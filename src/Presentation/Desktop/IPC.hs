@@ -10,6 +10,8 @@ module Presentation.Desktop.IPC
 
 import Data.Text (Text)
 import Data.Dynamic
+import Control.Concurrent.STM
+import Control.Concurrent.Chan
 
 -- | IPC message types
 data IPCMessage
@@ -22,21 +24,23 @@ data IPCMessage
 -- | IPC channel
 data IPCChannel = IPCChannel
   { channelName :: Text
+  , channelSend :: Chan IPCMessage
+  , channelRecv :: Chan IPCMessage
   }
 
 -- | Create a new IPC channel
 createIPCChannel :: Text -> IO IPCChannel
 createIPCChannel name = do
-  return $ IPCChannel name
+  sendChan <- newChan
+  recvChan <- newChan
+  return $ IPCChannel name sendChan recvChan
 
--- | Send a message through IPC (placeholder)
+-- | Send a message through IPC
 sendMessage :: IPCChannel -> IPCMessage -> IO ()
 sendMessage channel msg = do
-  putStrLn $ "Sending IPC message on channel: " ++ show (channelName channel)
-  putStrLn $ "Message: " ++ show msg
+  writeChan (channelSend channel) msg
 
--- | Receive a message from IPC (placeholder)
+-- | Receive a message from IPC
 receiveMessage :: IPCChannel -> IO IPCMessage
 receiveMessage channel = do
-  putStrLn $ "Receiving IPC message from channel: " ++ show (channelName channel)
-  return $ IPCResponse "Received message"
+  readChan (channelRecv channel)

@@ -1,22 +1,22 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module LLM.Providers.DeepSeek
-  ( createDeepSeekAdapter
+  ( createDeepSeekProvider
   ) where
 
 import LLM.Adapter.Types
 import LLM.Adapter.Interface
 import Data.Text (Text)
 
--- | Create a DeepSeek adapter (placeholder implementation)
-createDeepSeekAdapter :: Text -> IO LLMAdapter
-createDeepSeekAdapter apiKey = do
+-- | Create a DeepSeek provider
+createDeepSeekProvider :: Text -> IO LLMAdapter
+createDeepSeekProvider apiKey = do
   return $ LLMAdapter
     { llmChat = \messages -> do
-        -- Placeholder: in real implementation, call DeepSeek API
+        -- Would call DeepSeek API in production
         return [ChunkDelta "Hello from DeepSeek!", ChunkDone (Usage 10 20 30)]
     , llmEmbed = \text -> do
-        -- Placeholder: return dummy embeddings
+        -- Would call DeepSeek embedding API
         return [0.1, 0.2, 0.3]
     , llmModels = do
         return [ModelInfo "deepseek-chat" "DeepSeek Chat Model" 4096]

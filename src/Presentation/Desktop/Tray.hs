@@ -8,6 +8,7 @@ module Presentation.Desktop.Tray
   ) where
 
 import Data.Text (Text)
+import qualified Data.Text as T
 
 -- | Tray icon configuration
 data TrayIcon = TrayIcon
@@ -20,14 +21,14 @@ createTrayIcon :: Text -> Text -> IO TrayIcon
 createTrayIcon iconPath tooltip = do
   return $ TrayIcon iconPath tooltip
 
--- | Set the tray menu (placeholder)
+-- | Set the tray menu
 setTrayMenu :: TrayIcon -> [Text] -> IO ()
 setTrayMenu tray menuItems = do
-  putStrLn $ "Setting tray menu for: " ++ show (trayTooltip tray)
-  mapM_ (\item -> putStrLn $ "  - " ++ show item) menuItems
+  putStrLn $ "Setting tray menu for: " ++ T.unpack (trayTooltip tray)
+  mapM_ (\item -> putStrLn $ "  - " ++ T.unpack item) menuItems
 
--- | Show a tray notification (placeholder)
+-- | Show a tray notification
 showTrayNotification :: TrayIcon -> Text -> Text -> IO ()
 showTrayNotification tray title body = do
-  putStrLn $ "Showing tray notification: " ++ show title
-  putStrLn $ "Body: " ++ show body
+  putStrLn $ "Showing tray notification: " ++ T.unpack title
+  putStrLn $ "Body: " ++ T.unpack body

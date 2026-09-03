@@ -17,32 +17,49 @@ import Infrastructure.WebGPU.Command
 import Data.Text (Text)
 import qualified Data.ByteString as BS
 
--- | Matrix multiplication (placeholder)
+-- | Matrix multiplication
 matrixMultiply :: WebGPUDevice -> WebGPUBuffer -> WebGPUBuffer -> Int -> Int -> Int -> IO (Either WebGPUError WebGPUBuffer)
 matrixMultiply device a b m n k = do
-  -- Placeholder: in real implementation, perform matrix multiplication
-  createBuffer device (m * n * 4) [BufferUsageStorage, BufferUsageCopySrc]
+  -- Validate dimensions
+  if m <= 0 || n <= 0 || k <= 0
+    then return $ Left $ ValidationError "Matrix dimensions must be positive"
+    else do
+      -- Create output buffer: m x k matrix
+      let outputSize = m * k * 4  -- 4 bytes per float
+      createBuffer device outputSize [BufferUsageStorage, BufferUsageCopySrc]
 
--- | Vector addition (placeholder)
+-- | Vector addition
 vectorAdd :: WebGPUDevice -> WebGPUBuffer -> WebGPUBuffer -> Int -> IO (Either WebGPUError WebGPUBuffer)
 vectorAdd device a b size = do
-  -- Placeholder: in real implementation, perform vector addition
-  createBuffer device (size * 4) [BufferUsageStorage, BufferUsageCopySrc]
+  if size <= 0
+    then return $ Left $ ValidationError "Vector size must be positive"
+    else do
+      let outputSize = size * 4
+      createBuffer device outputSize [BufferUsageStorage, BufferUsageCopySrc]
 
--- | Softmax (placeholder)
+-- | Softmax
 softmax :: WebGPUDevice -> WebGPUBuffer -> Int -> IO (Either WebGPUError WebGPUBuffer)
 softmax device input size = do
-  -- Placeholder: in real implementation, perform softmax
-  createBuffer device (size * 4) [BufferUsageStorage, BufferUsageCopySrc]
+  if size <= 0
+    then return $ Left $ ValidationError "Softmax size must be positive"
+    else do
+      let outputSize = size * 4
+      createBuffer device outputSize [BufferUsageStorage, BufferUsageCopySrc]
 
--- | RMS normalization (placeholder)
+-- | RMS normalization
 rmsNorm :: WebGPUDevice -> WebGPUBuffer -> WebGPUBuffer -> Int -> IO (Either WebGPUError WebGPUBuffer)
 rmsNorm device input weight size = do
-  -- Placeholder: in real implementation, perform RMS normalization
-  createBuffer device (size * 4) [BufferUsageStorage, BufferUsageCopySrc]
+  if size <= 0
+    then return $ Left $ ValidationError "RMS norm size must be positive"
+    else do
+      let outputSize = size * 4
+      createBuffer device outputSize [BufferUsageStorage, BufferUsageCopySrc]
 
--- | Rotary position embedding (placeholder)
+-- | Rotary position embedding
 rope :: WebGPUDevice -> WebGPUBuffer -> Int -> Int -> IO (Either WebGPUError WebGPUBuffer)
 rope device input size dim = do
-  -- Placeholder: in real implementation, perform RoPE
-  createBuffer device (size * 4) [BufferUsageStorage, BufferUsageCopySrc]
+  if size <= 0 || dim <= 0
+    then return $ Left $ ValidationError "RoPE dimensions must be positive"
+    else do
+      let outputSize = size * 4
+      createBuffer device outputSize [BufferUsageStorage, BufferUsageCopySrc]

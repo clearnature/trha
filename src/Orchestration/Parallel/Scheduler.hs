@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Orchestration.Parallel.Scheduler
   ( parallel
   , pipeline
@@ -5,10 +7,12 @@ module Orchestration.Parallel.Scheduler
   ) where
 
 import Orchestration.Parallel.Types
+import Control.Concurrent.Async (async, wait, mapConcurrently)
+import Control.Concurrent.STM
 
 -- | Execute tasks in parallel
 parallel :: [IO a] -> IO [a]
-parallel tasks = sequence tasks  -- Placeholder: use async in real implementation
+parallel tasks = mapConcurrently id tasks
 
 -- | Execute tasks in pipeline
 pipeline :: [a -> IO a] -> a -> IO a
@@ -18,5 +22,5 @@ pipeline stages initial = do
 -- | Map-reduce pattern
 mapReduce :: (a -> IO b) -> ([b] -> c) -> [a] -> IO c
 mapReduce mapper reducer items = do
-  results <- mapM mapper items
+  results <- mapConcurrently mapper items
   return $ reducer results

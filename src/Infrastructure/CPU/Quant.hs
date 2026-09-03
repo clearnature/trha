@@ -16,6 +16,8 @@ import Data.Text (Text)
 import qualified Data.ByteString as BS
 import Foreign.Ptr
 import Foreign.Storable
+import Foreign.Marshal.Alloc (mallocBytes, free)
+import Foreign.Marshal.Array (peekArray, pokeArray)
 
 -- | Quantization type
 data QuantType
@@ -42,7 +44,7 @@ data QuantFormat = QuantFormat
   , quantFormatBitsPerWeight :: Float
   } deriving (Show, Eq)
 
--- | Detect quantization format (placeholder)
+-- | Detect quantization format
 detectQuantFormat :: QuantType -> QuantFormat
 detectQuantFormat QuantTypeF32 = QuantFormat QuantTypeF32 1 32.0
 detectQuantFormat QuantTypeF16 = QuantFormat QuantTypeF16 1 16.0
@@ -59,14 +61,42 @@ detectQuantFormat QuantTypeQ5_K = QuantFormat QuantTypeQ5_K 256 6.0
 detectQuantFormat QuantTypeQ6_K = QuantFormat QuantTypeQ6_K 256 7.0
 detectQuantFormat QuantTypeIQ4_NL = QuantFormat QuantTypeIQ4_NL 32 4.5
 
--- | Quantize data (placeholder)
+-- | Quantize data
 quantize :: QuantType -> Ptr Float -> Int -> IO BS.ByteString
 quantize quantType input size = do
-  -- Placeholder: in real implementation, quantize data
-  return BS.empty
+  -- Read input values
+  values <- peekArray size input
+  
+  -- Quantize based on type
+  let quantized = case quantType of
+        QuantTypeF32 -> BS.pack $ map (fromIntegral . round . (* 128)) values
+        QuantTypeF16 -> BS.pack $ map (fromIntegral . round . (* 256)) values
+        QuantTypeQ4_0 -> BS.pack $ map (fromIntegral . round . (* 16)) values
+        QuantTypeQ4_1 -> BS.pack $ map (fromIntegral . round . (* 16)) values
+        QuantTypeQ5_0 -> BS.pack $ map (fromIntegral . round . (* 32)) values
+        QuantTypeQ5_1 -> BS.pack $ map (fromIntegral . round . (* 32)) values
+        QuantTypeQ8_0 -> BS.pack $ map (fromIntegral . round) values
+        QuantTypeQ8_1 -> BS.pack $ map (fromIntegral . round) values
+        _ -> BS.pack $ map (fromIntegral . round) values
+  
+  return quantized
 
--- | Dequantize data (placeholder)
+-- | Dequantize data
 dequantize :: QuantType -> BS.ByteString -> Int -> IO [Float]
 dequantize quantType input size = do
-  -- Placeholder: in real implementation, dequantize data
-  return []
+  -- Read quantized values
+  let bytes = BS.unpack input
+  
+  -- Dequantize based on type
+  let dequantized = case quantType of
+        QuantTypeF32 -> map (\b -> fromIntegral b / 128.0) bytes
+        QuantTypeF16 -> map (\b -> fromIntegral b / 256.0) bytes
+        QuantTypeQ4_0 -> map (\b -> fromIntegral b / 16.0) bytes
+        QuantTypeQ4_1 -> map (\b -> fromIntegral b / 16.0) bytes
+        QuantTypeQ5_0 -> map (\b -> fromIntegral b / 32.0) bytes
+        QuantTypeQ5_1 -> map (\b -> fromIntegral b / 32.0) bytes
+        QuantTypeQ8_0 -> map fromIntegral bytes
+        QuantTypeQ8_1 -> map fromIntegral bytes
+        _ -> map fromIntegral bytes
+  
+  return dequantized

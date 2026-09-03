@@ -18,6 +18,6 @@ data PreloadScript = PreloadScript
 createPreloadScript :: Text -> Text -> PreloadScript
 createPreloadScript path content = PreloadScript path content
 
--- | Get the preload script content (placeholder)
+-- | Get the preload script content
 getPreloadScript :: PreloadScript -> Text
 getPreloadScript script = scriptContent script

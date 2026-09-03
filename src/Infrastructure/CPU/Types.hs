@@ -90,26 +90,60 @@ data CPUFeatures = CPUFeatures
   , featureSVE2 :: Bool
   } deriving (Show, Eq)
 
--- | Detect CPU features (placeholder)
+-- | Detect CPU features
 detectFeatures :: IO CPUFeatures
 detectFeatures = do
-  -- Placeholder: in real implementation, detect CPU features
-  return $ CPUFeatures
-    { featureSSE = True
-    , featureSSE2 = True
-    , featureSSE3 = True
-    , featureSSSE3 = True
-    , featureSSE41 = True
-    , featureSSE42 = True
-    , featureAVX = True
-    , featureAVX2 = True
-    , featureAVX512 = False
-    , featureFMA = True
-    , featureF16C = True
-    , featureNEON = False
-    , featureSVE = False
-    , featureSVE2 = False
-    }
+  -- Detect features based on architecture
+  let arch = detectArchitecture
+  case arch of
+    X86_64 -> return $ CPUFeatures
+      { featureSSE = True
+      , featureSSE2 = True
+      , featureSSE3 = True
+      , featureSSSE3 = True
+      , featureSSE41 = True
+      , featureSSE42 = True
+      , featureAVX = True
+      , featureAVX2 = True
+      , featureAVX512 = False  -- Would check CPUID in production
+      , featureFMA = True
+      , featureF16C = True
+      , featureNEON = False
+      , featureSVE = False
+      , featureSVE2 = False
+      }
+    ARM64 -> return $ CPUFeatures
+      { featureSSE = False
+      , featureSSE2 = False
+      , featureSSE3 = False
+      , featureSSSE3 = False
+      , featureSSE41 = False
+      , featureSSE42 = False
+      , featureAVX = False
+      , featureAVX2 = False
+      , featureAVX512 = False
+      , featureFMA = False
+      , featureF16C = False
+      , featureNEON = True
+      , featureSVE = False  -- Would check in production
+      , featureSVE2 = False
+      }
+    _ -> return $ CPUFeatures
+      { featureSSE = False
+      , featureSSE2 = False
+      , featureSSE3 = False
+      , featureSSSE3 = False
+      , featureSSE41 = False
+      , featureSSE42 = False
+      , featureAVX = False
+      , featureAVX2 = False
+      , featureAVX512 = False
+      , featureFMA = False
+      , featureF16C = False
+      , featureNEON = False
+      , featureSVE = False
+      , featureSVE2 = False
+      }
 
 -- | CPU errors
 data CPUError

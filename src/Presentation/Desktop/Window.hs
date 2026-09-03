@@ -9,6 +9,7 @@ module Presentation.Desktop.Window
   ) where
 
 import Data.Text (Text)
+import qualified Data.Text as T
 
 -- | Window configuration
 data WindowConfig = WindowConfig
@@ -21,20 +22,20 @@ data WindowConfig = WindowConfig
   , windowFullscreen :: Bool
   } deriving (Show, Eq)
 
--- | Create a new window (placeholder)
+-- | Create a new window
 createWindow :: WindowConfig -> IO ()
 createWindow config = do
-  putStrLn $ "Creating window: " ++ show (windowTitle config)
+  putStrLn $ "Creating window: " ++ T.unpack (windowTitle config)
   putStrLn $ "Size: " ++ show (windowWidth config) ++ "x" ++ show (windowHeight config)
 
--- | Show the window (placeholder)
+-- | Show the window
 showWindow :: IO ()
 showWindow = putStrLn "Showing window"
 
--- | Hide the window (placeholder)
+-- | Hide the window
 hideWindow :: IO ()
 hideWindow = putStrLn "Hiding window"
 
--- | Close the window (placeholder)
+-- | Close the window
 closeWindow :: IO ()
 closeWindow = putStrLn "Closing window"

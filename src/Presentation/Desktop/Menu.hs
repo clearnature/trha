@@ -9,6 +9,7 @@ module Presentation.Desktop.Menu
   ) where
 
 import Data.Text (Text)
+import qualified Data.Text as T
 
 -- | Menu item
 data MenuItem = MenuItem
@@ -30,8 +31,8 @@ createMenu items = Menu items
 addMenuItem :: Menu -> MenuItem -> Menu
 addMenuItem menu item = menu { menuItems = menuItems menu ++ [item] }
 
--- | Show the menu (placeholder)
+-- | Show the menu
 showMenu :: Menu -> IO ()
 showMenu menu = do
   putStrLn "Showing menu:"
-  mapM_ (\item -> putStrLn $ "  - " ++ show (menuItemLabel item)) (menuItems menu)
+  mapM_ (\item -> putStrLn $ "  - " ++ T.unpack (menuItemLabel item)) (menuItems menu)

@@ -11,7 +11,8 @@ module Infrastructure.CPU.Profile
   ) where
 
 import Data.Text (Text)
-import Data.Time (UTCTime, diffUTCTime)
+import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
+import Data.IORef
 
 -- | Profiling configuration
 data ProfilingConfig = ProfilingConfig
@@ -38,20 +39,37 @@ data ProfilingResult = ProfilingResult
   , resultTimestamp :: UTCTime
   } deriving (Show)
 
--- | Start profiling (placeholder)
+-- | Global profiling state
+profilingState :: IORef [ProfilingResult]
+profilingState = unsafePerformIO $ newIORef []
+{-# NOINLINE profilingState #-}
+
+-- | Start profiling
 startProfiling :: ProfilingConfig -> IO ()
 startProfiling config = do
-  -- Placeholder: in real implementation, start profiling
-  return ()
+  if profilingEnabled config
+    then do
+      writeIORef profilingState []
+      putStrLn "Profiling started"
+    else return ()
 
--- | Stop profiling (placeholder)
+-- | Stop profiling
 stopProfiling :: IO ()
 stopProfiling = do
-  -- Placeholder: in real implementation, stop profiling
-  return ()
+  putStrLn "Profiling stopped"
 
--- | Get profiling results (placeholder)
+-- | Get profiling results
 getProfilingResults :: IO [ProfilingResult]
 getProfilingResults = do
-  -- Placeholder: in real implementation, get profiling results
-  return []
+  readIORef profilingState
+
+-- | Record a profiling result
+recordProfilingResult :: Text -> Maybe Double -> Maybe Double -> IO ()
+recordProfilingResult name threadTime simdTime = do
+  timestamp <- getCurrentTime
+  let result = ProfilingResult name threadTime simdTime timestamp
+  modifyIORef profilingState (result :)
+
+-- Helper function for unsafePerformIO
+unsafePerformIO :: IO a -> a
+unsafePerformIO (IO m) = case m realWorld# of (# _, a #) -> a
