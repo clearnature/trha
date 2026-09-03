@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  haskell:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Haskell
+      uses: haskell/actions/setup@v2
+      with:
+        ghc-version: '9.4.8'
+        cabal-version: '3.10.2.1'
+    
+    - name: Cache Haskell dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cabal/packages
+          ~/.cabal/store
+          dist-newstyle
+        key: ${{ runner.os }}-haskell-${{ hashFiles('gh-harness.cabal') }}
+        restore-keys: |
+          ${{ runner.os }}-haskell-
+    
+    - name: Install dependencies
+      run: |
+        cabal update
+        cabal build --only-dependencies
+    
+    - name: Build
+      run: cabal build
+    
+    - name: Test
+      run: cabal test
+  
+  typescript:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18, 20]
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: |
+        cd packages/scheduler
+        npm install
+    
+    - name: Build
+      run: |
+        cd packages/scheduler
+        npm run build
+    
+    - name: Test
+      run: |
+        cd packages/scheduler
+        npm test
+  
+  benchmarks:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Use Node.js 18
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: |
+        cd benchmarks
+        npm install
+    
+    - name: Run smoke tests
+      run: |
+        cd benchmarks
+        npm test
+      env:
+        MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
+  
+  integration:
+    needs: [haskell, typescript, benchmarks]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Haskell
+      uses: haskell/actions/setup@v2
+      with:
+        ghc-version: '9.4.8'
+        cabal-version: '3.10.2.1'
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Build Haskell core
+      run: |
+        cabal update
+        cabal build --only-dependencies
+        cabal build
+    
+    - name: Build TypeScript scheduler
+      run: |
+        cd packages/scheduler
+        npm install
+        npm run build
+    
+    - name: Run integration tests
+      run: |
+        cd benchmarks
+        npm test -- --grep "Bridge"
+      env:
+        MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
