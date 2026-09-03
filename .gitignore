@@ -1,11 +1,161 @@
+# Haskell
 dist-newstyle/
-node_modules/
 *.o
 *.hi
 *.dyn_o
 *.dyn_hi
 .cabal-store/
-dist/
-result
 *.log
 *.tmp
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets and credentials
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.secret
+*.token
+*.credentials
+secrets/
+credentials/
+
+# API keys and tokens
+**/api_key*
+**/api-key*
+**/token*
+**/secret*
+**/password*
+**/credential*
+
+# Build outputs
+dist/
+build/
+result
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Logs
+*.log
+logs/
+
+# Coverage
+coverage/
+.coverage
+htmlcov/
+
+# Benchmarks output
+benchmarks/results/
+benchmarks/mimo-api/
+
+# Haskell build artifacts
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+*.p_hi
+*.p_o
+
+# Cabal
+.cabal-store/
+dist-newstyle/
+
+# Stack
+.stack-work/
+
+# Nix
+result
+result-*
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Kubernetes
+*.kubeconfig
+
+# AWS
+.aws/
+credentials
+
+# GCP
+.gcloud/
+application_default_credentials.json
+
+# Azure
+.azure/
+
+# SSH
+.ssh/
+id_rsa
+id_rsa.pub
+known_hosts
+
+# GPG
+.gnupg/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+.directory
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Test
+.temporary/
+.temporary/
+
+# Coverage
+coverage/
+.coverage
+htmlcov/
+*.cover
+
+# Docs
+docs/DeepSeek-Reasonix-studio-v2.11.0/
+docs/DeepSeek-Reasonix-studio-v2.11.0.zip
+
+# Misc
+*.bak
+*.backup
+*.orig
