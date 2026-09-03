@@ -1,0 +1,50 @@
+graph TD
+    subgraph "Presentation Layer"
+        Electron["Electron Desktop"]
+        WebUI["Web UI (React)"]
+        TUI["Pi TUI/CLI"]
+    end
+
+    subgraph "Orchestration Layer (TypeScript + Cordis)"
+        AgentLoop["Agent Loop Plugin"]
+        ToolRegistry["Tool Registry"]
+        SessionManager["Session Manager"]
+        ParallelScheduler["Pi Parallel Scheduler"]
+        HaskellBridge["Haskell FFI Bridge"]
+    end
+
+    subgraph "Core Engine Layer (Haskell/GHC)"
+        CacheEngine["Cache Engine<br/>(Reasonix Style)"]
+        TypeChecker["Type Checker"]
+        FormalVerifier["Formal Verifier"]
+        Reasoner["Reasoner"]
+        ServantAPI["servant API"]
+    end
+
+    subgraph "External Services"
+        LLMProvider["LLM Provider<br/>(DeepSeek)"]
+        FileSystem["File System"]
+        Network["Network"]
+    end
+
+    Electron --> AgentLoop
+    WebUI --> AgentLoop
+    TUI --> AgentLoop
+
+    AgentLoop --> ToolRegistry
+    AgentLoop --> SessionManager
+    AgentLoop --> ParallelScheduler
+    AgentLoop --> HaskellBridge
+
+    HaskellBridge --> ServantAPI
+    ServantAPI --> CacheEngine
+    ServantAPI --> TypeChecker
+    ServantAPI --> FormalVerifier
+    ServantAPI --> Reasoner
+
+    ToolRegistry --> FileSystem
+    ToolRegistry --> Network
+    AgentLoop --> LLMProvider
+
+    CacheEngine --> LLMProvider
+    Reasoner --> LLMProvider

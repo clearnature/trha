@@ -1,0 +1,20 @@
+{
+  "name": "gh-harness-benchmarks",
+  "version": "0.1.0",
+  "description": "Smoke tests and benchmarks for gh-harness",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:report": "vitest run --reporter=json --outputFile=results/test-results.json"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0",
+    "@vitest/coverage-v8": "^1.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "gh-harness-scheduler": "file:../packages/scheduler"
+  }
+}

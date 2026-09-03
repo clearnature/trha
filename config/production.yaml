@@ -1,0 +1,83 @@
+# gh-harness production configuration
+server:
+  host: 0.0.0.0
+  port: 8080
+  workers: 8
+  timeout: 30
+  keep_alive: 75
+
+model:
+  path: /opt/gh-harness/models/Qwen3.8-27B-IQ3_M.gguf
+  context_size: 4096
+  gpu_layers: 999
+  threads: 8
+  batch_size: 2048
+  ubatch_size: 512
+  flash_attn: auto
+
+logging:
+  level: info
+  format: json
+  output: /opt/gh-harness/logs/gh-harness.log
+  rotation: daily
+  retention: 14
+  max_size: 10MB
+
+monitoring:
+  enabled: true
+  port: 9090
+  metrics_path: /metrics
+  scrape_interval: 5s
+
+cache:
+  enabled: true
+  size: 1000
+  ttl: 3600
+  strategy: lru
+
+security:
+  tls:
+    enabled: false
+    cert_file: /opt/gh-harness/config/cert.pem
+    key_file: /opt/gh-harness/config/key.pem
+  auth:
+    enabled: false
+    token: ""
+
+performance:
+  max_connections: 10000
+  max_requests_per_connection: 1000
+  request_timeout: 30
+  response_timeout: 60
+  buffer_size: 8192
+
+storage:
+  data_dir: /opt/gh-harness/data
+  models_dir: /opt/gh-harness/models
+  logs_dir: /opt/gh-harness/logs
+  temp_dir: /tmp/gh-harness
+
+network:
+  tcp:
+    keepalive: true
+    keepalive_time: 300
+    keepalive_probes: 5
+    keepalive_intvl: 15
+    fin_timeout: 15
+    tw_reuse: true
+  buffer:
+    rmem_max: 16777216
+    wmem_max: 16777216
+    rmem_default: 1048576
+    wmem_default: 1048576
+
+resources:
+  memory:
+    limit: 16GB
+    reservation: 8GB
+  cpu:
+    limit: 8
+    reservation: 4
+  disk:
+    limit: 100GB
+    reservation: 50GB

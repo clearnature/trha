@@ -1,0 +1,134 @@
+name: Smoke Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18, 20]
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: |
+        cd benchmarks
+        npm install
+    
+    - name: Run smoke tests
+      run: |
+        cd benchmarks
+        npm test
+    
+    - name: Run tests with coverage
+      run: |
+        cd benchmarks
+        npm run test:coverage
+    
+    - name: Generate test report
+      run: |
+        cd benchmarks
+        npm run test:report
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-${{ matrix.node-version }}
+        path: |
+          benchmarks/results/
+          benchmarks/coverage/
+  
+  haskell-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Haskell
+      uses: haskell/actions/setup@v2
+      with:
+        ghc-version: '9.4.8'
+        cabal-version: '3.10.2.1'
+    
+    - name: Cache Haskell dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cabal/packages
+          ~/.cabal/store
+          dist-newstyle
+        key: ${{ runner.os }}-haskell-${{ hashFiles('gh-harness.cabal') }}
+        restore-keys: |
+          ${{ runner.os }}-haskell-
+    
+    - name: Install dependencies
+      run: |
+        cabal update
+        cabal build --only-dependencies
+    
+    - name: Build project
+      run: cabal build
+    
+    - name: Run Haskell tests
+      run: cabal test
+  
+  integration-test:
+    needs: [test, haskell-test]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Setup Haskell
+      uses: haskell/actions/setup@v2
+      with:
+        ghc-version: '9.4.8'
+        cabal-version: '3.10.2.1'
+    
+    - name: Install Node dependencies
+      run: |
+        cd packages/scheduler
+        npm install
+    
+    - name: Install Haskell dependencies
+      run: |
+        cabal update
+        cabal build --only-dependencies
+    
+    - name: Build Haskell core
+      run: cabal build
+    
+    - name: Build TypeScript scheduler
+      run: |
+        cd packages/scheduler
+        npm run build
+    
+    - name: Run integration tests
+      run: |
+        cd benchmarks
+        npm test -- --grep "Bridge"
+    
+    - name: Generate integration report
+      run: |
+        cd benchmarks
+        npm run test:report

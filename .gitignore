@@ -1,0 +1,11 @@
+dist-newstyle/
+node_modules/
+*.o
+*.hi
+*.dyn_o
+*.dyn_hi
+.cabal-store/
+dist/
+result
+*.log
+*.tmp

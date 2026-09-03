@@ -1,0 +1,94 @@
+cabal-version:      3.0
+name:               gh-harness-sdk
+version:            0.1.0.0
+synopsis:           SDK for gh-harness agent harness
+license:            MIT
+author:             Yanli
+build-type:         Simple
+
+-- SDK Core
+library gh-harness-sdk-core
+  exposed-modules:  
+    Core.Types
+    Core.Client
+    Core.HTTP
+    Core.Server
+    Core.Handlers
+  hs-source-dirs:   src
+  build-depends:    base ^>=4.22
+                  , aeson
+                  , text
+                  , bytestring
+                  , http-client
+                  , http-client-tls
+                  , http-types
+                  , servant
+                  , servant-server
+                  , warp
+                  , directory
+                  , time
+                  , containers
+  default-language: Haskell2010
+
+-- SDK Types
+library gh-harness-sdk-types
+  exposed-modules:  
+    Types.Config
+  hs-source-dirs:   src
+  build-depends:    base ^>=4.22
+                  , gh-harness-sdk-core
+                  , aeson
+                  , text
+                  , bytestring
+                  , directory
+  default-language: Haskell2010
+
+-- SDK Client
+library gh-harness-sdk-client
+  exposed-modules:  
+    Client.Session
+    Client.Agent
+    Client.Tool
+    Client.Model
+  hs-source-dirs:   src
+  build-depends:    base ^>=4.22
+                  , gh-harness-sdk-core
+                  , text
+  default-language: Haskell2010
+
+-- SDK Utils
+library gh-harness-sdk-utils
+  exposed-modules:  
+    Utils.Logger
+    Utils.Retry
+  hs-source-dirs:   src
+  build-depends:    base ^>=4.22
+                  , text
+                  , time
+  default-language: Haskell2010
+
+-- SDK Server Executable
+executable gh-harness-sdk-server
+  main-is:          Main.hs
+  hs-source-dirs:   src/Server
+  build-depends:    base ^>=4.22
+                  , gh-harness-sdk-core
+                  , text
+  default-language: Haskell2010
+
+-- SDK Test Suite
+test-suite gh-harness-sdk-test
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test
+  build-depends:    base ^>=4.22
+                  , gh-harness-sdk-core
+                  , gh-harness-sdk-types
+                  , gh-harness-sdk-client
+                  , gh-harness-sdk-utils
+                  , hspec
+                  , QuickCheck
+                  , aeson
+                  , text
+  ghc-options:      -rtsopts
+  default-language: Haskell2010

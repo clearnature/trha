@@ -1,0 +1,92 @@
+name: Static Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  release:
+    types: [ published ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+    
+    - name: Build static binary
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        file: Dockerfile.static
+        platforms: linux/amd64
+        push: false
+        tags: gh-harness:static
+        outputs: type=local,dest=./dist
+    
+    - name: Upload binary
+      uses: actions/upload-artifact@v3
+      with:
+        name: gh-harness-linux-x86_64
+        path: dist/gh-harness
+    
+    - name: Create release package
+      if: github.event_name == 'release'
+      run: |
+        cd dist
+        tar -czf gh-harness-linux-x86_64.tar.gz gh-harness
+        sha256sum gh-harness-linux-x86_64.tar.gz > gh-harness-linux-x86_64.tar.gz.sha256
+    
+    - name: Upload release asset
+      if: github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./dist/gh-harness-linux-x86_64.tar.gz
+        asset_name: gh-harness-linux-x86_64.tar.gz
+        asset_content_type: application/gzip
+    
+    - name: Upload checksum
+      if: github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./dist/gh-harness-linux-x86_64.tar.gz.sha256
+        asset_name: gh-harness-linux-x86_64.tar.gz.sha256
+        asset_content_type: text/plain
+  
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        distro: [ubuntu, centos, debian]
+    
+    steps:
+    - name: Download binary
+      uses: actions/download-artifact@v3
+      with:
+        name: gh-harness-linux-x86_64
+    
+    - name: Make binary executable
+      run: chmod +x gh-harness
+    
+    - name: Test on ${{ matrix.distro }}
+      uses: docker:// ${{ matrix.distro }}:latest
+      with:
+        args: |
+          bash -c "
+            ./gh-harness --version
+            ./gh-harness --help
+            echo 'Binary works on ${{ matrix.distro }}'
+          "
+    
+    - name: Test basic functionality
+      run: |
+        ./gh-harness --version
+        ./gh-harness --help
+        echo "Binary works on host system"

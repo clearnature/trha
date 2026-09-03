@@ -1,0 +1,22 @@
+cabal-version:      3.0
+name:               gh-haskell-go-bridge
+version:            0.1.0.0
+synopsis:           Haskell-Go bridge for gh-harness
+license:            MIT
+author:             Yanli
+build-type:         Simple
+
+executable gh-haskell-go-bridge
+  main-is:          Main.hs
+  hs-source-dirs:   .
+  build-depends:    base ^>=4.22
+                  , aeson
+                  , text
+                  , bytestring
+                  , http-client
+                  , http-client-tls
+                  , http-types
+                  , stm
+                  , directory
+                  , filepath
+  default-language: Haskell2010

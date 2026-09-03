@@ -1,0 +1,47 @@
+graph TD
+    subgraph "Applications"
+        CLI["CLI Frontend<br/>(Terminal)"]
+        Desktop["Desktop Frontend<br/>(GTK/Qt)"]
+        Web["Web Frontend<br/>(Warp)"]
+    end
+
+    subgraph "Shared Core Layer"
+        Core["gh-harness-core"]
+        subgraph "Core Modules"
+            Plugin["Core.Plugin<br/>(Free Monad DSL)"]
+            Session["Core.Session<br/>(Event Log)"]
+            Agent["Core.Agent<br/>(State Machine)"]
+            Tools["Core.Tools<br/>(Registry)"]
+            LLM["LLM.Adapter<br/>(DeepSeek)"]
+            Event["Core.Event<br/>(Event Bus)"]
+        end
+    end
+
+    subgraph "Infrastructure Layer"
+        Storage["Storage<br/>(JSON/SQLite)"]
+        Network["Network<br/>(HTTP Client)"]
+        Sandbox["Sandbox<br/>(Process Isolation)"]
+        Telemetry["Telemetry<br/>(Metrics)"]
+    end
+
+    CLI --> Core
+    Desktop --> Core
+    Web --> Core
+
+    Core --> Plugin
+    Core --> Session
+    Core --> Agent
+    Core --> Tools
+    Core --> LLM
+    Core --> Event
+
+    Session --> Storage
+    LLM --> Network
+    Tools --> Sandbox
+    Agent --> Telemetry
+
+    Plugin --> Session
+    Plugin --> Agent
+    Plugin --> Tools
+    Agent --> LLM
+    Agent --> Tools
