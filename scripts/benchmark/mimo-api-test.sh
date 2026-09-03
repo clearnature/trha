@@ -4,7 +4,7 @@
 set -e
 
 # Configuration
-API_KEY="REMOVED_API_KEY"
+API_KEY="${MIMO_API_KEY:-}"
 BASE_URL="https://token-plan-cn.xiaomimimo.com/v1"
 MODEL="mimo-v2.5-pro"
 OUTPUT_DIR="benchmarks/mimo-api"

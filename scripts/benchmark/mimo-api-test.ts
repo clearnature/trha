@@ -3,7 +3,7 @@
 import axios from 'axios';
 
 // Configuration
-const API_KEY = 'REMOVED_API_KEY';
+const API_KEY = process.env.MIMO_API_KEY || '';
 const BASE_URL = 'https://token-plan-cn.xiaomimimo.com/v1';
 const MODEL = 'mimo-v2.5-pro';
 
