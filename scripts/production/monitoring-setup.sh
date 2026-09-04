@@ -1,10 +1,10 @@
 #!/bin/bash
-# Monitoring setup script for gh-harness
+# Monitoring setup script for trha
 
 set -e
 
 # Configuration
-MONITORING_DIR="/opt/gh-harness/monitoring"
+MONITORING_DIR="/opt/trha/monitoring"
 CONFIG_FILE="config/production.yaml"
 LOG_FILE="logs/monitoring-setup.log"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -97,7 +97,7 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  - job_name: 'gh-harness'
+  - job_name: 'trha'
     static_configs:
       - targets: ['localhost:8080']
     metrics_path: '/metrics'
@@ -232,7 +232,7 @@ configure_grafana() {
         }' \
         http://admin:admin@localhost:3000/api/datasources
     
-    # Import gh-harness dashboard
+    # Import trha dashboard
     curl -s -X POST \
         -H "Content-Type: application/json" \
         -d @config/grafana-dashboard.json \
@@ -273,13 +273,13 @@ generate_report() {
 
 ## Monitoring Targets
 
-- **gh-harness**: localhost:8080/metrics
+- **trha**: localhost:8080/metrics
 - **llama-server**: localhost:8081/metrics
 - **Node Exporter**: localhost:9100
 
 ## Dashboards
 
-- **gh-harness Overview**: System metrics, request rates, response times
+- **trha Overview**: System metrics, request rates, response times
 - **Node Overview**: CPU, memory, disk, network
 
 ## Access
@@ -298,7 +298,7 @@ generate_report() {
 ## Notes
 
 - All monitoring components installed and configured
-- Prometheus scraping gh-harness metrics
+- Prometheus scraping trha metrics
 - Grafana dashboards configured
 - Node Exporter monitoring system metrics
 EOF

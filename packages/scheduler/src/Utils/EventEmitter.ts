@@ -1,4 +1,4 @@
-// Event emitter for gh-harness scheduler
+// Event emitter for trha scheduler
 
 export type EventHandler<T = unknown> = (data: T) => void | Promise<void>;
 

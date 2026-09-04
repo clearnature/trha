@@ -1,13 +1,13 @@
-# gh-harness SDK API 文档
+# trha SDK API 文档
 
 ## 概述
 
-gh-harness SDK 提供了与 gh-harness 核心引擎交互的 Haskell API。
+trha SDK 提供了与 trha 核心引擎交互的 Haskell API。
 
 ## 安装
 
 ```bash
-cabal install gh-harness-sdk
+cabal install trha-sdk
 ```
 
 ## 快速开始

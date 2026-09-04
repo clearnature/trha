@@ -18,7 +18,7 @@ import qualified Data.Text.IO as TIO
 -- | Main entry point
 main :: IO ()
 main = do
-  putStrLn "gh-harness CLI"
+  putStrLn "trha CLI"
   putStrLn "Type 'help' for commands, 'quit' to exit"
   
   -- Create CLI client

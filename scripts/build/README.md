@@ -1,6 +1,6 @@
 # Static Build Scripts
 
-用于构建 gh-harness 静态二进制的脚本。
+用于构建 trha 静态二进制的脚本。
 
 ## 概述
 
@@ -22,8 +22,8 @@
 ./scripts/build/static-build.sh
 
 # 或者使用 Docker
-docker build -f Dockerfile.static -t gh-harness:static .
-docker run --rm -v $(pwd)/dist:/output gh-harness:static
+docker build -f Dockerfile.static -t trha:static .
+docker run --rm -v $(pwd)/dist:/output trha:static
 ```
 
 ### 多发行版测试
@@ -90,13 +90,13 @@ cabal --version
 
 ```bash
 # 检查二进制类型
-file dist/gh-harness
+file dist/trha
 
 # 检查依赖
-ldd dist/gh-harness
+ldd dist/trha
 
 # 检查链接
-readelf -d dist/gh-harness
+readelf -d dist/trha
 ```
 
 ### 多发行版测试失败
@@ -106,7 +106,7 @@ readelf -d dist/gh-harness
 docker ps
 
 # 手动测试特定发行版
-docker run --rm -v $(pwd)/dist/gh-harness:/gh-harness ubuntu:22.04 /gh-harness --version
+docker run --rm -v $(pwd)/dist/trha:/trha ubuntu:22.04 /trha --version
 ```
 
 ## 技术细节

@@ -1,4 +1,4 @@
-// Tests for gh-harness scheduler
+// Tests for trha scheduler
 
 import { describe, it, expect } from 'vitest';
 import { SchedulerClient } from '../src/Core/Client.js';

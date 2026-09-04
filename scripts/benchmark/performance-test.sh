@@ -1,5 +1,5 @@
 #!/bin/bash
-# Performance test script for gh-harness
+# Performance test script for trha
 
 set -e
 

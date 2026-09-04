@@ -1,12 +1,12 @@
-# gh-harness 与 Pi 集成计划
+# trha 与 Pi 集成计划
 
 ## 概述
 
-将 gh-harness (Haskell/GHC 类型论推理) 与 Pi (并行子代理) 深度融合，构建下一代 AI 代理系统。
+将 trha (Haskell/GHC 类型论推理) 与 Pi (并行子代理) 深度融合，构建下一代 AI 代理系统。
 
 ## 核心优势
 
-### gh-harness 贡献
+### trha 贡献
 - **类型安全**：编译时保证代码正确性
 - **形式化验证**：Liquid Haskell 验证关键属性
 - **高性能**：GHC 优化 + 惰性求值

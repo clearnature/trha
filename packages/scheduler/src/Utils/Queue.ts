@@ -1,4 +1,4 @@
-// Queue implementation for gh-harness scheduler
+// Queue implementation for trha scheduler
 
 export class Queue<T> {
   private items: T[] = [];

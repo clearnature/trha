@@ -40,7 +40,7 @@ cabal run trha -- cli    # Run CLI REPL
 cabal run trha -- tui    # Run TUI mode
 ```
 
-GHC version: requires `base ^>=4.22` (GHC 9.12+). The cabal file defines 5 internal libraries (`gh-harness-core`, `gh-harness-llm`, `gh-harness-api`, `gh-harness-infra`, `gh-harness-orchestration`) merged where needed to work around GHC internal-lib linking bugs.
+GHC version: requires `base ^>=4.22` (GHC 9.12+). The cabal file defines 5 internal libraries (`trha-core`, `trha-llm`, `trha-api`, `trha-infra`, `trha-orchestration`) merged where needed to work around GHC internal-lib linking bugs.
 
 ### TypeScript Scheduler
 
@@ -66,7 +66,7 @@ npm test
 ### Static Binary (Docker)
 
 ```bash
-docker build -f Dockerfile.static -t gh-harness .
+docker build -f Dockerfile.static -t trha .
 ```
 
 Produces a single statically-linked binary from `scratch` image via Alpine + musl.

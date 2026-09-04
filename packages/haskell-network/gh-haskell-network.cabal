@@ -1,12 +1,12 @@
 cabal-version:      3.0
-name:               gh-haskell-network
+name:               trha-network
 version:            0.1.0.0
-synopsis:           Haskell network library for gh-harness
+synopsis:           Haskell network library for trha
 license:            MIT
 author:             Yanli
 build-type:         Simple
 
-executable gh-haskell-network
+executable trha-network
   main-is:          Main.hs
   hs-source-dirs:   .
   build-depends:    base ^>=4.22

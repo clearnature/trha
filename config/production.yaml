@@ -1,4 +1,4 @@
-# gh-harness production configuration
+# trha production configuration
 server:
   host: 0.0.0.0
   port: 8080
@@ -7,7 +7,7 @@ server:
   keep_alive: 75
 
 model:
-  path: /opt/gh-harness/models/Qwen3.8-27B-IQ3_M.gguf
+  path: /opt/trha/models/Qwen3.8-27B-IQ3_M.gguf
   context_size: 4096
   gpu_layers: 999
   threads: 8
@@ -18,7 +18,7 @@ model:
 logging:
   level: info
   format: json
-  output: /opt/gh-harness/logs/gh-harness.log
+  output: /opt/trha/logs/trha.log
   rotation: daily
   retention: 14
   max_size: 10MB
@@ -38,8 +38,8 @@ cache:
 security:
   tls:
     enabled: false
-    cert_file: /opt/gh-harness/config/cert.pem
-    key_file: /opt/gh-harness/config/key.pem
+    cert_file: /opt/trha/config/cert.pem
+    key_file: /opt/trha/config/key.pem
   auth:
     enabled: false
     token: ""
@@ -52,10 +52,10 @@ performance:
   buffer_size: 8192
 
 storage:
-  data_dir: /opt/gh-harness/data
-  models_dir: /opt/gh-harness/models
-  logs_dir: /opt/gh-harness/logs
-  temp_dir: /tmp/gh-harness
+  data_dir: /opt/trha/data
+  models_dir: /opt/trha/models
+  logs_dir: /opt/trha/logs
+  temp_dir: /tmp/trha
 
 network:
   tcp:

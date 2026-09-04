@@ -46,7 +46,7 @@ runHTTPApp app = do
 -- | Home handler
 homeHandler :: Application
 homeHandler request respond = do
-    respond $ response200 "Welcome to gh-harness HTTP server"
+    respond $ response200 "Welcome to trha HTTP server"
 
 -- | API handler
 apiHandler :: Application

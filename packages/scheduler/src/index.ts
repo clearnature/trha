@@ -1,4 +1,4 @@
-// Main entry point for gh-harness scheduler - Phase 6
+// Main entry point for trha scheduler - Phase 6
 
 export * from './Core/Client.js';
 export * from './Core/HTTP.js';

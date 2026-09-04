@@ -1,5 +1,5 @@
 #!/bin/bash
-# Model benchmark script for gh-harness
+# Model benchmark script for trha
 
 set -e
 
@@ -272,7 +272,7 @@ generate_report() {
     REPORT_FILE="$OUTPUT_DIR/benchmark-report-$TIMESTAMP.md"
     
     cat > "$REPORT_FILE" << EOF
-# gh-harness Benchmark Report
+# trha Benchmark Report
 
 **Date**: $(date)
 **Model**: $MODEL_PATH

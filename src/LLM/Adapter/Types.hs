@@ -62,7 +62,7 @@ instance ToJSON ModelInfo where
     [ "id"           .= modelName m
     , "object"       .= ("model" :: Text)
     , "created"      .= (0 :: Int)
-    , "owned_by"     .= ("gh-harness" :: Text)
+    , "owned_by"     .= ("trha" :: Text)
     , "description"  .= modelDescription m
     , "context_size" .= modelContextSize m
     ]

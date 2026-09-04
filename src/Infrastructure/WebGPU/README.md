@@ -1,4 +1,4 @@
-# WebGPU Backend for gh-harness
+# WebGPU Backend for trha
 
 WebGPU 后端实现，用于在 GPU 上执行计算密集型任务。
 
@@ -6,7 +6,7 @@ WebGPU 后端实现，用于在 GPU 上执行计算密集型任务。
 
 WebGPU 是一个现代的、跨平台的图形和计算 API，用于在 GPU 上执行高性能计算。
 
-gh-harness 的 WebGPU 后端提供了：
+trha 的 WebGPU 后端提供了：
 - 设备管理
 - 缓冲区管理
 - 着色器管理

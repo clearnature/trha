@@ -1,5 +1,5 @@
 #!/bin/bash
-# MIMO API test script for gh-harness
+# MIMO API test script for trha
 
 set -e
 

@@ -35,4 +35,4 @@ saveConfig config = do
 getConfigPath :: IO FilePath
 getConfigPath = do
   home <- getHomeDirectory
-  return $ home </> ".gh-harness" </> "config.json"
+  return $ home </> ".trha" </> "config.json"

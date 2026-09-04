@@ -1,10 +1,10 @@
 #!/bin/bash
-# Static build script for gh-harness using Alpine Linux + Musl
+# Static build script for trha using Alpine Linux + Musl
 
 set -e
 
 # Configuration
-PROJECT_NAME="gh-harness"
+PROJECT_NAME="trha"
 BUILD_DIR="dist/static"
 ALPINE_VERSION="3.19"
 GHC_VERSION="9.4.8"
@@ -351,20 +351,20 @@ A microkernel agent harness written in Haskell.
 ## Installation
 
 1. Download the binary
-2. Make it executable: \`chmod +x gh-harness\`
-3. Run it: \`./gh-harness --help\`
+2. Make it executable: \`chmod +x trha\`
+3. Run it: \`./trha --help\`
 
 ## Usage
 
 \`\`\`bash
 # Start the CLI
-./gh-harness
+./trha
 
 # Start the HTTP server
-./gh-harness --server --port 8080
+./trha --server --port 8080
 
 # Show help
-./gh-harness --help
+./trha --help
 \`\`\`
 
 ## Requirements

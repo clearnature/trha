@@ -7,7 +7,7 @@
 ## 1. 项目结构调整
 
 ```
-gh-harness/
+trha/
 ├── packages/
 │   ├── core-engine/           # Haskell 核心引擎
 │   │   ├── src/
@@ -121,7 +121,7 @@ export function createShell(): Shell {
 ```typescript
 // packages/electron-shell/src/main/main.ts
 import { app, BrowserWindow, ipcMain } from 'electron'
-import { createShell } from '@gh-harness/shared-frontend'
+import { createShell } from '@trha/shared-frontend'
 
 class ElectronMain {
   private window: BrowserWindow
@@ -178,7 +178,7 @@ contextBridge.exposeInMainWorld('shell', {
 ```typescript
 // packages/cli-shell/src/commands/chat.ts
 import { Command } from 'commander'
-import { createShell } from '@gh-harness/shared-frontend'
+import { createShell } from '@trha/shared-frontend'
 
 export const chatCommand = new Command('chat')
   .description('Start interactive chat')
@@ -289,8 +289,8 @@ export class SSEClient {
 ```json
 {
   "build": {
-    "appId": "com.gh-harness.desktop",
-    "productName": "gh-harness",
+    "appId": "com.trha.desktop",
+    "productName": "trha",
     "directories": {
       "output": "dist/electron"
     },

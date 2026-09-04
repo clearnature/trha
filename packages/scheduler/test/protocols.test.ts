@@ -35,7 +35,7 @@ describe('OpenAI Compatible API', () => {
     expect(data.data.length).toBeGreaterThan(0);
     expect(data.data[0]).toHaveProperty('id');
     expect(data.data[0]).toHaveProperty('object', 'model');
-    expect(data.data[0]).toHaveProperty('owned_by', 'gh-harness');
+    expect(data.data[0]).toHaveProperty('owned_by', 'trha');
   });
 
   it('POST /v1/chat/completions returns completion', async () => {

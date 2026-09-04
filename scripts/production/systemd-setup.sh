@@ -1,13 +1,13 @@
 #!/bin/bash
-# systemd service setup script for gh-harness
+# systemd service setup script for trha
 
 set -e
 
 # Configuration
-SERVICE_NAME="gh-harness"
-SERVICE_USER="gh-harness"
-SERVICE_GROUP="gh-harness"
-INSTALL_DIR="/opt/gh-harness"
+SERVICE_NAME="trha"
+SERVICE_USER="trha"
+SERVICE_GROUP="trha"
+INSTALL_DIR="/opt/trha"
 CONFIG_FILE="config/production.yaml"
 LOG_FILE="logs/systemd-setup.log"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -45,8 +45,8 @@ check_prerequisites() {
     fi
     
     # Check if binary exists
-    if [ ! -f "$INSTALL_DIR/gh-harness" ]; then
-        log_error "Binary not found: $INSTALL_DIR/gh-harness"
+    if [ ! -f "$INSTALL_DIR/trha" ]; then
+        log_error "Binary not found: $INSTALL_DIR/trha"
         exit 1
     fi
     
@@ -102,8 +102,8 @@ copy_files() {
     log_info "Copying files..."
     
     # Copy binary
-    cp gh-harness "$INSTALL_DIR/"
-    chmod 755 "$INSTALL_DIR/gh-harness"
+    cp trha "$INSTALL_DIR/"
+    chmod 755 "$INSTALL_DIR/trha"
     
     # Copy config
     if [ -f "$CONFIG_FILE" ]; then
@@ -111,14 +111,14 @@ copy_files() {
     else
         # Create default config
         cat > "$INSTALL_DIR/config/production.yaml" << EOF
-# gh-harness production configuration
+# trha production configuration
 server:
   host: 0.0.0.0
   port: 8080
   workers: 8
 
 model:
-  path: /opt/gh-harness/models/Qwen3.8-27B-IQ3_M.gguf
+  path: /opt/trha/models/Qwen3.8-27B-IQ3_M.gguf
   context_size: 4096
   gpu_layers: 999
   threads: 8
@@ -126,7 +126,7 @@ model:
 logging:
   level: info
   format: json
-  output: /opt/gh-harness/logs/gh-harness.log
+  output: /opt/trha/logs/trha.log
 
 monitoring:
   enabled: true
@@ -152,8 +152,8 @@ create_systemd_service() {
     # Create service file
     cat > "/etc/systemd/system/$SERVICE_NAME.service" << EOF
 [Unit]
-Description=gh-harness Agent Harness
-Documentation=https://github.com/gh-harness/gh-harness
+Description=trha Agent Harness
+Documentation=https://github.com/trha/trha
 After=network.target
 Wants=network-online.target
 
@@ -162,7 +162,7 @@ Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_GROUP
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/gh-harness --config $INSTALL_DIR/config/production.yaml
+ExecStart=$INSTALL_DIR/trha --config $INSTALL_DIR/config/production.yaml
 ExecReload=/bin/kill -HUP \$MAINPID
 Restart=always
 RestartSec=5

@@ -117,7 +117,7 @@ type Session struct {
 }
 ```
 
-## 4. gh-harness (Haskell/GHC)
+## 4. trha (Haskell/GHC)
 
 ### 项目结构
 ```
@@ -159,7 +159,7 @@ updateState agent newState =
 
 ### 功能映射表
 
-| 功能 | DeepSeek-Harness | Pi | Reasonix | gh-harness |
+| 功能 | DeepSeek-Harness | Pi | Reasonix | trha |
 |------|-----------------|-----|----------|------------|
 | **插件系统** | Cordis | - | Go Plugin | Free Monad |
 | **并行调度** | Subagent | parallel() | - | STM |
@@ -171,7 +171,7 @@ updateState agent newState =
 
 ### 技术栈映射
 
-| 层 | DeepSeek-Harness | Pi | Reasonix | gh-harness |
+| 层 | DeepSeek-Harness | Pi | Reasonix | trha |
 |---|-----------------|-----|----------|------------|
 | **前端** | Web UI | TUI/CLI | Desktop | Electron |
 | **调度** | Cordis | Agent Core | Control | Cordis |
@@ -183,7 +183,7 @@ updateState agent newState =
 
 ### 6.1 核心引擎 (Haskell)
 
-从 gh-harness 继承：
+从 trha 继承：
 - 类型论推理
 - Free Monad 插件系统
 - STM 并发控制

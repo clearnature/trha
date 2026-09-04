@@ -1,4 +1,4 @@
-# gh-harness 架构设计
+# trha 架构设计
 
 基于 Cordis 微内核思想的 Haskell 实现，参考 DeepSeek-Reasonix Studio v2.11.0 架构，实现前后端解耦、CLI/Desktop 共享核心。
 
@@ -7,8 +7,8 @@
 | 原则 | 实现方式 |
 |------|---------|
 | **微内核** | 核心只管理插件生命周期，功能全部插件化 |
-| **前后端解耦** | 核心库 `gh-harness-core` 不依赖任何 UI 框架 |
-| **CLI/Desktop 共享** | 通过 `gh-harness-core` 统一 API，不同前端独立实现 |
+| **前后端解耦** | 核心库 `trha-core` 不依赖任何 UI 框架 |
+| **CLI/Desktop 共享** | 通过 `trha-core` 统一 API，不同前端独立实现 |
 | **可逆副作用** | Free Monad + bracket 模式确保资源清理 |
 | **类型安全** | ExistentialQuantification + Typeable 实现运行时安全 |
 
@@ -27,7 +27,7 @@
 ├────────────────────────────┼─────────────────────────┤
 │                  Shared Core Layer                    │
 │   ┌────────────────────────┴─────────────────────┐   │
-│   │              gh-harness-core                   │   │
+│   │              trha-core                   │   │
 │   │  ┌─────────┐ ┌─────────┐ ┌─────────┐        │   │
 │   │  │ Plugin  │ │ Session │ │  Agent  │        │   │
 │   │  │ System  │ │  Log    │ │  Loop   │        │   │
@@ -168,7 +168,7 @@ data StreamChunk
 ### 4.1 Core API (所有前端共享)
 
 ```haskell
--- gh-harness-core 导出的接口
+-- trha-core 导出的接口
 data HarnessAPI = HarnessAPI
   { apiSendMessage    :: SessionId -> Text -> IO ()
   , apiCreateSession  :: IO SessionId
@@ -196,7 +196,7 @@ trha
 ### 4.3 Desktop Frontend (GTK/Qt)
 
 ```
-gh-harness-desktop
+trha-desktop
 ├── Main.hs           # 入口
 ├── UI/
 │   ├── MainWindow.hs # 主窗口
@@ -210,7 +210,7 @@ gh-harness-desktop
 ### 4.4 Web Frontend (Warp + WebSocket)
 
 ```
-gh-harness-web
+trha-web
 ├── Main.hs           # Warp 服务器
 ├── API/
 │   ├── REST.hs       # RESTful API
@@ -253,8 +253,8 @@ gh-harness-web
 ## 6. 包结构规划
 
 ```
-gh-harness/
-├── gh-harness-core/        # 核心库 (纯函数 + IO)
+trha/
+├── trha-core/        # 核心库 (纯函数 + IO)
 │   ├── Core/
 │   │   ├── Plugin.hs
 │   │   ├── Session.hs
@@ -267,13 +267,13 @@ gh-harness/
 ├── trha/                   # CLI 前端
 │   └── Main.hs
 │
-├── gh-harness-desktop/     # Desktop 前端
+├── trha-desktop/     # Desktop 前端
 │   └── Main.hs
 │
-├── gh-harness-web/         # Web 前端
+├── trha-web/         # Web 前端
 │   └── Main.hs
 │
-└── gh-harness-storage/     # 存储后端
+└── trha-storage/     # 存储后端
     └── Storage/
         ├── JSON.hs
         └── SQLite.hs

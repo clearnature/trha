@@ -1,4 +1,4 @@
-// Logger for gh-harness scheduler
+// Logger for trha scheduler
 
 import winston from 'winston';
 

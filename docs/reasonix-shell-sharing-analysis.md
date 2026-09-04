@@ -115,25 +115,25 @@ export class CLIShell implements Shell {
 }
 ```
 
-## 对 gh-harness 的启示
+## 对 trha 的启示
 
 ### 1. 架构分层
 
-gh-harness 应该：
+trha 应该：
 - **核心引擎** (Haskell): 所有业务逻辑
 - **外壳** (Electron/CLI): 用户交互
 - **共享前端** (TypeScript): 90%+ 代码共享
 
 ### 2. 通信协议
 
-gh-harness 应该：
+trha 应该：
 - 使用 HTTP Loopback 而非进程内调用
 - 实现严格的 origin 检查
 - 使用 Cookie 认证而非 query token
 
 ### 3. 跨平台发布
 
-gh-harness 应该：
+trha 应该：
 - 实现统一的发布线
 - 支持三平台自更新
 - 实现签名与公证
@@ -168,4 +168,4 @@ DeepSeek-Reasonix 通过**内核-外壳分离**和**共享前端层**，实现�
 3. **统一性**: 统一的通信协议和发布线
 4. **安全性**: 两轴安全模型和凭据保护
 
-gh-harness 应该借鉴这些设计，实现一个**类型驱动、可热插拔、极致并行**的下一代 AI 代理系统。
+trha 应该借鉴这些设计，实现一个**类型驱动、可热插拔、极致并行**的下一代 AI 代理系统。

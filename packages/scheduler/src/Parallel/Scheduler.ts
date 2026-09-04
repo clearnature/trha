@@ -1,4 +1,4 @@
-// Parallel scheduler for gh-harness
+// Parallel scheduler for trha
 
 export interface Task<T> {
   id: string;

@@ -100,7 +100,7 @@ runTUIMode config = do
 -- | Run CLI mode
 runCLIMode :: CLIConfig -> IO ()
 runCLIMode config = do
-  putStrLn "gh-harness CLI"
+  putStrLn "trha CLI"
   putStrLn "Type '/help' for commands, '/quit' to exit"
   bridge <- createSchedulerBridge config
   sessionRef <- newIORef (Nothing :: Maybe SessionId)
@@ -141,6 +141,6 @@ main = do
   where
     opts' = info (commandParser <**> helper)
       ( fullDesc
-      <> progDesc "gh-harness agent harness"
-      <> header "gh-harness - A microkernel agent harness"
+      <> progDesc "trha agent harness"
+      <> header "trha - A microkernel agent harness"
       )

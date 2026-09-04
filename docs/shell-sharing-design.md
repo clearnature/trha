@@ -270,7 +270,7 @@ export class SSEClient {
 ### 2. 发布线
 
 ```
-gh-harness/
+trha/
 ├── dist/
 │   ├── electron/          # Electron 桌面应用
 │   │   ├── win32/         # Windows
@@ -298,7 +298,7 @@ gh-harness/
 
 ## 总结
 
-通过**内核-外壳分离**和**共享前端层**，gh-harness 可以实现：
+通过**内核-外壳分离**和**共享前端层**，trha 可以实现：
 - CLI 和桌面共享同一份代码
 - 统一的用户体验
 - 独立的发布线

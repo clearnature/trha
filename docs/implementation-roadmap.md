@@ -14,7 +14,7 @@
 
 ### 1.2 项目结构
 ```
-pi-gh-harness/
+pi-trha/
 ├── core-engine/           # Haskell 核心引擎
 ├── orchestration/         # TypeScript 调度层
 ├── presentation/          # 前端层
@@ -40,7 +40,7 @@ data CacheEngine = CacheEngine
 -- 目标: 99%+ 缓存命中率
 ```
 
-### 2.2 类型检查器 (从 gh-harness 扩展)
+### 2.2 类型检查器 (从 trha 扩展)
 **负责人**: Haskell 专家
 **参考**: `src/Core/Agent.hs`
 

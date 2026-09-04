@@ -1,4 +1,4 @@
-// MIMO API test script for gh-harness
+// MIMO API test script for trha
 
 import axios from 'axios';
 

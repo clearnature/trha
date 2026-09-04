@@ -1,10 +1,10 @@
-# gh-harness CLI
+# trha CLI
 
-CLI 交互界面，用于与 gh-harness 代理系统交互。
+CLI 交互界面，用于与 trha 代理系统交互。
 
 ## 概述
 
-gh-harness CLI 提供了：
+trha CLI 提供了：
 - 命令行交互界面
 - 会话管理
 - 模型选择
@@ -94,7 +94,7 @@ trha cli
 
 ### 配置
 
-配置文件位于 `~/.gh-harness/config.json`：
+配置文件位于 `~/.trha/config.json`：
 
 ```json
 {

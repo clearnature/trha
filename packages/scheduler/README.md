@@ -113,7 +113,7 @@ trha 调度层提供了：
 ### 子代理管理
 
 ```typescript
-import { SubAgentManager } from '@gh-harness/scheduler';
+import { SubAgentManager } from '@trha/scheduler';
 
 const manager = new SubAgentManager({
   maxConcurrent: 5,
@@ -142,7 +142,7 @@ console.log(`Completed: ${summary.completed}, Failed: ${summary.failed}`);
 ### 通信协议
 
 ```typescript
-import { ProtocolHandler } from '@gh-harness/scheduler';
+import { ProtocolHandler } from '@trha/scheduler';
 
 const handler = new ProtocolHandler();
 
@@ -159,7 +159,7 @@ const response = await handler.handleMessage(request);
 ### 会话管理
 
 ```typescript
-import { SessionManager } from '@gh-harness/scheduler';
+import { SessionManager } from '@trha/scheduler';
 
 const manager = new SessionManager();
 
@@ -177,7 +177,7 @@ await manager.completeSession(session.id, 'completed');
 ### 错误处理
 
 ```typescript
-import { ErrorHandler } from '@gh-harness/scheduler';
+import { ErrorHandler } from '@trha/scheduler';
 
 const handler = new ErrorHandler({
   maxRetries: 3,
@@ -198,7 +198,7 @@ console.log(`Error type: ${error.type}, Retryable: ${error.retryable}`);
 ### 资源池
 
 ```typescript
-import { ResourcePool } from '@gh-harness/scheduler';
+import { ResourcePool } from '@trha/scheduler';
 
 const pool = new ResourcePool({
   maxSize: 10,
@@ -230,7 +230,7 @@ await pool.release(resource.id);
 ### 创建客户端
 
 ```typescript
-import { SchedulerClient } from '@gh-harness/scheduler';
+import { SchedulerClient } from '@trha/scheduler';
 
 const client = new SchedulerClient({
   host: 'localhost',
@@ -247,7 +247,7 @@ await client.sendMessage(sessionId, 'Hello!');
 ### 并行调度
 
 ```typescript
-import { ParallelScheduler } from '@gh-harness/scheduler';
+import { ParallelScheduler } from '@trha/scheduler';
 
 const scheduler = new ParallelScheduler({ maxConcurrency: 4 });
 

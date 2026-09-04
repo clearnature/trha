@@ -1,4 +1,4 @@
-// Haskell bridge for gh-harness scheduler
+// Haskell bridge for trha scheduler
 
 import { HttpClient } from '../Core/HTTP.js';
 

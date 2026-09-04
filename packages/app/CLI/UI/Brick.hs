@@ -53,7 +53,7 @@ data ResourceName
 -- | Create initial state
 initialState :: SchedulerBridge -> Text -> AppState
 initialState bridge model = AppState
-  { appMessages = [ChatMessage "system" "Welcome to gh-harness! Type a message to get started."]
+  { appMessages = [ChatMessage "system" "Welcome to trha! Type a message to get started."]
   , appInput = editorText InputArea (Just 1) ""
   , appSessionId = Nothing
   , appModel = model
@@ -112,7 +112,7 @@ drawHeader st =
   withAttr (attrName "header") $
     padAll 1 $
       hCenter $
-        str "gh-harness TUI"
+        str "trha TUI"
 
 -- | Draw messages
 drawMessages :: AppState -> Widget ResourceName

@@ -182,7 +182,7 @@ func (s *Session) AppendEvent(event Event) {
 
 **目标文件**: `src/core-engine/Session.hs` (Haskell 重写)
 
-## 4. gh-harness 代码整合
+## 4. trha 代码整合
 
 ### 4.1 核心模块
 
@@ -277,7 +277,7 @@ export { TUIApp } from './tui/app'
 
 ### Phase 1: 核心引擎 (1 周)
 - [ ] 从 Reasonix 提取缓存逻辑
-- [ ] 从 gh-harness 整合核心模块
+- [ ] 从 trha 整合核心模块
 - [ ] 实现 Haskell servant API
 
 ### Phase 2: 调度层 (1 周)

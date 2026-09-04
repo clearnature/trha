@@ -1,4 +1,4 @@
-// Plugin system for gh-harness scheduler
+// Plugin system for trha scheduler
 
 export interface Plugin {
   name: string;

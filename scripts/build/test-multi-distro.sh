@@ -4,7 +4,7 @@
 set -e
 
 # Configuration
-BINARY="dist/gh-harness"
+BINARY="dist/trha"
 DISTROS=("ubuntu:22.04" "centos:7" "debian:11" "alpine:3.19" "fedora:38")
 
 # Colors for output
@@ -47,22 +47,22 @@ test_distro() {
     log_info "Testing on $distro..."
     
     # Run test in Docker container
-    docker run --rm -v "$(pwd)/$BINARY:/gh-harness:ro" "$distro" bash -c "
+    docker run --rm -v "$(pwd)/$BINARY:/trha:ro" "$distro" bash -c "
         # Make binary executable
-        chmod +x /gh-harness
-        
+        chmod +x /trha
+
         # Test version
         echo 'Testing --version...'
-        /gh-harness --version
-        
+        /trha --version
+
         # Test help
         echo 'Testing --help...'
-        /gh-harness --help
-        
+        /trha --help
+
         # Test basic functionality
         echo 'Testing basic functionality...'
-        /gh-harness --test-mode
-        
+        /trha --test-mode
+
         echo 'All tests passed on $distro'
     "
     

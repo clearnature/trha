@@ -8,6 +8,6 @@ import Data.Text (Text)
 
 main :: IO ()
 main = do
-  putStrLn "Starting gh-harness SDK server..."
+  putStrLn "Starting trha SDK server..."
   let server = createServer 3000 "localhost"
   startServer server

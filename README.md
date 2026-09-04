@@ -28,7 +28,7 @@ trha/
 ├── benchmarks/                 # 冒烟测试
 ├── docs/                       # 文档
 ├── maps/                       # 架构图
-└── gh-harness.cabal            # 核心引擎构建配置
+└── trha.cabal                  # 核心引擎构建配置
 ```
 
 ## 核心特性

@@ -1,7 +1,7 @@
 {
-  "name": "@gh-harness/web",
+  "name": "@trha/web",
   "version": "0.1.0",
-  "description": "gh-harness Web Application",
+  "description": "trha Web Application",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run"
   },
-  "keywords": ["web", "react", "gh-harness"],
+  "keywords": ["web", "react", "trha"],
   "author": "Yanli",
   "license": "MIT",
   "dependencies": {

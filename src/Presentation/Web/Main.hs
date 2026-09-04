@@ -41,4 +41,4 @@ startWebApp app = do
       respond $ responseLBS
         status200
         [("Content-Type", "text/plain")]
-        "gh-harness Web Application"
+        "trha Web Application"

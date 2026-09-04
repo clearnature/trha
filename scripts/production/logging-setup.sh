@@ -1,10 +1,10 @@
 #!/bin/bash
-# Logging setup script for gh-harness
+# Logging setup script for trha
 
 set -e
 
 # Configuration
-LOG_DIR="/opt/gh-harness/logs"
+LOG_DIR="/opt/trha/logs"
 CONFIG_FILE="config/production.yaml"
 LOG_FILE="logs/logging-setup.log"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -62,7 +62,7 @@ create_log_directories() {
     mkdir -p "$LOG_DIR/access"
     
     # Set permissions
-    chown -R gh-harness:gh-harness "$LOG_DIR"
+    chown -R trha:trha "$LOG_DIR"
     chmod 755 "$LOG_DIR"
     
     log_info "Log directories created successfully"
@@ -74,7 +74,7 @@ configure_structured_logging() {
     
     # Create logging configuration
     cat > "$LOG_DIR/logging.yaml" << EOF
-# gh-harness structured logging configuration
+# trha structured logging configuration
 version: 1
 disable_existing_loggers: false
 
@@ -98,7 +98,7 @@ handlers:
     class: logging.handlers.RotatingFileHandler
     level: DEBUG
     formatter: json
-    filename: $LOG_DIR/gh-harness.log
+    filename: $LOG_DIR/trha.log
     maxBytes: 10485760  # 10MB
     backupCount: 10
     encoding: utf8
@@ -172,7 +172,7 @@ EOF
 configure_logrotate() {
     log_info "Configuring logrotate..."
     
-    cat > /etc/logrotate.d/gh-harness-structured << EOF
+    cat > /etc/logrotate.d/trha-structured << EOF
 $LOG_DIR/*.log {
     daily
     missingok
@@ -180,10 +180,10 @@ $LOG_DIR/*.log {
     compress
     delaycompress
     notifempty
-    create 0640 gh-harness gh-harness
+    create 0640 trha trha
     sharedscripts
     postrotate
-        systemctl reload gh-harness > /dev/null 2>&1 || true
+        systemctl reload trha > /dev/null 2>&1 || true
     endscript
 }
 
@@ -194,10 +194,10 @@ $LOG_DIR/**/*.log {
     compress
     delaycompress
     notifempty
-    create 0640 gh-harness gh-harness
+    create 0640 trha trha
     sharedscripts
     postrotate
-        systemctl reload gh-harness > /dev/null 2>&1 || true
+        systemctl reload trha > /dev/null 2>&1 || true
     endscript
 }
 EOF
@@ -212,11 +212,11 @@ create_log_analysis() {
     # Create log analysis script
     cat > "$LOG_DIR/analyze-logs.sh" << 'EOF'
 #!/bin/bash
-# Log analysis script for gh-harness
+# Log analysis script for trha
 
-LOG_DIR="/opt/gh-harness/logs"
+LOG_DIR="/opt/trha/logs"
 
-echo "=== gh-harness Log Analysis ==="
+echo "=== trha Log Analysis ==="
 echo "Date: $(date)"
 echo ""
 
@@ -287,7 +287,7 @@ generate_report() {
 
 ## Log Files
 
-- **Main Log**: $LOG_DIR/gh-harness.log
+- **Main Log**: $LOG_DIR/trha.log
 - **Agent Log**: $LOG_DIR/agent/agent.log
 - **Model Log**: $LOG_DIR/model/model.log
 - **System Log**: $LOG_DIR/system/system.log
@@ -296,11 +296,11 @@ generate_report() {
 ## Analysis
 
 - **Analysis Script**: $LOG_DIR/analyze-logs.sh
-- **Logrotate Config**: /etc/logrotate.d/gh-harness-structured
+- **Logrotate Config**: /etc/logrotate.d/trha-structured
 
 ## Commands
 
-- View logs: \`tail -f $LOG_DIR/gh-harness.log\`
+- View logs: \`tail -f $LOG_DIR/trha.log\`
 - Analyze logs: \`$LOG_DIR/analyze-logs.sh\`
 - Check errors: \`grep '"level": "ERROR"' $LOG_DIR/*.log\`
 - Check warnings: \`grep '"level": "WARNING"' $LOG_DIR/*.log\`

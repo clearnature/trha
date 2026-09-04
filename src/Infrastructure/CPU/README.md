@@ -1,10 +1,10 @@
-# CPU Backend for gh-harness
+# CPU Backend for trha
 
 CPU 后端实现，用于在 CPU 上执行计算密集型任务。
 
 ## 概述
 
-gh-harness 的 CPU 后端提供了：
+trha 的 CPU 后端提供了：
 - 多线程支持
 - SIMD 优化
 - BLAS 集成

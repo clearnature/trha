@@ -1,4 +1,4 @@
-// Subagent manager for gh-harness
+// Subagent manager for trha
 
 export interface SubAgentConfig {
   model: string;

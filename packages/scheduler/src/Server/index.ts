@@ -352,7 +352,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         id: m.name,
         object: 'model',
         created: Math.floor(Date.now() / 1000),
-        owned_by: 'gh-harness',
+        owned_by: 'trha',
         context_size: m.contextSize,
       })),
     });
@@ -441,7 +441,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     } catch {
       // Fallback: echo
       const lastMsg = messages[messages.length - 1];
-      const reply = `[gh-harness] ${lastMsg.content}`;
+      const reply = `[trha] ${lastMsg.content}`;
       res.json({
         id: requestId,
         object: 'chat.completion',
@@ -535,7 +535,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         res.write(`event: content_block_delta\ndata: ${JSON.stringify({
           type: 'content_block_delta',
           index: 0,
-          delta: { type: 'text_delta', text: '[gh-harness] Bridge error' },
+          delta: { type: 'text_delta', text: '[trha] Bridge error' },
         })}\n\n`);
       }
 
@@ -578,7 +578,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       });
     } catch {
       const lastMsg = messages[messages.length - 1];
-      const reply = `[gh-harness] ${typeof lastMsg.content === 'string' ? lastMsg.content : 'error'}`;
+      const reply = `[trha] ${typeof lastMsg.content === 'string' ? lastMsg.content : 'error'}`;
       res.json({
         id: requestId,
         type: 'message',
@@ -698,7 +698,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           type: 'response.output_text.delta',
           output_index: outputIndex,
           content_index: 0,
-          delta: '[gh-harness] Bridge error',
+          delta: '[trha] Bridge error',
         })}\n\n`);
       }
 
@@ -774,7 +774,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       });
     } catch {
       const inputText = typeof input === 'string' ? input : JSON.stringify(input);
-      const reply = `[gh-harness] ${inputText.slice(0, 100)}`;
+      const reply = `[trha] ${inputText.slice(0, 100)}`;
       res.json({
         id: responseId,
         object: 'response',

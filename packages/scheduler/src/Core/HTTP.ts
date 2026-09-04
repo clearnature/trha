@@ -1,4 +1,4 @@
-// HTTP Client for gh-harness
+// HTTP Client for trha
 
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { SchedulerError } from './Types.js';

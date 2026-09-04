@@ -1,5 +1,5 @@
 #!/bin/bash
-# Network optimization script for gh-harness
+# Network optimization script for trha
 
 set -e
 
@@ -65,7 +65,7 @@ optimize_tcp() {
     # TCP optimization settings
     cat >> /etc/sysctl.conf << EOF
 
-# gh-harness TCP optimization
+# trha TCP optimization
 net.core.somaxconn = 65535
 net.core.netdev_max_backlog = 65535
 net.ipv4.tcp_max_syn_backlog = 65535
@@ -105,7 +105,7 @@ optimize_buffers() {
     # Increase buffer sizes
     cat >> /etc/sysctl.conf << EOF
 
-# gh-harness buffer optimization
+# trha buffer optimization
 net.core.rmem_max = 16777216
 net.core.wmem_max = 16777216
 net.core.rmem_default = 1048576
@@ -126,7 +126,7 @@ optimize_conntrack() {
     # Connection tracking settings
     cat >> /etc/sysctl.conf << EOF
 
-# gh-harness connection tracking optimization
+# trha connection tracking optimization
 net.netfilter.nf_conntrack_max = 1048576
 net.netfilter.nf_conntrack_tcp_timeout_established = 3600
 net.netfilter.nf_conntrack_tcp_timeout_close_wait = 60
@@ -147,7 +147,7 @@ optimize_file_descriptors() {
     # Set file descriptor limits
     cat >> /etc/security/limits.conf << EOF
 
-# gh-harness file descriptor optimization
+# trha file descriptor optimization
 * soft nofile 1048576
 * hard nofile 1048576
 * soft nproc 1048576
@@ -159,8 +159,8 @@ root hard nproc 1048576
 EOF
     
     # Set systemd limits
-    mkdir -p /etc/systemd/system/gh-harness.service.d
-    cat > /etc/systemd/system/gh-harness.service.d/limits.conf << EOF
+    mkdir -p /etc/systemd/system/trha.service.d
+    cat > /etc/systemd/system/trha.service.d/limits.conf << EOF
 [Service]
 LimitNOFILE=1048576
 LimitNPROC=1048576
@@ -178,7 +178,7 @@ optimize_dns() {
     
     # Optimize DNS settings
     cat > /etc/resolv.conf << EOF
-# gh-harness DNS optimization
+# trha DNS optimization
 nameserver 8.8.8.8
 nameserver 8.8.4.4
 nameserver 1.1.1.1

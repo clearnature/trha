@@ -31,7 +31,7 @@ sdk/
 │   └── BasicUsage.hs          # 基本使用示例
 ├── docs/                       # 文档
 │   └── sdk-api.md             # API 文档
-├── gh-harness-sdk.cabal        # Cabal 构建配置
+├── trha-sdk.cabal        # Cabal 构建配置
 └── README.md                   # 本文件
 ```
 
@@ -48,7 +48,7 @@ sdk/
 ### 安装
 
 ```bash
-cabal install gh-harness-sdk
+cabal install trha-sdk
 ```
 
 ### 基本使用

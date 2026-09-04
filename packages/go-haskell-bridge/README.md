@@ -91,8 +91,8 @@ go-haskell-bridge 提供了：
 package main
 
 import (
-    "github.com/gh-harness/go-haskell-bridge/http"
-    "github.com/gh-harness/go-haskell-bridge/grpc"
+    "github.com/trha/go-haskell-bridge/http"
+    "github.com/trha/go-haskell-bridge/grpc"
 )
 
 func main() {
@@ -199,7 +199,7 @@ message GetDataResponse {
 
 ```go
 // Go 端
-mem, err := mmap.Open("/dev/shm/gh-harness", mmap.READ|mmap.WRITE)
+mem, err := mmap.Open("/dev/shm/trha", mmap.READ|mmap.WRITE)
 if err != nil {
     log.Fatal(err)
 }
@@ -211,7 +211,7 @@ copy(mem.Data(), []byte("Hello from Go"))
 
 ```haskell
 -- Haskell 端
-mem <- openSharedMemory "/dev/shm/gh-harness" ReadWriteMode
+mem <- openSharedMemory "/dev/shm/trha" ReadWriteMode
 content <- readSharedMemory mem
 putStrLn $ "Content: " ++ show content
 ```

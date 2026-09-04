@@ -1,4 +1,4 @@
-// Retry logic for gh-harness scheduler
+// Retry logic for trha scheduler
 
 export interface RetryConfig {
   maxAttempts: number;

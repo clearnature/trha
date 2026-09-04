@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cache optimization script for gh-harness
+# Cache optimization script for trha
 
 set -e
 
