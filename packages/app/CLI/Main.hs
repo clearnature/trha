@@ -10,7 +10,10 @@ import UI.Commands
 import Data.IORef
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import Options.Applicative
+import System.Console.ANSI
+import System.IO (hFlush, stdout, hSetEncoding, utf8, isEOF)
 
 -- | Global options (shared across subcommands)
 data GlobalOpts = GlobalOpts
@@ -100,8 +103,16 @@ runTUIMode config = do
 -- | Run CLI mode
 runCLIMode :: CLIConfig -> IO ()
 runCLIMode config = do
-  putStrLn "trha CLI"
+  hSetEncoding stdout utf8
+  -- Colored banner
+  setSGR [SetColor Foreground Vivid Cyan]
+  putStrLn "╭─────────────────────╮"
+  putStrLn "│ trha · agent harness │"
+  putStrLn "╰─────────────────────╯"
+  setSGR [Reset]
+  setSGR [SetColor Foreground Vivid Black]
   putStrLn "Type '/help' for commands, '/quit' to exit"
+  setSGR [Reset]
   bridge <- createSchedulerBridge config
   sessionRef <- newIORef (Nothing :: Maybe SessionId)
   modelRef <- newIORef (configModel config)
@@ -114,20 +125,39 @@ runServeMode config = do
   putStrLn "TODO: Implement API server startup"
   -- TODO: Import and call API.Server.startServer
 
--- | REPL loop
+-- | REPL loop with colored status line and λ prompt
 repl :: SchedulerBridge -> IORef (Maybe SessionId) -> IORef Text -> IO ()
 repl bridge sessionRef modelRef = do
-  putStr "> "
-  input <- getLine
-  let command = parseCommand (T.pack input)
-  case command of
-    Quit -> putStrLn "Goodbye!"
-    _ -> do
-      result <- executeCommand bridge sessionRef modelRef command
-      case result of
-        Just msg -> putStrLn $ T.unpack msg
-        Nothing -> return ()
-      repl bridge sessionRef modelRef
+  model <- readIORef modelRef
+  session <- readIORef sessionRef
+
+  -- Dim status line above the prompt
+  setSGR [SetColor Foreground Vivid Black]
+  TIO.putStrLn $
+    " " <> model
+    <> "  │  session: " <> maybe "none" T.pack session
+  setSGR [Reset]
+
+  -- λ prompt
+  setSGR [SetColor Foreground Vivid Green, SetConsoleIntensity BoldIntensity]
+  putStr "λ "
+  setSGR [Reset]
+  hFlush stdout
+
+  eof <- isEOF
+  if eof
+    then putStrLn "" >> putStrLn "Goodbye!"
+    else do
+      input <- getLine
+      let command = parseCommand (T.pack input)
+      case command of
+        Quit -> putStrLn "Goodbye!"
+        _ -> do
+          result <- executeCommand bridge sessionRef modelRef command
+          case result of
+            Just msg -> putStrLn (T.unpack msg)
+            Nothing -> return ()
+          repl bridge sessionRef modelRef
 
 -- | Main entry point
 main :: IO ()

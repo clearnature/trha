@@ -183,6 +183,8 @@ executable trha
                   , optparse-applicative >= 0.18
                   , stm
                   , containers
+                  , async
+                  , time
   default-language: Haskell2010
 
 -- Test Suite
