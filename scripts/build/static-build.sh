@@ -291,16 +291,16 @@ build_static() {
         --constraint='tasty-hspec +static'
     
     # Copy binary to build directory
-    cp dist-newstyle/build/x86_64-linux/ghc-${GHC_VERSION}/gh-harness-0.1.0.0/x/gh-harness/build/gh-harness/gh-harness "$BUILD_DIR/"
-    
+    cp dist-newstyle/build/x86_64-linux/ghc-${GHC_VERSION}/trha-0.1.0.0/x/trha/build/trha/trha "$BUILD_DIR/"
+
     log_info "Static binary built successfully"
 }
 
 # Verify binary
 verify_binary() {
     log_info "Verifying binary..."
-    
-    BINARY="$BUILD_DIR/gh-harness"
+
+    BINARY="$BUILD_DIR/trha"
     
     if [ ! -f "$BINARY" ]; then
         log_error "Binary not found: $BINARY"
@@ -340,11 +340,11 @@ create_package() {
     mkdir -p "$PACKAGE_DIR"
     
     # Copy binary
-    cp "$BUILD_DIR/gh-harness" "$PACKAGE_DIR/"
-    
+    cp "$BUILD_DIR/trha" "$PACKAGE_DIR/"
+
     # Create README
     cat > "$PACKAGE_DIR/README.md" << EOF
-# gh-harness
+# trha
 
 A microkernel agent harness written in Haskell.
 
@@ -398,7 +398,7 @@ main() {
     create_package
     
     log_info "Static build completed successfully"
-    log_info "Binary location: $BUILD_DIR/gh-harness"
+    log_info "Binary location: $BUILD_DIR/trha"
     log_info "Package location: $BUILD_DIR/${PROJECT_NAME}-linux-x86_64.tar.gz"
 }
 

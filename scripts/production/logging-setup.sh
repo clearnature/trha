@@ -311,7 +311,7 @@ generate_report() {
 - Log File: $LOG_FILE
 - Logging Config: $LOG_DIR/logging.yaml
 - Analysis Script: $LOG_DIR/analyze-logs.sh
-- Logrotate Config: /etc/logrotate.d/gh-harness-structured
+- Logrotate Config: /etc/logrotate.d/trha-structured
 
 ## Notes
 

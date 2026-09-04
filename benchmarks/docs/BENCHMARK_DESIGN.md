@@ -1,10 +1,10 @@
 # 基准测试设计文档
 
-参考 DeepSeek-Reasonix 的基准测试架构，为 gh-harness 设计完整的基准测试体系。
+参考 DeepSeek-Reasonix 的基准测试架构，为 trha 设计完整的基准测试体系。
 
 ## 概述
 
-gh-harness 基准测试体系包含以下测试类型：
+trha 基准测试体系包含以下测试类型：
 
 1. **E2E 测试**：端到端功能验证
 2. **验证压力测试**：边界条件和错误处理
@@ -202,8 +202,8 @@ import (
     "fmt"
     "time"
     
-    "gh-harness/internal/agent"
-    "gh-harness/internal/session"
+    "trha/internal/agent"
+    "trha/internal/session"
 )
 
 const (

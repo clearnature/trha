@@ -15,6 +15,6 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "gh-harness-scheduler": "file:../packages/scheduler"
+    "@trha/scheduler": "file:../packages/scheduler"
   }
 }

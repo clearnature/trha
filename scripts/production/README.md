@@ -63,7 +63,7 @@ sudo ./scripts/production/logging-setup.sh
 
 ### systemd 服务配置
 
-1. **服务用户创建**：gh-harness 用户
+1. **服务用户创建**：trha 用户
 2. **目录创建**：安装、配置、日志、数据目录
 3. **服务配置**：systemd 服务文件
 4. **日志轮转**：logrotate 配置
@@ -84,12 +84,12 @@ sudo ./scripts/production/logging-setup.sh
 
 ### systemd 服务
 
-- **文件**: `/etc/systemd/system/gh-harness.service`
+- **文件**: `/etc/systemd/system/trha.service`
 - **内容**: 服务配置、用户、权限、资源限制
 
 ### 日志配置
 
-- **文件**: `/opt/gh-harness/logs/logging.yaml`
+- **文件**: `/opt/trha/logs/logging.yaml`
 - **内容**: 结构化日志配置、轮转策略
 
 ### 监控配置
@@ -99,7 +99,7 @@ sudo ./scripts/production/logging-setup.sh
 
 ## 访问地址
 
-- **gh-harness**: http://localhost:8080
+- **trha**: http://localhost:8080
 - **Prometheus**: http://localhost:9090
 - **Grafana**: http://localhost:3000
 - **Node Exporter**: http://localhost:9100
@@ -110,19 +110,19 @@ sudo ./scripts/production/logging-setup.sh
 
 ```bash
 # 启动服务
-systemctl start gh-harness
+systemctl start trha
 
 # 停止服务
-systemctl stop gh-harness
+systemctl stop trha
 
 # 重启服务
-systemctl restart gh-harness
+systemctl restart trha
 
 # 查看状态
-systemctl status gh-harness
+systemctl status trha
 
 # 查看日志
-journalctl -u gh-harness -f
+journalctl -u trha -f
 ```
 
 ### 监控管理
@@ -142,13 +142,13 @@ systemctl status node-exporter
 
 ```bash
 # 查看日志
-tail -f /opt/gh-harness/logs/gh-harness.log
+tail -f /opt/trha/logs/trha.log
 
 # 分析日志
-/opt/gh-harness/logs/analyze-logs.sh
+/opt/trha/logs/analyze-logs.sh
 
 # 检查错误
-grep '"level": "ERROR"' /opt/gh-harness/logs/*.log
+grep '"level": "ERROR"' /opt/trha/logs/*.log
 ```
 
 ## 故障排除
@@ -157,13 +157,13 @@ grep '"level": "ERROR"' /opt/gh-harness/logs/*.log
 
 ```bash
 # 查看服务状态
-systemctl status gh-harness
+systemctl status trha
 
 # 查看日志
-journalctl -u gh-harness -n 100
+journalctl -u trha -n 100
 
 # 检查配置
-cat /opt/gh-harness/config/production.yaml
+cat /opt/trha/config/production.yaml
 ```
 
 ### 监控异常
@@ -183,13 +183,13 @@ netstat -tulpn | grep -E "(9090|3000|9100)"
 
 ```bash
 # 检查日志目录权限
-ls -la /opt/gh-harness/logs/
+ls -la /opt/trha/logs/
 
 # 检查日志文件大小
-du -sh /opt/gh-harness/logs/*.log
+du -sh /opt/trha/logs/*.log
 
 # 检查日志轮转
-cat /etc/logrotate.d/gh-harness
+cat /etc/logrotate.d/trha
 ```
 
 ## 参考
