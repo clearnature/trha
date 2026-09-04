@@ -1,12 +1,12 @@
 cabal-version:      3.0
-name:               gh-haskell-go-bridge
+name:               trha-go-bridge
 version:            0.1.0.0
-synopsis:           Haskell-Go bridge for gh-harness
+synopsis:           Haskell-Go bridge for trha
 license:            MIT
 author:             Yanli
 build-type:         Simple
 
-executable gh-haskell-go-bridge
+executable trha-go-bridge
   main-is:          Main.hs
   hs-source-dirs:   .
   build-depends:    base ^>=4.22

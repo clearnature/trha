@@ -7,7 +7,7 @@ author:             Yanli
 build-type:         Simple
 
 -- SDK Core
-library gh-harness-sdk-core
+library trha-sdk-core
   exposed-modules:  
     Core.Types
     Core.Client
@@ -31,12 +31,12 @@ library gh-harness-sdk-core
   default-language: Haskell2010
 
 -- SDK Types
-library gh-harness-sdk-types
-  exposed-modules:  
+library trha-sdk-types
+  exposed-modules:
     Types.Config
   hs-source-dirs:   src
   build-depends:    base ^>=4.22
-                  , gh-harness-sdk-core
+                  , trha-sdk-core
                   , aeson
                   , text
                   , bytestring
@@ -44,20 +44,20 @@ library gh-harness-sdk-types
   default-language: Haskell2010
 
 -- SDK Client
-library gh-harness-sdk-client
-  exposed-modules:  
+library trha-sdk-client
+  exposed-modules:
     Client.Session
     Client.Agent
     Client.Tool
     Client.Model
   hs-source-dirs:   src
   build-depends:    base ^>=4.22
-                  , gh-harness-sdk-core
+                  , trha-sdk-core
                   , text
   default-language: Haskell2010
 
 -- SDK Utils
-library gh-harness-sdk-utils
+library trha-sdk-utils
   exposed-modules:  
     Utils.Logger
     Utils.Retry
@@ -68,24 +68,24 @@ library gh-harness-sdk-utils
   default-language: Haskell2010
 
 -- SDK Server Executable
-executable gh-harness-sdk-server
+executable trha-sdk-server
   main-is:          Main.hs
   hs-source-dirs:   src/Server
   build-depends:    base ^>=4.22
-                  , gh-harness-sdk-core
+                  , trha-sdk-core
                   , text
   default-language: Haskell2010
 
 -- SDK Test Suite
-test-suite gh-harness-sdk-test
+test-suite trha-sdk-test
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
   hs-source-dirs:   test
   build-depends:    base ^>=4.22
-                  , gh-harness-sdk-core
-                  , gh-harness-sdk-types
-                  , gh-harness-sdk-client
-                  , gh-harness-sdk-utils
+                  , trha-sdk-core
+                  , trha-sdk-types
+                  , trha-sdk-client
+                  , trha-sdk-utils
                   , hspec
                   , QuickCheck
                   , aeson

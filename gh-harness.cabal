@@ -1,5 +1,5 @@
 cabal-version:      3.0
-name:               gh-harness
+name:               trha
 version:            0.1.0.0
 synopsis:           A microkernel agent harness written in Haskell
 license:            MIT
@@ -7,7 +7,7 @@ author:             Yanli
 build-type:         Simple
 
 -- Core Engine (Haskell/GHC)
-library gh-harness-core
+library trha-core
   exposed-modules:  
     Core.Plugin.Free
     Core.Plugin.Types
@@ -34,7 +34,7 @@ library gh-harness-core
   default-language: Haskell2010
 
 -- LLM Adapters + CPU Backend (merged to avoid GHC 9.14 internal-lib linking bug)
-library gh-harness-llm
+library trha-llm
   exposed-modules:  
     LLM.Adapter.Types
     LLM.Adapter.Interface
@@ -48,8 +48,8 @@ library gh-harness-llm
     Infrastructure.CPU.Inference
   hs-source-dirs:   src
   build-depends:    base ^>=4.22
-                  , gh-harness-core
-                  , gh-harness-infra
+                  , trha-core
+                  , trha-infra
                   , text
                   , aeson
                   , http-client
@@ -63,7 +63,7 @@ library gh-harness-llm
   default-language: Haskell2010
 
 -- API Server (OpenAI/Anthropic/Responses protocols)
-library gh-harness-api
+library trha-api
   exposed-modules:
     API.Server
   other-modules:
@@ -80,8 +80,8 @@ library gh-harness-api
     LLM.Stream
   hs-source-dirs:   src
   build-depends:    base ^>=4.22
-                  , gh-harness-core
-                  , gh-harness-llm
+                  , trha-core
+                  , trha-llm
                   , servant
                   , servant-server
                   , warp
@@ -99,7 +99,7 @@ library gh-harness-api
   default-language: Haskell2010
 
 -- Infrastructure Layer
-library gh-harness-infra
+library trha-infra
   exposed-modules:  
     Infrastructure.Storage.JSON
     Infrastructure.Storage.SQLite
@@ -108,7 +108,7 @@ library gh-harness-infra
     Infrastructure.Telemetry.Metrics
   hs-source-dirs:   src
   build-depends:    base ^>=4.22
-                  , gh-harness-core
+                  , trha-core
                   , text
                   , aeson
                   , directory
@@ -121,7 +121,7 @@ library gh-harness-infra
   default-language: Haskell2010
 
 -- Orchestration Layer (TypeScript bridge)
-library gh-harness-orchestration
+library trha-orchestration
   exposed-modules:
     Orchestration.Bridge.Types
     Orchestration.Bridge.HTTP
@@ -133,8 +133,8 @@ library gh-harness-orchestration
     Infrastructure.Network.HTTP
   hs-source-dirs:   src
   build-depends:    base ^>=4.22
-                  , gh-harness-core
-                  , gh-harness-infra
+                  , trha-core
+                  , trha-infra
                   , text
                   , aeson
                   , servant
@@ -186,15 +186,15 @@ executable trha
   default-language: Haskell2010
 
 -- Test Suite
-test-suite gh-harness-test
+test-suite trha-test
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
   hs-source-dirs:   test
   build-depends:    base ^>=4.22
-                  , gh-harness-core
-                  , gh-harness-llm
-                  , gh-harness-infra
-                  , gh-harness-api
+                  , trha-core
+                  , trha-llm
+                  , trha-infra
+                  , trha-api
                   , hspec
                   , QuickCheck
                   , text
