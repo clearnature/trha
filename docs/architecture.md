@@ -182,7 +182,7 @@ data HarnessAPI = HarnessAPI
 ### 4.2 CLI Frontend
 
 ```
-gh-harness-cli
+trha
 ├── Main.hs           # 入口
 ├── Commands/
 │   ├── Chat.hs       # 交互式对话
@@ -264,7 +264,7 @@ gh-harness/
 │   └── LLM/
 │       └── Adapter.hs
 │
-├── gh-harness-cli/         # CLI 前端
+├── trha/                   # CLI 前端
 │   └── Main.hs
 │
 ├── gh-harness-desktop/     # Desktop 前端

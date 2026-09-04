@@ -1,7 +1,7 @@
 {
-  "name": "gh-harness-benchmarks",
+  "name": "trha-benchmarks",
   "version": "0.1.0",
-  "description": "Smoke tests and benchmarks for gh-harness",
+  "description": "Smoke tests and benchmarks for trha",
   "type": "module",
   "scripts": {
     "test": "vitest run",

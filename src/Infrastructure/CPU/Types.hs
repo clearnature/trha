@@ -16,9 +16,14 @@ module Infrastructure.CPU.Types
   
     -- * Errors
   , CPUError(..)
+  
+    -- * Operations
+  , UnaryOp(..)
+  , BinaryOp(..)
   ) where
 
 import Data.Text (Text)
+import qualified Data.Text as T
 import System.Info (arch, os)
 
 -- | CPU backend
@@ -70,7 +75,7 @@ detectArchitecture = case arch of
   "s390x" -> S390X
   "wasm32" -> Wasm
   "wasm64" -> Wasm
-  _ -> UnknownArch (Data.Text.pack arch)
+  _ -> UnknownArch (T.pack arch)
 
 -- | CPU features
 data CPUFeatures = CPUFeatures
@@ -152,4 +157,41 @@ data CPUError
   | BLASNotAvailable
   | ArchitectureNotSupported CPUArchitecture
   | UnknownCPUError Text
+  deriving (Show, Eq)
+
+-- | Unary operation type
+data UnaryOp
+  = UnaryOpAbs
+  | UnaryOpNeg
+  | UnaryOpSgn
+  | UnaryOpStep
+  | UnaryOpTanh
+  | UnaryOpElu
+  | UnaryOpRelu
+  | UnaryOpSigmoid
+  | UnaryOpGelu
+  | UnaryOpGeluQuick
+  | UnaryOpSilu
+  | UnaryOpHardswish
+  | UnaryOpHardsigmoid
+  | UnaryOpExp
+  | UnaryOpLog
+  | UnaryOpSqrt
+  | UnaryOpSin
+  | UnaryOpCos
+  | UnaryOpCeil
+  | UnaryOpFloor
+  | UnaryOpRound
+  deriving (Show, Eq)
+
+-- | Binary operation type
+data BinaryOp
+  = BinaryOpAdd
+  | BinaryOpSub
+  | BinaryOpMul
+  | BinaryOpDiv
+  | BinaryOpPow
+  | BinaryOpMax
+  | BinaryOpMin
+  | BinaryOpMod
   deriving (Show, Eq)

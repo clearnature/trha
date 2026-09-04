@@ -1,10 +1,10 @@
-# gh-harness Benchmarks & Smoke Tests
+# trha Benchmarks & Smoke Tests
 
 全量冒烟测试和性能基准测试。
 
 ## 概述
 
-本目录包含 gh-harness 项目的全量冒烟测试和性能基准测试，覆盖所有核心模块的功能和函数。
+本目录包含 trha 项目的全量冒烟测试和性能基准测试，覆盖所有核心模块的功能和函数。
 
 ## 测试范围
 

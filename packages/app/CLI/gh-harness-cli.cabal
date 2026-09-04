@@ -1,12 +1,12 @@
 cabal-version:      3.0
-name:               gh-harness-cli
+name:               trha
 version:            0.1.0.0
 synopsis:           CLI for gh-harness agent harness
 license:            MIT
 author:             Yanli
 build-type:         Simple
 
-executable gh-harness-cli
+executable trha
   main-is:          Main.hs
   hs-source-dirs:   .
   build-depends:    base ^>=4.22

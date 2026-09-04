@@ -1,7 +1,7 @@
 cabal-version:      3.0
-name:               gh-harness-sdk
+name:               trha-sdk
 version:            0.1.0.0
-synopsis:           SDK for gh-harness agent harness
+synopsis:           SDK for trha agent harness
 license:            MIT
 author:             Yanli
 build-type:         Simple

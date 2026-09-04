@@ -71,7 +71,7 @@ gh-harness CLI 提供了：
 
 ```bash
 # 启动 CLI
-gh-harness-cli
+trha cli
 
 # 发送消息
 > Hello, how are you?

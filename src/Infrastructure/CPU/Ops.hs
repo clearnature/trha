@@ -10,6 +10,8 @@ module Infrastructure.CPU.Ops
   , unaryOp
   , binaryOp
   , scaleOp
+  , UnaryOp(..)
+  , BinaryOp(..)
   ) where
 
 import Infrastructure.CPU.Types

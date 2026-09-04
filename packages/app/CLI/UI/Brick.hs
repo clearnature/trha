@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 module UI.Brick
   ( -- * Brick UI
@@ -8,51 +7,58 @@ module UI.Brick
   , initialState
   , drawUI
   , handleEvent
+  , runTUI
   ) where
 
 import Brick
 import Brick.BChan
-import Brick.Forms
 import Brick.Widgets.Border
 import Brick.Widgets.Center
 import Brick.Widgets.Edit
+import Control.Concurrent (forkIO)
 import Control.Monad (void)
 import Control.Monad.IO.Class (liftIO)
+import Core.Types
+import Bridge.Scheduler (SchedulerBridge, sendMessage, createSession, listModels)
+import Data.IORef
 import Data.Text (Text)
 import qualified Data.Text as T
 import Graphics.Vty.Attributes
+import Graphics.Vty.Config (defaultConfig)
+import Graphics.Vty.CrossPlatform (mkVty)
 import Graphics.Vty.Input.Events
 
 -- | Application state
 data AppState = AppState
-  { appMessages    :: [Message]
+  { appMessages    :: [ChatMessage]
   , appInput       :: Editor Text ResourceName
-  , appSessionId   :: Maybe String
+  , appSessionId   :: Maybe SessionId
   , appModel       :: Text
   , appStatus      :: Text
-  } deriving (Show)
+  , appBridge      :: SchedulerBridge
+  }
 
--- | Message type
-data Message = Message
-  { messageRole    :: Text
-  , messageContent :: Text
+-- | Chat message
+data ChatMessage = ChatMessage
+  { msgRole    :: Text
+  , msgContent :: Text
   } deriving (Show)
 
 -- | Resource names
 data ResourceName
   = MessageArea
   | InputArea
-  | StatusBar
   deriving (Show, Eq, Ord)
 
--- | Initial state
-initialState :: AppState
-initialState = AppState
-  { appMessages = []
+-- | Create initial state
+initialState :: SchedulerBridge -> Text -> AppState
+initialState bridge model = AppState
+  { appMessages = [ChatMessage "system" "Welcome to gh-harness! Type a message to get started."]
   , appInput = editorText InputArea (Just 1) ""
   , appSessionId = Nothing
-  , appModel = "deepseek-chat"
+  , appModel = model
   , appStatus = "Ready"
+  , appBridge = bridge
   }
 
 -- | Application
@@ -65,21 +71,36 @@ app = App
   , appAttrMap = const theMap
   }
 
--- | Attribute map
+-- | Attribute map (Tokyo Night inspired)
 theMap :: AttrMap
 theMap = attrMap defAttr
-  [ (attrName "message", fg brightWhite)
-  , (attrName "input", fg brightCyan)
-  , (attrName "status", fg brightGreen)
+  [ (attrName "header", fg brightCyan `withStyle` bold)
+  , (attrName "message", fg brightWhite)
+  , (attrName "user", fg brightGreen)
+  , (attrName "assistant", fg brightBlue)
+  , (attrName "system", fg brightYellow)
   , (attrName "error", fg brightRed)
+  , (attrName "input", fg brightCyan)
+  , (attrName "status", fg brightBlack)
+  , (attrName "border", fg brightBlack)
+  , (attrName "title", fg magenta `withStyle` bold)
   ]
+
+-- | Run the TUI
+runTUI :: SchedulerBridge -> Text -> IO ()
+runTUI bridge model = do
+  chan <- newBChan 10
+  let mkVty' = mkVty defaultConfig
+  vty <- mkVty'
+  let st = initialState bridge model
+  void $ customMain vty mkVty' (Just chan) app st
 
 -- | Draw UI
 drawUI :: AppState -> [Widget ResourceName]
 drawUI st =
   [ vBox
       [ drawHeader st
-      , drawMessages st
+      , vLimitPercent 75 $ drawMessages st
       , drawInput st
       , drawStatus st
       ]
@@ -91,34 +112,40 @@ drawHeader st =
   withAttr (attrName "header") $
     padAll 1 $
       hCenter $
-        str "gh-harness CLI"
+        str "gh-harness TUI"
 
 -- | Draw messages
 drawMessages :: AppState -> Widget ResourceName
 drawMessages st =
-  borderWithLabel (str "Messages") $
-    vLimit 20 $
+  withAttr (attrName "border") $
+    borderWithLabel (withAttr (attrName "title") $ str " Messages ") $
       viewport MessageArea Vertical $
         vBox $
           map drawMessage (appMessages st)
 
 -- | Draw a single message
-drawMessage :: Message -> Widget ResourceName
+drawMessage :: ChatMessage -> Widget ResourceName
 drawMessage msg =
-  padAll 1 $
-    hBox
-      [ withAttr (attrName "role") $
-          str $ T.unpack $ messageRole msg
-      , str ": "
-      , withAttr (attrName "message") $
-          str $ T.unpack $ messageContent msg
-      ]
+  padLeftRight 1 $
+    padTopBottom 1 $
+      vBox
+        [ withAttr roleAttr $ str $ "[" ++ T.unpack (msgRole msg) ++ "]"
+        , padLeft (Pad 2) $ str $ T.unpack (msgContent msg)
+        ]
+  where
+    roleAttr = case msgRole msg of
+      "user"      -> attrName "user"
+      "assistant" -> attrName "assistant"
+      "system"    -> attrName "system"
+      _           -> attrName "message"
 
 -- | Draw input
 drawInput :: AppState -> Widget ResourceName
 drawInput st =
-  borderWithLabel (str "Input") $
-    renderEditor (str . T.unpack . T.unlines) True (appInput st)
+  withAttr (attrName "border") $
+    borderWithLabel (str " Input (Enter to send, Ctrl+Q to quit) ") $
+      withAttr (attrName "input") $
+        renderEditor (str . T.unpack . T.unlines) True (appInput st)
 
 -- | Draw status
 drawStatus :: AppState -> Widget ResourceName
@@ -130,6 +157,8 @@ drawStatus st =
         , str $ T.unpack $ appModel st
         , str " | "
         , str $ T.unpack $ appStatus st
+        , str " | Session: "
+        , str $ maybe "none" id (appSessionId st)
         ]
 
 -- | Handle events
@@ -137,20 +166,62 @@ handleEvent :: BrickEvent ResourceName e -> EventM ResourceName AppState ()
 handleEvent (VtyEvent (EvKey (KChar 'q') [MCtrl])) = halt
 handleEvent (VtyEvent (EvKey KEnter [])) = do
   st <- get
-  let input = T.unlines $ getEditContents $ appInput st
-  if T.null (T.strip input)
+  let input = T.strip $ T.unlines $ getEditContents $ appInput st
+  if T.null input
     then return ()
     else do
-      let newMsg = Message "user" (T.strip input)
-      put st { appMessages = appMessages st ++ [newMsg]
+      -- Add user message
+      let userMsg = ChatMessage "user" input
+      put st { appMessages = appMessages st ++ [userMsg]
              , appInput = editorText InputArea (Just 1) ""
-             , appStatus = "Processing..."
+             , appStatus = "Sending..."
              }
-      -- TODO: Send message to backend
-      return ()
+
+      -- Create session if needed
+      st' <- get
+      session <- case appSessionId st' of
+        Just sid -> return sid
+        Nothing -> do
+          result <- liftIO $ createSession (appBridge st')
+          case result of
+            Right sid -> do
+              put st' { appSessionId = Just sid }
+              return sid
+            Left err -> do
+              let errMsg = ChatMessage "system" $ "Failed to create session: " <> T.pack (show err)
+              put st' { appMessages = appMessages st' ++ [errMsg]
+                      , appStatus = "Error"
+                      }
+              return ""
+
+      -- Send message
+      if null session
+        then return ()
+        else do
+          st'' <- get
+          result <- liftIO $ sendMessage (appBridge st'') session input
+          case result of
+            Right chunk -> do
+              let content = case chunk of
+                    ChunkDelta text -> text
+                    ChunkToolCall name args -> "[Tool: " <> T.pack name <> "]"
+                    ChunkDone usage -> "[Done: " <> T.pack (show (usageTotalTokens usage)) <> " tokens]"
+              let assistantMsg = ChatMessage "assistant" content
+              put st'' { appMessages = appMessages st'' ++ [assistantMsg]
+                       , appStatus = "Ready"
+                       }
+            Left err -> do
+              let errMsg = ChatMessage "system" $ "Error: " <> T.pack (show err)
+              put st'' { appMessages = appMessages st'' ++ [errMsg]
+                       , appStatus = "Error"
+                       }
+
+      -- Scroll to bottom
+      vScrollToEnd (viewportScroll MessageArea)
+
 handleEvent (VtyEvent ev) = do
   st <- get
   let input = appInput st
-  newInput <- handleEditorEvent ev input
+  newInput <- nestEventM' input $ handleEditorEvent (VtyEvent ev)
   put st { appInput = newInput }
 handleEvent _ = return ()

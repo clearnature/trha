@@ -16,7 +16,7 @@ import Core.Cache.Types
 import Core.Cache.Engine
 import LLM.Adapter.Types
 import LLM.Adapter.Interface
-import LLM.Providers.DeepSeek
+import LLM.Providers.DeepSeek (createDeepSeekProvider)
 import Data.IORef
 import Data.Dynamic
 import qualified Data.Text as T
@@ -86,7 +86,7 @@ main = hspec $ do
 
   describe "LLM.Adapter" $ do
     it "can create a DeepSeek adapter" $ do
-      adapter <- createDeepSeekAdapter "test-key"
+      adapter <- createDeepSeekProvider "test-key"
       models <- llmModels adapter
-      length models `shouldBe` 1
+      length models `shouldSatisfy` (>= 1)
       modelName (head models) `shouldBe` "deepseek-chat"

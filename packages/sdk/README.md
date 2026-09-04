@@ -1,6 +1,6 @@
-# gh-harness SDK
+# trha SDK
 
-gh-harness 的 Haskell SDK，提供与核心引擎交互的 API。
+trha 的 Haskell SDK，提供与核心引擎交互的 API。
 
 ## 项目结构
 

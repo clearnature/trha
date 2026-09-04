@@ -14,6 +14,7 @@ library gh-harness-core
     Core.Session.Types
     Core.Session.Manager
     Core.Agent.Types
+    Core.Agent.Modes
     Core.Agent.StateMachine
     Core.Tools.Registry
     Core.Tools.Types
@@ -32,20 +33,69 @@ library gh-harness-core
                   , aeson
   default-language: Haskell2010
 
--- LLM Adapters
+-- LLM Adapters + CPU Backend (merged to avoid GHC 9.14 internal-lib linking bug)
 library gh-harness-llm
   exposed-modules:  
     LLM.Adapter.Types
     LLM.Adapter.Interface
     LLM.Providers.DeepSeek
     LLM.Providers.OpenAI
+    LLM.Stream
+    Infrastructure.CPU.Types
+    Infrastructure.CPU.SIMD
+    Infrastructure.CPU.BLAS
+    Infrastructure.CPU.Ops
+    Infrastructure.CPU.Inference
   hs-source-dirs:   src
   build-depends:    base ^>=4.22
                   , gh-harness-core
+                  , gh-harness-infra
                   , text
                   , aeson
                   , http-client
+                  , http-client-tls
+                  , http-types
                   , containers
+                  , bytestring
+                  , vector
+                  , stm
+                  , network
+  default-language: Haskell2010
+
+-- API Server (OpenAI/Anthropic/Responses protocols)
+library gh-harness-api
+  exposed-modules:
+    API.Server
+  other-modules:
+    Core.Agent.Modes
+    Core.Session.Manager
+    Core.Session.Types
+    Infrastructure.CPU.BLAS
+    Infrastructure.CPU.Inference
+    Infrastructure.CPU.Ops
+    Infrastructure.CPU.SIMD
+    Infrastructure.CPU.Types
+    LLM.Adapter.Interface
+    LLM.Adapter.Types
+    LLM.Stream
+  hs-source-dirs:   src
+  build-depends:    base ^>=4.22
+                  , gh-harness-core
+                  , gh-harness-llm
+                  , servant
+                  , servant-server
+                  , warp
+                  , wai
+                  , aeson
+                  , text
+                  , bytestring
+                  , stm
+                  , containers
+                  , http-types
+                  , http-client
+                  , http-client-tls
+                  , vector
+                  , async
   default-language: Haskell2010
 
 -- Infrastructure Layer
@@ -72,13 +122,15 @@ library gh-harness-infra
 
 -- Orchestration Layer (TypeScript bridge)
 library gh-harness-orchestration
-  exposed-modules:  
+  exposed-modules:
     Orchestration.Bridge.Types
     Orchestration.Bridge.HTTP
     Orchestration.Parallel.Types
     Orchestration.Parallel.Scheduler
     Orchestration.Subagent.Types
     Orchestration.Subagent.Manager
+  other-modules:
+    Infrastructure.Network.HTTP
   hs-source-dirs:   src
   build-depends:    base ^>=4.22
                   , gh-harness-core
@@ -98,10 +150,22 @@ library gh-harness-orchestration
   default-language: Haskell2010
 
 -- CLI Application
-executable gh-harness-cli
+executable trha
   main-is:          Main.hs
   hs-source-dirs:   packages/app/CLI
-  ghc-options:      -rtsopts
+  other-modules:
+    Bridge.Scheduler
+    Config.Settings
+    Core.Client
+    Core.HTTP
+    Core.Types
+    UI.Brick
+    UI.Commands
+    UI.Main
+    UI.Model
+    UI.Terminal
+    UI.Session
+  ghc-options:      -rtsopts -threaded
   build-depends:    base ^>=4.22
                   , aeson
                   , text
@@ -112,6 +176,13 @@ executable gh-harness-cli
                   , directory
                   , filepath
                   , ansi-terminal
+                  , process
+                  , brick >= 2.1
+                  , vty >= 6.1
+                  , vty-crossplatform >= 0.4
+                  , optparse-applicative >= 0.18
+                  , stm
+                  , containers
   default-language: Haskell2010
 
 -- Test Suite
@@ -123,6 +194,7 @@ test-suite gh-harness-test
                   , gh-harness-core
                   , gh-harness-llm
                   , gh-harness-infra
+                  , gh-harness-api
                   , hspec
                   , QuickCheck
                   , text
@@ -131,5 +203,6 @@ test-suite gh-harness-test
                   , free
                   , bytestring
                   , hashable
+                  , aeson
   ghc-options:      -rtsopts
   default-language: Haskell2010

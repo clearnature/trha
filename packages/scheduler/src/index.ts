@@ -13,6 +13,8 @@ export * from './Subagent/index.js';
 
 export * from './Bridge/Haskell.js';
 
+export * from './Server/index.js';
+
 export * from './Utils/EventEmitter.js';
 export * from './Utils/Queue.js';
 

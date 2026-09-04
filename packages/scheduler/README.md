@@ -1,10 +1,10 @@
-# gh-harness Scheduler
+# trha Scheduler
 
-TypeScript 调度层，用于 gh-harness 代理系统。
+TypeScript 调度层，用于 trha 代理系统。
 
 ## 概述
 
-gh-harness 调度层提供了：
+trha 调度层提供了：
 - 插件系统
 - 并行调度
 - 子代理管理
