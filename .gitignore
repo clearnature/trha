@@ -166,3 +166,11 @@ models/
 # Reasonix 会话运行时产物（task 状态快照、topic 元数据）——每次会话都变，不入库。
 # 曾由 8c48c75「纳入跟踪（迁移前快照）」的 git add -A 误入库 2167 个文件。
 .reasonix/
+
+# Electron 打包产物与 TS 编译输出 —— 同一次 git add -A 误入库（308 个文件、约 610 MB）。
+# 真源在 packages/app/Desktop/src 与 packages/scheduler/src，这里是它们的构建结果。
+# 注：benchmarks/coverage/ 与 benchmarks/results/ 已由上面的 coverage/ 与
+# benchmarks/results/ 规则覆盖，只是当时"先入库再 ignore"，故一并从索引移除。
+packages/app/Desktop/release/
+packages/app/Desktop/resources/node-runtime/
+packages/app/Desktop/resources/scheduler-dist/
