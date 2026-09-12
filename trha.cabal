@@ -1,0 +1,267 @@
+cabal-version:      3.0
+name:               trha
+version:            0.1.0.0
+synopsis:           A microkernel agent harness written in Haskell
+license:            MIT
+author:             Yanli
+build-type:         Simple
+
+-- Core Engine (Haskell/GHC)
+library trha-core
+  exposed-modules:  
+    Core.Plugin.Free
+    Core.Plugin.Types
+    Core.Session.Types
+    Core.Session.Manager
+    Core.Agent.Types
+    Core.Agent.Modes
+    Core.Agent.StateMachine
+    Core.Tools.Registry
+    Core.Tools.Types
+    Core.Event.Bus
+    Core.Event.Types
+    Core.Cache.Engine
+    Core.Cache.Types
+  hs-source-dirs:   src
+  build-depends:    base ^>=4.22
+                  , free
+                  , containers
+                  , stm
+                  , text
+                  , bytestring
+                  , hashable
+                  , aeson
+  default-language: Haskell2010
+
+-- LLM Adapters + CPU Backend (merged to avoid GHC 9.14 internal-lib linking bug)
+library trha-llm
+  exposed-modules:  
+    LLM.Adapter.Types
+    LLM.Adapter.Interface
+    LLM.Providers.DeepSeek
+    LLM.Providers.OpenAI
+    LLM.Stream
+    Infrastructure.CPU.Types
+    Infrastructure.CPU.SIMD
+    Infrastructure.CPU.BLAS
+    Infrastructure.CPU.Ops
+    Infrastructure.CPU.Quant
+    Infrastructure.CPU.SOV3
+    Infrastructure.CPU.S2Geometry
+    Infrastructure.CPU.GF3Ops
+    Infrastructure.CPU.Christoffel
+    Infrastructure.CPU.SovereignModel
+    Infrastructure.CPU.GF3Intrinsic
+    Infrastructure.CPU.SovereignIntrinsic
+    Infrastructure.CPU.SovereignGF27
+    Infrastructure.CPU.SovereignSection
+    Infrastructure.CPU.SovereignLossGain
+    Infrastructure.CPU.Z12Sys
+    Infrastructure.CPU.SovereignPhase12
+    Infrastructure.CPU.SovereignWuXing
+    Infrastructure.CPU.SovereignWuxingLayer
+    Infrastructure.CPU.SovereignFull
+    Infrastructure.CPU.SovereignPacked
+    Infrastructure.CPU.SovereignTypes
+    Infrastructure.CPU.Inference
+    Infrastructure.CPU.GGUF
+    Infrastructure.CPU.Dequant
+  hs-source-dirs:   src
+  build-depends:    base ^>=4.22
+                  , trha-core
+                  , trha-infra
+                  , text
+                  , aeson
+                  , http-client
+                  , http-client-tls
+                  , http-types
+                  , containers
+                  , bytestring
+                  , vector
+                  , stm
+                  , network
+  default-language: Haskell2010
+
+-- API Server (OpenAI/Anthropic/Responses protocols)
+-- visibility: public so the standalone CLI package (packages/app/CLI) can
+-- depend on it via `trha:trha-api`.
+library trha-api
+  visibility:        public
+  exposed-modules:
+    API.Server
+    API.Providers
+    API.ProviderProbe
+    API.ProviderRuntime
+    Core.Provider.Types
+  other-modules:
+    Core.Agent.Modes
+    Core.Session.Manager
+    Core.Session.Types
+    Infrastructure.CPU.BLAS
+    Infrastructure.CPU.Inference
+    Infrastructure.CPU.Ops
+    Infrastructure.CPU.SIMD
+    Infrastructure.CPU.Types
+    LLM.Adapter.Interface
+    LLM.Adapter.Types
+    LLM.Providers.DeepSeek
+    LLM.Stream
+  hs-source-dirs:   src
+  build-depends:    base ^>=4.22
+                  , trha-core
+                  , trha-llm
+                  , servant
+                  , servant-server
+                  , tagged
+                  , warp
+                  , wai
+                  , aeson
+                  , text
+                  , bytestring
+                  , stm
+                  , containers
+                  , http-types
+                  , http-client
+                  , http-client-tls
+                  , vector
+                  , async
+                  , directory
+                  , filepath
+  default-language: Haskell2010
+
+-- Infrastructure Layer
+library trha-infra
+  exposed-modules:  
+    Infrastructure.Storage.JSON
+    Infrastructure.Storage.SQLite
+    Infrastructure.Network.HTTP
+    Infrastructure.Sandbox.Process
+    Infrastructure.Telemetry.Metrics
+  hs-source-dirs:   src
+  build-depends:    base ^>=4.22
+                  , trha-core
+                  , text
+                  , aeson
+                  , directory
+                  , process
+                  , bytestring
+                  , containers
+                  , http-client
+                  , http-client-tls
+                  , http-types
+  default-language: Haskell2010
+
+-- Orchestration Layer (TypeScript bridge)
+library trha-orchestration
+  exposed-modules:
+    Orchestration.Bridge.Types
+    Orchestration.Bridge.HTTP
+    Orchestration.Parallel.Types
+    Orchestration.Parallel.Scheduler
+    Orchestration.Subagent.Types
+    Orchestration.Subagent.Manager
+  other-modules:
+    Infrastructure.Network.HTTP
+  hs-source-dirs:   src
+  build-depends:    base ^>=4.22
+                  , trha-core
+                  , trha-infra
+                  , text
+                  , aeson
+                  , servant
+                  , servant-server
+                  , tagged
+                  , warp
+                  , containers
+                  , stm
+                  , async
+                  , bytestring
+                  , http-client
+                  , http-client-tls
+                  , http-types
+  default-language: Haskell2010
+
+-- CLI Application
+executable trha
+  main-is:          Main.hs
+  hs-source-dirs:   packages/app/CLI
+  other-modules:
+    Bridge.Scheduler
+    Config.Settings
+    UI.Commands.Registry
+    Core.HTTP
+    Core.Transcript
+    Core.SessionSummary
+    Core.Replay
+    Core.SSE
+    Core.Types
+    UI.Brick
+    UI.Commands
+    UI.I18n
+    UI.SettingsView
+    UI.StatsView
+    UI.StatusInfo
+    UI.Render.Markdown
+    UI.Render.Picker
+    UI.Render.ToolCard
+    UI.Theme
+    UI.Render.Footer
+  ghc-options:      -rtsopts -threaded
+  build-depends:    base ^>=4.22
+                  , trha:trha-api
+                  , aeson
+                  , text
+                  , bytestring
+                  , http-client
+                  , http-client-tls
+                  , http-types
+                  , directory
+                  , filepath
+                  , ansi-terminal
+                  , process
+                  , brick >= 2.1
+                  , vty >= 6.1
+                  , vty-crossplatform >= 0.4
+                  , optparse-applicative >= 0.18
+                  , stm
+                  , containers
+                  , async
+                  , time
+                  , haskeline >= 0.8
+                  , yaml
+                  , unix
+  default-language: Haskell2010
+
+-- Test Suite
+test-suite trha-test
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test
+  build-depends:    base ^>=4.22
+                  , directory
+                  , trha-core
+                  , trha-llm
+                  , trha-infra
+                  , trha-api
+                  , hspec
+                  , QuickCheck
+                  , vector
+                  , text
+                  , stm
+                  , containers
+                  , free
+                  , bytestring
+                  , hashable
+                  , aeson
+  ghc-options:      -rtsopts
+  default-language: Haskell2010
+
+-- Kernel stub server (K6): deterministic two-round tool loop for
+-- end-to-end development without a DeepSeek API key.
+executable trha-kernel-stub
+  main-is:          StubKernel.hs
+  hs-source-dirs:   packages/kernel-stub
+  build-depends:    base ^>=4.22
+                  , trha-api
+  ghc-options:      -rtsopts -threaded
+  default-language: Haskell2010

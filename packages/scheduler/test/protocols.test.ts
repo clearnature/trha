@@ -284,9 +284,25 @@ describe('Authentication', () => {
     expect(res.status).toBe(200);
   });
 
-  it('/api/* requires token', async () => {
-    const res = await fetch(`${BASE}/api/sessions`);
-    expect(res.status).toBe(401);
+  it('/api/* writes require token (reads are loopback-bypassed)', async () => {
+    const read = await fetch(`${BASE}/api/sessions`);
+    expect(read.status).toBe(200); // origin-less read bypass on loopback
+    const write = await fetch(`${BASE}/api/session/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'standard' }),
+    });
+    expect(write.status).toBe(401); // writes always need the token
+  });
+
+  it('writes report a stable unauthorized code', async () => {
+    const write = await fetch(`${BASE}/api/session/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'standard' }),
+    });
+    const body = await write.json() as { code?: string };
+    expect(body.code).toBe('unauthorized');
   });
 
   it('/api/* works with valid token', async () => {

@@ -1,34 +1,69 @@
-import React, { useEffect } from 'react';
-import { Sidebar } from './components/Sidebar';
-import { ChatView } from './components/ChatView';
-import { SettingsPanel } from './components/SettingsPanel';
-import { useAppStore, initAPI } from './stores/appStore';
+import React, { useEffect, useState } from 'react';
+import { Shell } from './ui/Shell';
+import { Sidebar } from './ui/Sidebar';
+import { StatusBar } from './ui/StatusBar';
+import { MessageList } from './ui/MessageList';
+import { Composer } from './ui/Composer';
+import { ModelPicker } from './ui/ModelPicker';
+import { PlanPrompt } from './ui/PlanPrompt';
+import { SessionProvider, useSessionStore } from './ui/SessionContext';
+import { PrefsProvider, usePrefs } from './ui/PrefsContext';
+import { SettingsPanel } from './ui/SettingsPanel';
+import { initAPI } from './stores/appStore';
 
-function App() {
-  const { theme, showSettings, setShowSettings, loadModels, loadTools, loadModes } = useAppStore();
+function Workspace({ onSettingsClick }: { onSettingsClick: () => void }) {
+  const store = useSessionStore();
 
   useEffect(() => {
-    initAPI().then(() => {
-      loadModels();
-      loadTools();
-      loadModes();
+    initAPI().then(async () => {
+      const s = store.getState();
+      await s.loadCatalog();
+      await s.refresh();
+      await s.loadVersion();
     });
-  }, []);
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
+  }, [store]);
 
   return (
-    <div className="app-container">
-      <Sidebar onSettingsClick={() => setShowSettings(!showSettings)} />
-      <main className="main-content">
-        <ChatView />
-      </main>
-      {showSettings && (
-        <SettingsPanel onClose={() => setShowSettings(false)} />
-      )}
+    <Shell sidebar={<Sidebar onSettingsClick={onSettingsClick} />} statusBar={<StatusBar />}>
+      <div className="chat-view">
+        <MessageList />
+        <PlanPrompt />
+        <ModelPicker />
+        <Composer />
+      </div>
+    </Shell>
+  );
+}
+
+/** Applies theme + font size from prefs to the document root. */
+function useApplyPrefs() {
+  const { prefs } = usePrefs();
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', prefs.theme);
+    document.documentElement.style.fontSize = `${prefs.fontSize}px`;
+    document.documentElement.setAttribute('lang', prefs.lang);
+  }, [prefs.theme, prefs.fontSize, prefs.lang]);
+}
+
+function Root() {
+  const [showSettings, setShowSettings] = useState(false);
+  useApplyPrefs();
+
+  return (
+    <div className="app-root">
+      <Workspace onSettingsClick={() => setShowSettings(v => !v)} />
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
     </div>
+  );
+}
+
+function App() {
+  return (
+    <PrefsProvider>
+      <SessionProvider>
+        <Root />
+      </SessionProvider>
+    </PrefsProvider>
   );
 }
 

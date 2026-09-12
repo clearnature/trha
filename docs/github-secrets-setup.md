@@ -8,7 +8,7 @@
 
 ### 1. 访问 GitHub Secrets
 
-1. 打开你的 GitHub 仓库：https://github.com/clearnature/gh--harness
+1. 打开你的 GitHub 仓库：https://github.com/clearnature/trha
 2. 点击 **Settings** 选项卡
 3. 在左侧菜单中，点击 **Secrets and variables** → **Actions**
 4. 点击 **New repository secret**

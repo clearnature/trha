@@ -19,7 +19,8 @@ import Network.HTTP.Client.TLS
 import Network.HTTP.Types.Status
 import GHC.Generics
 
-import LLM.Adapter.Interface (LLMAdapter(..))
+import LLM.Adapter.Interface (LLMAdapter(..), unsupportedTools)
+import qualified LLM.Stream as LStream
 
 -- | OpenAI API response types
 data ChatResponse = ChatResponse
@@ -93,6 +94,8 @@ createOpenAIProvider apiKey = do
             Nothing -> return [ChunkError "Failed to parse OpenAI response"]
           else return [ChunkError $ "OpenAI API error: " <> T.pack (show (statusCode (responseStatus response)))]
 
+    , llmChatTools = unsupportedTools
+    , llmChatToolsStream = openAIStream apiKey
     , llmEmbed = \text -> do
         let requestBody = object
               [ "model" .= ("text-embedding-ada-002" :: Text)
@@ -126,3 +129,15 @@ createOpenAIProvider apiKey = do
         , ModelInfo "gpt-3.5-turbo" "GPT-3.5 Turbo"   16385
         ]
     }
+
+-- | Streaming call.  Text only, matching this adapter's declared capability
+-- (@unsupportedTools@): streaming must not quietly claim more than blocking.
+openAIStream :: Text -> [ChatMessage] -> [ToolSpec] -> (StreamChunk -> IO ()) -> IO ChatTurn
+openAIStream apiKey msgs _specs onEvent =
+  LStream.openAICompatStreamCall
+    "https://api.openai.com/v1/chat/completions"
+    apiKey
+    (object [ "model"    .= ("gpt-4" :: Text)
+            , "messages" .= map toJSON msgs
+            , "stream"   .= True ])
+    onEvent

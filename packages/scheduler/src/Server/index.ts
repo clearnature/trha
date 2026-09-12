@@ -5,18 +5,45 @@
 import express from 'express';
 import cors from 'cors';
 import { HaskellBridge } from '../Bridge/Haskell.js';
+import type { BridgeToolSpec, ToolCallData } from '../Bridge/Haskell.js';
+import { findTool, toToolSpecs } from './toolCatalog.js';
+import { confineWritePath, limitOutput } from './toolGuard.js';
 import { EventEmitter } from '../Utils/EventEmitter.js';
+import { Plugin, PluginManager } from '../Plugins/Plugin.js';
+import { loadPluginsFrom } from '../Plugins/loader.js';
+import { fileURLToPath } from 'node:url';
+import { readFileSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { loadPin, loadSessions, removeSessionFile, savePin, saveSession } from './stateStore.js';
+import { startPluginWatcher } from '../Plugins/watcher.js';
+import { mkdir, readFile, writeFile, appendFile } from 'node:fs/promises';
+import path from 'node:path';
 
 export interface ServerConfig {
   port: number;
+  /** Listen address; loopback only by default (host gate). */
+  host?: string;
   token: string;
   haskellHost: string;
   haskellPort: number;
+  /** Plugins registered at startup (Phase 3 plugin architecture). */
+  plugins?: Plugin[];
+  /** Directory of plugin modules (*.js/*.mjs, default-export Plugin) loaded at startup. */
+  pluginsDir?: string;
+  /** Hot-reload the plugins directory (default true). */
+  watchPlugins?: boolean;
+  /** Directory for server-side session persistence (absent = memory only). */
+  stateDir?: string;
+  /** Directory of static /studio pages (default: scheduler/studio-public). */
+  studioDir?: string;
+  /** Unix domain socket for host-local IPC (no TCP network surface). */
+  socketPath?: string;
 }
 
 export const defaultServerConfig: ServerConfig = {
   port: 3456,
-  token: process.env.GH_HARNESS_TOKEN || 'dev-token',
+  host: '127.0.0.1',
+  token: process.env.TRHA_TOKEN || 'dev-token',
   haskellHost: 'localhost',
   haskellPort: 8080,
 };
@@ -121,6 +148,37 @@ const ALL_TOOLS: ToolDef[] = [
   { name: 'logicprobe_verify', description: 'Run executable state-machine verification',          enabled: true, schema: { model: 'object' } },
 ];
 
+// ── Tool lifecycle event (Phase 2 S2) ─────────────────────────────────
+// Pushed to /api/events/:sessionId as `tool:update`; mirrors CLI ToolEvent.
+
+interface ToolEvent {
+  name: string;
+  args?: string[];
+  status: 'running' | 'succeeded' | 'failed';
+  error?: string;
+  durationMs?: number;
+}
+
+// ── Session shape ───────────────────────────────────────────────────────
+// One server-side session.  `pendingApproval` holds a plan request waiting
+// for a host decision (Phase 2 S1 approval gate).
+
+interface SessionMessage {
+  role: string;
+  content: string;
+  tool_calls?: unknown[];
+  tool_call_id?: string;
+  [key: string]: unknown;
+}
+
+interface SchedulerSession {
+  id: string;
+  mode: string;
+  messages: SessionMessage[];
+  pendingApproval: { message: string } | null;
+  createdAt: Date;
+}
+
 // ── Mode definitions (ported from deepseek-harness presets) ───────────────
 
 interface ModeConfig {
@@ -200,30 +258,196 @@ const MODES: Record<string, ModeConfig> = {
 
 // ── Server factory ────────────────────────────────────────────────────────
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const SESSION_COOKIE = 'trha_session';
+
+/** Read one cookie by name from a Cookie header (no cookie-parser dep). */
+function cookieValue(header: string | undefined, name: string): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(';')) {
+    const [k, ...rest] = part.trim().split('=');
+    if (k === name) return rest.join('=');
+  }
+  return undefined;
+}
+
+/** Best-effort scheduler version from package.json (dev fallback). */
+export function schedulerVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(
+      path.join(__dirname, '..', '..', 'package.json'), 'utf8')) as { version?: string };
+    return pkg.version ?? '0.0.0-dev';
+  } catch {
+    return '0.0.0-dev';
+  }
+}
+
 export function createServer(config: ServerConfig = defaultServerConfig) {
   const app = express();
   const events = new EventEmitter();
+  const sessionSecret = randomBytes(24).toString('hex');
   const bridge = new HaskellBridge({ host: config.haskellHost, port: config.haskellPort });
+
+  // ── Plugin runtime (Phase 3) ────────────────────────────────────────────
+  // Hooks fire asynchronously; plugin failures are logged, never fatal.
+  if (config.stateDir) {
+    void loadSessions(config.stateDir).then(records => {
+      for (const r of records) {
+        sessions.set(r.sessionId, {
+          id: r.sessionId,
+          mode: r.mode,
+          messages: r.messages as SessionMessage[],
+          pendingApproval: r.pendingApproval,
+          createdAt: new Date(r.createdAt),
+        });
+      }
+    }).catch(e => console.error('session restore failed:', e));
+  }
+
+  const plugins = new PluginManager(events);
+  plugins.registerService('events', events, ['events:listen', 'events:emit']);
+  plugins.registerService('bridge', bridge, ['model:query', 'sessions:list']);
+  plugins.registerService('pluginManager', plugins, ['plugins:register']);
+  const emitSafe = (p: Promise<void>) => {
+    p.catch(e => console.error('plugin hook error:', e));
+  };
+  for (const plugin of config.plugins ?? []) {
+    void plugins.register(plugin).catch(e => console.error(`plugin ${plugin.name} init failed:`, e));
+  }
+  if (config.pluginsDir) {
+    void loadPluginsFrom(config.pluginsDir).then(loaded => {
+      for (const p of loaded) {
+        void plugins.register(p).catch(e => console.error(`plugin ${p.name} init failed:`, e));
+      }
+    }).catch(e => console.error(`pluginsDir scan failed (${config.pluginsDir}):`, e));
+
+    if (config.watchPlugins !== false) {
+      // hot reload: new / changed / removed plugin files reconcile automatically
+      startPluginWatcher(config.pluginsDir, plugins);
+    }
+  }
 
   app.use(cors());
   app.use(express.json());
 
-  // Token authentication middleware
-  // Exempt /health and /v1/* (OpenAI/Anthropic/Responses protocols use their own auth)
+  // Authentication: Bearer token by default; the /studio pages are served
+  // from this same loopback listener, so same-origin requests (browser sends
+  // an Origin header equal to this listener) bypass the token -- mirroring
+  // the Reasonix loopback gate.  Cross-origin browsers are always refused;
+  // token-less non-browser callers keep working through the Bearer check.
   app.use((req, res, next) => {
-    if (req.path === '/health' || req.path.startsWith('/v1/')) return next();
-    const auth = req.headers.authorization;
-    const token = req.query.token as string;
-    if (auth !== `Bearer ${config.token}` && token !== config.token) {
-      return res.status(401).json({ error: 'Unauthorized' });
+    if (req.path === '/health' || req.path.startsWith('/v1/') || req.path.startsWith('/studio')) return next();
+    const origin = req.headers.origin;
+    const isRead = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
+    const loopbackOnly = (config.host ?? '127.0.0.1') === '127.0.0.1';
+    const sessionOk = cookieValue(req.headers.cookie, SESSION_COOKIE) === sessionSecret;
+    const authOk = req.headers.authorization === `Bearer ${config.token}`
+      || req.query.token === config.token;
+
+    if (!origin) {
+      // Non-browser (CLI/curl): loopback-only origin-less READS are allowed
+      // (Reasonix model); every write needs the Bearer token.
+      if (isRead && loopbackOnly) return next();
+      if (authOk) return next();
+      return res.status(401).json({ error: 'Unauthorized', code: 'unauthorized' });
     }
-    next();
+    // Browser: only this listener's own origin may proceed at all.
+    const self = `http://${req.headers.host}`;
+    if (origin !== self) {
+      return res.status(403).json({ error: 'cross-origin request denied', code: 'origin' });
+    }
+    // Same-origin page: the HttpOnly session cookie is the credential (a
+    // local non-page process cannot read it).  Cold-navigation reads
+    // (before the cookie exists) are allowed on loopback only.
+    if (sessionOk) return next();
+    if (isRead && loopbackOnly) return next();
+    return res.status(401).json({ error: 'session required', code: 'session' });
   });
 
   // ── Health ────────────────────────────────────────────────────────────
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', version: '0.1.0', modes: Object.keys(MODES) });
+  });
+
+  // ── /studio pages + version surface (loopback host; one routing rule:
+  // /studio* -> static page assets, everything else stays on the API) ──
+  const studioDir = config.studioDir
+    ?? path.join(__dirname, '..', '..', 'studio-public');
+  app.use('/studio', (req, res, next) => {
+    if ((req.method === 'GET' || req.method === 'HEAD')
+        && cookieValue(req.headers.cookie, SESSION_COOKIE) === undefined) {
+      res.setHeader('Set-Cookie',
+        `${SESSION_COOKIE}=${sessionSecret}; HttpOnly; SameSite=Strict; Path=/`);
+    }
+    next();
+  });
+  app.use('/studio', express.static(studioDir));
+
+  const pinnedVersion = new Map<string, string | null>();
+  app.get('/studio/versions', async (_req, res) => {
+    const current = schedulerVersion();
+    let pinned = pinnedVersion.get('current') ?? null;
+    if (config.stateDir && pinned === null) {
+      pinned = await loadPin(config.stateDir).catch(() => null);
+    }
+    res.json({
+      current,
+      pinned,
+      versions: [{ version: current, current: true }],
+    });
+  });
+  app.post('/studio/pin', async (req, res) => {
+    const version = (req.body ?? {}).version;
+    if (typeof version !== 'string' || version.trim() === '') {
+      return res.status(400).json({ error: 'version required' });
+    }
+    const target = version.trim();
+    pinnedVersion.set('current', target);
+    if (config.stateDir) {
+      await savePin(config.stateDir, target).catch(e =>
+        console.error('persist pin:', e));
+    }
+    res.json({ ok: true, pinned: target });
+  });
+
+  app.get('/api/plugins', (_req, res) => {
+    res.json(plugins.listPlugins().map(p => ({
+      name: p.name,
+      version: p.version,
+      description: p.description,
+    })));
+  });
+
+  // Declarative (hook-less) plugins can be registered/unregistered at
+  // runtime.  Plugins carrying JS hooks must still be provided at startup
+  // via ServerConfig.plugins -- functions cannot cross the HTTP boundary.
+  app.post('/api/plugins', async (req, res) => {
+    const { name, version, description } = req.body ?? {};
+    if (typeof name !== 'string' || !name.trim()
+        || typeof version !== 'string' || typeof description !== 'string') {
+      return res.status(400).json({ error: 'name/version/description required' });
+    }
+    try {
+      await plugins.register({ name: name.trim(), version, description });
+      return res.status(201).json({ ok: true, name: name.trim() });
+    } catch (e) {
+      return res.status(409).json({ error: (e as Error).message });
+    }
+  });
+
+  app.get('/api/services', (_req, res) => {
+    res.json(plugins.describeServices());
+  });
+
+  app.delete('/api/plugins/:name', async (req, res) => {
+    try {
+      await plugins.unregister(req.params.name);
+      return res.json({ ok: true, name: req.params.name });
+    } catch (e) {
+      return res.status(404).json({ error: (e as Error).message });
+    }
   });
 
   // ── Modes ─────────────────────────────────────────────────────────────
@@ -263,21 +487,76 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     res.json(models);
   });
 
+  // ── Provider registry (P4): forward to the kernel's /providers* ───────
+  //
+  // The kernel owns the registry (config, keys, probing); the scheduler is
+  // the only door the UI uses, so it forwards -- status and coded refusals
+  // included -- instead of duplicating any of it.
+
+  const kernelBase = () => `http://${config.haskellHost}:${config.haskellPort}`;
+
+  async function forwardToKernel(
+    res: import('express').Response,
+    method: 'GET' | 'POST',
+    path: string,
+    body?: unknown,
+  ): Promise<void> {
+    try {
+      const r = await fetch(`${kernelBase()}${path}`, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await r.text();
+      res.status(r.status).type('application/json').send(text || '{}');
+    } catch (e) {
+      res.status(502).json({ code: 'provider.kernel_unreachable', error: String(e) });
+    }
+  }
+
+  /** One text stream from the bridge: real increments when the kernel can
+   * stream, the whole reply as a single increment when it cannot (A3). */
+  async function streamReply(
+    messages: [string, string][],
+    onText: (text: string) => void,
+  ): Promise<void> {
+    try {
+      await bridge.queryModelStream({ messages }, onText);
+    } catch {
+      const r = await bridge.queryModel({ messages });
+      if (r.reply) onText(r.reply);
+    }
+  }
+
+  app.get('/api/providers', (_req, res) => { void forwardToKernel(res, 'GET', '/providers'); });
+  app.get('/api/providers/protocols', (_req, res) => { void forwardToKernel(res, 'GET', '/providers/protocols'); });
+  app.post('/api/providers', (req, res) => { void forwardToKernel(res, 'POST', '/providers', req.body); });
+  app.post('/api/providers/probe', (req, res) => { void forwardToKernel(res, 'POST', '/providers/probe', req.body); });
+  app.post('/api/providers/check', (req, res) => { void forwardToKernel(res, 'POST', '/providers/check', req.body); });
+  app.post('/api/providers/remove', (req, res) => { void forwardToKernel(res, 'POST', '/providers/remove', req.body); });
+  app.post('/api/providers/edit', (req, res) => { void forwardToKernel(res, 'POST', '/providers/edit', req.body); });
+  app.post('/api/providers/websearch', (req, res) => { void forwardToKernel(res, 'POST', '/providers/websearch', req.body); });
+  app.post('/api/providers/thinking', (req, res) => { void forwardToKernel(res, 'POST', '/providers/thinking', req.body); });
+
   // ── Sessions ──────────────────────────────────────────────────────────
 
-  const sessions = new Map<string, {
-    id: string;
-    mode: string;
-    messages: Array<{ role: string; content: string }>;
-    createdAt: Date;
-  }>();
+  const sessions = new Map<string, SchedulerSession>();
+  // optional disk persistence (G2): no-op without stateDir
+  const persistSession = (session: SchedulerSession) => {
+    if (!config.stateDir) return;
+    void saveSession(config.stateDir, session).catch(e =>
+      console.error(`persist session ${session.id}:`, e));
+  };
 
   app.post('/api/session/start', (req, res) => {
     const mode = req.body.mode || 'standard';
     if (!MODES[mode]) return res.status(400).json({ error: `Unknown mode: ${mode}` });
     const sessionId = `session-${Date.now()}`;
-    sessions.set(sessionId, { id: sessionId, mode, messages: [], createdAt: new Date() });
+    const created = { id: sessionId, mode, messages: [] as SessionMessage[], pendingApproval: null, createdAt: new Date() };
+    sessions.set(sessionId, created);
+    persistSession(created);
     events.emit('session:created', { sessionId, mode });
+    emitSafe(plugins.emitSessionCreate(sessionId));
     res.json({ sessionId, mode });
   });
 
@@ -287,38 +566,267 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     res.json(session);
   });
 
+  app.get('/api/session/:id/messages', (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    res.json({ messages: session.messages });
+  });
+
+  app.delete('/api/session/:id', (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    sessions.delete(req.params.id);
+    if (config.stateDir) {
+      void removeSessionFile(config.stateDir, req.params.id).catch(() => {});
+    }
+    events.emit('session:deleted', { sessionId: req.params.id });
+    emitSafe(plugins.emitSessionDelete(req.params.id));
+    res.json({ ok: true, sessionId: req.params.id });
+  });
+
   app.get('/api/sessions', (_req, res) => {
     res.json(Array.from(sessions.values()));
   });
 
   // ── Agent step ────────────────────────────────────────────────────────
 
+  // Run one full agent step and return the (aggregated) reply text.
+  // Shared by the plain /api/agent/step path and by the approval gate
+  // after the host approves a pending plan.
+  // ── Tool loop (Phase 3 K5) ─────────────────────────────────────────────
+  // Host-side tool executions: read-only file access for now.  The kernel
+  // emits assistant tool_calls; we execute them and feed results back as
+  // tool messages until the model answers without tool calls.
+  // Host-side tools live under the orchestration workspace so file
+  // mutations cannot escape /tmp/trha-workspace.
+  const WORKSPACE = '/tmp/trha-workspace';
+  const AGENT_TOOLS: BridgeToolSpec[] = toToolSpecs();
+  const MAX_TOOL_ROUNDS = 5;
+
+  const emitToolLifecycle = async (
+    sessionId: string, name: string, args: string[],
+    status: 'running' | 'succeeded' | 'failed', startedAt?: number, error?: string,
+  ): Promise<void> => {
+    const ev: ToolEvent = {
+      name, args, status,
+      ...(error !== undefined ? { error } : {}),
+      ...(startedAt !== undefined ? { durationMs: Date.now() - startedAt } : {}),
+    };
+    events.emit('tool:update', { sessionId, ...ev });
+    if (status === 'running') {
+      emitSafe(plugins.emitToolCall(sessionId, name, args));
+    }
+  };
+
+  const parseToolArgs = (c: ToolCallData): string[] => {
+    try {
+      const o = JSON.parse(c.arguments) as Record<string, unknown>;
+      return Object.entries(o).map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`);
+    } catch {
+      return [c.arguments];
+    }
+  };
+
+  const inWorkspace = (raw: unknown): string | null => {
+    if (typeof raw !== 'string') return null;
+    const resolved = path.resolve(raw);
+    return resolved.startsWith(path.resolve(WORKSPACE) + '/') ? resolved : null;
+  };
+
+  const executeTool = async (c: ToolCallData): Promise<string> => {
+    let argsObj: Record<string, unknown> = {};
+    try {
+      argsObj = JSON.parse(c.arguments) as Record<string, unknown>;
+    } catch {
+      return `ERROR: malformed arguments for ${c.name}`;
+    }
+    if (c.name === 'read_file') {
+      const target = inWorkspace(argsObj.path) ?? (typeof argsObj.path === 'string' ? argsObj.path : null);
+      if (!target) return 'ERROR: missing/invalid path argument';
+      try {
+        return limitOutput(await readFile(target, 'utf8'));
+      } catch (e) {
+        return `ERROR: ${(e as Error).message}`;
+      }
+    }
+    if (c.name === 'write_file' || c.name === 'append_file') {
+      if (typeof argsObj.path !== 'string') return 'ERROR: path must be a string';
+      // canonical, symlink-free target confined to the workspace
+      const target = await confineWritePath(WORKSPACE, argsObj.path);
+      if (!target) return 'ERROR: path escapes the workspace';
+      // Small local models sometimes double-encode or nest the content
+      // value; tolerate any JSON value by stringifying non-strings.
+      const rawContent = argsObj.content;
+      if (rawContent === undefined || rawContent === null) return 'ERROR: missing content';
+      const content = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
+      try {
+        if (c.name === 'write_file') {
+          await writeFile(target, content, 'utf8');
+        } else {
+          await appendFile(target, content, 'utf8');
+        }
+        return `OK: ${c.name} -> ${target} (${content.length} chars)`;
+      } catch (e) {
+        return `ERROR: ${(e as Error).message}`;
+      }
+    }
+    return `ERROR: unknown tool: ${c.name}`;
+  };
+
+  // Tool service: single source of truth exposed on ctx.tools (list/execute)
+  // so plugins can read the tool set by key instead of importing internals.
+  plugins.registerService('tools', {
+    list: () => AGENT_TOOLS,
+    execute: executeTool,
+  }, ['tools:list', 'tools:execute']);
+  // read-only session view (plugins observe session state by key)
+  plugins.registerService('sessions', {
+    get: (id: string) => sessions.get(id),
+    has: (id: string) => sessions.has(id),
+    list: () => Array.from(sessions.values()).map(s => ({ id: s.id, mode: s.mode })),
+  }, ['sessions:get', 'sessions:list']);
+
+  // Run one full agent step: loop tools until the model replies in plain
+  // text (or the round budget is exhausted).
+  const runStep = async (
+    session: SchedulerSession,
+    message: string,
+    target: { provider?: string; model?: string } = {},
+    onDelta?: (text: string) => void,
+  ): Promise<string> => {
+    const mode = MODES[session.mode];
+    // Plugins may intercept the whole step (approval / short-circuit) by
+    // bailing on 'agent:step:before' with a reply.
+    const intercepted = await plugins.runBail('agent:step:before', message);
+    if (typeof intercepted === 'string') {
+      session.messages.push({ role: 'user', content: message });
+      events.emit('agent:message', { sessionId: session.id, role: 'user', content: message });
+      session.messages.push({ role: 'assistant', content: intercepted });
+      events.emit('agent:message', { sessionId: session.id, role: 'assistant', content: intercepted });
+      persistSession(session);
+      return intercepted;
+    }
+    // Plugins may rewrite the tool set offered to the model.
+    const toolsBase = (plugins.service('tools') as { list(): BridgeToolSpec[] }).list();
+    const toolsCfg = (await plugins.runWaterfall('agent:tools', toolsBase)) as BridgeToolSpec[];
+    session.messages.push({ role: 'user', content: message });
+    events.emit('agent:message', { sessionId: session.id, role: 'user', content: message });
+    emitSafe(plugins.emitMessageSend(session.id, { role: 'user', content: message }));
+
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      let response;
+      // "Model-visible means logged": every model request is observable
+      // before it is sent, so a transcript/plugin can reconstruct what the
+      // model saw.
+      events.emit('agent:model-request', {
+        sessionId: session.id,
+        round,
+        messageCount: session.messages.length,
+        toolCount: toolsCfg.length,
+      });
+      try {
+        const request = {
+          messages: session.messages, tools: toolsCfg,
+          model: target.model, provider: target.provider,
+        };
+        // A kernel without the streaming endpoint — or a wire that cannot
+        // stream — still answers: fall back to the blocking call instead of
+        // failing the whole step.
+        response = onDelta
+          ? await bridge.queryModelStream(request, onDelta)
+              .catch(() => bridge.queryModel(request))
+          : await bridge.queryModel(request);
+      } catch {
+        // Kernel unreachable: demo tool lifecycle + mode-context echo
+        // (kept for Phase 2 S2 tool-event tests and offline development).
+        const demo: ToolEvent = { name: 'bash', args: ['echo demo-tool'], status: 'running' };
+        events.emit('tool:update', { sessionId: session.id, ...demo });
+        emitSafe(plugins.emitToolCall(session.id, demo.name, demo.args));
+        const started = Date.now();
+        await new Promise(r => setTimeout(r, 30));
+        events.emit('tool:update', {
+          sessionId: session.id, ...demo,
+          status: 'succeeded', durationMs: Date.now() - started,
+        });
+        const reply = mode.ptc.enabled
+          ? `[PTC] run_code(${message.slice(0, 50)}...)`
+          : `[${session.mode}] Received: ${message}`;
+        session.messages.push({ role: 'assistant', content: reply });
+        events.emit('agent:message', { sessionId: session.id, role: 'assistant', content: reply });
+        persistSession(session);
+        return reply;
+      }
+
+      const calls = response.toolCalls ?? [];
+      if (calls.length === 0) {
+        const reply = response.reply;
+        session.messages.push({ role: 'assistant', content: reply });
+        events.emit('agent:message', { sessionId: session.id, role: 'assistant', content: reply });
+        persistSession(session);
+        return reply;
+      }
+
+      // Record the assistant's tool_calls, execute each tool, feed results
+      // back as tool messages, then let the model continue.
+      session.messages.push({
+        role: 'assistant', content: response.reply,
+        tool_calls: calls.map(c => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments } })),
+      });
+      for (const call of calls) {
+        const started = Date.now();
+        await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'running');
+        const output = await executeTool(call);
+        const failed = output.startsWith('ERROR');
+        await emitToolLifecycle(session.id, call.name, parseToolArgs(call),
+          failed ? 'failed' : 'succeeded', started, failed ? output : undefined);
+        session.messages.push({ role: 'tool', tool_call_id: call.id, content: output });
+      }
+    }
+
+    const exhausted = `(tool loop exhausted after ${MAX_TOOL_ROUNDS} rounds)`;
+    session.messages.push({ role: 'assistant', content: exhausted });
+    events.emit('agent:message', { sessionId: session.id, role: 'assistant', content: exhausted });
+    persistSession(session);
+    return exhausted;
+  };
+
   app.post('/api/agent/step', async (req, res) => {
-    const { sessionId, message } = req.body;
+    const { sessionId, message, requireApproval, provider, model } = req.body;
     const session = sessions.get(sessionId);
     if (!session) return res.status(404).json({ error: 'Session not found' });
-
-    const mode = MODES[session.mode];
-    session.messages.push({ role: 'user', content: message });
-    events.emit('agent:message', { sessionId, role: 'user', content: message });
-
-    try {
-      const response = await bridge.queryModel({
-        messages: session.messages.map(m => [m.role, m.content] as [string, string]),
-      });
-      const reply = response.chunks.join('');
-      session.messages.push({ role: 'assistant', content: reply });
-      events.emit('agent:message', { sessionId, role: 'assistant', content: reply });
-      res.json({ reply, messages: session.messages, mode: session.mode });
-    } catch {
-      // Fallback: echo with mode context
-      const reply = mode.ptc.enabled
-        ? `[PTC] run_code(${message.slice(0, 50)}...)`
-        : `[${session.mode}] Received: ${message}`;
-      session.messages.push({ role: 'assistant', content: reply });
-      events.emit('agent:message', { sessionId, role: 'assistant', content: reply });
-      res.json({ reply, messages: session.messages, mode: session.mode });
+    if (typeof message !== 'string' || message.trim() === '') {
+      return res.status(400).json({ error: 'Missing message' });
     }
+
+    // Approval gate: hold the request until the host decides.
+    if (requireApproval) {
+      session.pendingApproval = { message };
+      events.emit('agent:plan', { sessionId, status: 'awaiting_approval', message });
+      return res.json({ status: 'awaiting_approval', pending: { message }, mode: session.mode });
+    }
+
+    session.pendingApproval = null; // a regular step clears any stale gate
+    // A3: stream the answer to whoever listens on this session's SSE channel.
+    const reply = await runStep(session, message, { provider, model },
+      text => events.emit('agent:delta', { sessionId: session.id, text }));
+    res.json({ reply, messages: session.messages, mode: session.mode });
+  });
+
+  // ── Approval decisions (Phase 2 S1) ───────────────────────────────────
+
+  app.post('/api/session/:id/decision', async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    const pending = session.pendingApproval;
+    if (!pending) return res.status(400).json({ error: 'No pending approval' });
+    const approve = req.body?.approve === true;
+    session.pendingApproval = null;
+    events.emit('agent:decision', { sessionId: session.id, approve });
+    if (!approve) {
+      return res.json({ status: 'denied', mode: session.mode });
+    }
+    const reply = await runStep(session, pending.message);
+    res.json({ status: 'approved', reply, messages: session.messages, mode: session.mode });
   });
 
   // ── SSE event stream ──────────────────────────────────────────────────
@@ -330,13 +838,25 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       'Connection': 'keep-alive',
     });
 
+    const sessionId = req.params.sessionId;
     const handler = (data: unknown) => {
+      // only forward events belonging to this session
+      const payload = data as { sessionId?: string };
+      if (payload?.sessionId && payload.sessionId !== sessionId) return;
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
     events.on('agent:message', handler);
+    events.on('agent:delta', handler);
+    events.on('agent:plan', handler);
+    events.on('agent:decision', handler);
+    events.on('tool:update', handler);
     req.on('close', () => {
       events.off('agent:message', handler);
+      events.off('agent:delta', handler);
+      events.off('agent:plan', handler);
+      events.off('agent:decision', handler);
+      events.off('tool:update', handler);
     });
   });
 
@@ -381,12 +901,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       });
 
       try {
-        const response = await bridge.queryModel({ messages: bridgeMessages });
-        const fullText = response.chunks.join('');
-
-        // Send as streaming chunks
-        const words = fullText.split(/(\s+)/);
-        for (let i = 0; i < words.length; i++) {
+        let first = true;
+        // Real increments: the kernel streams, we forward them as they arrive.
+        await streamReply(bridgeMessages, text => {
           const chunk = {
             id: requestId,
             object: 'chat.completion.chunk',
@@ -394,12 +911,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
             model: modelInfo.name,
             choices: [{
               index: 0,
-              delta: i === 0 ? { role: 'assistant', content: words[i] } : { content: words[i] },
+              delta: first ? { role: 'assistant', content: text } : { content: text },
               finish_reason: null,
             }],
           };
+          first = false;
           res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-        }
+        });
 
         // Final chunk
         res.write(`data: ${JSON.stringify({
@@ -420,7 +938,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // Non-stream mode
     try {
       const response = await bridge.queryModel({ messages: bridgeMessages });
-      const fullText = response.chunks.join('');
+      const fullText = response.reply;
 
       res.json({
         id: requestId,
@@ -519,18 +1037,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       })}\n\n`);
 
       try {
-        const response = await bridge.queryModel({ messages: bridgeMessages });
-        const fullText = response.chunks.join('');
-
-        // Send text in chunks
-        const words = fullText.split(/(\s+)/);
-        for (const word of words) {
+        await streamReply(bridgeMessages, text => {
           res.write(`event: content_block_delta\ndata: ${JSON.stringify({
             type: 'content_block_delta',
             index: 0,
-            delta: { type: 'text_delta', text: word },
+            delta: { type: 'text_delta', text },
           })}\n\n`);
-        }
+        });
       } catch {
         res.write(`event: content_block_delta\ndata: ${JSON.stringify({
           type: 'content_block_delta',
@@ -561,7 +1074,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // Non-stream mode
     try {
       const response = await bridge.queryModel({ messages: bridgeMessages });
-      const fullText = response.chunks.join('');
+      const fullText = response.reply;
 
       res.json({
         id: requestId,
@@ -680,19 +1193,14 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       })}\n\n`);
 
       try {
-        const response = await bridge.queryModel({ messages: bridgeMessages });
-        const fullText = response.chunks.join('');
-
-        // Send text delta
-        const words = fullText.split(/(\s+)/);
-        for (const word of words) {
+        await streamReply(bridgeMessages, text => {
           res.write(`event: response.output_text.delta\ndata: ${JSON.stringify({
             type: 'response.output_text.delta',
             output_index: outputIndex,
             content_index: 0,
-            delta: word,
+            delta: text,
           })}\n\n`);
-        }
+        });
       } catch {
         res.write(`event: response.output_text.delta\ndata: ${JSON.stringify({
           type: 'response.output_text.delta',
@@ -751,7 +1259,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // Non-stream mode
     try {
       const response = await bridge.queryModel({ messages: bridgeMessages });
-      const fullText = response.chunks.join('');
+      const fullText = response.reply;
 
       res.json({
         id: responseId,
@@ -796,14 +1304,48 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   return { app, config };
 }
 
+// Host-lease handshake (Electron host architecture):
+//  * stdout carries exactly one line: versioned JSON handshake
+//    { "v": 1, "name": "trha-scheduler", "port": N } -- hosts that do not
+//    recognise the version refuse to start the child.
+//  * all operational logs go to stderr.
+//  * when TRHA_LEASE_STDIN=1, stdin is a lease: the host closing it (normal
+//    exit or crash of the parent) makes the scheduler drain and exit.
 export function startServer(config: ServerConfig = defaultServerConfig) {
   const { app } = createServer(config);
   return new Promise<void>((resolve) => {
-    app.listen(config.port, () => {
-      console.log(`Scheduler listening on port ${config.port}`);
-      console.log(`Modes: ${Object.keys(MODES).join(', ')}`);
-      console.log(`Tools: ${ALL_TOOLS.length} registered`);
+    const onListen = () => {
+      const handshake = config.socketPath
+        ? { v: 1, name: 'trha-scheduler', port: 0, socket: config.socketPath }
+        : { v: 1, name: 'trha-scheduler', port: config.port };
+      process.stdout.write(JSON.stringify(handshake) + '\n');
+      if (config.socketPath) {
+        console.error(`Scheduler listening on ${config.socketPath}`);
+      } else {
+        console.error(`Scheduler listening on port ${config.port}`);
+      }
+      console.error(`Modes: ${Object.keys(MODES).join(', ')}`);
+      console.error(`Tools: ${ALL_TOOLS.length} registered`);
       resolve();
-    });
+    };
+    if (config.socketPath) {
+      // remove a stale socket file from a previous run, then listen on UDS
+      try { rmSync(config.socketPath); } catch { /* ignore */ }
+      app.listen(config.socketPath, onListen);
+      process.on('exit', () => {
+        try { rmSync(config.socketPath ?? ''); } catch { /* ignore */ }
+      });
+    } else {
+      app.listen(config.port, config.host ?? '127.0.0.1', onListen);
+    }
   });
+}
+
+if (process.env.TRHA_LEASE_STDIN === '1') {
+  process.stdin.resume();
+  process.stdin.on('end', () => {
+    // lease dropped: parent gone (crash or exit) -- drain and leave
+    process.exit(0);
+  });
+  process.stdin.on('close', () => process.exit(0));
 }

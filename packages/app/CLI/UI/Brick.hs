@@ -6,7 +6,7 @@ module UI.Brick
   , ChatMessage(..)
   , AppEvent(..)
   , ResourceName(..)
-  , app
+  , appFor
   , initialState
   , runTUI
   ) where
@@ -15,19 +15,41 @@ import Brick
 import Brick.BChan
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async)
-import Control.Monad (void)
+import Control.Monad (forM_, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Core.Types
-import Bridge.Scheduler
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, listSessions, createSession, deleteSession, sendMessage, listModels, planStep, approvePlan, denyPlan)
+import Core.Replay (ReplayBlock(..), renderReplay)
+import Core.SessionSummary (SessionSummary(..), pickLocalSession)
+import Core.Transcript (listLocalSessions, loadTranscript, recordChunk, recordSession, recordToolEvent, recordUser)
+import UI.Commands (runSettingsCommand)
+import UI.Commands.Registry (pickerItems, registryHelp)
+import UI.SettingsView (SettingsEntry(..), settingsEntries, filterEntries, isOverridden, maskSecret)
+import UI.StatusInfo (StatusRow(..), collectStatusInfo)
+import UI.StatsView (StatsBlock(..), buildStatsBlocks)
+import UI.I18n (Lang(..), parseLang, tr)
+import Config.Settings (resolveConfig)
+import Data.List (intersperse)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Format (formatTime, defaultTimeLocale)
 import Graphics.Vty.Attributes
 import Graphics.Vty.Config (defaultConfig)
 import Graphics.Vty.CrossPlatform (mkVty)
 import Graphics.Vty.Input.Events
+import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics)
+import UI.Render.Footer (footerHints)
+import System.Directory (getCurrentDirectory)
+import System.IO (hFlush, stdout)
+import Control.Exception (IOException, try)
+import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
+import UI.Render.Picker (PickerItem(..), filterItems, maxVisible, moveSelection, queryAppend, queryDelete, windowRange)
+import UI.Render.ToolCard (ToolStatus(..), toolCardLines, toolCardWithStatus)
+import UI.Theme (ColorSpec(..), TermColor(..), TermStyle(..), Theme, resolveTheme, themeColors)
 
 -- | Application state
 data AppState = AppState
@@ -37,21 +59,73 @@ data AppState = AppState
   , appModel     :: Text
   , appStatus    :: Text
   , appBusy      :: Bool          -- ^ True while awaiting a response
+  , appPending   :: Maybe PendingMsg -- ^ Assistant reply being accumulated (streaming)
+  , appLastUsage :: Maybe Int     -- ^ Token usage of the last completed reply
+  , appPicker    :: Maybe PickerState -- ^ Quick-picker overlay (command menu)
   , appBridge    :: SchedulerBridge
   , appChan      :: BChan AppEvent
+  , appLang      :: Lang
+  , appSettings  :: Maybe SettingsPanel -- ^ /settings overlay (navigation/edit)
+  , appEffCfg    :: CLIConfig           -- ^ effective config snapshot for the panel
+  , appSysRows   :: [StatusRow]         -- ^ cached /settings Status rows
+  , appMetrics    :: [(Text, Text)]     -- ^ static metric values (workspace/git)
   }
+
+-- | Quick-picker state.  The candidate list is the shared registry
+-- ('UI.Commands.Registry.pickerItems'), filtered live by @pQuery@.
+data PickerState = PickerState
+  { pQuery    :: Text
+  , pSelected :: Int
+  } deriving (Show)
+
+-- | A tool invocation captured for display as a card.
+data ToolInv = ToolInv
+  { tiName :: ToolName
+  , tiArgs :: [Text]
+  } deriving (Show, Eq)
 
 -- | Chat message with timestamp
 data ChatMessage = ChatMessage
   { msgRole    :: Text
   , msgContent :: Text
   , msgTime    :: Text
+  , msgTool    :: Maybe ToolInv -- ^ present for tool-card messages
+  } deriving (Show)
+
+-- | Plain message (no tool payload).
+mkMsg :: Text -> Text -> Text -> ChatMessage
+mkMsg role content t = ChatMessage role content t Nothing
+
+-- | Tool-card message (content holds the pre-rendered card text).
+toolMsg :: Text -> ToolInv -> Text -> ChatMessage
+toolMsg role inv t =
+  ChatMessage role (T.unlines (toolCardLines (T.pack (tiName inv)) (tiArgs inv))) t (Just inv)
+
+-- | Streaming accumulation state for one assistant reply.
+--
+-- A reply arrives as a sequence of chunks (one `EvResponse` per chunk:
+-- `ChunkDelta` appends text, `ChunkToolCall` records a tool invocation,
+-- `ChunkDone` flushes the block).  Chunks may arrive individually today
+-- (synchronous endpoint, kernel aggregates) or incrementally later
+-- (standard SSE stream) -- the UI treats both uniformly.
+data PendingMsg = PendingMsg
+  { pmContent :: Text        -- ^ Accumulated delta text
+  , pmTools   :: [ToolInv]   -- ^ Tool invocations seen so far (reverse order)
+  , pmStart   :: Text        -- ^ Timestamp of the first delta
   } deriving (Show)
 
 -- | Async events pushed by background threads
 data AppEvent
   = EvResponse (Either CLIError StreamChunk)
   | EvSession (Either CLIError SessionId)
+  | EvSessions (Either CLIError [SessionId])
+  | EvModels (Either CLIError [ModelInfo])
+  | EvDeleted SessionId
+  | EvPlan (Either CLIError PlanSubmit)
+  | EvVerdict (Either CLIError PlanVerdict)
+  | EvTool (Either CLIError ToolEvent)
+  | EvStatusInfo [StatusRow]
+  | EvMetrics [(Text, Text)]
   deriving (Show)
 
 -- | Resource names
@@ -61,51 +135,87 @@ data ResourceName
   deriving (Show, Eq, Ord)
 
 -- | Create initial state
-initialState :: SchedulerBridge -> BChan AppEvent -> Text -> AppState
-initialState bridge chan model = AppState
+initialState :: SchedulerBridge -> BChan AppEvent -> CLIConfig -> AppState
+initialState bridge chan cfg = AppState
   { appMessages  = []
   , appInput     = editorText InputArea (Just 1) ""
   , appSessionId = Nothing
-  , appModel     = model
-  , appStatus    = "Ready"
+  , appModel     = configModel cfg
+  , appStatus    = tr lang "Ready"
   , appBusy      = False
+  , appPending   = Nothing
+  , appLastUsage = Nothing
+  , appPicker    = Nothing
   , appBridge    = bridge
   , appChan      = chan
+  , appLang      = lang
+  , appSettings  = Nothing
+  , appEffCfg    = cfg
+  , appSysRows   = []
+  , appMetrics   = []
   }
+  where lang = parseLang (configLang cfg)
 
--- | Application
-app :: App AppState AppEvent ResourceName
-app = App
+-- | Application for a given theme (attribute map follows the palette).
+appFor :: Theme -> App AppState AppEvent ResourceName
+appFor theme = App
   { appDraw         = drawUI
   , appChooseCursor = showFirstCursor
   , appHandleEvent  = handleEvent
   , appStartEvent   = return ()
-  , appAttrMap      = const theMap
+  , appAttrMap      = const (themeAttrMap theme)
   }
 
--- | Attribute map (Tokyo Night inspired)
-theMap :: AttrMap
-theMap = attrMap defAttr
-  [ (attrName "header",    fg brightCyan `withStyle` bold)
-  , (attrName "user",      fg brightGreen `withStyle` bold)
-  , (attrName "assistant", fg brightBlue)
-  , (attrName "system",    fg yellow)
-  , (attrName "error",     fg brightRed `withStyle` bold)
-  , (attrName "input",     fg brightCyan)
-  , (attrName "status",    fg brightBlack)
-  , (attrName "timestamp", fg brightBlack)
-  , (attrName "border",    fg brightBlack)
-  , (attrName "title",     fg magenta `withStyle` bold)
-  , (attrName "busy",      fg yellow `withStyle` bold)
+-- | Build a brick attribute map from a UI theme.
+themeAttrMap :: Theme -> AttrMap
+themeAttrMap th = attrMap defAttr
+  [ (attrName (T.unpack role), toVtyAttr cs)
+  | (role, cs) <- themeColors th
   ]
 
--- | Run the TUI
-runTUI :: SchedulerBridge -> Text -> IO ()
-runTUI bridge model = do
+-- | Map a theme colour spec to a vty attribute.
+toVtyAttr :: ColorSpec -> Attr
+toVtyAttr (ColorSpec fgCol styles) =
+  foldr (\st a -> a `withStyle` toVtyStyle st) (vtyFg fgCol) styles
+
+toVtyStyle :: TermStyle -> Style
+toVtyStyle StyleBold = bold
+toVtyStyle StyleDim  = dim
+toVtyStyle StyleReverse = reverseVideo
+
+-- | Map a theme colour token to a vty foreground attribute.
+vtyFg :: TermColor -> Attr
+vtyFg c = fg $ case c of
+  Black        -> black
+  Red          -> red
+  Green        -> green
+  Yellow       -> yellow
+  Blue         -> blue
+  Magenta      -> magenta
+  Cyan         -> cyan
+  White        -> white
+  BrightBlack  -> brightBlack
+  BrightRed    -> brightRed
+  BrightGreen  -> brightGreen
+  BrightYellow -> brightYellow
+  BrightBlue   -> brightBlue
+  BrightMagenta-> brightMagenta
+  BrightCyan   -> brightCyan
+  BrightWhite  -> brightWhite
+
+-- | Run the TUI with the named theme (unknown names fall back to default).
+runTUI :: SchedulerBridge -> CLIConfig -> IO ()
+runTUI bridge cfg = do
   chan <- newBChan 20
-  let mkVty' = mkVty defaultConfig
+  -- static footer metrics are sampled once (workspace path, git branch)
+  _ <- async $ do
+    ws <- getCurrentDirectory
+    gb <- gitBranchText
+    writeBChan chan (EvMetrics [("workspace", T.pack ws), ("git", gb)])
+  let theme = resolveTheme (configTheme cfg)
+      mkVty' = mkVty defaultConfig
   vty <- mkVty'
-  void $ customMain vty mkVty' (Just chan) app (initialState bridge chan model)
+  void $ customMain vty mkVty' (Just chan) (appFor theme) (initialState bridge chan cfg)
 
 --------------------------------------------------------------------------------
 -- Drawing
@@ -113,19 +223,110 @@ runTUI bridge model = do
 
 drawUI :: AppState -> [Widget ResourceName]
 drawUI st =
-  [ vBox
-      [ drawHeader
-      , vLimitPercent 75 $ drawMessages st
-      , drawInput st
-      , drawStatus st
+  case appSettings st of
+    -- /settings takes over the whole screen (qwen-style dialog): the tab
+    -- bar sits at the top and the content fills the terminal.
+    Just _  -> [ drawSettingsPanel st ]
+    Nothing ->
+      [ vBox
+          [ drawHeader (appLang st)
+          , drawMessages st
+          , maybe emptyWidget (drawPickerWidget st) (appPicker st)
+          , drawInput st
+          , drawStatus st
+          ]
       ]
-  ]
 
-drawHeader :: Widget ResourceName
-drawHeader =
+drawHeader :: Lang -> Widget ResourceName
+drawHeader lang =
   withAttr (attrName "header") $
     padLeftRight 1 $
-      hBox [ str " trha ", str "— agent harness" ]
+      hBox [ str " trha ", str (T.unpack (tr lang "— agent harness")) ]
+
+-- | Quick-picker overlay: filtered command list with a live query row.
+drawPickerWidget :: AppState -> PickerState -> Widget ResourceName
+drawPickerWidget st ps =
+  withAttr (attrName "border") $
+    borderWithLabel (withAttr (attrName "title") $ str (T.unpack (tr lang " Commands "))) $
+      vBox (rows ++ [queryRow])
+  where
+    lang = appLang st
+    matches = filterItems (pQuery ps) (pickerItems lang)
+    n       = length matches
+    sel     = pSelected ps
+    (start, end) = windowRange n sel maxVisible
+    rows = [ pickerRow idx sel it
+           | (idx, it) <- zip [start ..] (drop start (take (end + 1) matches))
+           , idx <= end ]
+    queryRow = padLeftRight 1 $ hBox
+      [ withAttr (attrName "input") $ str ("> " ++ T.unpack (pQuery ps))
+      , withAttr (attrName "status") $ str (T.unpack (tr lang "   ↑/↓ move · Enter run · Esc close"))
+      ]
+
+    pickerRow :: Int -> Int -> PickerItem -> Widget ResourceName
+    pickerRow idx cur it =
+      padLeftRight 1 $ hBox
+        [ withAttr markerAttr $ str marker
+        , str " "
+        , withAttr (attrName "title") $ str (T.unpack (piId it))
+        , withAttr (attrName "timestamp") $ str $ "  " ++ T.unpack (T.take 44 (piDesc it))
+        ]
+      where
+        marker | idx == cur = "▸ "
+               | otherwise  = "  "
+        markerAttr | idx == cur = attrName "tool"
+                   | otherwise  = attrName "timestamp"
+
+statusLine :: AppState -> Text
+statusLine st = T.unlines
+  [ tr lang "Status:"
+  , tr lang "  Session: " <> maybe (tr lang "none") T.pack (appSessionId st)
+  , tr lang "  Model: " <> appModel st
+  , "  " <> appStatus st
+  ]
+  where lang = appLang st
+
+-- | Resume a local session: replay its transcript into the message area
+-- and make it the active session.
+resumeSession :: Text -> EventM ResourceName AppState ()
+resumeSession selText = do
+  lang <- gets appLang
+  t <- liftIO now
+  local <- liftIO listLocalSessions
+  case pickLocalSession (T.unpack selText) local of
+    Nothing ->
+      appendMsg (mkMsg "system" (tr lang "No local session matches: " <> selText) t)
+    Just s -> do
+      events <- liftIO (loadTranscript (ssId s))
+      let msgs = blocksToMessages (renderReplay events)
+      modify $ \st -> st { appMessages = msgs
+                         , appSessionId = Just (ssId s)
+                         , appStatus = tr (appLang st) "Resumed " <> T.pack (ssId s)
+                         , appBusy = False
+                         , appPending = Nothing }
+      when (null msgs) $
+        appendMsg (mkMsg "system" (tr lang "Session " <> T.pack (ssId s) <> tr lang " has an empty transcript.") t)
+      appendMsg (mkMsg "system" (tr lang "Note: continuing needs the session on the orchestration side.") t)
+      scrollBottom
+
+-- | Numbered listing of local sessions (mirrors the REPL format).
+localSessionLines :: Lang -> [SessionSummary] -> [Text]
+localSessionLines lang sessions =
+  [ "  [" <> T.pack (show (i :: Int)) <> "] " <> ssTitle s
+      <> "  (" <> T.pack (ssId s)
+      <> maybe "" (\m -> " · " <> m) (ssModel s)
+      <> " · " <> T.pack (show (ssTurns s)) <> tr lang " turn(s)"
+      <> maybe "" (\ts -> " · " <> ts) (ssLastTs s)
+      <> ")"
+  | (i, s) <- zip [1 :: Int ..] sessions ]
+
+-- | Turn replay blocks into chat messages for the message area.
+blocksToMessages :: [ReplayBlock] -> [ChatMessage]
+blocksToMessages = map toMsg
+  where
+    toMsg b = case rbTool b of
+      Just (name, args) -> toolMsg "tool" (ToolInv name args) (maybe "" id (rbTime b))
+      Nothing           -> mkMsg (rbRole b) (rbContent b) (maybe "" id (rbTime b))
 
 drawMessages :: AppState -> Widget ResourceName
 drawMessages st =
@@ -133,30 +334,104 @@ drawMessages st =
     borderWithLabel (withAttr (attrName "title") $ str " Messages ") $
       viewport MessageArea Vertical $
         vBox $
-          if null (appMessages st)
-            then [ padAll 1 $ withAttr (attrName "timestamp") $
-                     strWrap "No messages yet. Type something and press Enter, or /help for commands." ]
-            else map drawMessage (appMessages st)
+          case (appMessages st, appPending st) of
+            ([], Nothing) ->
+              [ padAll 1 $ withAttr (attrName "timestamp") $
+                  strWrap "No messages yet. Type something and press Enter, or /help for commands." ]
+            _ -> map (drawMessage cfg) (appMessages st)
+              ++ maybe [] (pure . drawPending cfg) (appPending st)
+  where cfg = appEffCfg st
 
-drawMessage :: ChatMessage -> Widget ResourceName
-drawMessage msg =
+-- | Display style for a message role: (attribute, bracket label).
+roleDisplay :: Text -> (AttrName, Text)
+roleDisplay role = case role of
+  "user"      -> (attrName "user", role)
+  "assistant" -> (attrName "assistant", role)
+  "tool"      -> (attrName "tool", role)
+  "plan"      -> (attrName "plan", role)
+  "system"    -> (attrName "system", role)
+  "error"     -> (attrName "error", role)
+  _           -> (attrName "header", role)
+
+-- | Header row shared by messages and the streaming block:
+-- @[role] timestamp@.
+messageHeader :: Bool -> Text -> Text -> Widget ResourceName
+messageHeader showTs role time =
+  hBox (roleW : [timeW | showTs])
+  where
+    sty = roleDisplay role
+    roleW = withAttr (fst sty) $ str $ "[" ++ T.unpack (snd sty) ++ "]"
+    timeW = hBox [str " ", withAttr (attrName "timestamp") (str (T.unpack time))]
+
+-- | Body of a message: a tool-invocation card, an assistant reply run
+-- through the Markdown renderer, or plain wrapped text.
+messageBody :: Bool -> Text -> Text -> Maybe ToolInv -> Widget ResourceName
+messageBody md role content tool =
+  case tool of
+    Just inv ->
+      padLeft (Pad 2) $
+        withAttr (attrName "tool") $
+          vBox [ str (T.unpack l)
+               | l <- toolCardLines (T.pack (tiName inv)) (tiArgs inv) ]
+    Nothing
+      | role == "assistant" && md ->
+          padLeft (Pad 2) $
+            withAttr (attrName "assistant") $
+              vBox (renderBlocks (parseMarkdown content))
+      | role == "assistant" ->
+          padLeft (Pad 2) $
+            withAttr (attrName "assistant") $ strWrap (T.unpack content)
+      | role == "plan" ->
+          -- plan/approval card (Reasonix plan-decision style)
+          padLeft (Pad 2) $
+            withAttr (attrName "plan") $
+              borderWithLabel (withAttr (attrName "plan") $ str " Plan ") $
+                vBox
+                  [ padLeftRight 1 $ strWrap (T.unpack content)
+                  , padLeftRight 1 $ withAttr (attrName "status") $
+                      str "run /approve or /deny"
+                  ]
+      | otherwise ->
+          padLeft (Pad 2) $ strWrap (T.unpack content)
+
+drawMessage :: CLIConfig -> ChatMessage -> Widget ResourceName
+drawMessage cfg msg =
   padLeftRight 1 $
     padTopBottom 1 $
       vBox
-        [ hBox
-            [ withAttr roleAttr $ str $ "[" ++ T.unpack (msgRole msg) ++ "]"
-            , str " "
-            , withAttr (attrName "timestamp") $ str $ T.unpack (msgTime msg)
-            ]
-        , padLeft (Pad 2) $ strWrap (T.unpack (msgContent msg))
+        [ messageHeader (configTimestamps cfg) (msgRole msg) (msgTime msg)
+        , messageBody (configMarkdown cfg) (msgRole msg) (msgContent msg) (msgTool msg)
         ]
+
+-- | Render a parsed Markdown document as widgets.
+-- Paragraphs are wrapped as plain text for now; fenced code blocks get a
+-- bordered card labelled with their language.  Rich inline styling
+-- (bold/code colours) lands with the theme phase (P1.5).
+renderBlocks :: [MdBlock] -> [Widget ResourceName]
+renderBlocks = map renderBlock
   where
-    roleAttr = case msgRole msg of
-      "user"      -> attrName "user"
-      "assistant" -> attrName "assistant"
-      "system"    -> attrName "system"
-      "error"     -> attrName "error"
-      _           -> attrName "header"
+    renderBlock (MdCodeBlock lang code) =
+      padTop (Pad 1) $
+        withAttr (attrName "codeBlock") $
+          borderWithLabel (withAttr (attrName "codeLang") $ str (" " ++ T.unpack lang ++ " ")) $
+            vBox [ strWrap (T.unpack l) | l <- T.lines code ]
+    renderBlock (MdParagraph spans) =
+      strWrap (T.unpack (T.concat (map spanText spans)))
+
+    spanText (MdPlain t) = t
+    spanText (MdBold t)  = t
+    spanText (MdCode t)  = t
+
+-- | Render the assistant reply currently being accumulated.
+-- A blinking cursor suffix signals that the stream is still open.
+drawPending :: CLIConfig -> PendingMsg -> Widget ResourceName
+drawPending cfg pm =
+  padLeftRight 1 $
+    padTopBottom 1 $
+      vBox
+        [ messageHeader (configTimestamps cfg) "assistant" (pmStart pm)
+        , messageBody (configMarkdown cfg) "assistant" (pmContent pm <> "▍") Nothing
+        ]
 
 drawInput :: AppState -> Widget ResourceName
 drawInput st =
@@ -173,15 +448,14 @@ drawStatus :: AppState -> Widget ResourceName
 drawStatus st =
   withAttr (attrName "status") $
     padLeftRight 1 $
-      hBox
-        [ str " Model: "
-        , withAttr (attrName "title") $ txt (appModel st)
-        , str "  │  Session: "
-        , str (maybe "none" id (appSessionId st))
-        , str "  │  "
-        , str (T.unpack (appStatus st))
-        , str "  │  PgUp/PgDn scroll · g/G top/bottom · Ctrl+Q quit"
-        ]
+      hBox (intersperse (str "  │  ")
+        (map (str . T.unpack) metricSegs
+          ++ [str (T.unpack footerHints) | configHints (appEffCfg st)]))
+  where
+    live = FooterLive (appModel st) (fmap T.pack (appSessionId st)) (appStatus st)
+                      (appLastUsage st) (messageChars st)
+    metricSegs = footerMetrics (appLang st) (parseMetrics (configMetrics (appEffCfg st))) live (appMetrics st)
+    messageChars st2 = sum (map (T.length . msgContent) (appMessages st2))
 
 --------------------------------------------------------------------------------
 -- Event handling
@@ -200,17 +474,66 @@ handleEvent :: BrickEvent ResourceName AppEvent -> EventM ResourceName AppState 
 handleEvent (AppEvent ev) = handleAppEvent ev
 handleEvent (VtyEvent (EvKey (KChar 'q') [MCtrl])) = halt
 handleEvent (VtyEvent (EvKey (KChar 'c') [MCtrl])) = halt
+handleEvent (VtyEvent ev) = do
+  st <- get
+  case appSettings st of
+    Just _  -> handleSettingsKey ev
+    Nothing -> case appPicker st of
+      Just _  -> handlePickerKey ev
+      Nothing -> handleChatKey ev
+handleEvent _ = return ()
 
-handleEvent (VtyEvent (EvKey KPageUp [])) =
-  vScrollBy (viewportScroll MessageArea) (-10)
-handleEvent (VtyEvent (EvKey KPageDown [])) =
-  vScrollBy (viewportScroll MessageArea) 10
-handleEvent (VtyEvent (EvKey (KChar 'g') [])) =
-  vScrollToBeginning (viewportScroll MessageArea)
-handleEvent (VtyEvent (EvKey (KChar 'G') [])) =
+-- | Keys while the quick picker is open.
+handlePickerKey :: Event -> EventM ResourceName AppState ()
+handlePickerKey (EvKey KUp [])       = movePickerSel (-1)
+handlePickerKey (EvKey KDown [])     = movePickerSel 1
+handlePickerKey (EvKey (KChar 'p') [MCtrl]) = movePickerSel (-1)
+handlePickerKey (EvKey (KChar 'n') [MCtrl]) = movePickerSel 1
+handlePickerKey (EvKey KEnter [])    = pickerEnter
+handlePickerKey (EvKey KEsc [])      = modify $ \s -> s { appPicker = Nothing }
+handlePickerKey (EvKey KBS [])       = do
+  modify $ \s -> s { appPicker = (\ps -> ps { pQuery = queryDelete (pQuery ps), pSelected = 0 }) <$> appPicker s }
   scrollBottom
+handlePickerKey (EvKey (KChar c) [])
+  | let o = fromEnum c in o >= 32 && o < 127 = do
+      modify $ \s -> s { appPicker = (\ps -> ps { pQuery = queryAppend (pQuery ps) c, pSelected = 0 }) <$> appPicker s }
+      scrollBottom
+handlePickerKey _ = return ()
 
-handleEvent (VtyEvent (EvKey KEnter [])) = do
+-- | Move the picker selection, clamping to the current match list.
+movePickerSel :: Int -> EventM ResourceName AppState ()
+movePickerSel delta = do
+  st <- get
+  case appPicker st of
+    Nothing -> return ()
+    Just ps -> do
+      let n = length (filterItems (pQuery ps) (pickerItems (appLang st)))
+      modify $ \s -> s { appPicker = Just ps { pSelected = moveSelection delta (pSelected ps) n } }
+
+-- | Run the command under the picker cursor.
+pickerEnter :: EventM ResourceName AppState ()
+pickerEnter = do
+  st <- get
+  case appPicker st of
+    Nothing -> return ()
+    Just ps -> do
+      let matches = filterItems (pQuery ps) (pickerItems (appLang st))
+      modify $ \s -> s { appPicker = Nothing }
+      case drop (pSelected ps) matches of
+        item : _ -> handleSlash (piId item)
+        []       -> return ()
+
+-- | Keys in the normal chat view.
+handleChatKey :: Event -> EventM ResourceName AppState ()
+handleChatKey (EvKey KPageUp []) =
+  vScrollBy (viewportScroll MessageArea) (-10)
+handleChatKey (EvKey KPageDown []) =
+  vScrollBy (viewportScroll MessageArea) 10
+handleChatKey (EvKey (KChar 'g') []) =
+  vScrollToBeginning (viewportScroll MessageArea)
+handleChatKey (EvKey (KChar 'G') []) =
+  scrollBottom
+handleChatKey (EvKey KEnter []) = do
   st <- get
   let input = T.strip $ T.unlines $ getEditContents $ appInput st
   if T.null input || appBusy st
@@ -218,105 +541,712 @@ handleEvent (VtyEvent (EvKey KEnter [])) = do
     else do
       modify $ \s -> s { appInput = editorText InputArea (Just 1) "" }
       handleSubmit input
-
-handleEvent (VtyEvent ev) = do
+-- | A leading @/@ on an empty input opens the quick-picker (command menu);
+-- any other @/@ is typed into the editor as plain text.
+handleChatKey (EvKey (KChar '/') []) = do
+  st <- get
+  let input = T.strip $ T.unlines $ getEditContents $ appInput st
+  if T.null input
+    then modify $ \s -> s { appPicker = Just (PickerState "/" 0) }
+    else do
+      newInput <- nestEventM' (appInput st) $ handleEditorEvent (VtyEvent (EvKey (KChar '/') []))
+      put st { appInput = newInput }
+handleChatKey ev = do
   st <- get
   newInput <- nestEventM' (appInput st) $ handleEditorEvent (VtyEvent ev)
   put st { appInput = newInput }
-handleEvent _ = return ()
+
+-- | Ensure a streaming block is open for the current assistant reply.
+ensurePending :: EventM ResourceName AppState ()
+ensurePending = do
+  st <- get
+  case appPending st of
+    Just _ -> return ()
+    Nothing -> do
+      t <- liftIO now
+      modify $ \s -> s { appPending = Just (PendingMsg "" [] t) }
+
+-- | Append a text delta to the open assistant block.
+appendDelta :: Text -> EventM ResourceName AppState ()
+appendDelta text = do
+  ensurePending
+  modify $ \s -> s { appPending = (\pm -> pm { pmContent = pmContent pm <> text }) <$> appPending s }
+
+-- | Record a tool invocation in the open block.
+addToolLine :: ToolName -> [Text] -> EventM ResourceName AppState ()
+addToolLine name args = do
+  ensurePending
+  let inv = ToolInv name args
+  modify $ \s -> s { appPending = (\pm -> pm { pmTools = inv : pmTools pm }) <$> appPending s }
+
+-- | Close the streaming block and persist it as chat messages.
+flushPending :: EventM ResourceName AppState ()
+flushPending = do
+  st <- get
+  case appPending st of
+    Nothing -> return ()
+    Just pm -> do
+      let toolMsgs = [ toolMsg "tool" inv (pmStart pm)
+                     | inv <- reverse (pmTools pm) ]
+          textMsgs = [ mkMsg "assistant" (T.strip (pmContent pm)) (pmStart pm)
+                     | not (T.null (T.strip (pmContent pm))) ]
+      modify $ \s -> s { appMessages = appMessages s ++ toolMsgs ++ textMsgs
+                       , appPending = Nothing
+                       , appBusy = False
+                       , appStatus = tr (appLang s) "Ready" }
 
 -- | Async events from background workers
 handleAppEvent :: AppEvent -> EventM ResourceName AppState ()
 handleAppEvent (EvSession result) = do
-  t <- liftIO now
   case result of
     Right sid -> do
-      modify $ \st -> st { appSessionId = Just sid, appStatus = "Ready" }
-      appendMsg (ChatMessage "system" ("Session ready: " <> T.pack sid) t)
+      -- Auto-created sessions are recorded silently so that the system
+      -- message does not interleave between the user message and the reply.
+      modify $ \st -> st { appSessionId = Just sid, appStatus = tr (appLang st) "Ready" }
     Left err -> do
-      appendMsg (ChatMessage "error" ("Session failed: " <> T.pack (show err)) t)
-      modify $ \st -> st { appStatus = "Error", appBusy = False }
+      lang <- gets appLang
+      t <- liftIO now
+      appendMsg (mkMsg "error" (tr lang "Session failed: " <> T.pack (show err)) t)
+      modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
   scrollBottom
-handleAppEvent (EvResponse result) = do
+handleAppEvent (EvResponse result) = case result of
+  Right chunk -> case chunk of
+    ChunkDelta text    -> appendDelta text >> scrollBottom
+    ChunkToolCall n as -> addToolLine n as >> scrollBottom
+    ChunkDone usage    -> do
+      flushPending
+      bell <- gets (configBell . appEffCfg)
+      when bell $ liftIO (putStr "\a" >> hFlush stdout)
+      modify $ \s -> s { appLastUsage = Just (usageTotalTokens usage) }
+      scrollBottom
+  Left err -> do
+    flushPending -- keep whatever partial content already arrived
+    t <- liftIO now
+    appendMsg (mkMsg "error" ("Error: " <> T.pack (show err)) t)
+    modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
+    scrollBottom
+handleAppEvent (EvSessions result) = do
+  lang <- gets appLang
+  t <- liftIO now
+  let body = case result of
+        Right []  -> tr lang "No sessions."
+        Right sids -> (tr lang "Sessions:" <> "\n") <> T.unlines (map (\s -> "  • " <> T.pack s) sids)
+        Left err   -> tr lang "Error: " <> T.pack (show err)
+  appendMsg (mkMsg "system" body t)
+  scrollBottom
+handleAppEvent (EvModels result) = do
+  lang <- gets appLang
+  t <- liftIO now
+  let body = case result of
+        Right []    -> tr lang "No models available."
+        Right ms    -> (tr lang "Models:" <> "\n") <> T.unlines
+                         (map (\m -> "  • " <> modelName m <> " — " <> modelDescription m) ms)
+        Left err    -> tr lang "Error: " <> T.pack (show err)
+  appendMsg (mkMsg "system" body t)
+  scrollBottom
+handleAppEvent (EvDeleted sid) = do
+  lang <- gets appLang
+  t <- liftIO now
+  appendMsg (mkMsg "system" (tr lang "Deleted session: " <> T.pack sid) t)
+  scrollBottom
+handleAppEvent (EvPlan result) = do
   t <- liftIO now
   case result of
-    Right chunk -> do
-      let content = case chunk of
-            ChunkDelta text    -> text
-            ChunkToolCall n as -> "[Tool: " <> T.pack n <> " " <> T.unwords as <> "]"
-            ChunkDone usage    -> "✓ " <> T.pack (show (usageTotalTokens usage)) <> " tokens"
-      appendMsg (ChatMessage "assistant" content t)
-      modify $ \st -> st { appStatus = "Ready", appBusy = False }
+    Right (PlanAwaiting preview) ->
+      appendMsg (mkMsg "plan" ("⏸ " <> preview) t)
     Left err -> do
-      appendMsg (ChatMessage "error" (T.pack (show err)) t)
-      modify $ \st -> st { appStatus = "Error", appBusy = False }
+      appendMsg (mkMsg "error" (T.pack (show err)) t)
+      modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
+  scrollBottom
+handleAppEvent (EvVerdict result) = do
+  lang <- gets appLang
+  t <- liftIO now
+  case result of
+    Right (PlanApproved reply) -> do
+      appendMsg (mkMsg "assistant" reply t)
+      modify $ \st -> st { appStatus = tr (appLang st) "Ready", appBusy = False }
+    Right PlanDenied ->
+      appendMsg (mkMsg "system" (tr lang "Plan denied.") t)
+    Left err -> do
+      appendMsg (mkMsg "error" (T.pack (show err)) t)
+      modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
+  scrollBottom
+handleAppEvent (EvStatusInfo rows) = do
+  modify $ \s -> s { appSysRows = rows }
+handleAppEvent (EvMetrics rows) = do
+  modify $ \s -> s { appMetrics = rows }
+handleAppEvent (EvTool result) = do
+  lang <- gets appLang
+  t <- liftIO now
+  case result of
+    Right ev -> do
+      -- running events only update the status line; completed events
+      -- become tool cards
+      modify $ \st -> st { appStatus = tr (appLang st) "tool: " <> T.pack (teName ev) <> " " <> tr (appLang st) (statusTagOf (teStatus ev)) }
+      case teStatus ev of
+        ToolRunRunning -> return ()
+        _              -> appendMsg (mkMsg "tool" (renderToolEvent ev) t)
+    Left err -> do
+      appendMsg (mkMsg "error" (tr lang "SSE: " <> T.pack (show err)) t)
+      modify $ \st -> st { appStatus = tr (appLang st) "Error" }
   scrollBottom
 
--- | Dispatch submitted input
+-- | Status text for the footer/status line.
+statusTagOf :: ToolRunStatus -> Text
+statusTagOf ToolRunRunning   = "running…"
+statusTagOf ToolRunSucceeded = "✓"
+statusTagOf (ToolRunFailed _) = "✗"
+
+-- | Render a tool card with its status footer (message text).
+renderToolEvent :: ToolEvent -> Text
+renderToolEvent ev =
+  T.unlines (toolCardWithStatus (T.pack (teName ev)) (teArgs ev)
+              (toCardStatus (teStatus ev)) (teDurationMs ev))
+
+-- | Map the wire status to the card status type.
+toCardStatus :: ToolRunStatus -> ToolStatus
+toCardStatus s = case s of
+  ToolRunRunning   -> ToolRunning
+  ToolRunSucceeded -> ToolSucceeded
+  ToolRunFailed e  -> ToolFailed e
+
+-- | Dispatch submitted input: open the quick picker when a slash prefix is
+-- ambiguous, otherwise run the command / send the chat message.
 handleSubmit :: Text -> EventM ResourceName AppState ()
-handleSubmit input
-  | "/" `T.isPrefixOf` input = handleSlash input
-  | otherwise                = handleChat input
+handleSubmit input = do
+  st <- get
+  if "/" `T.isPrefixOf` input
+    then case filterItems input (pickerItems (appLang st)) of
+      []  -> handleSlash input  -- unknown or parameterised command typed in full
+      [_] -> handleSlash input  -- unique match: run it directly
+      _   -> modify $ \s -> s { appPicker = Just (PickerState input 0) }
+    else handleChat input
 
 handleSlash :: Text -> EventM ResourceName AppState ()
 handleSlash input = do
   t <- liftIO now
   st <- get
   let cmd = T.toLower input
+      bridge = appBridge st
+      chan   = appChan st
+      lang   = appLang st
   case cmd of
     "/help" ->
-      appendMsg (ChatMessage "system" helpText t)
+      appendMsg (mkMsg "system" (helpTextFor (appLang st)) t)
     "/clear" ->
       modify $ \s -> s { appMessages = [] }
     "/new" -> do
       modify $ \s -> s { appBusy = True, appStatus = "Creating session..." }
       void $ liftIO $ async $
-        createSession (appBridge st) >>= writeBChan (appChan st) . EvSession
+        createSession bridge >>= writeBChan chan . EvSession
+    "/settings"
+      | T.null (T.strip (T.drop 9 input)) -> openSettingsPanel
+      | otherwise -> do
+          let arg = T.strip (T.drop 9 input)
+          msg <- liftIO (runSettingsCommand lang arg)
+          forM_ msg $ \m -> appendMsg (mkMsg "system" m t)
+          scrollBottom
+    "/sessions" ->
+      void $ liftIO $ async $
+        listSessions bridge >>= writeBChan chan . EvSessions
+    "/models" ->
+      void $ liftIO $ async $
+        listModels bridge >>= writeBChan chan . EvModels
     "/quit" -> halt
     "/exit" -> halt
-    _
+    "/status" ->
+      appendMsg (mkMsg "system" (statusLine st) t)
+    "/approve" -> do
+      cur <- gets appSessionId
+      case cur of
+        Nothing -> appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
+        Just sid -> do
+          modify $ \s -> s { appBusy = True, appStatus = "Executing plan..." }
+          void $ liftIO $ async $ do
+            r <- approvePlan bridge sid
+            writeBChan chan (EvVerdict r)
+    "/deny" -> do
+      cur <- gets appSessionId
+      case cur of
+        Nothing -> appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
+        Just sid -> do
+          void $ liftIO $ async $ do
+            r <- denyPlan bridge sid
+            writeBChan chan (EvVerdict r)
+    "/plugins" -> do
+      t <- liftIO now
+      result <- liftIO (listPlugins bridge)
+      case result of
+        Right [] -> appendMsg (mkMsg "system" "No plugins registered." t)
+        Right ps -> appendMsg (mkMsg "system"
+                      ("Plugins:\n" <> T.unlines
+                        [ "  - " <> pluginName p <> " " <> pluginVersion p
+                            <> "  —  " <> pluginDescription p
+                        | p <- ps ]) t)
+        Left err -> appendMsg (mkMsg "error" (T.pack (show err)) t)
+    "/resume" -> do
+      local <- liftIO listLocalSessions
+      if null local
+        then appendMsg (mkMsg "system" (tr lang "No local sessions found. Run a conversation first.") t)
+        else do
+          appendMsg (mkMsg "system" ("Local sessions:\n" <> T.unlines (localSessionLines (appLang st) local)) t)
+          appendMsg (mkMsg "system" (tr lang "Resume with /resume <number-or-id>.") t)
+    _ 
+      | "/resume " `T.isPrefixOf` cmd -> resumeSession (T.strip (T.drop 8 input))
+      | cmd == "/plan" ->
+          appendMsg (mkMsg "system" (tr lang "Usage: /plan <what to do>") t)
+      | "/plan " `T.isPrefixOf` cmd -> do
+          let planText = T.strip (T.drop 6 input)
+          cur <- gets appSessionId
+          case cur of
+            Nothing ->
+              appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
+            Just sid -> do
+              appendMsg (mkMsg "user" planText t)
+              modify $ \s -> s { appBusy = True, appStatus = "Awaiting approval..." }
+              void $ liftIO $ async $ do
+                recordUser sid planText
+                r <- planStep bridge sid planText
+                writeBChan chan (EvPlan r)
       | cmd == "/model" ->
-          appendMsg (ChatMessage "system" ("Current model: " <> appModel st) t)
+          appendMsg (mkMsg "system" ("Current model: " <> appModel st) t)
       | "/model " `T.isPrefixOf` cmd -> do
           let model = T.strip (T.drop 7 input)
           modify $ \s -> s { appModel = model }
-          appendMsg (ChatMessage "system" ("Model set: " <> model) t)
+          appendMsg (mkMsg "system" ("Model set: " <> model) t)
+      | "/delete " `T.isPrefixOf` cmd -> do
+          let sid = T.unpack (T.strip (T.drop 8 input))
+          if null sid
+            then appendMsg (mkMsg "system" "Usage: /delete <session-id>" t)
+            else do
+              cur <- gets appSessionId
+              when (cur == Just sid) $
+                modify $ \s -> s { appSessionId = Nothing }
+              void $ liftIO $ async $ do
+                _ <- deleteSession bridge sid
+                writeBChan chan (EvDeleted sid)
       | otherwise ->
-          appendMsg (ChatMessage "system" ("Unknown command: " <> input <> " — try /help") t)
+          appendMsg (mkMsg "system" (tr lang "Unknown command: " <> input <> tr lang " — try /help") t)
   scrollBottom
-  where
-    helpText = T.unlines
-      [ "Commands:"
-      , "  /help            Show this help"
-      , "  /model [name]    Show or set the model"
-      , "  /new             Create a new session"
-      , "  /clear           Clear message history"
-      , "  /quit            Exit (also Ctrl+Q)"
-      , "Keys:"
-      , "  PgUp / PgDn      Scroll messages"
-      , "  g / G            Jump to top / bottom"
-      , "  Ctrl+Q           Quit"
-      ]
 
--- | Send a chat message: create session lazily, send async, never block UI
+-- | Send a chat message: create session lazily, send async, never block UI.
+-- While the step runs, tool lifecycle events arrive over SSE; they are
+-- recorded to the transcript and surfaced through 'EvTool'.
 handleChat :: Text -> EventM ResourceName AppState ()
 handleChat input = do
   t <- liftIO now
-  appendMsg (ChatMessage "user" input t)
-  modify $ \st -> st { appBusy = True, appStatus = "Thinking..." }
+  appendMsg (mkMsg "user" input t)
+  modify $ \st -> st { appBusy = True, appStatus = tr (appLang st) "Thinking..." }
 
   st <- get
   let bridge = appBridge st
       chan   = appChan st
+      model  = appModel st
+      runStepWithTools sid = do
+        cancel <- subscribeSessionEvents bridge sid (toolSink chan sid)
+        result <- sendMessage bridge sid input
+        -- drain window: let trailing SSE events (e.g. the final tool
+        -- status) arrive before tearing the stream down
+        liftIO $ threadDelay 100000
+        cancel
+        recordChunk sid result
+        writeBChan chan (EvResponse result)
   void $ liftIO $ async $ case appSessionId st of
-    Just sid ->
-      sendMessage bridge sid input >>= writeBChan chan . EvResponse
+    Just sid -> do
+      recordUser sid input
+      runStepWithTools sid
     Nothing -> do
       sessResult <- createSession bridge
       writeBChan chan (EvSession sessResult)
       case sessResult of
-        Right sid ->
-          sendMessage bridge sid input >>= writeBChan chan . EvResponse
+        Right sid -> do
+          recordSession sid model
+          recordUser sid input
+          runStepWithTools sid
         Left _ ->
           return ()
   scrollBottom
+  where
+    -- Record every tool event; completed/failed ones also go to the UI.
+    toolSink chan sid ev = case ev of
+      Right toolEv -> do
+        recordToolEvent sid toolEv
+        case teStatus toolEv of
+          ToolRunRunning -> return ()
+          _              -> writeBChan chan (EvTool (Right toolEv))
+      Left err -> writeBChan chan (EvTool (Left err))
+
+-- | Localised /help text (command list + picker/key hints).
+helpTextFor :: Lang -> Text
+helpTextFor lang = T.unlines $
+  T.lines (registryHelp lang)
+    ++ [ ""
+       , tr lang "Quick picker:"
+       , tr lang "  Type a slash prefix and press Enter to open the command menu;"
+       , tr lang "  keep typing to filter, ↑/↓ to move, Enter to run, Esc to close."
+       , ""
+       , tr lang "Keys:"
+       , tr lang "  PgUp / PgDn       Scroll messages"
+       , tr lang "  g / G             Jump to top / bottom"
+       , tr lang "  Ctrl+Q            Quit"
+       ]
+
+
+-- /settings panel -- port of the qwen-code SettingsDialog interaction:
+-- a tab bar (Settings / Status / Stats) plus a focus model where the
+-- keyboard moves between the tab bar and the list (and into value editing).
+--   keys:  left/right  switch tab (any focus)
+--          up          list top -> tab bar    down: tab bar -> list
+--          enter       tab bar: activate list | list: edit/toggle value
+--          type        filter list (search)  esc: close / cancel edit
+
+data SettingsTab
+  = TabSettings
+  | TabStatus
+  | TabStats
+  deriving (Show, Eq, Enum, Bounded)
+
+data SettingsFocus
+  = FocusTabs
+  | FocusSearch
+  | FocusList
+  deriving (Show, Eq)
+
+-- | Panel state: active tab, focus region, list selection/query/edit.
+data SettingsPanel = SettingsPanel
+  { spTab   :: SettingsTab
+  , spFocus :: SettingsFocus
+  , spSel   :: Int            -- ^ selected index within the filtered rows
+  , spQuery :: Text           -- ^ live filter (typed while the list is focused)
+  , spEdit  :: Maybe Text     -- ^ Just buffer while editing a text value
+  , spError :: Maybe Text     -- ^ last apply error (shown under the list)
+  } deriving (Show)
+
+tabList :: [SettingsTab]
+tabList = [minBound .. maxBound]
+
+tabLabel :: Lang -> SettingsTab -> Text
+tabLabel lang t = tr lang (case t of
+  TabSettings -> "Settings"
+  TabStatus   -> "Status"
+  TabStats    -> "Stats")
+
+-- | Rows for the current effective config in the active language.
+settingsRows :: AppState -> [SettingsEntry]
+settingsRows st = settingsEntries (appLang st) (appEffCfg st)
+
+-- | Filtered rows currently shown in the settings tab.
+visibleRows :: AppState -> [SettingsEntry]
+visibleRows st = filterEntries q (settingsRows st)
+  where
+    q = maybe "" spQuery (appSettings st)
+
+-- | Open the panel with a fresh effective configuration snapshot.
+openSettingsPanel :: EventM ResourceName AppState ()
+openSettingsPanel = do
+  st <- get
+  let chan = appChan st
+      model = appModel st
+      mSid = appSessionId st
+  cfg <- liftIO (resolveConfig defaultCLIConfig)
+  _ <- liftIO $ async $ do
+    rows <- collectStatusInfo cfg mSid model
+    writeBChan chan (EvStatusInfo rows)
+  modify $ \s -> s { appSettings = Just (SettingsPanel TabSettings FocusList 0 "" Nothing Nothing)
+                    , appEffCfg = cfg }
+
+-- | Close the /settings panel.
+closeSettingsPanel :: EventM ResourceName AppState ()
+closeSettingsPanel = modify $ \s -> s { appSettings = Nothing }
+
+-- | Apply one edited value and refresh the snapshot.
+applySetting :: Text -> Text -> EventM ResourceName AppState ()
+applySetting key raw = do
+  lang <- gets appLang
+  msg <- liftIO (runSettingsCommand lang (key <> " " <> raw))
+  cfg <- liftIO (resolveConfig defaultCLIConfig)
+  modify $ \s -> s { appEffCfg = cfg
+                    , appSettings = (\p -> p { spEdit = Nothing, spError = Nothing }) <$> appSettings s }
+  case msg of
+    Just m | any (`T.isPrefixOf` m) ["Error: ", "Unknown", "Value must", "错误：", "未知", "值必须"] ->
+      modify $ \s -> s { appSettings = (\p -> p { spError = Just m }) <$> appSettings s }
+    Just m ->
+      modify $ \s -> s { appSettings = (\p -> p { spError = Just (tr (appLang s) "Saved: " <> m) }) <$> appSettings s }
+    Nothing -> return ()
+
+-- | Move the tab by a delta (wraps around the tab list).
+moveTab :: Int -> SettingsTab -> SettingsTab
+moveTab d t = toEnum (mod (fromEnum t + d) (fromEnum (maxBound :: SettingsTab) + 1))
+-- | Keys while the settings panel is open (three-zone focus model, mirroring
+-- the reference dialog: tabs -> search -> list -> editing).
+handleSettingsKey :: Event -> EventM ResourceName AppState ()
+handleSettingsKey (EvKey KEsc []) = do
+  st <- get
+  case appSettings st of
+    -- editing: cancel the edit first
+    Just p | Just _ <- spEdit p ->
+      modify $ \s -> s { appSettings = Just p { spEdit = Nothing } }
+    -- search/list zone with a query: clear it before closing
+    Just p | (spFocus p == FocusSearch || spFocus p == FocusList) && not (T.null (spQuery p)) ->
+      modify $ \s -> s { appSettings = Just p { spQuery = "", spSel = 0 } }
+    _ -> closeSettingsPanel
+-- left/right switch the tab from any zone (ignored while editing)
+handleSettingsKey (EvKey KLeft []) = do
+  st <- get
+  if editingNow st then return () else moveTabBy (-1)
+handleSettingsKey (EvKey KRight []) = do
+  st <- get
+  if editingNow st then return () else moveTabBy 1
+-- up: search -> tabs ; list top (no query) -> search
+handleSettingsKey (EvKey KUp []) = do
+  st <- get
+  case appSettings st of
+    Just p | spFocus p == FocusSearch ->
+      modify $ \s -> s { appSettings = Just p { spFocus = FocusTabs } }
+    Just p | spFocus p == FocusList && spSel p == 0 && T.null (spQuery p) ->
+      modify $ \s -> s { appSettings = Just p { spFocus = FocusSearch } }
+    Just p | spFocus p == FocusList -> moveListSel (-1)
+    _ -> return ()
+-- down: tabs -> search (settings tab) ; search -> list ; list wraps
+handleSettingsKey (EvKey KDown []) = do
+  st <- get
+  case appSettings st of
+    Just p | spFocus p == FocusTabs && spTab p == TabSettings ->
+      modify $ \s -> s { appSettings = Just p { spFocus = FocusSearch } }
+    Just p | spFocus p == FocusSearch ->
+      modify $ \s -> s { appSettings = Just p { spFocus = FocusList } }
+    Just p | spFocus p == FocusList -> moveListSel 1
+    _ -> return ()
+handleSettingsKey (EvKey KEnter []) = do
+  st <- get
+  case appSettings st of
+    Nothing -> return ()
+    Just p | Just buf <- spEdit p -> do
+      let rows = visibleRows st
+      case drop (spSel p) rows of
+        e : _ -> applySetting (seKey e) buf
+        []    -> return ()
+    Just p -> case (spTab p, spFocus p) of
+      (TabStatus, _)  -> return ()  -- read-only content
+      (TabStats, _)   -> return ()
+      (TabSettings, FocusTabs) ->
+        modify $ \s -> s { appSettings = Just p { spFocus = FocusSearch } }
+      (TabSettings, FocusSearch) ->
+        modify $ \s -> s { appSettings = Just p { spFocus = FocusList } }
+      (TabSettings, FocusList) -> do
+        let rows = visibleRows st
+        case drop (spSel p) rows of
+          e : _ | seKind e == "bool" -> applySetting (seKey e) (if seVal e == "true" then "false" else "true")
+          e : _ | not (null (seOptions e)) ->
+            applySetting (seKey e) (nextOption (seOptions e) (seVal e))
+          e : _ -> modify $ \s -> s { appSettings = Just p { spEdit = Just (seedEdit e) } }
+          []    -> return ()
+handleSettingsKey (EvKey (KChar c) []) = do
+  st <- get
+  let o = fromEnum c
+  case appSettings st of
+    Just p | Just buf <- spEdit p ->
+      modify $ \s -> s { appSettings = Just p { spEdit = Just (buf <> T.singleton c) } }
+    Just p | spTab p == TabSettings && spFocus p == FocusSearch, o >= 32 && o < 127 ->
+      modify $ \s -> s { appSettings = Just p { spQuery = queryAppend (spQuery p) c, spSel = 0 } }
+    Just p | spTab p == TabSettings && spFocus p == FocusList, o >= 32 && o < 127 ->
+      modify $ \s -> s { appSettings = Just p { spQuery = queryAppend (spQuery p) c, spSel = 0 } }
+    _ -> return ()
+handleSettingsKey (EvKey KBS []) = do
+  st <- get
+  case appSettings st of
+    Just p | Just buf <- spEdit p ->
+      modify $ \s -> s { appSettings = Just p { spEdit = Just (T.dropEnd 1 buf) } }
+    Just p | spFocus p == FocusSearch || spFocus p == FocusList ->
+      modify $ \s -> s { appSettings = Just p { spQuery = queryDelete (spQuery p), spSel = 0 } }
+    _ -> return ()
+handleSettingsKey _ = return ()
+
+-- | Is a value edit in progress?
+editingNow :: AppState -> Bool
+editingNow st = case appSettings st of
+  Just p | Just _ <- spEdit p -> True
+  _ -> False
+
+-- | Tab-bar switching shared by left/right keys.
+moveTabBy :: Int -> EventM ResourceName AppState ()
+moveTabBy d = modify $ \s -> s { appSettings = (\p -> p { spTab = moveTab d (spTab p)
+                                                           , spSel = 0, spQuery = "", spEdit = Nothing, spError = Nothing }) <$> appSettings s }
+
+-- | Move the list selection by a delta, wrapping around (qwen behaviour:
+-- down at the end returns to the top).
+moveListSel :: Int -> EventM ResourceName AppState ()
+moveListSel d = do
+  st <- get
+  let n = length (visibleRows st)
+  modify $ \s -> s { appSettings = (\p -> p { spSel = if n <= 0 then 0 else mod (spSel p + d + n) n }) <$> appSettings s }
+-- | Initial edit buffer: current value, except secrets which start empty.
+seedEdit :: SettingsEntry -> Text
+seedEdit e
+  | seKey e == "token" = ""
+  | otherwise = seVal e
+
+-- | Widget for the settings panel (tab bar + content).
+drawSettingsPanel :: AppState -> Widget ResourceName
+drawSettingsPanel st =
+  withAttr (attrName "border") $
+    borderWithLabel (withAttr (attrName "title") $ str (T.unpack (tr lang " settings "))) $
+      vBox (tabBarRow : contentRows ++ [fill ' '])
+  where
+    lang = appLang st
+    p = case appSettings st of
+      Just x  -> x
+      Nothing -> SettingsPanel TabSettings FocusList 0 "" Nothing Nothing
+    -- make one row span the full dialog width (fill absorbs the rest)
+    fullRow w = vLimit 1 $ hBox [padLeftRight 1 w, fill ' ']
+    fullRowAny w = hBox [padLeftRight 1 w, fill ' '] -- single line vs. multi-line content
+    tabBarRow = fullRow $ hBox
+      [ hBox (map tabWidget tabList)
+      , str "  "
+      , withAttr (attrName "status") (str (T.unpack hintText))
+      ]
+    tabWidget t =
+      let active = spTab p == t
+          label = " " <> tabLabel lang t <> " "
+          attr  = if active then attrName "tool" else attrName "timestamp"
+      in withAttr attr (str (T.unpack label))
+    hintText = case spFocus p of
+      FocusTabs -> tr lang "←/→ to switch tabs"
+      FocusSearch -> tr lang "↑ tabs · ↓ list · type to filter"
+      FocusList -> case spEdit p of
+        Just _  -> tr lang "Enter save · Esc cancel"
+        Nothing -> tr lang "↑/↓ move · Enter edit · Esc close"
+          <> "  " <> tr lang "←/→ to switch tabs"
+    contentRows = case spTab p of
+      TabSettings -> settingsListRows
+      TabStatus   -> [fullRowAny (renderStatusRows lang (appSysRows st))]
+      TabStats    -> [fullRowAny (vLimit 22 (renderStatsBlocks lang (computeStatsBlocks st)))]
+    settingsListRows = fullRow (searchRow st p) : map fullRow rowsShown ++ [fullRow descRow, fullRow statusRow]
+    searchRow st2 sp =
+      let q = spQuery sp
+          n = length (filterEntries q (settingsRows st2))
+          left = if T.null q then tr (appLang st2) "Settings" else tr (appLang st2) "Search: " <> q
+      in hBox
+        [ withAttr (attrName "input") $ str (T.unpack left)
+        , str "   "
+        , withAttr (attrName "status") $ str (T.unpack (searchRight sp n))
+        ]
+    searchRight sp n = case spEdit sp of
+      Just buf  -> tr lang "editing " <> buf <> "   " <> tr lang "Enter save · Esc cancel"
+      Nothing
+        | n == 0 -> tr lang "no match"
+        | otherwise -> "[" <> T.pack (show n) <> "]"
+          <> maybe "" ("  " <>) (spError sp)
+    rowsShown = map (padLeftRight 1 . rowFor) [start .. min end (n - 1)]
+    visible = visibleRows st
+    n = length visible
+    sel = spSel p
+    editing = case spEdit p of
+      Just _  -> True
+      Nothing -> False
+    (start, end) = windowRange n sel settingsListMax
+    rowFor idx = case drop idx visible of
+      e : _ -> if idx == sel
+        then withAttr (attrName "selection") (fullRow (rowBody e))
+        else withAttr (attrName "timestamp") (fullRow (rowBody e))
+      [] -> emptyWidget
+    -- qwen-style row: label left, fill, value pinned right; * = overridden
+    rowBody e = hBox
+      [ withAttr (attrName "title") (str (T.unpack (T.take 30 (seLabel e))))
+      , fill ' '
+      , str (T.unpack (T.take 30 valueText))
+      ]
+      where
+        valueText | seKey e == "token" = maskSecret (seVal e)
+                  | otherwise = seVal e
+          <> (if isOverridden e then " *" else "")
+    -- qwen-style detail line: full description of the selected row
+    descRow = case drop sel visible of
+      e : _ | not editing && n > 0 ->
+        withAttr (attrName "timestamp") $ str (T.unpack (T.take 70 (seHint e)))
+      _ -> emptyWidget
+    -- bottom help line
+    statusRow = padLeftRight 1 $ withAttr (attrName "status") $ str (T.unpack helpText)
+    helpText
+      | editing = tr lang "Enter save · Esc cancel"
+      | otherwise = tr lang "↑/↓ move · Enter edit · Esc close"
+
+-- | Clamp a selection into @[0, n-1]@.
+clampSel :: Int -> Int -> Int
+clampSel n sel
+  | n <= 0 = 0
+  | otherwise = max 0 (min sel (n - 1))
+
+-- | Two-column rendering of the Status rows (label column padded).
+renderStatusRows :: Lang -> [StatusRow] -> Widget ResourceName
+renderStatusRows lang rows =
+  vLimit 20 $ vBox [ row r | r <- rows ]
+  where
+    w = 1 + maximum (map (T.length . tr lang . srLabel) rows)
+    padTo x = x <> T.replicate (w - T.length x) " "
+    row r = hBox
+      [ withAttr (attrName "timestamp") (str (T.unpack (padTo (tr lang (srLabel r)))))
+      , str (T.unpack (srValue r))
+      ]
+
+-- | Counters for the Stats tab, shaped by UI.StatsView.
+computeStatsBlocks :: AppState -> [StatsBlock]
+computeStatsBlocks st =
+  buildStatsBlocks sid total (u, a, tl, sy) (appLastUsage st) chars
+  where
+    roles = map msgRole (appMessages st)
+    total = length roles
+    u  = length (filter (== "user") roles)
+    a  = length (filter (== "assistant") roles)
+    tl = length (filter (== "tool") roles)
+    sy = total - u - a - tl
+    chars = sum (map (T.length . msgContent) (appMessages st))
+    sid = maybe "—" T.pack (appSessionId st)
+
+-- | Render the three stats sections (title + two-column rows each).
+renderStatsBlocks :: Lang -> [StatsBlock] -> Widget ResourceName
+renderStatsBlocks lang blocks = vBox (concatMap one blocks)
+  where
+    one b = [ padLeftRight 1 $ withAttr (attrName "title") $ str (T.unpack (tr lang (sbTitleKey b)))
+            , renderStatusRows lang [ StatusRow k v | (k, v) <- sbRows b ]
+            , str " "
+            ]
+
+-- | Next element in a cycle (wraps to the head); falls back to the head
+-- when the current value is not one of the options.
+nextOption :: [Text] -> Text -> Text
+nextOption opts cur = case break (== cur) opts of
+  (_, [])     -> case opts of
+    (x : _) -> x
+    []      -> ""
+  (_, x : rest) -> case rest of
+    (nxt : _) -> nxt
+    []        -> case opts of
+      (h : _) -> h
+      []      -> x
+
+-- | Maximum panel row width (kept below the 80-column window).
+settingsListWidth :: Int
+settingsListWidth = 96
+
+-- | Current git branch name (from the working tree) or "—".
+gitBranchText :: IO Text
+gitBranchText = do
+  mhead <- readMaybeFile ".git/HEAD"
+  case mhead of
+    Nothing -> return "—"
+    Just hd | "ref: " `T.isPrefixOf` hd -> do
+      let refPath = ".git/" <> T.unpack (T.strip (T.drop 5 hd))
+      mref <- readMaybeFile refPath
+      return (maybe "—" T.strip mref)
+    Just hd -> return (T.strip hd)
+  where
+    readMaybeFile fp = do
+      r <- try (TIO.readFile fp) :: IO (Either IOException Text)
+      return $ case r of
+        Left _  -> Nothing
+        Right t -> Just t
+
+-- | Rows shown at once in the settings list (all 11 keys fit on tall screens).
+settingsListMax :: Int
+settingsListMax = 20

@@ -1,0 +1,99 @@
+cabal-version:      3.0
+name:               trha-cli
+version:            0.1.0.0
+synopsis:           CLI for trha agent harness
+license:            MIT
+author:             Yanli
+build-type:         Simple
+
+-- Standalone build definition for the trha CLI shell.
+-- Mirrors the executable stanza in the repository-root trha.cabal so that
+-- `cd packages/app/CLI && cabal build` works on its own.
+executable trha
+  main-is:          Main.hs
+  hs-source-dirs:   .
+  other-modules:
+    Bridge.Scheduler
+    Config.Settings
+    UI.Commands.Registry
+    Core.HTTP
+    Core.Transcript
+    Core.SessionSummary
+    Core.Replay
+    Core.SSE
+    Core.Types
+    UI.Brick
+    UI.Commands
+    UI.I18n
+    UI.SettingsView
+    UI.StatsView
+    UI.StatusInfo
+    UI.Render.Markdown
+    UI.Render.Picker
+    UI.Render.ToolCard
+    UI.Theme
+    UI.Render.Footer
+  ghc-options:      -rtsopts -threaded
+  build-depends:    base ^>=4.22
+                  , trha:trha-api
+                  , aeson
+                  , text
+                  , bytestring
+                  , http-client
+                  , http-client-tls
+                  , http-types
+                  , directory
+                  , filepath
+                  , ansi-terminal
+                  , process
+                  , brick >= 2.1
+                  , vty >= 6.1
+                  , vty-crossplatform >= 0.4
+                  , optparse-applicative >= 0.18
+                  , stm
+                  , containers
+                  , async
+                  , time
+                  , haskeline >= 0.8
+                  , yaml
+                  , unix
+  default-language: Haskell2010
+
+test-suite trha-cli-test
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   ., test
+  other-modules:
+    Core.SSE
+    Core.SSESpec
+    Core.TypesSpec
+    Core.Replay
+    Core.ReplaySpec
+    Core.SessionSummary
+    Core.SessionSummarySpec
+    Core.Types
+    UI.Render.Markdown
+    UI.Render.MarkdownSpec
+    UI.Render.Picker
+    UI.Render.PickerSpec
+    UI.Render.ToolCard
+    UI.Render.ToolCardSpec
+    UI.Theme
+    UI.ThemeSpec
+    UI.Render.Footer
+    UI.Render.FooterSpec
+    UI.CommandsSpec
+    UI.Commands.RegistrySpec
+    UI.Commands.Registry
+  build-depends:    base ^>=4.22
+                  , hspec >= 2.10
+                  , text
+                  , aeson
+                  , bytestring
+                  , containers
+                  , yaml
+                  , directory
+                  , filepath
+                  , time
+                  , unix
+  default-language: Haskell2010

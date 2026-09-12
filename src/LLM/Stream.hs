@@ -13,12 +13,17 @@ module LLM.Stream
   , streamDeepSeek
   , parseSSELine
   , parseNDJSONLine
+  , streamPostSse
+  , openAICompatStreamCall
   ) where
 
 import Control.Exception (try, SomeException)
-import Control.Monad (when)
+import Control.Monad (join, when)
 import Data.Aeson
+import Data.Aeson.Key (fromText)
+import qualified Data.Aeson.KeyMap as KM
 import Data.Aeson.Types (parseMaybe)
+import Data.List (sortOn)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.IORef
@@ -28,9 +33,11 @@ import qualified Data.Text.Encoding as TE
 import qualified Data.Vector as V
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Network.HTTP.Types (HeaderName)
 import Network.HTTP.Types.Status (statusCode)
+import Data.Text.Encoding.Error (lenientDecode)
 
-import LLM.Adapter.Types (Message(..), Role(..))
+import LLM.Adapter.Types (Message(..), Role(..), ChatMessage, ChatTurn(..), StreamChunk(..), ToolCall(..), ToolSpec, Usage(..))
 
 data StreamEvent
   = SEVDelta Text
@@ -265,3 +272,144 @@ parseAnthropicEvent = parseMaybe $ withObject "AnthropicEvent" $ \v -> do
         _ -> pure (SEVError "Unknown error")
     "ping" -> pure (SEVDelta "")
     _ -> pure (SEVDelta "")
+
+--------------------------------------------------------------------------------
+-- Shared engine (A5): one SSE implementation for every OpenAI-compatible wire
+--------------------------------------------------------------------------------
+
+-- | A JSON object field.
+fieldOf :: Text -> Object -> Maybe Value
+fieldOf k o = KM.lookup (fromText k) o
+
+-- | A JSON string field as plain text.
+textOf :: Maybe Value -> Text
+textOf (Just (String t)) = t
+textOf _                 = ""
+
+-- | POST a JSON body to an SSE endpoint and hand each @data:@ payload to the
+-- callback the moment it arrives.  Never throws: failure comes back as @Left@.
+streamPostSse
+  :: String                            -- ^ endpoint URL
+  -> [(HeaderName, BS.ByteString)]     -- ^ extra headers (auth, version, …)
+  -> Value                             -- ^ request body
+  -> (Value -> IO ())                  -- ^ per-frame callback
+  -> IO (Either Text ())
+streamPostSse url headers body onFrame = do
+  mgr <- newManager tlsManagerSettings
+  req0 <- parseRequest url
+  let req = req0
+        { method = "POST"
+        , requestBody = RequestBodyLBS (encode body)
+        , requestHeaders =
+            ("Accept", "text/event-stream") : ("Content-Type", "application/json") : headers
+        , responseTimeout = responseTimeoutNone
+        }
+  result <- try $ withResponse req mgr $ \resp -> do
+    let code = statusCode (responseStatus resp)
+    if code >= 400
+      then do
+        errBody <- brReadSome (responseBody resp) 4096
+        return $ Left ("HTTP " <> T.pack (show code) <> ": " <> TE.decodeUtf8With lenientDecode (BSL.toStrict errBody))
+      else do
+        go (responseBody resp) ""
+        return (Right ())
+  case result of
+    Left (ex :: SomeException) -> return $ Left (T.pack (show ex))
+    Right r -> return r
+  where
+    go reader buf = do
+      chunk <- brRead reader
+      if BS.null chunk
+        then pure ()
+        else do
+          let text = TE.decodeUtf8With lenientDecode chunk
+              allFrames = buf <> text
+              (frames, rest) = splitFrames allFrames
+          mapM_ dispatch frames
+          go reader rest
+    splitFrames t = case T.breakOn "\n\n" t of
+      (frame, rest) | T.null rest -> ([], frame)
+                    | otherwise   -> let (f, r) = splitFrames (T.drop 2 rest) in (frame : f, r)
+    dispatch frame = mapM_ oneLine (T.lines frame)
+    oneLine line = case T.stripPrefix "data: " (T.strip line) of
+      Just payload | payload /= "[DONE]" ->
+        case decode (BSL.fromStrict (TE.encodeUtf8 payload)) of
+          Just v  -> onFrame v
+          Nothing -> pure ()
+      _ -> pure ()
+
+-- | Stream an OpenAI-compatible completion against any endpoint.  Each text
+-- increment reaches @onEvent@ as it arrives; tool-call fragments are
+-- aggregated per index and emitted once complete, so the returned @ChatTurn@
+-- matches what the blocking call would have produced.
+openAICompatStreamCall
+  :: String                          -- ^ full endpoint URL
+  -> Text                            -- ^ api key (empty = no Authorization header)
+  -> Value                           -- ^ request body (caller sets @stream@)
+  -> (StreamChunk -> IO ()) -> IO ChatTurn
+openAICompatStreamCall url apiKey body onEvent = do
+  acc <- newIORef []
+  result <- streamPostSse url authHeaders body $ \v -> do
+    case openAICompatDelta v of
+      Just txt | not (T.null txt) -> onEvent (ChunkDelta txt)
+      _                           -> pure ()
+    calls <- readIORef acc
+    writeIORef acc (foldl mergeCall calls (openAICompatToolDeltas v))
+  done <- readIORef acc
+  mapM_ (\(_, nm, args) -> onEvent (ChunkToolCall nm args))
+        (sortOn (\(i, _, _) -> i) (reverse done))
+  case result of
+    Left e   -> do
+      onEvent (ChunkError e)
+      pure (ChatTurn "" [] Nothing (Just e))
+    Right () -> do
+      onEvent (ChunkDone (Usage 0 0 0))
+      pure (ChatTurn "" [] Nothing Nothing)
+  where
+    authHeaders =
+      [ ("Authorization", "Bearer " <> TE.encodeUtf8 apiKey) | not (T.null (T.strip apiKey)) ]
+
+-- | Merge one tool-call fragment into the running list.  Fragments must be
+-- appended (@new@ after @old@), never prepended — the provider sends the name
+-- first and the arguments in pieces.
+mergeCall :: [(Int, Text, Text)] -> (Int, Text, Text) -> [(Int, Text, Text)]
+mergeCall acc (i, nm, ag) = case break (\(j, _, _) -> j == i) acc of
+  (before, (_, nm0, ag0) : after) -> before ++ [(i, nm0 <> nm, ag0 <> ag)] ++ after
+  _                               -> acc ++ [(i, nm, ag)]
+
+-- | @choices[0].delta.content@ from a streaming frame.
+openAICompatDelta :: Value -> Maybe Text
+openAICompatDelta v = case v of
+  Object o -> case fieldOf "choices" o of
+    Just (Array a) -> case V.toList a of
+      (Object c : _) -> case fieldOf "delta" c of
+        Just (Object d) -> case fieldOf "content" d of
+          Just (String t) -> Just t
+          _               -> Nothing
+        _ -> Nothing
+      _ -> Nothing
+    _ -> Nothing
+  _ -> Nothing
+
+-- | @choices[0].delta.tool_calls@ → (index, name chunk, argument chunk).
+openAICompatToolDeltas :: Value -> [(Int, Text, Text)]
+openAICompatToolDeltas v = case v of
+  Object o -> case fieldOf "choices" o of
+    Just (Array a) -> case V.toList a of
+      (Object c : _) -> case fieldOf "delta" c of
+        Just (Object d) -> case fieldOf "tool_calls" d of
+          Just (Array tcs) -> [ (idx, nm, ag)
+                              | Object tc <- V.toList tcs
+                              , let idx = case fieldOf "index" tc of
+                                            Just (Number n) -> round n
+                                            _               -> 0
+                              , let fn  = case fieldOf "function" tc of
+                                            Just (Object f) -> f
+                                            _               -> KM.empty
+                              , let nm  = textOf (fieldOf "name" fn)
+                              , let ag  = textOf (fieldOf "arguments" fn) ]
+          _ -> []
+        _ -> []
+      _ -> []
+    _ -> []
+  _ -> []

@@ -25,29 +25,29 @@ jobs:
         file: Dockerfile.static
         platforms: linux/amd64
         push: false
-        tags: gh-harness:static
+        tags: trha:static
         outputs: type=local,dest=./dist
     
     - name: Upload binary
       uses: actions/upload-artifact@v3
       with:
-        name: gh-harness-linux-x86_64
-        path: dist/gh-harness
+        name: trha-linux-x86_64
+        path: dist/trha
     
     - name: Create release package
       if: github.event_name == 'release'
       run: |
         cd dist
-        tar -czf gh-harness-linux-x86_64.tar.gz gh-harness
-        sha256sum gh-harness-linux-x86_64.tar.gz > gh-harness-linux-x86_64.tar.gz.sha256
+        tar -czf trha-linux-x86_64.tar.gz trha
+        sha256sum trha-linux-x86_64.tar.gz > trha-linux-x86_64.tar.gz.sha256
     
     - name: Upload release asset
       if: github.event_name == 'release'
       uses: actions/upload-release-asset@v1
       with:
         upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./dist/gh-harness-linux-x86_64.tar.gz
-        asset_name: gh-harness-linux-x86_64.tar.gz
+        asset_path: ./dist/trha-linux-x86_64.tar.gz
+        asset_name: trha-linux-x86_64.tar.gz
         asset_content_type: application/gzip
     
     - name: Upload checksum
@@ -55,8 +55,8 @@ jobs:
       uses: actions/upload-release-asset@v1
       with:
         upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./dist/gh-harness-linux-x86_64.tar.gz.sha256
-        asset_name: gh-harness-linux-x86_64.tar.gz.sha256
+        asset_path: ./dist/trha-linux-x86_64.tar.gz.sha256
+        asset_name: trha-linux-x86_64.tar.gz.sha256
         asset_content_type: text/plain
   
   test:
@@ -70,23 +70,23 @@ jobs:
     - name: Download binary
       uses: actions/download-artifact@v3
       with:
-        name: gh-harness-linux-x86_64
+        name: trha-linux-x86_64
     
     - name: Make binary executable
-      run: chmod +x gh-harness
+      run: chmod +x trha
     
     - name: Test on ${{ matrix.distro }}
       uses: docker:// ${{ matrix.distro }}:latest
       with:
         args: |
           bash -c "
-            ./gh-harness --version
-            ./gh-harness --help
+            ./trha --version
+            ./trha --help
             echo 'Binary works on ${{ matrix.distro }}'
           "
     
     - name: Test basic functionality
       run: |
-        ./gh-harness --version
-        ./gh-harness --help
+        ./trha --version
+        ./trha --help
         echo "Binary works on host system"

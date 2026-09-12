@@ -13,6 +13,11 @@ module Core.Types
   , ModelInfo(..)
   , Usage(..)
   , StreamChunk(..)
+  , PlanSubmit(..)
+  , PlanVerdict(..)
+  , ToolRunStatus(..)
+  , ToolEvent(..)
+  , PluginInfo(..)
   
     -- * Configuration
   , CLIConfig(..)
@@ -23,6 +28,7 @@ module Core.Types
   ) where
 
 import Data.Aeson
+import Data.Aeson.Types (Parser, (.:), (.:?), (.!=), withObject)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 
@@ -88,6 +94,19 @@ data ModelInfo = ModelInfo
 instance ToJSON ModelInfo
 instance FromJSON ModelInfo
 
+-- | A registered orchestration plugin (declarative view).
+data PluginInfo = PluginInfo
+  { pluginName        :: Text
+  , pluginVersion     :: Text
+  , pluginDescription :: Text
+  } deriving (Show, Eq, Generic)
+
+instance FromJSON PluginInfo where
+  parseJSON = withObject "PluginInfo" $ \o -> PluginInfo
+    <$> o .: "name"
+    <*> o .: "version"
+    <*> o .: "description"
+
 -- | Usage statistics
 data Usage = Usage
   { usagePromptTokens     :: Int
@@ -108,30 +127,133 @@ data StreamChunk
 instance ToJSON StreamChunk
 instance FromJSON StreamChunk
 
+-- | Outcome of submitting a plan through the approval gate: the
+-- orchestration layer is waiting for a host decision.
+data PlanSubmit
+  = PlanAwaiting Text -- ^ pending plan request (held by the host)
+  deriving (Show, Eq)
+
+-- | Outcome of an approval decision.
+data PlanVerdict
+  = PlanApproved Text -- ^ plan executed; reply text
+  | PlanDenied
+  deriving (Show, Eq)
+
+-- | Lifecycle status of a tool execution reported by the orchestration
+-- layer over SSE (Phase 2 S2).
+data ToolRunStatus
+  = ToolRunRunning
+  | ToolRunSucceeded
+  | ToolRunFailed Text -- ^ failure detail (e.g. exit code)
+  deriving (Show, Eq)
+
+-- | One tool lifecycle event.
+data ToolEvent = ToolEvent
+  { teName       :: ToolName
+  , teArgs       :: [Text]
+  , teStatus     :: ToolRunStatus
+  , teDurationMs :: Maybe Int
+  } deriving (Show, Eq)
+
+instance FromJSON ToolRunStatus where
+  parseJSON = withText "ToolRunStatus" $ \t ->
+    case t of
+      "running"   -> pure ToolRunRunning
+      "succeeded" -> pure ToolRunSucceeded
+      "failed"    -> pure (ToolRunFailed "")
+      _           -> fail "unknown tool status"
+
+instance ToJSON ToolRunStatus where
+  toJSON ToolRunRunning   = String "running"
+  toJSON ToolRunSucceeded = String "succeeded"
+  toJSON (ToolRunFailed _) = String "failed"
+
+instance FromJSON ToolEvent where
+  parseJSON = withObject "ToolEvent" $ \o -> do
+    name <- o .: "name"
+    args <- o .:? "args" .!= ([] :: [Text])
+    dur  <- o .:? "durationMs"
+    st   <- o .: "status" :: Parser Text
+    status <- case st of
+      "running"   -> pure ToolRunRunning
+      "succeeded" -> pure ToolRunSucceeded
+      "failed"    -> ToolRunFailed <$> o .:? "error" .!= ""
+      _           -> fail "unknown tool status"
+    pure $ ToolEvent name args status dur
+
+instance ToJSON ToolEvent where
+  toJSON (ToolEvent name args st dur) =
+    object $
+      [ "name" .= name
+      , "args" .= args
+      , "status" .= statusTag st
+      , "durationMs" .= dur
+      ]
+      ++ [ "error" .= err | ToolRunFailed err <- [st], err /= "" ]
+    where
+      statusTag ToolRunRunning   = ("running" :: Text)
+      statusTag ToolRunSucceeded = "succeeded"
+      statusTag (ToolRunFailed _) = "failed"
+
 -- | CLI configuration
 data CLIConfig = CLIConfig
   { configHost       :: Text
   , configPort       :: Int
   , configModel      :: Text
+  , configToken      :: Text
   , configMaxTokens  :: Int
   , configTimeout    :: Int
   , configRetries    :: Int
   , configVerbose    :: Bool
+  , configTheme      :: Text
+  , configLang       :: Text -- ^ "zh" (default) or "en" interface language
+  , configMetrics    :: Text -- ^ status-line metric keys (comma separated)
+  , configMarkdown   :: Bool -- ^ render assistant replies as markdown
+  , configTimestamps :: Bool -- ^ show message timestamps
+  , configHints      :: Bool -- ^ show the footer key hints
+  , configBell       :: Bool -- ^ ring the terminal bell when a reply completes
   } deriving (Show, Eq, Generic)
 
 instance ToJSON CLIConfig
-instance FromJSON CLIConfig
+
+-- | Manual 'FromJSON' so that newer optional fields (token, theme) default
+-- when reading settings files written by older versions.
+instance FromJSON CLIConfig where
+  parseJSON = withObject "CLIConfig" $ \v -> CLIConfig
+    <$> v .: "configHost"
+    <*> v .: "configPort"
+    <*> v .: "configModel"
+    <*> v .:? "configToken" .!= "dev-token"
+    <*> v .: "configMaxTokens"
+    <*> v .: "configTimeout"
+    <*> v .: "configRetries"
+    <*> v .: "configVerbose"
+    <*> v .:? "configTheme" .!= "tokyo-night"
+    <*> v .:? "configLang" .!= "zh"
+    <*> v .:? "configMetrics" .!= "model,git,context,session"
+    <*> v .:? "configMarkdown" .!= True
+    <*> v .:? "configTimestamps" .!= True
+    <*> v .:? "configHints" .!= True
+    <*> v .:? "configBell" .!= False
 
 -- | Default CLI configuration
 defaultCLIConfig :: CLIConfig
 defaultCLIConfig = CLIConfig
   { configHost      = "localhost"
-  , configPort      = 3000
+  , configPort      = 3456
   , configModel     = "deepseek-chat"
+  , configToken     = "dev-token"
   , configMaxTokens = 4096
-  , configTimeout   = 30000
+  , configTimeout   = 120000
   , configRetries   = 3
   , configVerbose   = False
+  , configTheme     = "tokyo-night"
+  , configLang      = "zh"
+  , configMetrics   = "model,git,context,session"
+  , configMarkdown  = True
+  , configTimestamps = True
+  , configHints     = True
+  , configBell      = False
   }
 
 -- | CLI errors

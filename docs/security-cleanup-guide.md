@@ -17,7 +17,7 @@ API 密钥 `tp-cwa1hhqtypbyqyzk9ezz23usjfzk6575ddcq1s8gg3cc1042` 被提交到 Gi
 pip install git-filter-repo
 
 # 备份仓库
-cp -r /home/yanli/work/gh--harness /home/yanli/work/gh--harness-backup
+cp -r /home/yanli/work/trha /home/yanli/work/trha-backup
 
 # 创建替换文件
 cat > /tmp/replacements.txt << 'EOF'
@@ -25,7 +25,7 @@ tp-cwa1hhqtypbyqyzk9ezz23usjfzk6575ddcq1s8gg3cc1042==>REMOVED_API_KEY
 EOF
 
 # 执行过滤
-cd /home/yanli/work/gh--harness
+cd /home/yanli/work/trha
 git-filter-repo --replace-text /tmp/replacements.txt
 
 # 强制推送
@@ -35,10 +35,10 @@ git push origin main --force
 ### 方案 2：使用 git filter-branch
 
 ```bash
-cd /home/yanli/work/gh--harness
+cd /home/yanli/work/trha
 
 # 备份
-cp -r . ../gh--harness-backup
+cp -r . ../trha-backup
 
 # 执行过滤
 git filter-branch --force --tree-filter '
@@ -64,10 +64,10 @@ wget https://repo1.maven.org/maven2/com/madgag/bfg/1.14.0/bfg-1.14.0.jar
 echo "tp-cwa1hhqtypbyqyzk9ezz23usjfzk6575ddcq1s8gg3cc1042" > /tmp/sensitive.txt
 
 # 执行清理
-java -jar bfg-1.14.0.jar --replace-text /tmp/sensitive.txt /home/yanli/work/gh--harness
+java -jar bfg-1.14.0.jar --replace-text /tmp/sensitive.txt /home/yanli/work/trha
 
 # 清理引用
-cd /home/yanli/work/gh--harness
+cd /home/yanli/work/trha
 git reflog expire --expire=now --all && git gc --prune=now --aggressive
 
 # 强制推送

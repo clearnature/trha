@@ -26,7 +26,7 @@ jobs:
           ~/.cabal/packages
           ~/.cabal/store
           dist-newstyle
-        key: ${{ runner.os }}-haskell-${{ hashFiles('gh-harness.cabal') }}
+        key: ${{ runner.os }}-haskell-${{ hashFiles('trha.cabal') }}
         restore-keys: |
           ${{ runner.os }}-haskell-
     
@@ -72,6 +72,34 @@ jobs:
         cd packages/scheduler
         npm test
   
+  desktop:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Use Node.js 20
+      uses: actions/setup-node@v3
+      with:
+        node-version: 20
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        cd packages/app/Desktop
+        npm install
+
+    - name: Test (host contract, handshake, studio client)
+      run: |
+        cd packages/app/Desktop
+        npx vitest run
+
+    - name: Build main + renderer
+      run: |
+        cd packages/app/Desktop
+        npm run build:main
+        npm run build:renderer
+
   benchmarks:
     runs-on: ubuntu-latest
     

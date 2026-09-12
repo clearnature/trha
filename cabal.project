@@ -1,0 +1,7 @@
+-- trha multi-package project file.
+-- The root trha.cabal (kernel + shell servers) and the standalone CLI
+-- shell under packages/app/CLI (own trha-cli.cabal, brick TUI/REPL) are
+-- both part of this project so builds work from either directory.
+packages:
+  .
+  packages/app/CLI

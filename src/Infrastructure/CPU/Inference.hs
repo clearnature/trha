@@ -6,6 +6,7 @@ module Infrastructure.CPU.Inference
   , createInferenceEngine
   , loadModel
   , generate
+  , generateStream
   , tokenize
   , detokenize
   ) where
@@ -47,19 +48,28 @@ loadModel engine = do
   putStrLn $ "Loading model: " ++ engineModelPath engine
   return $ Right ()
 
--- | Generate text
-generate :: InferenceEngine -> Text -> Int -> IO (Either String Text)
-generate engine prompt maxTokens = do
-  -- Tokenize input
-  let tokens = tokenize engine prompt
-  
-  -- Generate tokens (placeholder)
-  let generatedTokens = take maxTokens (repeat 0)
-  
-  -- Detokenize output
-  let output = detokenize engine generatedTokens
-  
+-- | Generate text, handing each token's text to the callback the moment it is
+-- produced.  @generate@ is this function with a no-op callback, so the
+-- blocking and the streaming path can never drift apart — and a real engine
+-- only ever has to replace the sampling step inside this one loop.
+generateStream :: InferenceEngine -> Text -> Int -> (Text -> IO ()) -> IO (Either String Text)
+generateStream engine prompt maxTokens onToken = do
+  let _promptTokens = tokenize engine prompt
+      go acc 0 = return acc
+      go acc n = do
+        -- Placeholder sampler; a real engine would sample from logits here.
+        let word  = detokenize engine [0]
+            piece = if T.null acc then word else " " <> word
+            acc'  = acc <> piece
+        onToken piece
+        go acc' (n - 1)
+  output <- go "" maxTokens
   return $ Right output
+
+-- | Generate text (blocking entry point).
+generate :: InferenceEngine -> Text -> Int -> IO (Either String Text)
+generate engine prompt maxTokens =
+  generateStream engine prompt maxTokens (\_ -> return ())
 
 -- | Tokenize text
 tokenize :: InferenceEngine -> Text -> [Int]

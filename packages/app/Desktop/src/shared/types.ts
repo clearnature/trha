@@ -34,6 +34,9 @@ export interface ElectronAPI {
   getToken: () => Promise<string>;
   getSchedulerPort: () => Promise<number>;
   getAppVersion: () => Promise<string>;
+  getStudioInfo: () => Promise<unknown>;
+  getPrefs: () => Promise<unknown>;
+  setPrefs: (prefs: unknown) => Promise<void>;
   platform: string;
 }
 

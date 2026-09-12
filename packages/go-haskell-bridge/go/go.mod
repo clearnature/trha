@@ -1,4 +1,4 @@
-module github.com/gh-harness/go-haskell-bridge
+module github.com/clearnature/trha/packages/go-haskell-bridge/go
 
 go 1.21
 

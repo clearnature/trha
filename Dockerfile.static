@@ -219,13 +219,13 @@ RUN cabal build all \
 
 # Copy binary to output
 RUN mkdir -p /output && \
-    cp dist-newstyle/build/x86_64-linux/ghc-${GHC_VERSION}/gh-harness-0.1.0.0/x/gh-harness/build/gh-harness/gh-harness /output/
+    cp dist-newstyle/build/x86_64-linux/ghc-${GHC_VERSION}/trha-0.1.0.0/x/trha/build/trha/trha /output/
 
 # Final stage - minimal image
 FROM scratch
 
 # Copy binary from builder
-COPY --from=builder /output/gh-harness /gh-harness
+COPY --from=builder /output/trha /trha
 
 # Set entrypoint
-ENTRYPOINT ["/gh-harness"]
+ENTRYPOINT ["/trha"]

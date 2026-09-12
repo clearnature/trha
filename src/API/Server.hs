@@ -9,17 +9,33 @@
 -- Includes both non-streaming and streaming (SSE) endpoints.
 module API.Server
   ( startServer
+  , startStubKernel
   , API
+  , parseOpenAIRequest
+  , OpenAIRequest(..)
+  , openaiCompletion
+  , openaiToolCompletion
   ) where
 
 import Servant
+import Data.Tagged (Tagged(..))
+import Network.Wai (Application, responseLBS, responseStream, strictRequestBody)
 import Network.Wai.Handler.Warp (run)
+import Network.HTTP.Types (ResponseHeaders, status200, status400)
+import qualified Data.ByteString.Builder as Builder
+import Control.Concurrent (threadDelay)
 import Control.Monad.IO.Class (liftIO)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import Data.Aeson
-import Data.Aeson.Types (parseMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
+import qualified Data.ByteString.Lazy as BL
+import qualified Data.Text.Encoding as TE
+import Data.Aeson.Types (Pair, parseMaybe)
+import Data.Aeson.Key (fromText)
+import qualified Data.Aeson.KeyMap as KM
+import Control.Monad (join)
 import GHC.Generics
 import qualified Data.Map as Map
 import Control.Concurrent.STM
@@ -29,10 +45,17 @@ import Data.IORef
 import Core.Session.Types
 import Core.Session.Manager
 import Core.Agent.Modes
+import Core.Provider.Types (ProviderEntry, findProvider)
+
+-- Provider registry handlers (P1: list/protocols, P2: probe, P3: save/…)
+import qualified API.Providers as P
+import qualified API.ProviderProbe as PP
+import qualified API.ProviderRuntime as PR
 
 -- LLM modules
 import qualified LLM.Adapter.Types as LLM
 import LLM.Adapter.Interface (LLMAdapter(..))
+import LLM.Adapter.Types (ChatMessage(..), ChatTurn(..), StreamChunk(..), ToolCall(..), ToolSpec, Usage(..))
 import qualified LLM.Stream as Stream
 
 --------------------------------------------------------------------------------
@@ -44,6 +67,16 @@ type API =
        "health" :> Get '[JSON] Value
   :<|> "session" :> "start" :> ReqBody '[JSON] StartReq :> Post '[JSON] Value
   :<|> "agent" :> "step" :> ReqBody '[JSON] StepReq :> Post '[JSON] Value
+  -- Provider registry (P1: list + protocols; P2: probe; P3: save/remove/check)
+  :<|> "providers" :> Get '[JSON] Value
+  :<|> "providers" :> "protocols" :> Get '[JSON] Value
+  :<|> "providers" :> "probe" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  :<|> "providers" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  :<|> "providers" :> "remove" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  :<|> "providers" :> "check" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  :<|> "providers" :> "edit" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  :<|> "providers" :> "websearch" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  :<|> "providers" :> "thinking" :> ReqBody '[JSON] Value :> Post '[JSON] Value
   -- OpenAI compatible (non-stream)
   :<|> "v1" :> "models" :> Get '[JSON] Value
   :<|> "v1" :> "chat" :> "completions" :> ReqBody '[JSON] Value :> Post '[JSON] Value
@@ -51,10 +84,10 @@ type API =
   :<|> "v1" :> "messages" :> ReqBody '[JSON] Value :> Post '[JSON] Value
   -- Responses API (non-stream)
   :<|> "v1" :> "responses" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-  -- Streaming endpoints (SSE) - returns raw WAI Application
-  :<|> "v1" :> "chat" :> "completions" :> "stream" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-  :<|> "v1" :> "messages" :> "stream" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-  :<|> "v1" :> "responses" :> "stream" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  -- Streaming endpoints: real SSE, written to the socket as it arrives.
+  :<|> "v1" :> "chat" :> "completions" :> "stream" :> Raw
+  :<|> "v1" :> "messages" :> "stream" :> Raw
+  :<|> "v1" :> "responses" :> "stream" :> Raw
 
 -- Request types
 data StartReq = StartReq { srMode :: Maybe Text }
@@ -72,13 +105,22 @@ server adapter sessions =
        healthHandler
   :<|> startSessionHandler sessions
   :<|> agentStepHandler adapter sessions
+  :<|> P.providersHandler
+  :<|> P.protocolsHandler
+  :<|> PP.probeHandler
+  :<|> P.saveProviderHandler
+  :<|> P.removeProviderHandler
+  :<|> P.checkProviderHandler
+  :<|> P.editProviderHandler
+  :<|> P.setWebSearchHandler
+  :<|> P.setThinkingHandler
   :<|> openaiModelsHandler adapter
   :<|> openaiChatHandler adapter
   :<|> anthropicMessagesHandler adapter
   :<|> responsesHandler adapter
-  :<|> openaiStreamHandler adapter
-  :<|> anthropicStreamHandler adapter
-  :<|> responsesStreamHandler adapter
+  :<|> openaiStreamApp adapter
+  :<|> anthropicStreamApp adapter
+  :<|> responsesStreamApp adapter
 
 -- Health check
 healthHandler :: Handler Value
@@ -137,39 +179,114 @@ openaiModelsHandler adapter = do
       ]
 
 openaiChatHandler :: LLMAdapter -> Value -> Handler Value
-openaiChatHandler adapter body =
-  case parseOpenAI body of
+openaiChatHandler defaultAdapter body = do
+  adapter <- dispatchAdapter defaultAdapter body
+  case parseOpenAIRequest body of
     Nothing -> throwError err400 { errBody = "Invalid request" }
-    Just (model, msgs, _stream) -> do
-      let hsMsgs = map (\(r, c) -> LLM.Message (toRole r) c) msgs
-      chunks <- liftIO $ llmChat adapter hsMsgs
-      let content = T.concat [t | LLM.ChunkDelta t <- chunks]
-      let usage = case [u | LLM.ChunkDone u <- chunks] of
-            (u:_) -> u
-            []    -> LLM.Usage 0 0 0
-      return $ object
-        [ "id"      .= ("chatcmpl-" <> model :: Text)
-        , "object"  .= ("chat.completion" :: Text)
-        , "model"   .= model
-        , "choices" .= [object
-            [ "index"         .= (0 :: Int)
-            , "message"       .= object ["role" .= ("assistant" :: Text), "content" .= content]
-            , "finish_reason" .= ("stop" :: Text)
-            ]]
-        , "usage"   .= toJSON usage
-        ]
-
-parseOpenAI :: Value -> Maybe (Text, [(Text, Text)], Bool)
-parseOpenAI val = parseMaybe parser val
+    Just req
+      | null (oaiTools req) -> do
+          -- legacy path: role/content messages through the plain chat
+          let hsMsgs = [ LLM.Message (toRole r) c
+                       | m <- oaiMsgs req
+                       , Just (r, c) <- [parseLegacyMessage m] ]
+          chunks <- liftIO $ llmChat adapter hsMsgs
+          return $ openaiCompletion (oaiModel req) chunks
+      | otherwise -> do
+          -- function-calling path: full ChatMessage semantics (incl. tool
+          -- results and assistant tool_calls in the history)
+          msgs <- case mapM parseChatMsg (oaiMsgs req) of
+            Nothing -> throwError err400 { errBody = "Invalid message in tools request" }
+            Just ms -> return ms
+          specs <- case mapM parseTool (oaiTools req) of
+            Nothing -> throwError err400 { errBody = "Invalid tools" }
+            Just ts -> return ts
+          turn <- liftIO $ llmChatTools adapter msgs specs
+          return $ openaiToolCompletion (oaiModel req) turn
   where
-    parser = withObject "OpenAI" $ \v -> do
-      model  <- v .:? "model" .!= "deepseek-chat"
-      msgs   <- v .:? "messages" .!= ([] :: [Value])
-      stream <- v .:? "stream" .!= False
-      parsed <- mapM parseMsg msgs
-      return (model, parsed, stream)
-    parseMsg = withObject "Message" $ \m ->
-      (,) <$> m .: "role" <*> m .: "content"
+    parseChatMsg :: Value -> Maybe LLM.ChatMessage
+    parseChatMsg v = parseMaybe parseJSON v
+    parseTool :: Value -> Maybe LLM.ToolSpec
+    parseTool v = parseMaybe parseJSON v
+
+-- | P6: a request may name a provider ("provider": "<name>"); that provider's
+-- saved endpoint answers it via its own adapter.  Without a name the kernel's
+-- default adapter is used, so every existing caller keeps working.
+dispatchAdapter :: LLMAdapter -> Value -> Handler LLMAdapter
+dispatchAdapter defaultAdapter body = do
+  resolved <- liftIO (resolveAdapterIO defaultAdapter body)
+  either (throwError . adapterRefusal) pure resolved
+
+requestedProvider :: Value -> Maybe Text
+requestedProvider body = join (parseMaybe (withObject "req" (\o -> o .:? "provider")) body)
+
+-- | A refusal the UI can act on: HTTP status plus a machine-readable code.
+codedRefusal :: Int -> Text -> Text -> ServerError
+codedRefusal status code msg = ServerError
+  { errHTTPCode = status
+  , errReasonPhrase = T.unpack (T.replace "_" " " code)
+  , errBody = encode (object [ "code" .= code, "error" .= msg ])
+  , errHeaders = [("Content-Type", "application/json")]
+  }
+
+-- | Parsed OpenAI chat request: model, raw messages, stream flag,
+-- raw tools array (Phase 3 K3).
+data OpenAIRequest = OpenAIRequest
+  { oaiModel  :: Text
+  , oaiMsgs   :: [Value]
+  , oaiStream :: Bool
+  , oaiTools  :: [Value]
+  }
+
+-- | Legacy role/content pair from a plain chat message.
+parseLegacyMessage :: Value -> Maybe (Text, Text)
+parseLegacyMessage v = parseMaybe (withObject "Message" $ \m ->
+  (,) <$> m .: "role" <*> m .: "content") v
+
+-- | Parse the request, preserving the raw @tools@ and message values so
+-- the handler can decide between the legacy and the tool-calling path.
+parseOpenAIRequest :: Value -> Maybe OpenAIRequest
+parseOpenAIRequest val = parseMaybe parser val
+  where
+    parser = withObject "OpenAI" $ \v -> OpenAIRequest
+      <$> (v .:? "model" .!= "deepseek-chat")
+      <*> (v .:? "messages" .!= ([] :: [Value]))
+      <*> (v .:? "stream" .!= False)
+      <*> (v .:? "tools" .!= ([] :: [Value]))
+
+-- | Legacy completion response (no tools).
+openaiCompletion :: Text -> [LLM.StreamChunk] -> Value
+openaiCompletion model chunks = object
+  [ "id"      .= ("chatcmpl-" <> model :: Text)
+  , "object"  .= ("chat.completion" :: Text)
+  , "model"   .= model
+  , "choices" .= [object
+      [ "index"         .= (0 :: Int)
+      , "message"       .= object ["role" .= ("assistant" :: Text), "content" .= content]
+      , "finish_reason" .= ("stop" :: Text)
+      ]]
+  , "usage"   .= toJSON usage
+  ]
+  where
+    content = T.concat [t | LLM.ChunkDelta t <- chunks]
+    usage = case [u | LLM.ChunkDone u <- chunks] of
+      (u : _) -> u
+      []      -> LLM.Usage 0 0 0
+
+-- | Tool-calling completion response (Phase 3 K3).
+openaiToolCompletion :: Text -> LLM.ChatTurn -> Value
+openaiToolCompletion model turn = object
+  [ "id"      .= ("chatcmpl-" <> model :: Text)
+  , "object"  .= ("chat.completion" :: Text)
+  , "model"   .= model
+  , "choices" .= [object
+      [ "index"         .= (0 :: Int)
+      , "message"       .= object
+          ( [ "role" .= ("assistant" :: Text), "content" .= LLM.ctContent turn ]
+              ++ [ "tool_calls" .= LLM.ctToolCalls turn | not (null (LLM.ctToolCalls turn)) ] )
+      , "finish_reason" .= (if null (LLM.ctToolCalls turn) then ("stop" :: Text) else "tool_calls")
+      ]]
+  , "usage" .= maybe (toJSON (LLM.Usage 0 0 0)) toJSON (LLM.ctUsage turn)
+  ]
 
 --------------------------------------------------------------------------------
 -- 4. Anthropic Compatible API
@@ -267,19 +384,190 @@ parseResponses val = parseMaybe parser val
 -- 7. Streaming endpoints (SSE)
 --------------------------------------------------------------------------------
 
+-- | Where a streaming request should go: the provider it names, if any.
+streamingTarget :: Value -> IO (Maybe (ProviderEntry, Text))
+streamingTarget body = case requestedProvider body of
+  Nothing   -> pure Nothing
+  Just name -> do
+    store <- P.loadProviderStore
+    case findProvider name store of
+      Nothing    -> pure Nothing
+      Just entry -> do
+        mkey <- P.resolveKey name =<< P.loadKeys
+        pure (Just (entry, maybe "" id mkey))
+
+-- | Why a request's provider could not be used.
+data AdapterError
+  = UnknownProvider Text       -- ^ nothing is saved under that name
+  | UnavailableProvider Text   -- ^ saved, but its wire could not be built
+  deriving (Show, Eq)
+
+-- | Which adapter answers a request: the named provider's, or the default.
+-- One implementation, shared by the blocking (Handler) and the streaming
+-- (Application) path -- the two can never disagree about provider lookup.
+resolveAdapterIO :: LLMAdapter -> Value -> IO (Either AdapterError LLMAdapter)
+resolveAdapterIO defaultAdapter body =
+  case requestedProvider body of
+    Nothing   -> pure (Right defaultAdapter)
+    Just name -> do
+      store <- P.loadProviderStore
+      case findProvider name store of
+        Nothing    -> pure (Left (UnknownProvider name))
+        Just entry -> do
+          mkey <- P.resolveKey name =<< P.loadKeys
+          built <- PR.adapterFor entry (maybe "" id mkey)
+          pure (either (Left . UnavailableProvider) Right built)
+
+-- | The resolution as a coded HTTP refusal (Handler path).
+adapterRefusal :: AdapterError -> ServerError
+adapterRefusal (UnknownProvider name) =
+  codedRefusal 404 "provider.unknown" ("no provider named " <> name)
+adapterRefusal (UnavailableProvider why) =
+  codedRefusal 502 "provider.adapter_unavailable" why
+
+-- | The same failure as plain text: the streaming path reports in-band, in an
+-- SSE error frame, so it needs no HTTP status of its own.
+adapterRefusalText :: AdapterError -> Text
+adapterRefusalText (UnknownProvider name)    = "no provider named " <> name
+adapterRefusalText (UnavailableProvider why) = why
+
+-- | A field of a JSON object.
+lookupField :: Text -> Object -> Maybe Value
+lookupField k o = KM.lookup (fromText k) o
+
+-- | An array field of a JSON body ([] when absent or not an array).
+rawArray :: Text -> Value -> [Value]
+rawArray k v = case v of
+  Object o -> case lookupField k o of
+    Just (Array a) -> V.toList a
+    _              -> []
+  _ -> []
+
+-- | A value back as compact JSON text (arguments are strings on the wire).
+jsonTextOf :: Value -> Text
+jsonTextOf = TE.decodeUtf8 . BL.toStrict . encode
+
+-- | One Anthropic message as the kernel's chat type — text, @tool_use@ and
+-- @tool_result@ blocks all survive, so a tool loop can close.
+anthropicChatMsg :: Value -> Maybe ChatMessage
+anthropicChatMsg v = case v of
+  Object o -> do
+    role <- case lookupField "role" o of
+      Just (String r) -> Just r
+      _               -> Nothing
+    let blocks = case lookupField "content" o of
+          Just (String t) -> [ object [ "type" .= ("text" :: Text), "text" .= t ] ]
+          Just (Array a)  -> V.toList a
+          _               -> []
+        texts   = [ t | Object b <- blocks, lookupField "type" b == Just (String "text")
+                      , Just (String t) <- [lookupField "text" b] ]
+        uses    = [ LLM.ToolCall (asTextOf (lookupField "id" b)) (asTextOf (lookupField "name" b))
+                             (jsonTextOf (fromMaybe Null (lookupField "input" b)))
+                  | Object b <- blocks, lookupField "type" b == Just (String "tool_use") ]
+        results = [ (asTextOf (lookupField "tool_use_id" b), asTextOf (lookupField "content" b))
+                  | Object b <- blocks, lookupField "type" b == Just (String "tool_result") ]
+    Just $ case (role, results) of
+      ("user", (cid, out):_) -> ChatTool cid (if T.null (T.strip out) then "(no output)" else out)
+      ("assistant", _)       -> ChatAssistant (T.concat texts) uses
+      ("user", [])           -> ChatUser (T.concat texts)
+      _                      -> ChatSystem (T.concat texts)
+  _ -> Nothing
+
+-- | One Responses input item as the kernel's chat type (@function_call@ and
+-- @function_call_output@ included).
+responsesChatMsg :: Value -> Maybe ChatMessage
+responsesChatMsg v = case v of
+  Object o -> case lookupField "type" o of
+    Just (String "function_call") ->
+      Just (ChatAssistant "" [ LLM.ToolCall (asTextOf (lookupField "call_id" o))
+                                        (asTextOf (lookupField "name" o))
+                                        (asTextOf (lookupField "arguments" o)) ])
+    Just (String "function_call_output") ->
+      Just (ChatTool (asTextOf (lookupField "call_id" o)) (asTextOf (lookupField "output" o)))
+    _ -> case lookupField "role" o of
+      Just (String role) ->
+        let content = case lookupField "content" o of
+              Just (String t) -> t
+              Just (Array a)  -> T.concat
+                [ asTextOf (lookupField "text" b) | Object b <- V.toList a ]
+              _               -> ""
+        in Just $ if role == "system" then ChatSystem content else ChatUser content
+      _ -> Nothing
+  _ -> Nothing
+
+-- | A JSON string field as plain text.
+asTextOf :: Maybe Value -> Text
+asTextOf (Just (String t)) = t
+asTextOf _                 = ""
+
+-- | Run the named provider's streaming call, re-expressed in the kernel's own
+-- event type so the endpoints below keep their existing shape.
+providerEvents :: (ProviderEntry, Text) -> [ChatMessage] -> [ToolSpec] -> (Stream.StreamEvent -> IO ()) -> IO ()
+providerEvents (entry, key) msgs specs onEvent = do
+  call <- PR.providerStream entry key
+  _ <- call msgs specs $ \chunk -> case chunk of
+    ChunkDelta t    -> onEvent (Stream.SEVDelta t)
+    ChunkToolCall n a -> onEvent (Stream.SEVToolCall n a)
+    ChunkDone u     -> onEvent (Stream.SEVUsage (usagePromptTokens u) (usageCompletionTokens u) (usageTotalTokens u))
+    ChunkError e    -> onEvent (Stream.SEVError e)
+  pure ()
+
+-- | Role/content pairs as the kernel's function-calling message type.
+toChatMessages :: [(Text, Text)] -> [ChatMessage]
+toChatMessages = map $ \(r, c) -> case r of
+  "system"    -> ChatSystem c
+  "assistant" -> ChatAssistant c []
+  _           -> ChatUser c
+
+-- | POST /v1/chat/completions/stream — real SSE: every increment is written
+-- to the socket the moment the provider produces it.
+openaiStreamApp :: LLMAdapter -> Tagged Handler Application
+openaiStreamApp adapter = Tagged $ \req respond -> do
+  raw <- strictRequestBody req
+  case decode raw of
+    Nothing -> respond (responseLBS status400 [] "Invalid request")
+    Just v -> case parseOpenAIRequest v of
+      Nothing -> respond (responseLBS status400 [] "Invalid request")
+      Just oai -> do
+        effAdapter <- resolveAdapterIO adapter v
+        -- Full-fidelity messages straight from the wire: tool results and the
+        -- assistant's own tool_calls must survive, or the tool loop can never
+        -- close (a `tool` turn flattened to user text looks like a new demand).
+        let msgs  = [ m | Just m <- map (parseMaybe parseJSON) (oaiMsgs oai) ]
+            specs = [ sp | Just sp <- map (parseMaybe parseJSON) (oaiTools oai) ]
+        respond $ responseStream status200 sseHeaders $ \write flush -> do
+          case effAdapter of
+            Left why -> emitOpenAI write (ChunkError (adapterRefusalText why)) >> flush
+            Right a  -> do
+              _ <- llmChatToolsStream a msgs specs (\chunk -> emitOpenAI write chunk >> flush)
+              pure ()
+          write (Builder.string8 "data: [DONE]\n\n")
+          flush
+
 -- | OpenAI streaming: POST /v1/chat/completions/stream
 openaiStreamHandler :: LLMAdapter -> Value -> Handler Value
 openaiStreamHandler adapter body =
-  case parseOpenAI body of
+  case parseOpenAIRequest body of
     Nothing -> throwError err400 { errBody = "Invalid request" }
-    Just (model, msgs, _stream) -> do
-      let hsMsgs = map (\(r, c) -> LLM.Message (toRole r) c) msgs
+    Just req -> do
+      let model = oaiModel req
+          hsMsgs = [ LLM.Message (toRole r) c
+                   | m <- oaiMsgs req
+                   , Just (r, c) <- [parseLegacyMessage m] ]
+          specs = [ sp | Just sp <- map (parseMaybe parseJSON) (oaiTools req) ]
       -- Collect streaming events into a list
       eventsRef <- liftIO $ newIORef ([] :: [Stream.StreamEvent])
       let onEvent ev = modifyIORef eventsRef (ev :)
-      result <- liftIO $ Stream.streamDeepSeek "" model hsMsgs onEvent
+      target <- liftIO (streamingTarget body)
+      result <- liftIO $ case target of
+        Just t  -> providerEvents t
+                     (toChatMessages [ (r, c) | m <- oaiMsgs req, Just (r, c) <- [parseLegacyMessage m] ])
+                     specs
+                     onEvent >> pure (Right ())
+        Nothing -> Stream.streamDeepSeek "" model hsMsgs onEvent
       events <- liftIO $ readIORef eventsRef
       let content = T.concat [t | Stream.SEVDelta t <- reverse events]
+      let toolCalls = streamedToolCalls (reverse events)
       let usage = case [(pt, ct, tt) | Stream.SEVUsage pt ct tt <- events] of
             ((pt, ct, tt):_) -> object
               ["prompt_tokens" .= pt, "completion_tokens" .= ct, "total_tokens" .= tt]
@@ -290,12 +578,41 @@ openaiStreamHandler adapter body =
         , "model"   .= model
         , "choices" .= [object
             [ "index" .= (0 :: Int)
-            , "message" .= object ["role" .= ("assistant" :: Text), "content" .= content]
-            , "finish_reason" .= ("stop" :: Text)
+            , "message" .= object (
+                [ "role" .= ("assistant" :: Text), "content" .= content ]
+                ++ [ "tool_calls" .= [ object
+                        [ "id" .= ("call_" <> T.pack (show i) :: Text)
+                        , "type" .= ("function" :: Text)
+                        , "function" .= object ["name" .= n, "arguments" .= a]
+                        ] | (i, (n, a)) <- zip [(0 :: Int) ..] toolCalls ]
+                   | not (null toolCalls) ])
+            , "finish_reason" .= (if null toolCalls then "stop" else "tool_calls" :: Text)
             ]]
         , "usage"   .= usage
         , "stream_events" .= length events
         ]
+
+-- | POST /v1/messages/stream — the Messages API's named-event SSE.
+anthropicStreamApp :: LLMAdapter -> Tagged Handler Application
+anthropicStreamApp adapter = Tagged $ \req respond -> do
+  raw <- strictRequestBody req
+  case decode raw of
+    Nothing -> respond (responseLBS status400 [] "Invalid request")
+    Just v -> case parseAnthropic v of
+      Nothing -> respond (responseLBS status400 [] "Invalid request")
+      Just (model, sys, msgs) -> do
+        effAdapter <- resolveAdapterIO adapter v
+        -- Faithful turns: a tool_result block must not be flattened to user
+        -- text, or the tool loop can never close.
+        let convo = maybe id (\x m -> ChatSystem x : m) sys
+                      (mapMaybe anthropicChatMsg (rawArray "messages" v))
+        respond $ responseStream status200 sseHeaders $ \write flush -> do
+          case effAdapter of
+            Left why -> emitAnthropic write (ChunkError (adapterRefusalText why)) >> flush
+            Right a  -> do
+              _ <- llmChatToolsStream a convo [] (\chunk -> emitAnthropic write chunk >> flush)
+              pure ()
+          emitAnthropic write (ChunkDone (Usage 0 0 0)) >> flush
 
 -- | Anthropic streaming: POST /v1/messages/stream
 anthropicStreamHandler :: LLMAdapter -> Value -> Handler Value
@@ -307,20 +624,53 @@ anthropicStreamHandler adapter body =
                    $ map (\(r, c) -> LLM.Message (toRole r) c) msgs
       eventsRef <- liftIO $ newIORef ([] :: [Stream.StreamEvent])
       let onEvent ev = modifyIORef eventsRef (ev :)
-      result <- liftIO $ Stream.streamAnthropic "" model hsMsgs onEvent
+      target <- liftIO (streamingTarget body)
+      result <- liftIO $ case target of
+        Just t  -> providerEvents t
+                     (toChatMessages (maybe [] (\x -> [("system", x)]) sys ++ msgs))
+                     []
+                     onEvent >> pure (Right ())
+        Nothing -> Stream.streamAnthropic "" model hsMsgs onEvent
       events <- liftIO $ readIORef eventsRef
       let content = T.concat [t | Stream.SEVDelta t <- reverse events]
+      let toolCalls = streamedToolCalls (reverse events)
       return $ object
         [ "id"          .= ("msg-stream-" <> model :: Text)
         , "type"        .= ("message" :: Text)
         , "role"        .= ("assistant" :: Text)
-        , "content"     .= [object ["type" .= ("text" :: Text), "text" .= content]]
+        , "content"     .= (
+            [ object ["type" .= ("text" :: Text), "text" .= content] | not (T.null content) ]
+            ++ [ object [ "type" .= ("tool_use" :: Text), "name" .= n, "input" .= rawJson a ]
+               | (n, a) <- toolCalls ])
         , "model"       .= model
-        , "stop_reason" .= ("end_turn" :: Text)
+        , "stop_reason" .= (if null toolCalls then "end_turn" else "tool_use" :: Text)
         , "stream_events" .= length events
         ]
 
--- | Responses streaming: POST /v1/responses/stream
+-- | POST /v1/responses/stream — the Responses API's typed-event SSE.
+responsesStreamApp :: LLMAdapter -> Tagged Handler Application
+responsesStreamApp adapter = Tagged $ \req respond -> do
+  raw <- strictRequestBody req
+  case decode raw of
+    Nothing -> respond (responseLBS status400 [] "Invalid request")
+    Just v -> case parseResponses v of
+      Nothing -> respond (responseLBS status400 [] "Invalid request")
+      Just (model, instr, inputMsgs) -> do
+        effAdapter <- resolveAdapterIO adapter v
+        -- Faithful items: function_call_output must survive as a tool turn.
+        let convo = maybe id (\x m -> ChatSystem x : m) instr
+                      (mapMaybe responsesChatMsg (rawArray "input" v))
+        respond $ responseStream status200 sseHeaders $ \write flush -> do
+          case effAdapter of
+            Left why -> emitResponses write (ChunkError (adapterRefusalText why)) >> flush
+            Right a  -> do
+              _ <- llmChatToolsStream a convo [] (\chunk -> emitResponses write chunk >> flush)
+              pure ()
+          emitResponses write (ChunkDone (Usage 0 0 0)) >> flush
+
+
+-- Helpers
+-- ----- | Responses streaming: POST /v1/responses/stream
 responsesStreamHandler :: LLMAdapter -> Value -> Handler Value
 responsesStreamHandler adapter body =
   case parseResponses body of
@@ -330,25 +680,40 @@ responsesStreamHandler adapter body =
                    $ map (\(r, c) -> LLM.Message (toRole r) c) inputMsgs
       eventsRef <- liftIO $ newIORef ([] :: [Stream.StreamEvent])
       let onEvent ev = modifyIORef eventsRef (ev :)
-      result <- liftIO $ Stream.streamDeepSeek "" model hsMsgs onEvent
+      target <- liftIO (streamingTarget body)
+      result <- liftIO $ case target of
+        Just t  -> providerEvents t
+                     (toChatMessages (maybe [] (\x -> [("system", x)]) instr ++ inputMsgs))
+                     []
+                     onEvent >> pure (Right ())
+        Nothing -> Stream.streamDeepSeek "" model hsMsgs onEvent
       events <- liftIO $ readIORef eventsRef
       let content = T.concat [t | Stream.SEVDelta t <- reverse events]
+      let toolCalls = streamedToolCalls (reverse events)
       return $ object
         [ "id"         .= ("resp-stream-" <> model :: Text)
         , "object"     .= ("response" :: Text)
         , "created_at" .= (0 :: Int)
         , "model"      .= model
-        , "output"     .= [object
-            [ "type"    .= ("message" :: Text)
-            , "id"      .= ("msg-stream" :: Text)
-            , "role"    .= ("assistant" :: Text)
-            , "status"  .= ("completed" :: Text)
-            , "content" .= [object
-                [ "type"        .= ("output_text" :: Text)
-                , "text"        .= content
-                , "annotations" .= ([] :: [Text])
-                ]]
-            ]]
+        , "output"     .= (
+            [ object
+                [ "type"    .= ("message" :: Text)
+                , "id"      .= ("msg-stream" :: Text)
+                , "role"    .= ("assistant" :: Text)
+                , "status"  .= ("completed" :: Text)
+                , "content" .= [object
+                    [ "type"        .= ("output_text" :: Text)
+                    , "text"        .= content
+                    , "annotations" .= ([] :: [Text])
+                    ]]
+                ] ]
+            ++ [ object
+                   [ "type"      .= ("function_call" :: Text)
+                   , "id"        .= ("fc-stream" <> T.pack (show i) :: Text)
+                   , "call_id"   .= ("call_" <> T.pack (show i) :: Text)
+                   , "name"      .= n
+                   , "arguments" .= a
+                   ] | (i, (n, a)) <- zip [(0 :: Int) ..] toolCalls ])
         , "status"     .= ("completed" :: Text)
         , "stream_events" .= length events
         ]
@@ -356,6 +721,91 @@ responsesStreamHandler adapter body =
 --------------------------------------------------------------------------------
 -- Helpers
 --------------------------------------------------------------------------------
+
+-- | Headers every SSE response carries; @X-Accel-Buffering: no@ keeps proxies
+-- from holding the frames back.
+sseHeaders :: ResponseHeaders
+sseHeaders =
+  [ ("Content-Type", "text/event-stream")
+  , ("Cache-Control", "no-cache")
+  , ("Connection", "keep-alive")
+  , ("X-Accel-Buffering", "no")
+  ]
+
+-- | One SSE frame: an optional @event:@ line, then the JSON payload.
+sse :: (Builder.Builder -> IO ()) -> Maybe Text -> [Pair] -> IO ()
+sse write eventName pairs = write $ mconcat $
+  [ Builder.string8 "event: " <> Builder.string8 (T.unpack e) <> Builder.string8 "\n"
+  | e <- maybe [] pure eventName ]
+  ++ [ Builder.string8 "data: "
+     , Builder.byteString (BL.toStrict (encode (object pairs)))
+     , Builder.string8 "\n\n" ]
+
+-- | The kernel's own event type back as an adapter chunk.
+fromKernelEvent :: Stream.StreamEvent -> StreamChunk
+fromKernelEvent (Stream.SEVDelta t)      = ChunkDelta t
+fromKernelEvent (Stream.SEVToolCall n a) = ChunkToolCall n a
+fromKernelEvent (Stream.SEVUsage p c t)  = ChunkDone (Usage p c t)
+fromKernelEvent Stream.SEVDone           = ChunkDone (Usage 0 0 0)
+fromKernelEvent (Stream.SEVError e)      = ChunkError e
+
+-- | OpenAI-compatible frames (@choices[0].delta@).
+emitOpenAI :: (Builder.Builder -> IO ()) -> StreamChunk -> IO ()
+emitOpenAI write chunk = case chunk of
+  ChunkDelta t -> sse write Nothing
+    [ "choices" .= [object ["index" .= (0 :: Int), "delta" .= object ["content" .= t]]] ]
+  ChunkToolCall n a -> sse write Nothing
+    [ "choices" .= [object [ "index" .= (0 :: Int)
+                           , "delta" .= object [ "tool_calls" .= [ object
+                               [ "index" .= (0 :: Int)
+                               , "function" .= object ["name" .= n, "arguments" .= a] ] ] ] ]] ]
+  ChunkDone _ -> sse write Nothing
+    [ "choices" .= [object [ "index" .= (0 :: Int), "delta" .= object []
+                           , "finish_reason" .= ("stop" :: Text) ]] ]
+  ChunkError e -> sse write Nothing [ "error" .= object ["message" .= e] ]
+
+-- | Anthropic frames (@content_block_delta@ / @content_block_start@).
+emitAnthropic :: (Builder.Builder -> IO ()) -> StreamChunk -> IO ()
+emitAnthropic write chunk = case chunk of
+  ChunkDelta t -> sse write (Just "content_block_delta")
+    [ "type" .= ("content_block_delta" :: Text)
+    , "index" .= (0 :: Int)
+    , "delta" .= object [ "type" .= ("text_delta" :: Text), "text" .= t ] ]
+  ChunkToolCall n a -> sse write (Just "content_block_start")
+    [ "type" .= ("content_block_start" :: Text)
+    , "index" .= (1 :: Int)
+    , "content_block" .= object
+        [ "type" .= ("tool_use" :: Text)
+        , "id"   .= ("toolu_stream" :: Text)
+        , "name" .= n
+        , "input" .= rawJson a ] ]
+  ChunkDone _ -> sse write (Just "message_stop") [ "type" .= ("message_stop" :: Text) ]
+  ChunkError e -> sse write (Just "error")
+    [ "type" .= ("error" :: Text), "error" .= object ["message" .= e] ]
+
+-- | Responses frames (@response.output_text.delta@ / @response.output_item.added@).
+emitResponses :: (Builder.Builder -> IO ()) -> StreamChunk -> IO ()
+emitResponses write chunk = case chunk of
+  ChunkDelta t -> sse write (Just "response.output_text.delta")
+    [ "type" .= ("response.output_text.delta" :: Text), "delta" .= t ]
+  ChunkToolCall n a -> sse write (Just "response.output_item.added")
+    [ "type" .= ("response.output_item.added" :: Text)
+    , "item" .= object
+        [ "type" .= ("function_call" :: Text), "name" .= n, "arguments" .= a ] ]
+  ChunkDone _ -> sse write (Just "response.completed")
+    [ "type" .= ("response.completed" :: Text) ]
+  ChunkError e -> sse write (Just "error")
+    [ "type" .= ("error" :: Text), "message" .= e ]
+
+-- | Tool calls carried by the events of one streaming request.
+
+streamedToolCalls :: [Stream.StreamEvent] -> [(Text, Text)]
+streamedToolCalls events = [ (n, a) | Stream.SEVToolCall n a <- events ]
+
+-- | An arguments string embedded back into JSON (kept as a string if it does
+-- not parse, so the caller still sees what the model said).
+rawJson :: Text -> Value
+rawJson t = fromMaybe (String t) (decode (BL.fromStrict (TE.encodeUtf8 t)))
 
 toRole :: Text -> LLM.Role
 toRole "system"    = LLM.System
@@ -373,3 +823,56 @@ startServer adapter port = do
   putStrLn $ "Starting server on port " ++ show port
   putStrLn "Protocols: OpenAI (/v1/chat/completions), Anthropic (/v1/messages), Responses (/v1/responses)"
   run port (serve (Proxy :: Proxy API) (server adapter sessionsVar))
+
+--------------------------------------------------------------------------------
+-- Stub kernel (K6): two-round tool loop without a real provider.
+--------------------------------------------------------------------------------
+
+-- | A kernel that answers the first tool-bearing request with a read_file
+-- tool call and the second (which carries the tool result) with the result
+-- echoed back -- enough to exercise the orchestration tool loop end to end.
+stubAdapter :: IO LLMAdapter
+stubAdapter = return $ LLMAdapter
+  { llmChat = \msgs -> do
+      let lastText = if null msgs then "" else LLM.messageContent (last msgs)
+      return [ LLM.ChunkDelta ("[stub] " <> lastText), LLM.ChunkDone (LLM.Usage 1 1 2) ]
+  , llmChatTools = stubTools
+  , llmEmbed = \_ -> return []
+  , llmModels = return [ LLM.ModelInfo "stub" "Stub Kernel" 4096 ]
+  , llmChatToolsStream = stubStream
+  }
+
+-- | The stub streams for real: it announces its answer in two pieces with a
+-- short gap, so "the first byte arrived well before the end" is observable.
+stubStream :: [LLM.ChatMessage] -> [LLM.ToolSpec] -> (LLM.StreamChunk -> IO ()) -> IO LLM.ChatTurn
+stubStream msgs specs onEvent = do
+  turn <- stubTools msgs specs
+  mapM_ (\tc -> onEvent (LLM.ChunkToolCall (LLM.tcName tc) (LLM.tcArguments tc)))
+        (LLM.ctToolCalls turn)
+  case LLM.ctError turn of
+    Just e  -> onEvent (LLM.ChunkError e)
+    Nothing -> do
+      let txt = LLM.ctContent turn
+          (headBit, restBits) = T.splitAt 1 txt
+      onEvent (LLM.ChunkDelta headBit)
+      threadDelay 30000          -- 30ms: a real gap no buffering can hide
+      onEvent (LLM.ChunkDelta restBits)
+      onEvent (LLM.ChunkDone (maybe (LLM.Usage 0 0 0) id (LLM.ctUsage turn)))
+  pure turn
+
+-- | The stub's tool-calling answer, shared by both call paths.
+stubTools :: [LLM.ChatMessage] -> [LLM.ToolSpec] -> IO LLM.ChatTurn
+stubTools msgs _specs = do
+  let toolResults = [ r | LLM.ChatTool _ r <- msgs ]
+  if null toolResults
+    then return $ LLM.ChatTurn ""
+             [ LLM.ToolCall "call-stub" "read_file" "{\"path\":\"/etc/hostname\"}" ]
+             (Just (LLM.Usage 1 1 2)) Nothing
+    else return $ LLM.ChatTurn ("[stub] tool said: " <> last toolResults)
+             [] (Just (LLM.Usage 1 1 2)) Nothing
+
+-- | Start the stub kernel on the given port.
+startStubKernel :: Int -> IO ()
+startStubKernel port = do
+  adapter <- stubAdapter
+  startServer adapter port

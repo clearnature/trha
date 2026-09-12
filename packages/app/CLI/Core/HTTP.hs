@@ -18,25 +18,36 @@ module Core.HTTP
 
 import Core.Types
 import Data.Aeson
+import Data.ByteString (ByteString)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import qualified Data.ByteString.Lazy as BSL
 import Network.HTTP.Client
-import Network.HTTP.Client.TLS
+import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Network.HTTP.Types (HeaderName)
 import Network.HTTP.Types.Status
 
 -- | HTTP client
 data HTTPClient = HTTPClient
   { httpClientManager :: Manager
   , httpClientBase    :: String
+  , httpClientToken   :: Text
   }
 
 -- | Create a new HTTP client
-createHTTPClient :: Text -> Int -> IO HTTPClient
-createHTTPClient host port = do
+createHTTPClient :: Text -> Int -> Text -> Int -> IO HTTPClient
+createHTTPClient host port token timeoutMs = do
   manager <- newManager tlsManagerSettings
+    { managerResponseTimeout = responseTimeoutMicro (timeoutMs * 1000) }
   let baseUrl = "http://" ++ T.unpack host ++ ":" ++ show port
-  return $ HTTPClient manager baseUrl
+  return $ HTTPClient manager baseUrl token
+
+-- | Authorization header for the orchestration token.
+authHeader :: HTTPClient -> [(HeaderName, ByteString)]
+authHeader client = case httpClientToken client of
+  t | T.null t -> []
+    | otherwise -> [("Authorization", "Bearer " <> TE.encodeUtf8 t)]
 
 -- | Build URL from path
 buildUrl :: HTTPClient -> String -> String
@@ -62,7 +73,8 @@ httpGet :: FromJSON a => HTTPClient -> String -> IO (Either CLIError a)
 httpGet client path = do
   let url = buildUrl client path
   request <- parseRequest url
-  response <- httpLbs request (httpClientManager client)
+  let request' = request { requestHeaders = authHeader client }
+  response <- httpLbs request' (httpClientManager client)
   return $ parseResponse response
 
 -- | HTTP POST request
@@ -73,7 +85,7 @@ httpPost client path body = do
   let request' = request
         { method = "POST"
         , requestBody = RequestBodyLBS (encode body)
-        , requestHeaders = [("Content-Type", "application/json")]
+        , requestHeaders = ("Content-Type", "application/json") : authHeader client
         }
   response <- httpLbs request' (httpClientManager client)
   return $ parseResponse response
@@ -86,7 +98,7 @@ httpPut client path body = do
   let request' = request
         { method = "PUT"
         , requestBody = RequestBodyLBS (encode body)
-        , requestHeaders = [("Content-Type", "application/json")]
+        , requestHeaders = ("Content-Type", "application/json") : authHeader client
         }
   response <- httpLbs request' (httpClientManager client)
   return $ parseResponse response
@@ -96,6 +108,6 @@ httpDelete :: FromJSON a => HTTPClient -> String -> IO (Either CLIError a)
 httpDelete client path = do
   let url = buildUrl client path
   request <- parseRequest url
-  let request' = request { method = "DELETE" }
+  let request' = request { method = "DELETE", requestHeaders = authHeader client }
   response <- httpLbs request' (httpClientManager client)
   return $ parseResponse response

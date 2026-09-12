@@ -510,3 +510,220 @@ body {
   outline: none;
   border-color: var(--primary-color);
 }
+
+/* ── Shell layout (ui/) ─────────────────────────────────────────────── */
+.app-root { display: contents; }
+
+.status-region {
+  border-top: 1px solid var(--border-color);
+  background-color: var(--surface-color);
+}
+
+.status-bar {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--secondary-color);
+}
+
+.status-bar .status-state.ready { color: var(--success-color); }
+.status-bar .status-state.processing { color: var(--warning-color); }
+.status-bar .status-state.error { color: var(--error-color); }
+.status-usage { margin-left: auto; }
+
+/* ── Tool card ──────────────────────────────────────────────────────── */
+.tool-card {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  margin: 8px 0;
+  background-color: var(--surface-color);
+  font-size: 13px;
+}
+
+.tool-card-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-color);
+  font-size: 13px;
+  text-align: left;
+}
+
+.tool-card-header:disabled { cursor: default; }
+.tool-name { font-weight: 600; }
+.tool-duration { margin-left: auto; color: var(--secondary-color); font-size: 11px; }
+.tool-detail { padding: 6px 10px; border-top: 1px solid var(--border-color); }
+.tool-args {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--secondary-color);
+}
+.tool-error { color: var(--error-color); font-size: 12px; margin-top: 4px; }
+
+/* ── Notice card ────────────────────────────────────────────────────── */
+.notice-card {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  margin: 8px 0;
+  border-radius: 6px;
+  font-size: 13px;
+  background-color: var(--hover-color);
+}
+.notice-card.error { background-color: rgba(234, 67, 53, 0.08); color: var(--error-color); }
+
+/* ── Plan card ──────────────────────────────────────────────────────── */
+.plan-card {
+  border: 1px solid var(--primary-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  background-color: var(--surface-color);
+}
+.plan-header { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.plan-body { margin: 0; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.plan-actions { display: flex; gap: 8px; margin-top: 10px; }
+.plan-actions button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  font-size: 13px;
+}
+.plan-approve { background-color: var(--primary-color); color: #fff; border-color: var(--primary-color); }
+.plan-deny { background-color: transparent; color: var(--text-color); }
+.plan-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Ask card (placeholder) ─────────────────────────────────────────── */
+.ask-card {
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  opacity: 0.85;
+}
+.ask-options { display: flex; gap: 8px; margin-top: 6px; }
+.ask-option {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background-color: transparent;
+  color: var(--text-color);
+}
+.ask-note { margin-top: 6px; font-size: 11px; color: var(--secondary-color); }
+
+/* ── Markdown ───────────────────────────────────────────────────────── */
+.md-body { font-size: 1em; line-height: 1.55; }
+.md-heading { margin: 8px 0 4px; }
+.md-paragraph { margin: 4px 0; white-space: pre-wrap; }
+.md-list { margin: 4px 0 4px 20px; }
+.md-inline-code {
+  background-color: var(--hover-color);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 0.9em;
+}
+.md-code {
+  background-color: var(--hover-color);
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-size: 12px;
+  margin: 6px 0;
+}
+.md-code code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.md-cursor { opacity: 0.7; animation: md-blink 1s steps(2) infinite; }
+@keyframes md-blink { 50% { opacity: 0; } }
+
+/* ── misc ───────────────────────────────────────────────────────────── */
+.session-item { display: flex; align-items: center; gap: 8px; }
+.session-item .session-title { flex: 1; }
+.session-delete {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 12px;
+}
+.session-delete:hover { opacity: 1; color: var(--error-color); }
+.pref-value { margin-left: 8px; font-size: 12px; color: var(--secondary-color); }
+
+/* ── Provider panel (P5) ────────────────────────────────────────────── */
+.providers { display: flex; flex-direction: column; gap: 8px; }
+.prov-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 13px; font-weight: 600;
+}
+.prov-row {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  font-size: 12px; padding: 6px 8px;
+  border: 1px solid var(--border-color); border-radius: 6px;
+}
+.prov-name { font-weight: 600; }
+.prov-kinds, .prov-host, .prov-models { color: var(--secondary-color); }
+.prov-key.on { color: var(--success-color); }
+.prov-key.off { color: var(--warning-color); }
+.prov-row .act, .prov-head .act {
+  padding: 2px 8px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--border-color); border-radius: 4px;
+  background: transparent; color: var(--text-color);
+}
+
+.addp {
+  display: flex; flex-direction: column; gap: 10px;
+  border: 1px dashed var(--border-color); border-radius: 8px; padding: 10px;
+}
+.addp .fields { display: flex; gap: 8px; flex-wrap: wrap; }
+.addp label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.addp label.grow { flex: 1; min-width: 140px; }
+.addp label.full { flex-basis: 100%; }
+.addp input, .addp select {
+  padding: 6px 8px; font-size: 13px;
+  border: 1px solid var(--border-color); border-radius: 4px;
+  background-color: var(--background-color); color: var(--text-color);
+}
+.acts { display: flex; gap: 8px; }
+.acts button {
+  padding: 6px 12px; font-size: 13px; cursor: pointer;
+  border: 1px solid var(--border-color); border-radius: 6px;
+  background: transparent; color: var(--text-color);
+}
+.acts button.primary { background-color: var(--primary-color); color: #fff; border-color: var(--primary-color); }
+.acts button:disabled { opacity: 0.5; cursor: not-allowed; }
+.acct-note { margin: 0; font-size: 12px; color: var(--secondary-color); }
+.find.warn { display: flex; gap: 6px; font-size: 12px; color: var(--error-color); }
+
+.mlist-wrap { display: flex; flex-direction: column; gap: 6px; }
+.mlb { font-size: 12px; color: var(--secondary-color); }
+.mlist { display: flex; flex-direction: column; gap: 4px; }
+.mrow { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.mvis {
+  font-size: 10px; padding: 1px 5px; border-radius: 3px;
+  background-color: var(--hover-color); color: var(--secondary-color);
+}
+.madd { display: flex; gap: 6px; margin-top: 4px; }
+.prov-default { display: flex; gap: 4px; align-items: center; font-size: 12px; }
+.prov-default select {
+  padding: 2px 4px; font-size: 12px;
+  border: 1px solid var(--border-color); border-radius: 4px;
+  background-color: var(--background-color); color: var(--text-color);
+}
+.prov-toggle { display: flex; gap: 4px; align-items: center; font-size: 12px; }
+.prov-toggle input:disabled { opacity: 0.4; }
+
+.madd input {
+  flex: 1; padding: 4px 8px; font-size: 12px;
+  border: 1px solid var(--border-color); border-radius: 4px;
+  background-color: var(--background-color); color: var(--text-color);
+}

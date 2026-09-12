@@ -1,37 +1,74 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Bridge from the CLI/TUI shell to the TypeScript orchestration layer
+-- (packages/scheduler).  Wire protocol (Phase 2 S0 alignment):
+--
+--   POST   /api/session/start       {mode}          -> {sessionId, mode}
+--   GET    /api/sessions                            -> [ {id, mode, ...} ]
+--   GET    /api/session/:id                         -> {id, mode, messages, ...}
+--   DELETE /api/session/:id                         -> 200
+--   POST   /api/agent/step          {sessionId,message} -> {reply, messages, mode}
+--   GET    /api/session/:id/messages                -> {messages: [{role, content}]}
+--   GET    /api/models                              -> [ {name, description, contextSize} ]
+--   GET    /health                                  -> {status, ...}
+--
+-- Functions that have no counterpart in the orchestration API return an
+-- explicit 'UnknownCLIError' instead of pretending to work.
 module Bridge.Scheduler
   ( -- * Scheduler Bridge
     SchedulerBridge(..)
   , createSchedulerBridge
-  
+
     -- * Session Operations
   , createSession
   , listSessions
   , getSession
   , deleteSession
-  
+
     -- * Message Operations
   , sendMessage
   , getMessages
-  
+
+    -- * Session Events (SSE, Phase 2 S2)
+  , subscribeSessionEvents
+
+    -- * Plan / Approval (Phase 2 S1)
+  , planStep
+  , approvePlan
+  , denyPlan
+
     -- * Agent Operations
   , getAgentState
   , updateAgentState
-  
+
     -- * Model Operations
   , listModels
   , getModel
-  
+
+    -- * Plugins (Phase 3)
+  , listPlugins
+
     -- * Health Check
   , healthCheck
   ) where
 
 import Core.Types
 import Core.HTTP
+import Core.SSE (SseDecoder, feed, newDecoder, parseToolEvent)
 import Data.Aeson
 import Data.Aeson.Types (parseMaybe)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import Control.Concurrent (forkIO, killThread, newEmptyMVar, putMVar, takeMVar)
+import System.Timeout (timeout)
+import Control.Exception (catch)
 import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
+import Network.HTTP.Client
+    ( BodyReader, parseRequest, requestHeaders, responseBody, withResponse, brRead
+    )
+import Network.HTTP.Types (HeaderName)
 
 -- | Scheduler bridge
 data SchedulerBridge = SchedulerBridge
@@ -42,117 +79,240 @@ data SchedulerBridge = SchedulerBridge
 -- | Create a new scheduler bridge
 createSchedulerBridge :: CLIConfig -> IO SchedulerBridge
 createSchedulerBridge config = do
-  http <- createHTTPClient (configHost config) (configPort config)
+  http <- createHTTPClient (configHost config) (configPort config) (configToken config) (configTimeout config)
   return $ SchedulerBridge config http
 
--- | Create a new session
+--------------------------------------------------------------------------------
+-- Session Operations
+--------------------------------------------------------------------------------
+
+-- | Create a session on the orchestration layer.
 createSession :: SchedulerBridge -> IO (Either CLIError SessionId)
 createSession bridge = do
-  result <- httpGet (bridgeHTTP bridge) "/api/sessions"
+  result <- httpPost (bridgeHTTP bridge) "/api/session/start" (object ["mode" .= ("standard" :: Text)])
   return $ case result of
-    Right (Object r) -> case parseMaybe (.: "id") r of
+    Right (Object r) -> case parseMaybe (.: "sessionId") r of
       Just sessionId -> Right sessionId
-      Nothing -> Left $ ValidationError "Missing session ID"
-    Right _ -> Left $ ValidationError "Invalid response"
+      Nothing -> Left $ ValidationError "Missing sessionId in response"
+    Right _ -> Left $ ValidationError "Invalid session/start response"
     Left err -> Left err
 
--- | List all sessions
+-- | List all sessions (id strings extracted from session objects).
 listSessions :: SchedulerBridge -> IO (Either CLIError [SessionId])
 listSessions bridge = do
-  result <- httpGet (bridgeHTTP bridge) "/api/sessions"
+  result <- httpGet (bridgeHTTP bridge) "/api/sessions" :: IO (Either CLIError [Value])
   return $ case result of
-    Right (Object r) -> case parseMaybe (.: "sessions") r of
-      Just sessions -> Right sessions
-      Nothing -> Left $ ValidationError "Missing sessions"
-    Right _ -> Left $ ValidationError "Invalid response"
+    Right sessions ->
+      Right [ sid | Object o <- sessions, Just sid <- [parseMaybe (.: "id") o] ]
     Left err -> Left err
 
--- | Get a session by ID
+-- | Get a session by ID.  The orchestration layer returns a session
+-- object (not a 'SessionEvent'); kept as an explicit error until the CLI
+-- side defines a matching projection type.
 getSession :: SchedulerBridge -> SessionId -> IO (Either CLIError SessionEvent)
-getSession bridge sessionId = do
-  result <- httpGet (bridgeHTTP bridge) ("/api/sessions/" ++ sessionId)
-  return $ case result of
-    Right (Object r) -> case parseMaybe (.: "session") r of
-      Just event -> Right event
-      Nothing -> Left $ ValidationError "Missing session event"
-    Right _ -> Left $ ValidationError "Invalid response"
-    Left err -> Left err
+getSession _ _ =
+  return $ Left $ UnknownCLIError "getSession: not wired to orchestration API"
 
--- | Delete a session
+-- | Delete a session.
 deleteSession :: SchedulerBridge -> SessionId -> IO (Either CLIError ())
 deleteSession bridge sessionId = do
-  result <- httpDelete (bridgeHTTP bridge) ("/api/sessions/" ++ sessionId) :: IO (Either CLIError Value)
+  result <- httpDelete (bridgeHTTP bridge) ("/api/session/" ++ sessionId) :: IO (Either CLIError Value)
   return $ fmap (const ()) result
 
--- | Send a message to a session
+--------------------------------------------------------------------------------
+-- Message Operations
+--------------------------------------------------------------------------------
+
+-- | Send one user message and return the agent's reply as a stream chunk.
+-- The orchestration layer performs the full step and returns aggregated
+-- text; delta events will come over SSE later.
 sendMessage :: SchedulerBridge -> SessionId -> Text -> IO (Either CLIError StreamChunk)
 sendMessage bridge sessionId content = do
-  let message = Message "user" content
-  result <- httpPost (bridgeHTTP bridge) ("/api/sessions/" ++ sessionId ++ "/messages") message
+  result <- httpPost (bridgeHTTP bridge) "/api/agent/step"
+    (object ["sessionId" .= sessionId, "message" .= content])
+    :: IO (Either CLIError Value)
   return $ case result of
-    Right (Object r) -> case parseMaybe (.: "response") r of
-      Just chunk -> Right chunk
-      Nothing -> Left $ ValidationError "Missing response"
-    Right _ -> Left $ ValidationError "Invalid response"
+    Right (Object r) -> case parseMaybe (.: "reply") r of
+      Just reply -> Right (ChunkDelta reply)
+      Nothing    -> Left $ ValidationError "Missing reply in response"
+    Right _ -> Left $ ValidationError "Invalid agent/step response"
     Left err -> Left err
 
--- | Get messages from a session
+-- | Fetch the stored message list of a session.
 getMessages :: SchedulerBridge -> SessionId -> IO (Either CLIError [Message])
 getMessages bridge sessionId = do
-  result <- httpGet (bridgeHTTP bridge) ("/api/sessions/" ++ sessionId ++ "/messages")
+  result <- httpGet (bridgeHTTP bridge) ("/api/session/" ++ sessionId ++ "/messages")
   return $ case result of
     Right (Object r) -> case parseMaybe (.: "messages") r of
-      Just messages -> Right messages
+      Just raw -> Right [ msg | Object m <- raw, Just msg <- [parseStored m] ]
       Nothing -> Left $ ValidationError "Missing messages"
-    Right _ -> Left $ ValidationError "Invalid response"
+    Right _ -> Left $ ValidationError "Invalid session messages response"
     Left err -> Left err
+  where
+    parseStored :: Object -> Maybe Message
+    parseStored o = Message <$> parseMaybe (.: "role") o <*> parseMaybe (.: "content") o
 
--- | Get agent state
-getAgentState :: SchedulerBridge -> AgentId -> IO (Either CLIError AgentState)
-getAgentState bridge agentId = do
-  result <- httpGet (bridgeHTTP bridge) ("/api/agents/" ++ agentId)
+--------------------------------------------------------------------------------
+-- Session Events (SSE)
+--------------------------------------------------------------------------------
+
+-- | Subscribe to a session's SSE event stream (Phase 2 S2 tool events).
+-- Feed chunks through 'Core.SSE', deliver decoded 'ToolEvent's to the
+-- callback.  Returns a cancellation action that stops the reader thread
+-- (safe to call from any thread; call it before quitting).
+subscribeSessionEvents
+  :: SchedulerBridge -> SessionId
+  -> (Either CLIError ToolEvent -> IO ())
+  -> IO (IO ())
+subscribeSessionEvents bridge sid onEvent = do
+  let client = bridgeHTTP bridge
+      url    = buildUrl client ("/api/events/" ++ sid)
+  request <- parseRequest url
+  let headers = ("Accept", "text/event-stream") : authHeaders (httpClientToken client)
+      request' = request { requestHeaders = headers }
+  ready <- newEmptyMVar
+  tid <- forkIO $
+    catch
+      (withResponse request' (httpClientManager client) $ \resp -> do
+         -- headers received: the server has registered our stream, so
+         -- events emitted from this point on will reach us
+         putMVar ready ()
+         readLoop newDecoder (responseBody resp))
+      (\e -> onEvent (Left (UnknownCLIError ("SSE error: " <> T.pack (show (e :: IOError))))))
+  -- bounded wait for the handshake so callers can subscribe before the
+  -- request that triggers the events they care about
+  _ <- timeout 2000000 (takeMVar ready)
+  return $ killThread tid
+  where
+    readLoop :: SseDecoder -> BodyReader -> IO ()
+    readLoop dec br = do
+      chunk <- brRead br
+      if BS.null chunk
+        then return ()
+        else do
+          let (payloads, dec') = feed dec chunk
+          mapM_ (deliver . parseToolEvent) payloads
+          readLoop dec' br
+    deliver Nothing =
+      onEvent (Left (ValidationError "Invalid tool event payload"))
+    deliver (Just ev) = onEvent (Right ev)
+
+    authHeaders :: Text -> [(HeaderName, ByteString)]
+    authHeaders t
+      | T.null t = []
+      | otherwise = [("Authorization", "Bearer " <> TE.encodeUtf8 t)]
+
+--------------------------------------------------------------------------------
+-- Plan / Approval (Phase 2 S1)
+--------------------------------------------------------------------------------
+
+-- | Submit a plan request through the approval gate.  The orchestration
+-- layer holds the message and answers with @awaiting_approval@.
+planStep :: SchedulerBridge -> SessionId -> Text -> IO (Either CLIError PlanSubmit)
+planStep bridge sessionId message = do
+  result <- httpPost (bridgeHTTP bridge) "/api/agent/step"
+    (object [ "sessionId" .= sessionId, "message" .= message, "requireApproval" .= True ])
+    :: IO (Either CLIError Value)
   return $ case result of
-    Right (Object r) -> case parseMaybe (.: "state") r of
-      Just state -> Right state
-      Nothing -> Left $ ValidationError "Missing state"
-    Right _ -> Left $ ValidationError "Invalid response"
+    Right (Object r) ->
+      case parseMaybe (.: "status") r :: Maybe Text of
+        Just "awaiting_approval" ->
+          case parseMaybe (.: "pending") r :: Maybe Value of
+            Just (Object po) -> case parseMaybe (.: "message") po :: Maybe Text of
+              Just msg -> Right (PlanAwaiting msg)
+              Nothing  -> Left $ ValidationError "Missing pending.message"
+            _ -> Left $ ValidationError "Missing pending"
+        Just other -> Left $ ValidationError $ "Unexpected plan status: " <> other
+        Nothing -> Left $ ValidationError "Missing status"
+    Right _ -> Left $ ValidationError "Invalid plan response"
     Left err -> Left err
 
--- | Update agent state
-updateAgentState :: SchedulerBridge -> AgentId -> AgentState -> IO (Either CLIError ())
-updateAgentState bridge agentId state = do
-  result <- httpPut (bridgeHTTP bridge) ("/api/agents/" ++ agentId) state :: IO (Either CLIError Value)
-  return $ fmap (const ()) result
+-- | Approve the pending plan; returns the agent reply.
+approvePlan :: SchedulerBridge -> SessionId -> IO (Either CLIError PlanVerdict)
+approvePlan bridge sessionId = decidePlan bridge sessionId True
 
--- | List all models
+-- | Deny the pending plan.
+denyPlan :: SchedulerBridge -> SessionId -> IO (Either CLIError PlanVerdict)
+denyPlan bridge sessionId = decidePlan bridge sessionId False
+
+-- | Shared implementation of POST /api/session/:id/decision.
+decidePlan :: SchedulerBridge -> SessionId -> Bool -> IO (Either CLIError PlanVerdict)
+decidePlan bridge sessionId approve = do
+  result <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sessionId ++ "/decision")
+    (object ["approve" .= approve])
+    :: IO (Either CLIError Value)
+  return $ case result of
+    Right (Object r) ->
+      case parseMaybe (.: "status") r :: Maybe Text of
+        Just "approved" ->
+          case parseMaybe (.: "reply") r :: Maybe Text of
+            Just reply -> Right (PlanApproved reply)
+            Nothing    -> Left $ ValidationError "Missing reply"
+        Just "denied"  -> Right PlanDenied
+        Just other     -> Left $ ValidationError $ "Unexpected decision status: " <> other
+        Nothing        -> Left $ ValidationError "Missing status"
+    Right _ -> Left $ ValidationError "Invalid decision response"
+    Left err -> Left err
+
+--------------------------------------------------------------------------------
+-- Agent Operations (no counterpart in the orchestration API yet)
+--------------------------------------------------------------------------------
+
+getAgentState :: SchedulerBridge -> AgentId -> IO (Either CLIError AgentState)
+getAgentState _ _ =
+  return $ Left $ UnknownCLIError "getAgentState: not wired to orchestration API"
+
+updateAgentState :: SchedulerBridge -> AgentId -> AgentState -> IO (Either CLIError ())
+updateAgentState _ _ _ =
+  return $ Left $ UnknownCLIError "updateAgentState: not wired to orchestration API"
+
+--------------------------------------------------------------------------------
+-- Model Operations
+--------------------------------------------------------------------------------
+
+-- | List available models (name/description/contextSize from orchestration).
 listModels :: SchedulerBridge -> IO (Either CLIError [ModelInfo])
 listModels bridge = do
-  result <- httpGet (bridgeHTTP bridge) "/api/models"
+  result <- httpGet (bridgeHTTP bridge) "/api/models" :: IO (Either CLIError [Value])
   return $ case result of
-    Right (Object r) -> case parseMaybe (.: "models") r of
-      Just models -> Right models
-      Nothing -> Left $ ValidationError "Missing models"
-    Right _ -> Left $ ValidationError "Invalid response"
+    Right raw -> Right [ mi | Object m <- raw, Just mi <- [parseModel m] ]
     Left err -> Left err
+  where
+    parseModel :: Object -> Maybe ModelInfo
+    parseModel o = ModelInfo
+      <$> parseMaybe (.: "name") o
+      <*> parseMaybe (.: "description") o
+      <*> parseMaybe (.: "contextSize") o
 
--- | Get a model by name
+-- | Fetch a single model by name (no dedicated endpoint; explicit error).
 getModel :: SchedulerBridge -> Text -> IO (Either CLIError ModelInfo)
-getModel bridge modelName = do
-  result <- httpGet (bridgeHTTP bridge) ("/api/models/" ++ show modelName)
+getModel _ _ =
+  return $ Left $ UnknownCLIError "getModel: not wired to orchestration API"
+
+--------------------------------------------------------------------------------
+-- Plugins (Phase 3)
+--------------------------------------------------------------------------------
+
+-- | List plugins registered on the orchestration layer.
+listPlugins :: SchedulerBridge -> IO (Either CLIError [PluginInfo])
+listPlugins bridge = do
+  result <- httpGet (bridgeHTTP bridge) "/api/plugins" :: IO (Either CLIError [PluginInfo])
   return $ case result of
-    Right (Object r) -> case parseMaybe (.: "model") r of
-      Just model -> Right model
-      Nothing -> Left $ ValidationError "Missing model"
-    Right _ -> Left $ ValidationError "Invalid response"
+    Right ps -> Right ps
     Left err -> Left err
 
--- | Health check
+--------------------------------------------------------------------------------
+-- Health Check
+--------------------------------------------------------------------------------
+
+-- | Check the orchestration service health endpoint.
 healthCheck :: SchedulerBridge -> IO (Either CLIError Bool)
 healthCheck bridge = do
-  result <- httpGet (bridgeHTTP bridge) "/api/health"
+  result <- httpGet (bridgeHTTP bridge) "/health" :: IO (Either CLIError Value)
   return $ case result of
-    Right (Object r) -> case parseMaybe (.: "status") r of
-      Just status -> Right status
-      Nothing -> Left $ ValidationError "Missing status"
-    Right _ -> Left $ ValidationError "Invalid response"
+    Right (Object r) ->
+      case parseMaybe (.: "status") r :: Maybe Text of
+        Just s  -> Right (s == "ok")
+        Nothing -> Left $ ValidationError "Missing status"
+    Right _ -> Left $ ValidationError "Invalid health response"
     Left err -> Left err

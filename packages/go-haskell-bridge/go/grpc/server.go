@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
-	pb "github.com/gh-harness/go-haskell-bridge/proto"
+	pb "github.com/clearnature/trha/packages/go-haskell-bridge/go/proto"
 )
 
 // Server represents a gRPC server for Go-Haskell communication

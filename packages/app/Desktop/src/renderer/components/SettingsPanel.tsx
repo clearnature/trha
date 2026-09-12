@@ -1,12 +1,16 @@
 import React from 'react';
-import { useAppStore } from '../stores/appStore';
+import { useSession } from '../ui/SessionContext';
 
 interface SettingsPanelProps {
   onClose: () => void;
+  theme: 'light' | 'dark';
+  setTheme: (theme: 'light' | 'dark') => void;
 }
 
-export function SettingsPanel({ onClose }: SettingsPanelProps) {
-  const { theme, setTheme, models, modes, currentMode } = useAppStore();
+export function SettingsPanel({ onClose, theme, setTheme }: SettingsPanelProps) {
+  const modes = useSession(s => s.modes);
+  const models = useSession(s => s.models);
+  const currentMode = useSession(s => s.selectedMode);
   const mode = modes[currentMode];
 
   return (

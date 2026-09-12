@@ -1,0 +1,44 @@
+appId: dev.trha.desktop
+productName: trha
+executableName: trha
+artifactName: ${productName}_${version}_${arch}.${ext}
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+extraResources:
+  - from: resources/scheduler-dist
+    to: scheduler
+    filter: ['**/*']
+  # bundled node runtime so the spawned scheduler does not depend on a
+  # system node (win/mac/linux set NODE_BIN at build time)
+  - from: resources/node-runtime
+    to: node
+    filter: ['*']
+asar: true
+# Windows: per-user installer that takes over the legacy install (a one-time
+# uninstall prompt is expected from the legacy line); only the outer container
+# is signed -- the spawned kernel stays unsigned but runs after install.
+win:
+  target:
+    - nsis
+  signingHashAlgorithms: [sha256]
+nsis:
+  perMachine: false
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+# macOS: replace the app bundle on update; signing/notarization are wired at
+# CI time via env (CSC_LINK/CSC_KEY_PASSWORD) -- the witness lives with the
+# updater, not the packager.
+mac:
+  target:
+    - dmg
+  category: public.app-category.developer-tools
+# Linux: .deb keeping the legacy package name so dpkg upgrades in place.
+linux:
+  target:
+    - deb
+  category: Development
+  maintainer: trha
+  synopsis: trha agent desktop

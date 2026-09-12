@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gh-harness/go-haskell-bridge/error"
-	"github.com/gh-harness/go-haskell-bridge/protocol"
+	"github.com/clearnature/trha/packages/go-haskell-bridge/go/error"
+	"github.com/clearnature/trha/packages/go-haskell-bridge/go/protocol"
 )
 
 // Server represents an HTTP server for Go-Haskell communication

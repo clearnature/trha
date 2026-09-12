@@ -26,7 +26,7 @@ export function ChatView() {
     return (
       <div className="chat-view">
         <div className="chat-empty">
-          <h2>Welcome to gh-harness</h2>
+          <h2>Welcome to trha</h2>
           <p>Create a new session to get started.</p>
           <button onClick={createSession} className="new-session-btn">+ New Session</button>
         </div>

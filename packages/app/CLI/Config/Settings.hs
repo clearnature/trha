@@ -1,38 +1,149 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Configuration loading for the trha CLI.
+--
+-- Layered, hardened settings management modelled on haskell-agent's
+-- @~/.haskell-agent@ initialisation:
+--
+--   * settings live in @~/.trha/settings.yaml@ (user) and, optionally,
+--     @<project>/.trha/settings.yaml@ (per-project override);
+--   * effective value = defaults ⊂ user settings ⊂ project settings,
+--     with @--host/--port/--model@ applied last by the caller;
+--   * @~/.trha@ is created as a private directory (0700) and
+--     @settings.yaml@ is written atomically with 0600 permissions
+--     (temp file + rename), so a crash never corrupts the file;
+--   * an unreadable settings file prints a warning and falls back to
+--     defaults instead of aborting.
 module Config.Settings
-  ( -- * Settings
-    loadConfig
+  ( -- * Entry point
+    initConfig
   , saveConfig
-  , getConfigPath
+    -- * Layered resolution (read-only; used by /settings)
+  , resolveConfig
+    -- * Paths
+  , getConfigDir
+  , getHomeConfigPath
+  , getProjectConfigPath
   ) where
 
-import Core.Types
-import Data.Aeson
-import Data.Text (Text)
-import qualified Data.ByteString.Lazy as BSL
-import System.Directory (doesFileExist, getHomeDirectory)
+import Core.Types (CLIConfig, defaultCLIConfig)
+import Control.Monad (unless)
+import Data.Aeson (Result(..), Value(..), fromJSON, toJSON)
+import qualified Data.Aeson.KeyMap as KM
+import qualified Data.ByteString as BS
+import Data.Yaml (ParseException, decodeFileEither, encode)
+import System.Directory
+    ( createDirectoryIfMissing
+    , doesFileExist
+    , getCurrentDirectory
+    , getHomeDirectory
+    , renameFile
+    )
 import System.FilePath ((</>))
+import System.Posix.Files (setFileMode)
 
--- | Load configuration from file
-loadConfig :: IO (Maybe CLIConfig)
-loadConfig = do
-  path <- getConfigPath
-  exists <- doesFileExist path
-  if exists
-    then do
-      content <- BSL.readFile path
-      return $ decode content
-    else return Nothing
+--------------------------------------------------------------------------------
+-- Public API
+--------------------------------------------------------------------------------
 
--- | Save configuration to file
+-- | Initialise the user data directory and return the effective configuration.
+--
+-- * Creates @~/.trha@ and @~/.trha/sessions@ (both 0700) on first run.
+-- * Writes the default @~/.trha/settings.yaml@ if it does not exist yet.
+-- * Merges: defaults < @~/.trha/settings.yaml@ < @./.trha/settings.yaml@
+--   (a per-project file is honoured when present, never auto-created).
+initConfig :: IO CLIConfig
+initConfig = do
+  dir <- getConfigDir
+  ensurePrivateDir dir
+  ensurePrivateDir (dir </> "sessions")
+  homePath <- getHomeConfigPath
+  exists <- doesFileExist homePath
+  unless exists (writeSettingsAtomic homePath defaultCLIConfig)
+  -- The file may pre-date the hardened initialiser; tighten it regardless.
+  setFileMode homePath 0o600
+  resolveConfig defaultCLIConfig
+
+-- | Save configuration to @~/.trha/settings.yaml@ (atomic, 0600).
 saveConfig :: CLIConfig -> IO ()
 saveConfig config = do
-  path <- getConfigPath
-  BSL.writeFile path (encode config)
+  dir <- getConfigDir
+  ensurePrivateDir dir
+  path <- getHomeConfigPath
+  writeSettingsAtomic path config
 
--- | Get configuration file path
-getConfigPath :: IO FilePath
-getConfigPath = do
+-- | @~/.trha@ (user data directory)
+getConfigDir :: IO FilePath
+getConfigDir = do
   home <- getHomeDirectory
-  return $ home </> ".trha" </> "config.json"
+  return $ home </> ".trha"
+
+-- | @~/.trha/settings.yaml@
+getHomeConfigPath :: IO FilePath
+getHomeConfigPath = (</> "settings.yaml") <$> getConfigDir
+
+-- | @./.trha/settings.yaml@ (per-project override, optional)
+getProjectConfigPath :: IO FilePath
+getProjectConfigPath = do
+  cwd <- getCurrentDirectory
+  return $ cwd </> ".trha" </> "settings.yaml"
+
+--------------------------------------------------------------------------------
+-- Layered resolution
+--------------------------------------------------------------------------------
+
+-- | Merge two YAML values; the second argument is the higher-precedence
+-- layer and wins on key conflicts (project layer over user layer over
+-- defaults).  Nested objects merge recursively.
+mergeValues :: Value -> Value -> Value
+mergeValues (Object lo) (Object hi) = Object (KM.unionWith mergeValues lo hi)
+mergeValues _ hi = hi
+
+-- | Read one settings file as a raw YAML value ('Nothing' when absent or
+-- unreadable; a warning is printed for unreadable files).
+readSettings :: FilePath -> IO (Maybe Value)
+readSettings path = do
+  exists <- doesFileExist path
+  if not exists
+    then return Nothing
+    else do
+      result <- decodeFileEither path :: IO (Either ParseException Value)
+      case result of
+        Right v  -> return (Just v)
+        Left err -> do
+          putStrLn $ "Warning: could not parse " ++ path ++ ": " ++ show err
+          return Nothing
+
+-- | Merge defaults < home settings < project settings and decode.
+resolveConfig :: CLIConfig -> IO CLIConfig
+resolveConfig fallback = do
+  defV   <- toJSON <$> pure fallback
+  homeV  <- readSettings =<< getHomeConfigPath
+  projV  <- readSettings =<< getProjectConfigPath
+  let merged  = maybe defV (mergeValues defV) homeV
+      merged2 = maybe merged (mergeValues merged) projV
+  case fromJSON merged2 :: Result CLIConfig of
+    Success cfg -> return cfg
+    Error err   -> do
+      putStrLn $ "Warning: invalid settings (using defaults): " ++ err
+      return fallback
+
+--------------------------------------------------------------------------------
+-- Private helpers
+--------------------------------------------------------------------------------
+
+-- | Create a directory that is only accessible by the owner (0700).
+ensurePrivateDir :: FilePath -> IO ()
+ensurePrivateDir dir = do
+  createDirectoryIfMissing True dir
+  setFileMode dir 0o700
+
+-- | Write settings atomically with 0600 permissions: write to a temp file,
+-- set permissions, then rename over the target so a crash never leaves a
+-- half-written settings file behind.
+writeSettingsAtomic :: FilePath -> CLIConfig -> IO ()
+writeSettingsAtomic path config = do
+  let tmp = path ++ ".tmp"
+  BS.writeFile tmp (encode config)
+  setFileMode tmp 0o600
+  renameFile tmp path

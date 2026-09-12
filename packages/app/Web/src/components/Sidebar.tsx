@@ -11,7 +11,7 @@ export function Sidebar({ onSettingsClick }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
-        <h2>gh-harness</h2>
+        <h2>trha</h2>
         <button onClick={createSession} className="new-session-btn">+ New Session</button>
       </div>
 

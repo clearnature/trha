@@ -11,7 +11,7 @@ export class HttpClient {
     this.baseUrl = `http://${host}:${port}`;
     this.client = axios.create({
       baseURL: this.baseUrl,
-      timeout: 30000,
+      timeout: 300000,
       headers: {
         'Content-Type': 'application/json',
       },

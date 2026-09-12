@@ -1,27 +1,35 @@
 import { create } from 'zustand';
 import type { Session, Message, Model, Tool, AgentState } from '../../shared/types';
+import { resolveApiConfig, ApiConfig } from './apiConfig.js';
+import { setApiRuntime } from '../port/runtime.js';
 
 // ── API client ──────────────────────────────────────────────────────────
 
-let apiBase = 'http://localhost:3456';
+let cfg: ApiConfig = { base: 'http://localhost:3456', useToken: false };
 let apiToken = '';
 
+/** Detect the hosting mode and set the API base/token policy. */
 export async function initAPI() {
-  if (window.electronAPI) {
-    const port = await window.electronAPI.getSchedulerPort();
+  const hasPreload = typeof window !== 'undefined' && !!window.electronAPI;
+  let port: number | undefined;
+  if (hasPreload && window.electronAPI) {
+    port = await window.electronAPI.getSchedulerPort();
     apiToken = await window.electronAPI.getToken();
-    apiBase = `http://localhost:${port}`;
   }
+  const isStudioPath = typeof location !== 'undefined' && location.pathname.startsWith('/studio');
+  cfg = resolveApiConfig({ hasPreload, schedulerPort: port, isStudioPath });
+  // keep the port assembly in sync: UI under port/ uses the same runtime
+  setApiRuntime(cfg, apiToken);
 }
 
 async function apiFetch(path: string, options: RequestInit = {}) {
-  const res = await fetch(`${apiBase}${path}`, {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (cfg.useToken) {
+    headers['Authorization'] = `Bearer ${apiToken}`;
+  }
+  const res = await fetch(`${cfg.base}${path}`, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiToken}`,
-      ...options.headers,
-    },
+    headers: { ...headers, ...(options.headers as Record<string, string> | undefined) },
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
@@ -37,6 +45,8 @@ export interface ModeConfig {
   compaction: { enabled: boolean; prunerEnabled: boolean; thresholdChars: number; headChars: number; tailChars: number };
   delegation: { enabled: boolean; forkEnabled: boolean; ralphEnabled: boolean; maxRounds: number };
   ptc: { enabled: boolean; language: string; description: string };
+  hasRunCode?: boolean;
+  hasPersona?: boolean;
   hasPlan: boolean;
   hasTodo: boolean;
   hasWebSearch: boolean;

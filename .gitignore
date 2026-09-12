@@ -159,3 +159,6 @@ docs/DeepSeek-Reasonix-studio-v2.11.0.zip
 *.bak
 *.backup
 *.orig
+
+# 测试用模型 checkpoint（242 MB，不入库；源头在 /data/trit/pyBitNet/scripts/artifacts/sov_native/）
+models/

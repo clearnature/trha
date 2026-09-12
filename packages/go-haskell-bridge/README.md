@@ -91,8 +91,8 @@ go-haskell-bridge 提供了：
 package main
 
 import (
-    "github.com/trha/go-haskell-bridge/http"
-    "github.com/trha/go-haskell-bridge/grpc"
+    "github.com/clearnature/trha/packages/go-haskell-bridge/go/http"
+    "github.com/clearnature/trha/packages/go-haskell-bridge/go/grpc"
 )
 
 func main() {

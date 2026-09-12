@@ -117,14 +117,14 @@ main = do
 ## 构建
 
 ```bash
-cd /home/yanli/work/gh--harness
+cd /home/yanli/work/trha
 cabal build
 ```
 
 ## 测试
 
 ```bash
-cd /home/yanli/work/gh--harness
+cd /home/yanli/work/trha
 cabal test
 ```
 

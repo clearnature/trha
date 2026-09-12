@@ -7,11 +7,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/gh-harness/go-haskell-bridge/http"
-	"github.com/gh-harness/go-haskell-bridge/grpc"
-	"github.com/gh-harness/go-haskell-bridge/channel"
-	"github.com/gh-harness/go-haskell-bridge/memory"
-	"github.com/gh-harness/go-haskell-bridge/goroutine"
+	"github.com/clearnature/trha/packages/go-haskell-bridge/go/http"
+	"github.com/clearnature/trha/packages/go-haskell-bridge/go/grpc"
+	"github.com/clearnature/trha/packages/go-haskell-bridge/go/channel"
+	"github.com/clearnature/trha/packages/go-haskell-bridge/go/memory"
+	"github.com/clearnature/trha/packages/go-haskell-bridge/go/goroutine"
 )
 
 func main() {

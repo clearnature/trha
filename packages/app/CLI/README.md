@@ -67,46 +67,90 @@ trha CLI 提供了：
 
 ## 使用示例
 
+### 安装
+
+```bash
+# 方式一：开发链接（推荐开发期，指向当前构建产物）
+ln -sf "$PWD/dist-newstyle/build/x86_64-linux/ghc-9.14.1/trha-0.1.0.0/x/trha/build/trha/trha" \
+  ~/.local/bin/trha
+
+# 方式二：安装到用户目录（cabal 全量安装）
+cabal install exe:trha --installdir "$HOME/.local/bin" --overwrite-policy=always
+```
+
+确保 `~/.local/bin` 在 `PATH` 中。
+
 ### 基本使用
 
 ```bash
-# 启动 CLI
+# 启动 CLI（REPL 模式；/quit 退出）
 trha cli
 
+# 启动 TUI（全屏终端界面；Ctrl+Q 退出）
+trha tui
+
+# 指定 TUI 主题（tokyo-night 深色 / light 浅色，默认读 settings.yaml 或 --theme）
+trha --theme light tui
+
+# TUI 内：输入 "/" 回车打开命令选择面板（Quick Picker）
+#   ↑/↓ 移动 · 继续输入过滤 · Enter 执行 · Esc 关闭
+# 例如输入 "/mo" 回车 → 选择面板列出 /model、/models → 回车执行
+
+# 指定服务端与模型（默认读 ~/.trha/settings.yaml）
+trha -h localhost -p 3456 -m deepseek-chat cli
+
 # 发送消息
-> Hello, how are you?
+> /help
 
-# 查看帮助
-> help
+# 查看帮助 / 列出会话 / 列出模型
+> /sessions
+> /models
 
-# 列出会话
-> sessions
-
-# 列出模型
-> models
-
-# 检查健康状态
-> health
-
-# 退出
-> quit
+# 新建会话 / 切换模型
+> /new
+> /model deepseek-chat
 ```
 
-### 配置
+### 配置目录 `~/.trha`
 
-配置文件位于 `~/.trha/config.json`：
+首次运行会自动创建以下结构（无需手工准备；目录 0700、文件 0600，仅本人可读写）：
 
-```json
-{
-  "configHost": "localhost",
-  "configPort": 3000,
-  "configModel": "deepseek-chat",
-  "configMaxTokens": 4096,
-  "configTimeout": 30000,
-  "configRetries": 3,
-  "configVerbose": false
-}
 ```
+~/.trha/
+├── settings.yaml  # 用户配置（YAML，缺失时写入默认值，可直接编辑）
+├── history        # REPL 命令历史（haskeline）
+└── sessions/      # 本地会话 transcript
+    └── <session-id>/
+        └── transcript.jsonl   # 逐行 JSON 事件（session/user/assistant/tool/done/error）
+```
+
+> 旧版 `~/.trha/config.json` 已停用（不再读取），可自行删除。
+
+### 配置分层
+
+配置按以下优先级合并（高层覆盖低层的同名字段）：
+
+1. 命令行 `--host/--port/--model`（最高）
+2. 项目级 `./.trha/settings.yaml`（当前目录存在时生效，**不会**自动创建）
+3. 用户级 `~/.trha/settings.yaml`（首跑自动生成默认值）
+4. 内建默认值（最低）
+
+例如 `~/.trha/settings.yaml` 设默认模型，某项目在项目根放 `./.trha/settings.yaml` 覆盖模型，命令行 `-m` 再覆盖。
+
+配置文件内容：
+
+```yaml
+configHost: localhost
+configMaxTokens: 4096
+configModel: deepseek-chat
+configPort: 3456   # orchestration layer (packages/scheduler)
+configRetries: 3
+configTimeout: 30000
+configVerbose: false
+configTheme: tokyo-night   # TUI 主题：tokyo-night | light（未知名称回退默认）
+```
+
+配置写入采用原子替换（临时文件 + rename），异常中断不会损坏文件；解析失败时打印 Warning 并回退默认值。
 
 ## 构建
 

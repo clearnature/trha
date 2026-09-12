@@ -153,7 +153,7 @@ create_systemd_service() {
     cat > "/etc/systemd/system/$SERVICE_NAME.service" << EOF
 [Unit]
 Description=trha Agent Harness
-Documentation=https://github.com/trha/trha
+Documentation=https://github.com/clearnature/trha
 After=network.target
 Wants=network-online.target
 
