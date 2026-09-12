@@ -162,3 +162,7 @@ docs/DeepSeek-Reasonix-studio-v2.11.0.zip
 
 # 测试用模型 checkpoint（242 MB，不入库；源头在 /data/trit/pyBitNet/scripts/artifacts/sov_native/）
 models/
+
+# Reasonix 会话运行时产物（task 状态快照、topic 元数据）——每次会话都变，不入库。
+# 曾由 8c48c75「纳入跟踪（迁移前快照）」的 git add -A 误入库 2167 个文件。
+.reasonix/
