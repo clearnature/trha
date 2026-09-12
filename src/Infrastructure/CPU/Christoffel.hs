@@ -50,9 +50,11 @@ transportTryte qTryte protoTryte shift =
 
 -- | One head's contribution: the tryte collapses to @Σ trits / 6.0@ and scales
 -- that head's slice of the input (gf3_s2_lattice.py:611-617).
-christoffelMix :: [Int] -> [Double] -> [Double]
+-- ⚠️ @transported@ 来自 'transportTryte'（GF(3) 元素 'Trit'）；此处是**浮点**路径，
+-- 故显式 unwrap 成 'Int' 再参与实数运算。
+christoffelMix :: [Trit] -> [Double] -> [Double]
 christoffelMix transported xHead =
-  map (* (fromIntegral (sum transported) / 6.0)) xHead
+  map (* (fromIntegral (sum (map tritToInt transported)) / 6.0)) xHead
 
 -- | The full Christoffel forward for one token, returning @multi_head@ — the
 -- caller applies @out_proj@ (gf3_s2_lattice.py:563-630).
@@ -71,7 +73,8 @@ christoffelForward heads qW qS protos fromCell toCell x =
     qTryte = tryteOf (ternaryLinear qW qS x)                 -- [heads*6]
     shift  = gf3Shift fromCell (getDirection fromCell toCell)
     transportedAll =
-      [ transportTryte (take 6 (drop (h * 6) qTryte)) (protos !! h) shift
+      [ transportTryte (map mkTrit (take 6 (drop (h * 6) qTryte)))
+                       (map mkTrit (protos !! h)) shift
       | h <- [0 .. heads - 1] ]
     headDim = length x `div` heads
     slice h xs = take headDim (drop (h * headDim) xs)
