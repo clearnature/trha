@@ -174,3 +174,9 @@ models/
 packages/app/Desktop/release/
 packages/app/Desktop/resources/node-runtime/
 packages/app/Desktop/resources/scheduler-dist/
+
+# studio 静态页面的**输出目录**：由 packages/app/Desktop/package.json 的
+# export:studio 脚本生成（vite build && rm -rf .../studio-public/* &&
+# cp -r dist/renderer/* .../studio-public/）。scheduler/src/Server 只在运行时
+# 把它当静态托管目录读取，不是源码。同 8c48c75 误入库。
+packages/scheduler/studio-public/
