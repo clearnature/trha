@@ -12,7 +12,7 @@
 -- > 推理     SovereignWuxingLayer  T⁶ 环面上 4 步「六节点 × 三值」因果推理
 --
 -- 这一层刻意不做维度变换：`layerIntrinsic27At` 与 `wuxingForward` 都吃/吐
--- `[Int]`（GF(27) 元素），所以可以直接串联。所有中间量都落在 [0,26]。
+-- `[GF27]`，所以可以直接串联。
 module Infrastructure.CPU.SovereignFull
   ( sovereignForwardFull
   , fullChainReport
@@ -22,13 +22,12 @@ module Infrastructure.CPU.SovereignFull
 
 import Infrastructure.CPU.SovereignGF27
   ( embed27
-  , gf27Add
   , gf27Matmul
-  , gf27One
   , gf27RmsNorm
-  , gf27Zero
   , layerIntrinsic27At
   )
+import qualified Infrastructure.CPU.SovereignTypes as ST
+import Infrastructure.CPU.SovereignTypes (GF27, Trit, mkTrit, tritToInt)
 import Infrastructure.CPU.SovereignIntrinsic (SovereignIntWeights(..), SovereignIntLayer(..))
 import Infrastructure.CPU.SovereignModel (SovereignConfig(..), defaultMonopolePrototype)
 import Infrastructure.CPU.SovereignPhase12 (layerStep12, phase12Init, step12)
@@ -54,11 +53,11 @@ sovereignForwardFull
   -> WuxingConfig
   -> WuxingLayerW
   -> [Int]
-  -> [[Int]]
+  -> [[GF27]]
 sovereignForwardFull cfg w wcfg wl tokenIds = map headLogits normed
   where
     dim   = scDim cfg
-    gamma = replicate dim gf27One
+    gamma = replicate dim ST.gf27One
 
     -- ① 60 层，由真实十二律相位驱动（每 12 步一次桥）
     pairs = [ pr | (_, pr) <- map layerStep12 (take (scDepth cfg) (iterate step12 phase12Init)) ]
@@ -70,11 +69,11 @@ sovereignForwardFull cfg w wcfg wl tokenIds = map headLogits normed
     wxed = [ firstOf4 (wuxingForward wcfg wl h) | h <- hidden ]
 
     -- ③ bypass → final norm → lm_head
-    bypassed = [ zipWith gf27Add h (tableRow (siwContentBypass w) t)
+    bypassed = [ zipWith ST.plusGF27 h (map ST.embedGF3 (tableRow (siwContentBypass w) t))
                | (h, t) <- zip wxed tokenIds ]
     normed = map (gf27RmsNorm gamma) bypassed
     headLogits = gf27Matmul (siwLmHead w)
-    tableRow table tok = take dim (table !! (tok `mod` length table) ++ repeat gf27Zero)
+    tableRow table tok = take dim (table !! (tok `mod` length table) ++ repeat (mkTrit 0))
 
 -- | 把整个矩阵强制到完全求值（deep-force）。
 --
@@ -82,20 +81,20 @@ sovereignForwardFull cfg w wcfg wl tokenIds = map headLogits normed
 -- 每层的 `ByteString` 会被闭包捕获，`[4320,1440]` 又是 6.2M 个未求值的 `Float`/`Int`。
 -- 若不在读入时立即强制，60 层的权重会全部滞留 —— 实测把进程撑到 **54 GB** 并触发
 -- 系统级 OOM（`global_oom`，killed `trha-test`, anon-rss 54047760 kB）。
-forceMat :: [[Int]] -> [[Int]]
+forceMat :: [[Trit]] -> [[Trit]]
 forceMat m = forceRows 0 m `seq` m
   where
-    forceRows :: Int -> [[Int]] -> Int
+    forceRows :: Int -> [[Trit]] -> Int
     forceRows !acc []       = acc
     forceRows !acc (r : rs) = forceRows (acc + forceRow r) rs
-    forceRow :: [Int] -> Int
-    forceRow = foldl' (+) 0
+    forceRow :: [Trit] -> Int
+    forceRow = foldl' (\a t -> a + tritToInt t) 0
 
 -- | 把向量强制到完全求值，并返回它本身。
 --
--- 用 'length' 而非 @foldl' (+) 0@：元素类型是 'Int'，spine 走完即已完全求值，
--- 不必真的做一次 O(n) 加法（那是纯浪费）。
-forceVec :: [Int] -> [Int]
+-- 用 'length' 而非 @foldl' (+) 0@：元素是 newtype 包裹的 'Int'（零开销），
+-- spine 走完即已完全求值，不必真的做一次 O(n) 加法（那是纯浪费）。
+forceVec :: [GF27] -> [GF27]
 forceVec v = length v `seq` v
 
 -- | 流式全 60 层：**逐层从 checkpoint 目录读真实权重**，用完即弃。
@@ -115,7 +114,7 @@ forwardStreaming
   :: FilePath            -- ^ @.sov@ 文件路径
   -> SovereignConfig
   -> [Int]               -- ^ token ids
-  -> IO (Either String [Int])
+  -> IO (Either String [GF27])
 forwardStreaming sovPath cfg tokenIds = do
   img <- BS.readFile sovPath
   let idx = indexZip img
@@ -130,7 +129,7 @@ forwardStreamingDir
   :: FilePath            -- ^ 含 @data/N@ 的目录
   -> SovereignConfig
   -> [Int]
-  -> IO (Either String [Int])
+  -> IO (Either String [GF27])
 forwardStreamingDir dir cfg tokenIds = do
   runStreaming (\i -> BS.readFile (dir ++ "/data/" ++ show i)) cfg tokenIds
 
@@ -139,13 +138,13 @@ runStreaming
   :: (Int -> IO BS.ByteString)   -- ^ 按 @data/N@ 的序号取字节
   -> SovereignConfig
   -> [Int]
-  -> IO (Either String [Int])
+  -> IO (Either String [GF27])
 runStreaming fetch cfg tokenIds = do
   let dim   = scDim cfg
       heads = scHeads cfg
       ff    = scFF cfg
       hex   = 6
-      proto = defaultMonopolePrototype heads
+      proto = map (map (map mkTrit)) (defaultMonopolePrototype heads)
       chunk n xs = case xs of
         [] -> []
         _  -> take n xs : chunk n (drop n xs)
@@ -153,7 +152,8 @@ runStreaming fetch cfg tokenIds = do
         bs <- fetch i
         -- evaluate + forceMat：在 IO 动作内就把整张矩阵算完，之后 bs 可被 GC。
         -- 直接用 unpackTritsInt，省掉 Float 装箱与 map round。
-        evaluate (forceMat (chunk c (take (r * c) (unpackTritsInt bs (r * c)))))
+        evaluate (forceMat (map (map mkTrit)
+                             (chunk c (take (r * c) (unpackTritsInt bs (r * c))))))
   -- 相位一次算好（60 个），不要每层用 `iterate !! k` 重建
   let phases = [ pr | (_, pr) <- map layerStep12 (take (scDepth cfg) (iterate step12 phase12Init)) ]
   -- 逐层推进：每层读 5 个矩阵 → 立即强制 → 跑该层 → 强制输出 → 丢弃
@@ -175,8 +175,8 @@ runStreaming fetch cfg tokenIds = do
   -- 起点取 embedding 的前 dim 维（token_emb.weight 是 [1536,1440]）
   bs0 <- fetch 0
   let tokE = chunk dim (take (8 * dim) (unpackTritsInt bs0 (8 * dim)))
-      embedded = [ take dim (row ++ repeat gf27Zero)
-                 | tok <- tokenIds, let row = tokE !! (tok `mod` length tokE) ]
+      embedded = [ take dim (row ++ repeat ST.gf27Zero)
+                 | tok <- tokenIds, let row = map ST.mkGF27 (tokE !! (tok `mod` length tokE)) ]
   case embedded of
     [] -> pure (Right [])
     (x0 : _) -> go 0 x0
@@ -188,7 +188,7 @@ fullChainReport
   -> WuxingConfig
   -> WuxingLayerW
   -> [Int]
-  -> ([[Int]], [T6State], [[[(Int, Int)]]], [[Bool]])
+  -> ([[GF27]], [T6State], [[[(Int, Int)]]], [[Bool]])
 fullChainReport cfg w wcfg wl tokenIds =
   ( map headLogits normed
   , tmstates
@@ -196,7 +196,7 @@ fullChainReport cfg w wcfg wl tokenIds =
   , okss )
   where
     dim   = scDim cfg
-    gamma = replicate dim gf27One
+    gamma = replicate dim ST.gf27One
     pairs = [ pr | (_, pr) <- map layerStep12 (take (scDepth cfg) (iterate step12 phase12Init)) ]
     embedded = embed27 cfg w tokenIds
     hidden = foldl (\hs (i, pr) -> map (layerIntrinsic27At cfg (siwLayers w !! i) pr) hs)
@@ -206,8 +206,8 @@ fullChainReport cfg w wcfg wl tokenIds =
     tmstates = [ st | (_, st, _, _) <- reports ]
     chains   = [ ch | (_, _, ch, _) <- reports ]
     okss     = [ os | (_, _, _, os) <- reports ]
-    bypassed = [ zipWith gf27Add h (tableRow (siwContentBypass w) t)
+    bypassed = [ zipWith ST.plusGF27 h (map ST.embedGF3 (tableRow (siwContentBypass w) t))
                | (h, t) <- zip wxed tokenIds ]
     normed = map (gf27RmsNorm gamma) bypassed
     headLogits = gf27Matmul (siwLmHead w)
-    tableRow table tok = take dim (table !! (tok `mod` length table) ++ repeat gf27Zero)
+    tableRow table tok = take dim (table !! (tok `mod` length table) ++ repeat (mkTrit 0))
