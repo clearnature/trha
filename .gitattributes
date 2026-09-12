@@ -1,0 +1,27 @@
+# ── 二进制文件：不做文本 diff/merge，避免被当成文本误合并 ──────────────
+# 背景：历史上曾把 electron 打包产物（.deb / .asar / .so / .pak）误入库，
+# 见 ca800d7 / b65618c / d28c069 三次清理。这些类型即便将来再出现，
+# 也不该走文本 diff 通道。
+*.deb        binary
+*.rpm        binary
+*.AppImage   binary
+*.snap       binary
+*.dmg        binary
+*.asar       binary
+*.so         binary
+*.so.*       binary
+*.dylib      binary
+*.dll        binary
+*.node       binary
+*.pak        binary
+*.woff2      binary
+
+# ── 图片资源 ──────────────────────────────────────────────────────────
+*.png        binary
+*.jpg        binary
+*.jpeg       binary
+*.gif        binary
+*.ico        binary
+
+# ── lock 文件：机器生成、体积大，在 diff 与语言统计里折叠 ──────────────
+package-lock.json   -diff linguist-generated

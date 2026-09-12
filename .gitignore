@@ -180,3 +180,17 @@ packages/app/Desktop/resources/scheduler-dist/
 # cp -r dist/renderer/* .../studio-public/）。scheduler/src/Server 只在运行时
 # 把它当静态托管目录读取，不是源码。同 8c48c75 误入库。
 packages/scheduler/studio-public/
+
+# ── 防御性规则：兜住构建/打包产物，避免重犯 ca800d7/b65618c/d28c069 那类误入库 ──
+# Electron / electron-builder 的散落产物（产物目录本身已按路径忽略，这里兜底）
+*.deb
+*.rpm
+*.AppImage
+*.snap
+*.dmg
+*.asar
+# TypeScript / Vite 增量编译产物
+*.tsbuildinfo
+.vite/
+# 通用构建输出目录（dist 是构建约定；各子包另有显式规则）
+dist/
