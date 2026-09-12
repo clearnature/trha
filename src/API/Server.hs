@@ -10,6 +10,9 @@
 module API.Server
   ( startServer
   , startStubKernel
+  , mkApp
+  , mkStubApp
+  , mkCPUApp
   , API
   , parseOpenAIRequest
   , OpenAIRequest(..)
@@ -54,7 +57,7 @@ import qualified API.ProviderRuntime as PR
 
 -- LLM modules
 import qualified LLM.Adapter.Types as LLM
-import LLM.Adapter.Interface (LLMAdapter(..))
+import LLM.Adapter.Interface (LLMAdapter(..), createCPUAdapter)
 import LLM.Adapter.Types (ChatMessage(..), ChatTurn(..), StreamChunk(..), ToolCall(..), ToolSpec, Usage(..))
 import qualified LLM.Stream as Stream
 
@@ -817,12 +820,42 @@ toRole _           = LLM.User
 -- 8. Start server
 --------------------------------------------------------------------------------
 
+-- | The server as a WAI 'Application', with the backend injected.
+--
+-- Split out of 'startServer' so tests can drive the **real** API through
+-- @testWithApplication@ without binding a fixed port.  Everything that decides
+-- which backend answers HTTP flows through this one argument: swap the
+-- 'LLMAdapter' and every endpoint follows.
+mkApp :: LLMAdapter -> IO Application
+mkApp adapter = do
+  sessionsVar <- newTVarIO Map.empty
+  pure (serve (Proxy :: Proxy API) (server adapter sessionsVar))
+
 startServer :: LLMAdapter -> Int -> IO ()
 startServer adapter port = do
-  sessionsVar <- newTVarIO Map.empty
+  app <- mkApp adapter
   putStrLn $ "Starting server on port " ++ show port
   putStrLn "Protocols: OpenAI (/v1/chat/completions), Anthropic (/v1/messages), Responses (/v1/responses)"
-  run port (serve (Proxy :: Proxy API) (server adapter sessionsVar))
+  run port app
+
+-- | The stub-backed app (K6): deterministic two-round tool loop, no provider
+-- key and no model file.  Same wiring the production @startStubKernel@ uses.
+mkStubApp :: IO Application
+mkStubApp = stubAdapter >>= mkApp
+
+-- | The **local CPU engine**-backed app: the real inference stack answers every
+-- endpoint, SSE included.
+--
+-- ⚠️ Why the adapter is built *here* instead of being passed in: this package
+-- compiles its own copy of @LLM.Adapter.Interface@ (listed in @other-modules@),
+-- so @trha-api@'s 'LLMAdapter' and @trha-llm@'s 'LLMAdapter' are **different
+-- types** despite sharing a module name and source file.  An adapter obtained
+-- from @trha-llm@ — @createCPUAdapter@ as seen from outside this package — cannot
+-- be handed to 'mkApp'.  Building it inside the package keeps the types aligned.
+-- Creating the engine here is also exactly where the wiring gap lives: nothing
+-- outside this module can currently inject a CPU backend.
+mkCPUApp :: FilePath -> IO Application
+mkCPUApp modelPath = createCPUAdapter modelPath >>= mkApp
 
 --------------------------------------------------------------------------------
 -- Stub kernel (K6): two-round tool loop without a real provider.

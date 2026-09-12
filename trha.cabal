@@ -253,7 +253,14 @@ test-suite trha-test
                   , bytestring
                   , hashable
                   , aeson
-  ghc-options:      -rtsopts
+                  -- HTTP 端到端装配测试：起真实 server + 发真实请求
+                  , warp
+                  , wai
+                  , http-types
+                  , http-client
+  -- -threaded 是必需的：warp 的 testWithApplication 要把 server 跑在另一个
+  -- capability 上，非 threaded RTS 下请求会以 NoResponseDataReceived 失败。
+  ghc-options:      -rtsopts -threaded
   default-language: Haskell2010
 
 -- Kernel stub server (K6): deterministic two-round tool loop for

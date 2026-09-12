@@ -45,7 +45,13 @@ import LLM.Adapter.Types
 import qualified LLM.Adapter.Types as LLM
 import LLM.Adapter.Interface
 import LLM.Providers.DeepSeek (buildDeepSeekChatRequest, createDeepSeekProvider, parseDeepSeekChatTurn)
-import API.Server (OpenAIRequest(..), parseOpenAIRequest)
+import API.Server (OpenAIRequest(..), parseOpenAIRequest, mkStubApp, mkCPUApp)
+import Network.Wai (Application)
+import Network.Wai.Handler.Warp (testWithApplication)
+import Network.HTTP.Client (Manager, newManager, defaultManagerSettings, parseRequest,
+                            httpLbs, responseBody, responseStatus, method, requestBody,
+                            requestHeaders, RequestBody(..))
+import Network.HTTP.Types (statusCode)
 import API.ProviderProbe (classifyListing, parseModelIds)
 import Core.Provider.Types
 import Data.IORef
@@ -289,7 +295,10 @@ main = hspec $ do
                             ++ " nz=" ++ show nz
                             ++ " 有界=" ++ show (and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | row <- run, v <- row ]))
       rs <- mapM probe [ "bitnet2b_warmstart.sov", "20260721-033421_step31000.sov" ]
-      sequence_ [ pendingWith m | m <- rs ]
+      -- ⚠️ 不能用 sequence_：第一个 pendingWith 抛异常即中断，后面 probe 的测量结果
+      -- 永远打不出来（此前报告里只有 bitnet2b_warmstart.sov 一项可见）。合并成单条
+      -- 消息，两个 probe 的结果都进入报告。
+      pendingWith (List.intercalate " | " rs)
 
     it "真实训练后权重（ZIP 里的 data/0）→ GF(27)×十二律相位，60 层有界" $ do
       -- 20260721-033421_step31000.sov 实为 PyTorch ZIP（magic = PK\003\004），
@@ -1948,3 +1957,72 @@ main = hspec $ do
       lookupKey "a" ks `shouldBe` Just "sk-a"
       lookupKey "zz" ks `shouldBe` Nothing
       (decode (encode ks) :: Maybe ProviderKeys) `shouldBe` Just ks
+
+  -- ── API.Server 装配端到端（真实 warp + 真实 HTTP 请求）──────────────────────
+  -- 为什么补这组：全库此前**没有任何 HTTP 端到端测试**，所有 API 测试都停在纯函数
+  -- 层（parseOpenAIRequest / classifyListing / ProviderEntry）。后果是接线缺口不会
+  -- 被任何测试看见。
+  --
+  -- ⚠️ 装配在这里暴露出的**根本障碍**：trha-api 把自己的 LLM.Adapter.Interface
+  -- 又编译了一份（列在 other-modules），于是 trha-api 的 LLMAdapter 与 trha-llm 的
+  -- LLMAdapter 是**两个不同类型**。外部拿到的 createCPUAdapter 根本传不进
+  -- API.Server —— 所以这组测试只能走包内入口（mkCPUApp / mkStubApp），写不成
+  -- 「注入任意 adapter」的形式。
+  describe "API.Server — 装配端到端 (HTTP, 真实 warp)" $ do
+    let withApp :: Application -> (Manager -> String -> IO a) -> IO a
+        withApp app act =
+          testWithApplication (pure app) $ \port -> do
+            mgr <- newManager defaultManagerSettings
+            act mgr ("http://127.0.0.1:" ++ show port)
+
+        httpGet :: Manager -> String -> IO (Int, String)
+        httpGet mgr url = do
+          req <- parseRequest url
+          res <- httpLbs req mgr
+          pure (statusCode (responseStatus res), BLC.unpack (responseBody res))
+
+        httpPost :: Manager -> String -> Value -> IO (Int, String)
+        httpPost mgr url body = do
+          req0 <- parseRequest ("POST " ++ url)
+          let req = req0 { method          = "POST"
+                         , requestBody     = RequestBodyLBS (encode body)
+                         , requestHeaders  = [ ("Content-Type", "application/json") ] }
+          res <- httpLbs req mgr
+          pure (statusCode (responseStatus res), BLC.unpack (responseBody res))
+
+        chatReq :: Bool -> Value
+        chatReq stream = object
+          [ "model"    .= ("cpu-model" :: T.Text)
+          , "stream"   .= stream
+          , "messages" .= [ object [ "role"    .= ("user" :: T.Text)
+                                   , "content" .= ("hi" :: T.Text) ] ]
+          ]
+
+    it "stub 装配：/v1/models 报的是 stub 自己的模型（K6 现状）" $ do
+      app <- mkStubApp
+      (code, body) <- withApp app $ \mgr base -> httpGet mgr (base ++ "/v1/models")
+      code `shouldBe` 200
+      ("Stub Kernel" `isInfixOf` body) `shouldBe` True
+
+    it "CPU 装配：同一个端点换成 cpu-model（backend 由装配决定，不是硬编码）" $ do
+      app <- mkCPUApp "/dev/null"
+      (code, body) <- withApp app $ \mgr base -> httpGet mgr (base ++ "/v1/models")
+      code `shouldBe` 200
+      ("cpu-model" `isInfixOf` body)     `shouldBe` True
+      ("Stub Kernel" `isInfixOf` body)   `shouldBe` False
+
+    it "CPU adapter 经 HTTP 完成一次非流式 chat（/v1/chat/completions）" $ do
+      app <- mkCPUApp "/dev/null"
+      (code, body) <- withApp app $ \mgr base ->
+        httpPost mgr (base ++ "/v1/chat/completions") (chatReq False)
+      code `shouldBe` 200
+      ("chat.completion" `isInfixOf` body) `shouldBe` True
+      ("cpu-model" `isInfixOf` body)       `shouldBe` True
+
+    it "CPU adapter 经 HTTP 走 SSE 流式（/v1/chat/completions/stream）" $ do
+      app <- mkCPUApp "/dev/null"
+      (code, body) <- withApp app $ \mgr base ->
+        httpPost mgr (base ++ "/v1/chat/completions/stream") (chatReq True)
+      code `shouldBe` 200
+      ("data: " `isInfixOf` body)        `shouldBe` True
+      ("data: [DONE]" `isInfixOf` body)  `shouldBe` True
