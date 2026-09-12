@@ -23,7 +23,7 @@ import Infrastructure.CPU.SovereignWuxingLayer
 import Infrastructure.CPU.SovereignFull
 import Infrastructure.CPU.SovereignPacked
 import qualified Infrastructure.CPU.SovereignTypes as ST
-import Infrastructure.CPU.SovereignTypes (mkTrit)
+import Infrastructure.CPU.SovereignTypes (mkTrit, tritToInt)
 import System.Environment (lookupEnv)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as BS
@@ -58,6 +58,7 @@ import System.CPUTime (getCPUTime)
 import qualified Data.List as List
 import qualified Data.Vector.Unboxed as VU
 import Data.List (isInfixOf, isPrefixOf)
+import Data.Maybe (listToMaybe)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map as Map
@@ -65,6 +66,21 @@ import Control.Monad.Free (liftF)
 
 subsetOf :: (Eq a) => [a] -> [a] -> Bool
 subsetOf xs ys = all (`elem` ys) xs
+
+-- | 尾部稳态周期：找**最小** d ∈ [1,120]，使帧序列末尾以 d 为周期
+-- （末尾 d 个位置的相邻周期比较全成立）。找不到则 'Nothing'。
+--
+-- ⚠️ 与「首次重复」判法的区别：相位推进会在一个轮内产生**偶然的相邻重复**，
+-- 用 firstRepeat 会把它误报成周期 1。这里要求末尾**连续 d 步**都满足周期 d，
+-- 从而排除偶然重复（见 "自持：60 层后落入周期 12" 一测的注记）。
+--
+-- ⚠️ 本函数此前在 Spec.hs 中被引用但**从未定义**（迁移时才发现），
+-- 此处按各调用点的期望语义实现，仅供测试使用。
+tailCycle :: (Eq a) => [[[a]]] -> Maybe Int
+tailCycle frames = listToMaybe [ d | d <- [1 .. 120], d < n, holdsFor d ]
+  where
+    n = length frames
+    holdsFor d = and [ frames !! i == frames !! (i - d) | i <- [n - d .. n - 1] ]
 
 main :: IO ()
 main = hspec $ do
@@ -123,30 +139,30 @@ main = hspec $ do
     -- z3r_gate / z3r_gated_mul / z3r_dot_product.
     let dim = 8
         lut = rsqrtLutQ16 dim 1e-5
-        x = [0, 1, 2, 0, 1, 2, 0, 1]
+        x = map mkTrit [0, 1, 2, 0, 1, 2, 0, 1]
         gw = [ [ mkTrit ((r * 7 + c * 13 + 3) `mod` 3) | c <- [0 .. dim - 1] ] | r <- [0 .. 2] ]
         uw = [ [ mkTrit ((r * 7 + c * 13 + 4) `mod` 3) | c <- [0 .. dim - 1] ] | r <- [0 .. 2] ]
         dw = [ [ mkTrit ((r * 7 + c * 13 + 5) `mod` 3) | c <- [0 .. 2] ] | r <- [0 .. dim - 1] ]
-        gamma = replicate dim 1
+        gamma = replicate dim (mkTrit 1)
 
     it "reproduces the sov-math C++ Q16 rsqrt LUT bit for bit" $ do
       lut `shouldBe` [20724303, 185356, 131069, 107018, 92681, 82897, 75674, 70061, 65536]
 
     it "reproduces z3r_rms_norm bit for bit and stays inside GF(3)" $ do
-      z3rRmsNorm lut gamma x `shouldBe` [0, 1, 0, 0, 1, 0, 0, 1]
+      map tritToInt (z3rRmsNorm lut gamma x) `shouldBe` [0, 1, 0, 0, 1, 0, 0, 1]
 
     it "reproduces the layer-2 dot product (integer, no reduction)" $ do
-      z3rDotProduct [1, 2, 1, 2] [2, 2, 1, 1] `shouldBe` 6
+      z3rDotProduct (map mkTrit [1, 2, 1, 2]) (map mkTrit [2, 2, 1, 1]) `shouldBe` 6   -- 层2：不归约
 
     it "reproduces z3r_matmul / z3r_gate / z3r_gated_mul / swiglu bit for bit" $ do
       let g = z3rMatmul gw x
           u = z3rMatmul uw x
-          gate = z3rGate (length (filter (/= 0) g)) (3 * fxpOne)
-      g `shouldBe` [2, 0, 1]
-      u `shouldBe` [0, 1, 2]
-      gate `shouldBe` 0                       -- non_zero=2 -> 2*65536 < 3*65536
-      z3rGatedMul gate u `shouldBe` replicate 3 0
-      z3rSwiGLU gw uw dw x `shouldBe` replicate dim 0
+          gate = z3rGate (length (filter (\t -> tritToInt t /= 0) g)) (3 * fxpOne)
+      map tritToInt g `shouldBe` [2, 0, 1]
+      map tritToInt u `shouldBe` [0, 1, 2]
+      tritToInt gate `shouldBe` 0             -- non_zero=2 -> 2*65536 < 3*65536
+      map tritToInt (z3rGatedMul gate u) `shouldBe` replicate 3 0
+      map tritToInt (z3rSwiGLU gw uw dw x) `shouldBe` replicate dim 0
 
     it "lands on a limit cycle instead of blowing up" $ do
       -- The float version of the same pipeline reaches ~1e21 because it never
@@ -154,13 +170,13 @@ main = hspec $ do
       -- space is finite and a cycle is forced.
       let iterate 0 v = v
           iterate n v = iterate (n - 1) (z3rRmsNorm lut gamma v)
-          sums = [ sum (iterate (t + 1) x) | t <- [0 .. 9] ]   -- after t+1 norms
+          sums = [ sum (map tritToInt (iterate (t + 1) x)) | t <- [0 .. 9] ]   -- after t+1 norms
       sums `shouldBe` [3, 6, 0, 0, 0, 0, 0, 0, 0, 0]
-      all (\v -> v >= 0 && v <= 2) (iterate 10 x) `shouldBe` True
+      all (\v -> tritToInt v >= 0 && tritToInt v <= 2) (iterate 10 x) `shouldBe` True
 
     it "gated_mul is GF(3) multiplication, not a float product" $ do
-      z3rGatedMul 2 [0, 1, 2] `shouldBe` [0, 2, 1]   -- 2*2=4=1 mod 3
-      z3rGatedMul 0 [0, 1, 2] `shouldBe` [0, 0, 0]
+      map tritToInt (z3rGatedMul (mkTrit 2) (map mkTrit [0, 1, 2])) `shouldBe` [0, 2, 1]   -- 2*2=4=1 mod 3
+      map tritToInt (z3rGatedMul (mkTrit 0) (map mkTrit [0, 1, 2])) `shouldBe` [0, 0, 0]
 
   describe "Infrastructure.CPU.GF3Intrinsic — DuodecClock 本源相位归零 (A6/M7f)" $ do
     -- 数值锚: /home/yanli/work/math/cpp/tests/test_duodec_crt.cpp
@@ -240,12 +256,12 @@ main = hspec $ do
           ll = SovereignIntLayer (w3 12 dimC 1) (w3 dimC dimC 2) (w3 (3 * dimC) dimC 3)
                  (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (map (map (map mkTrit)) (defaultMonopolePrototype 2))
           ww = SovereignIntWeights (map (map (ST.mkGF27 . ST.tritToInt)) (w3 8 dimC 7)) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 60 ll)
-          emb = [ take dimC (siwTokenEmbed ww !! (t `mod` 8) ++ repeat 0) | t <- [1, 3, 5] ]
+          emb = [ take dimC (siwTokenEmbed ww !! (t `mod` 8) ++ repeat ST.gf27Zero) | t <- [1, 3, 5] ]
           pairs = [ pr | (_, pr) <- map layerStep12 (take 60 (iterate step12 phase12Init)) ]
           run = foldl (\hs (i, pr) -> map (layerIntrinsic27At cc (siwLayers ww !! i) pr) hs)
                       emb (zip [0 ..] pairs)
       map length run `shouldBe` [dimC, dimC, dimC]
-      and [ v >= 0 && v <= 26 | row <- run, v <- row ] `shouldBe` True
+      and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | row <- run, v <- row ] `shouldBe` True
       breatheCount (last (take 61 (iterate step12 phase12Init))) `shouldBe` 5
 
     it "训练后 .sov（step31000）的 token_emb 切片 → GF(27)×十二律相位（diagnostic）" $ do
@@ -271,7 +287,7 @@ main = hspec $ do
                                   (embed27 cc ww [1, 3, 5]) (zip [0 ..] pairs)
                   pure (p ++ ": head=" ++ show (take 6 (head rows))
                             ++ " nz=" ++ show nz
-                            ++ " 有界=" ++ show (and [ v >= 0 && v <= 26 | row <- run, v <- row ]))
+                            ++ " 有界=" ++ show (and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | row <- run, v <- row ]))
       rs <- mapM probe [ "bitnet2b_warmstart.sov", "20260721-033421_step31000.sov" ]
       sequence_ [ pendingWith m | m <- rs ]
 
@@ -303,7 +319,7 @@ main = hspec $ do
           -- 权威复算：artifacts/checkpoints/<tag>.pt（bfloat16 state_dict）
           -- 的 token_emb 按同样切片（8行×每行前24）得非零数 = 181
           nz `shouldBe` 181
-          and [ v >= 0 && v <= 26 | row <- run, v <- row ] `shouldBe` True
+          and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | row <- run, v <- row ] `shouldBe` True
 
     it "loadTorchZip：解 torch.save 的 ZIP，data/0 尺寸与权威 .pt 同源" $ do
       let z = "/data/trit/pyBitNet/scripts/artifacts/sov_native/20260721-033421_step31000.sov"
@@ -356,20 +372,20 @@ main = hspec $ do
           , wlStepT6   = replicate steps (w3 dimC (heads * 2) 7)
           , wlStepConf = replicate steps (w3 dimC heads 8)
           , wlFuse     = w3 (heads * hh) dimC 9
-          , wlGInit    = replicate hex (replicate trit (replicate hh 1)) }
-        x0 = take dimC (cycle [0, 1, 2])
+          , wlGInit    = replicate hex (replicate trit (replicate hh (mkTrit 1))) }
+        x0 = map ST.mkGF27 (take dimC (cycle [0, 1, 2]))
 
     it "因果图：6×6 邻接，值是 GF(3) 乘（sigmoid 的离散对应）" $ do
       let (adj, updated) = causalGraphStep cfg ll x0
       length adj `shouldBe` hex
       map length adj `shouldBe` replicate hex hex
-      and [ v >= 0 && v <= 2 | row <- adj, v <- row ] `shouldBe` True
+      and [ tritToInt v >= 0 && tritToInt v <= 2 | row <- adj, v <- row ] `shouldBe` True
       length updated `shouldBe` dimC
-      and [ v >= 0 && v <= 26 | v <- updated ] `shouldBe` True   -- GF(27) 内
+      and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | v <- updated ] `shouldBe` True   -- GF(27) 内
 
     it "argMaxIdx：整数域上的选择（平局取最小下标）" $ do
-      argMaxIdx [0, 1, 2] `shouldBe` 2
-      argMaxIdx [2, 2, 1] `shouldBe` 0
+      argMaxIdx (map ST.mkGF27 [0, 1, 2]) `shouldBe` 2
+      argMaxIdx (map ST.mkGF27 [2, 2, 1]) `shouldBe` 0
       argMaxIdx [] `shouldBe` 0
 
     it "T⁶ 验证门：极向/环向必须在缠绕内，Berry 相位必须连续" $ do
@@ -384,7 +400,7 @@ main = hspec $ do
     it "4 步推理链端到端：输出有界 ∈ GF(27)，相位/链长正确" $ do
       let (h, st, chain, oks) = wuxingForward cfg ll x0
       length h `shouldBe` dimC
-      and [ v >= 0 && v <= 26 | v <- h ] `shouldBe` True
+      and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | v <- h ] `shouldBe` True
       length chain `shouldBe` steps
       length oks `shouldBe` steps
       -- 每步选中 (节点, trit)，节点 ∈ [0,6)、trit ∈ [0,3)
@@ -412,13 +428,13 @@ main = hspec $ do
           , wlStepT6   = replicate steps (w3 dimR (heads * 2) 7)
           , wlStepConf = replicate steps (w3 dimR heads 8)
           , wlFuse     = w3 (heads * hh) dimR 9
-          , wlGInit    = replicate hex (replicate trit (replicate hh 1)) }
-        xR = take dimR (cycle [0, 1, 2])
+          , wlGInit    = replicate hex (replicate trit (replicate hh (mkTrit 1))) }
+        xR = map ST.mkGF27 (take dimR (cycle [0, 1, 2]))
 
     it "12 头 × 4 步（与 checkpoint 同构的维度比例）端到端：有界 + 链正确" $ do
       let (h, st, chain, oks) = wuxingForward cfgR llR xR
       length h `shouldBe` dimR
-      and [ v >= 0 && v <= 26 | v <- h ] `shouldBe` True
+      and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | v <- h ] `shouldBe` True
       length chain `shouldBe` steps
       map length chain `shouldBe` replicate steps heads
       and [ n >= 0 && n < hex && t >= 0 && t < trit | sel <- chain, (n, t) <- sel ] `shouldBe` True
@@ -448,15 +464,15 @@ main = hspec $ do
           , wlStepT6   = replicate steps (w3 dimF (heads * 2) 7)
           , wlStepConf = replicate steps (w3 dimF heads 8)
           , wlFuse     = w3 (heads * hh) dimF 9
-          , wlGInit    = replicate hex (replicate trit (replicate hh 1)) }
-        xF = take dimF (cycle [0, 1, 2])
+          , wlGInit    = replicate hex (replicate trit (replicate hh (mkTrit 1))) }
+        xF = map ST.mkGF27 (take dimF (cycle [0, 1, 2]))
 
     it "dim=1440 全尺寸：nd=240、hh=120，端到端有界 ∈ GF(27)" $ do
       nd `shouldBe` 240
       hh `shouldBe` 120
       let (h, _st, chain, oks) = wuxingForward cfgF llF xF
       length h `shouldBe` dimF
-      and [ v >= 0 && v <= 26 | v <- h ] `shouldBe` True
+      and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | v <- h ] `shouldBe` True
       length chain `shouldBe` steps
       map length chain `shouldBe` replicate steps heads
       length oks `shouldBe` steps
@@ -464,7 +480,7 @@ main = hspec $ do
       let (adj, updated) = causalGraphStep cfgF llF xF
       map length adj `shouldBe` replicate hex hex
       length updated `shouldBe` dimF
-      and [ v >= 0 && v <= 26 | v <- updated ] `shouldBe` True
+      and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | v <- updated ] `shouldBe` True
 
   describe "Infrastructure.CPU.SovereignFull — 完整链路 60 层 GF(27) → 五行推理 (A6/M17)" $ do
     let w3 r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
@@ -487,12 +503,12 @@ main = hspec $ do
           , wlStepT6   = replicate steps (w3 dimC (heads * 2) 7)
           , wlStepConf = replicate steps (w3 dimC heads 8)
           , wlFuse     = w3 (heads * hh) dimC 9
-          , wlGInit    = replicate hex (replicate trit (replicate hh 1)) }
+          , wlGInit    = replicate hex (replicate trit (replicate hh (mkTrit 1))) }
 
     it "全链路：6 层 GF(27)×十二律相位 → 五行推理 → lm_head，全程 ∈ [0,26]" $ do
       let out = sovereignForwardFull layerCfg ww wcfg wl [1, 3, 5]
       map length out `shouldBe` [8, 8, 8]
-      and [ v >= 0 && v <= 26 | row <- out, v <- row ] `shouldBe` True
+      and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | row <- out, v <- row ] `shouldBe` True
 
     it "诊断版：每 token 都返回五行相位状态、四步链与可达标记" $ do
       let (out, sts, chains, okss) = fullChainReport layerCfg ww wcfg wl [1, 3, 5]
@@ -557,10 +573,10 @@ main = hspec $ do
                 , wlStepT6   = replicate steps stepT6
                 , wlStepConf = replicate steps stepConf
                 , wlFuse     = fuse
-                , wlGInit    = replicate hex (replicate trit (replicate hh 1)) }
-              xR = take dimF (cycle [0, 1, 2])
+                , wlGInit    = replicate hex (replicate trit (replicate hh (mkTrit 1))) }
+              xR = map ST.mkGF27 (take dimF (cycle [0, 1, 2]))
           -- 真实权重的取值必须都在 {0,1,2}
-          and [ v >= 0 && v <= 2 | row <- take 8 nodeProj, v <- row ] `shouldBe` True
+          and [ tritToInt v >= 0 && tritToInt v <= 2 | row <- take 8 nodeProj, v <- row ] `shouldBe` True
           -- 形状自证
           length nodeProj `shouldBe` dimF
           length (head nodeProj) `shouldBe` dimF
@@ -571,7 +587,7 @@ main = hspec $ do
           -- 真实权重跑一次
           let (h, _st, chain, oks) = wuxingForward wcfg wl xR
           length h `shouldBe` dimF
-          and [ v >= 0 && v <= 26 | v <- h ] `shouldBe` True
+          and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | v <- h ] `shouldBe` True
           length chain `shouldBe` steps
           map length chain `shouldBe` replicate steps heads
           length oks `shouldBe` steps
@@ -613,7 +629,7 @@ main = hspec $ do
               x1 = layerIntrinsic27At cfgR lyr0 (0, 1) x0
               x2 = gf27RmsNorm gammaR x1
           -- 真实权重取值必须是 trit
-          and [ v >= 0 && v <= 2 | row <- take 4 (silQProj lyr0), v <- row ] `shouldBe` True
+          and [ tritToInt v >= 0 && tritToInt v <= 2 | row <- take 4 (silQProj lyr0), v <- row ] `shouldBe` True
           -- 形状自证（q_proj [72,1440]、gate [4320,1440]、down [1440,4320]）
           length (silQProj lyr0) `shouldBe` (heads * 6)
           length (silGateProj lyr0) `shouldBe` ffF
@@ -621,8 +637,8 @@ main = hspec $ do
           length (head (silDownProj lyr0)) `shouldBe` ffF
           -- 真实一层的前向结果
           length x1 `shouldBe` dimF
-          and [ v >= 0 && v <= 26 | v <- x1 ] `shouldBe` True
-          and [ v >= 0 && v <= 26 | v <- x2 ] `shouldBe` True
+          and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | v <- x1 ] `shouldBe` True
+          and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | v <- x2 ] `shouldBe` True
 
   describe "Infrastructure.CPU.SovereignFull — 真实全 60 层流式前向 (A6/M20)" $ do
     -- 逐层从 checkpoint 目录读真实权重（data/23 + 5k + {0..4}），跑完整 60 层。
@@ -666,7 +682,7 @@ main = hspec $ do
           case (rs, rd) of
             (Right xs, Right xd) -> do
               length xs `shouldBe` dimF
-              and [ v >= 0 && v <= 26 | v <- xs ] `shouldBe` True
+              and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | v <- xs ] `shouldBe` True
               xs `shouldBe` xd                            -- ★ 逐元素全等
             _ -> expectationFailure ("sov=" ++ show rs ++ " dir=" ++ show rd)
 
@@ -683,7 +699,7 @@ main = hspec $ do
               Left e  -> expectationFailure e
               Right x -> do
                 length x `shouldBe` dimF
-                and [ v >= 0 && v <= 26 | v <- x ] `shouldBe` True
+                and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | v <- x ] `shouldBe` True
 
   describe "GF(27) 查表优化 — 对拍验证 (Fable5/Step6)" $ do
     -- 原实现每次 gf27Add/gf27Mul 做 7 次除法 + 2 个元组分配，
@@ -738,21 +754,22 @@ main = hspec $ do
 
   describe "gf27Matmul 单趟融合 — 对拍 + 基准 (Fable5/Step6b)" $ do
     it "gf27Matmul ≡ gf27MatmulZip（多组形状，逐元素全等）" $ do
-      let mk r c sd = [ [ (i * 7 + j * 13 + sd) `mod` 27 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
-          v n sd   = [ (i * 11 + sd) `mod` 27 | i <- [0 .. n - 1] ]
+      -- 权重（Trit）× 激活（GF27）：权重按 GF(3) 造数，激活按 GF(27) 造数
+      let mk r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+          v n sd   = [ ST.mkGF27 ((i * 11 + sd) `mod` 27) | i <- [0 .. n - 1] ]
           shapes = [(3, 5), (8, 8), (12, 30), (30, 12), (60, 60)]
       and [ gf27Matmul (mk r c sd) (v c sd) == gf27MatmulZip (mk r c sd) (v c sd)
           | (r, c) <- shapes, sd <- [0 .. 4] ] `shouldBe` True
 
     it "microbenchmark：gf27Matmul 融合 vs zipWith（60×60 × 2000）" $ do
       let n = 60 :: Int; reps = 2000 :: Int
-          w = [ [ (i * 7 + j * 13) `mod` 27 | j <- [0 .. n - 1] ] | i <- [0 .. n - 1] ]
-          x = [ i `mod` 27 | i <- [0 .. n - 1] ]
+          w = [ [ mkTrit ((i * 7 + j * 13) `mod` 3) | j <- [0 .. n - 1] ] | i <- [0 .. n - 1] ]
+          x = [ ST.mkGF27 (i `mod` 27) | i <- [0 .. n - 1] ]
           timeIt f = do
             t0 <- getCPUTime
             let go 0 acc = acc
                 go k _   = let r = f w x in r `seq` go (k - 1 :: Int) r
-            let rr = go reps ([] :: [Int])
+            let rr = go reps ([] :: [ST.GF27])
             rr `seq` return ()
             t1 <- getCPUTime
             return (fromIntegral (t1 - t0) / 1.0e9 :: Double)
@@ -765,7 +782,7 @@ main = hspec $ do
 
   describe "SovereignPacked — 打包表示对拍（方案C：5 trit/字节）" $ do
     let tritsOf n sd = [ (i * 7 + sd) `mod` 3 | i <- [0 .. n - 1] ]
-        asMat r c sd = [ [ (i * 13 + j * 7 + sd) `mod` 3 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+        asMat r c sd = [ [ mkTrit ((i * 13 + j * 7 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
 
     it "pvFromTrits / pvToList 往返，且 pvAt 与列表逐位一致" $ do
       and [ (pvToList (pvFromTrits ts) :: [Int]) == ts
@@ -783,12 +800,12 @@ main = hspec $ do
       ((fromIntegral (VU.last bs) :: Int) < (3 ^ (2 :: Int))) `shouldBe` True
 
     it "pvMatmul ≡ gf27Matmul（多组形状 × 多种子，逐元素全等）" $ do
-      and [ (map fromIntegral (VU.toList (pvMatmul r c (pvFromTrits (concat (asMat r c sd)))
-                                   (VU.fromList (map (fromIntegral :: Int -> Word8) x)))) :: [Int])
-              == gf27Matmul (asMat r c sd) x
+      and [ (map fromIntegral (VU.toList (pvMatmul r c (pvFromTrits (concat (map (map ST.tritToInt) (asMat r c sd))))
+                                   (VU.fromList (map (fromIntegral :: Int -> Word8) (map ST.gf27ToInt x))))) :: [Int])
+              == map ST.gf27ToInt (gf27Matmul (asMat r c sd) x)
           | (r, c) <- [(1, 5), (3, 10), (7, 26), (12, 60), (30, 144)]
           , sd <- [0 .. 2]
-          , let x = [ (i * 11 + sd) `mod` 27 | i <- [0 .. c - 1] ] ] `shouldBe` True
+          , let x = [ ST.mkGF27 ((i * 11 + sd) `mod` 27) | i <- [0 .. c - 1] ] ] `shouldBe` True
 
     it "真实权重 data/0：pvFromBytes 与 unpackTritsInt 同源（升序位序）" $ do
       let f = "/home/yanli/work/trha/models/20260721-033421_step31000/data/0"
@@ -849,14 +866,18 @@ main = hspec $ do
 
     it "[L2] 上下文：gf27Matmul 内层（1440 维行点积 × 300 轮）三种 mul" $ do
       let dim = 1440 :: Int; rounds = 300 :: Int
-          w = [ (j * 13 + 7) `mod` 27 | j <- [0 .. dim - 1] ]       -- 一行权重
-          x = [ (i * 11) `mod` 27 | i <- [0 .. dim - 1] ]           -- 激活
-          dotWith f = foldl (\ !a !(u, v) -> gf27Add a (f u v)) ST.gf27Zero (zip w x)
+          w = [ ST.mkGF27 ((j * 13 + 7) `mod` 27) | j <- [0 .. dim - 1] ]  -- 一行采样
+          x = [ ST.mkGF27 ((i * 11) `mod` 27) | i <- [0 .. dim - 1] ]   -- 激活（GF(27)）
+          -- f 保持 Int -> Int -> Int（三种 gf27Mul 实现都是 Int 版），
+          -- 在 dotWith 内部完成 GF27 ↔ Int 的边界转换
+          dotWith f = foldl (\ !a !(u, v) ->
+                        ST.plusGF27 a (ST.mkGF27 (f (ST.gf27ToInt u) (ST.gf27ToInt v))))
+                      ST.gf27Zero (zip w x)
           timeIt g = do
             t0 <- getCPUTime
             -- acc + r 使每轮的 r 都真被消费，避免 GHC 提升常量计算
             let go !acc 0 = acc
-                go !acc k = let r = g in go (acc + r) (k - 1)
+                go !acc k = let r = ST.gf27ToInt g in go (acc + r) (k - 1)
                 rr = go 0 rounds
             rr `seq` return ()
             t1 <- getCPUTime
@@ -908,7 +929,7 @@ main = hspec $ do
       let out0 = gf27RmsNorm gamma base
           -- 逐个位置扰动，检查影响范围
           affect k =
-            let x' = take k base ++ [ (base !! k + 1) `mod` 27 ] ++ drop (k + 1) base
+            let x' = take k base ++ [ ST.mkGF27 ((ST.gf27ToInt (base !! k) + 1) `mod` 27) ] ++ drop (k + 1) base
                 out' = gf27RmsNorm gamma x'
             in [ i | i <- [0 .. dim - 1], out' !! i /= out0 !! i ]
       and [ (affect k) `subsetOf` [k] | k <- [0 .. dim - 1] ] `shouldBe` True
@@ -916,7 +937,7 @@ main = hspec $ do
     it "旧版 gf27RmsNormScalar 是全局耦合的（对照，证明降维确实发生）" $ do
       let out0 = gf27RmsNormScalar gamma base
           affect k =
-            let x' = take k base ++ [ (base !! k + 1) `mod` 27 ] ++ drop (k + 1) base
+            let x' = take k base ++ [ ST.mkGF27 ((ST.gf27ToInt (base !! k) + 1) `mod` 27) ] ++ drop (k + 1) base
                 out' = gf27RmsNormScalar gamma x'
             in length [ i | i <- [0 .. dim - 1], out' !! i /= out0 !! i ]
       -- 旧版里 shift 是全局非零计数，扰动会牵动全向量（至少大部分）
@@ -932,7 +953,7 @@ main = hspec $ do
           u = gf27Matmul uw base
       -- 用同样输入走一遍，验证门控是逐分量 g_j ⊗ u_j
       (length (gf27SwiGLU gw uw dw base)) `shouldBe` dim
-      (zipWith gf27Mul g u :: [Int]) `shouldSatisfy` (\v -> length v == dim)
+      (zipWith ST.mulGF27 g u :: [ST.GF27]) `shouldSatisfy` (\v -> length v == dim)
 
   describe "AlphaPower 是 GF(9) 的 C4 子群（不只是 Z/4 序号）" $ do
     let gfs = [ (1, 0), (0, 1), (2, 0), (0, 2) ]   -- {1, α, 2, 2α}
@@ -987,24 +1008,24 @@ main = hspec $ do
     -- ⚠️ 范畴：权重是 GF(3) 元素（Trit，值 0..2），激活是 GF(27) 元素（0..26）。
     -- 对拍必须两边同域：权重用 mod 3 生成，激活用 mod 27。
     let mkW r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
-        vx n sd = [ (i * 11 + sd) `mod` 27 | i <- [0 .. n - 1] ]
+        vx n sd = [ ST.mkGF27 ((i * 11 + sd) `mod` 27) | i <- [0 .. n - 1] ]
 
     it "matmulGF27 ≡ gf27Matmul（5 组形状 × 3 种子，逐元素全等）" $ do
-      and [ ST.fromGF27Vec (ST.matmulGF27 (ST.toTritMat (mkW r c sd)) (ST.toGF27Vec (vx c sd)))
-              == gf27Matmul (mkW r c sd) (vx c sd)
+      and [ ST.fromGF27Vec (ST.matmulGF27 (mkW r c sd) (vx c sd))
+              == map ST.gf27ToInt (gf27Matmul (mkW r c sd) (vx c sd))
           | (r, c) <- [(3,5),(8,8),(12,30),(30,12),(60,60)], sd <- [0 .. 2] ] `shouldBe` True
 
     it "rmsNormGF27 ≡ gf27RmsNorm（逐分量，逐元素全等）" $ do
       let g = replicate 24 ST.gf27One
           x = vx 24 3
-      ST.fromGF27Vec (ST.rmsNormGF27 (ST.toGF27Vec g) (ST.toGF27Vec x))
-        `shouldBe` gf27RmsNorm g x
+      ST.fromGF27Vec (ST.rmsNormGF27 g x)
+        `shouldBe` map ST.gf27ToInt (gf27RmsNorm g x)
 
     it "swiGLUGF27 ≡ gf27SwiGLU（逐分量门控，逐元素全等）" $ do
       let d = 8
           gw = mkW d d 1; uw = mkW d d 2; dw = mkW d d 3; x = vx d 1
-      ST.fromGF27Vec (ST.swiGLUGF27 (ST.toTritMat gw) (ST.toTritMat uw) (ST.toTritMat dw) (ST.toGF27Vec x))
-        `shouldBe` gf27SwiGLU gw uw dw x
+      ST.fromGF27Vec (ST.swiGLUGF27 gw uw dw x)
+        `shouldBe` map ST.gf27ToInt (gf27SwiGLU gw uw dw x)
 
     it "alphaPowGF27 ≡ gf27AlphaPow（α 的周期幂，全量 k ∈ [0,60]）" $ do
       and [ ST.gf27ToInt (ST.alphaPowGF27 k) == gf27AlphaPow k | k <- [0 .. 60] ] `shouldBe` True
@@ -1108,24 +1129,24 @@ main = hspec $ do
       zhonglvAlignMod 1 `shouldBe` (177147 `mod` 65536)
 
   describe "Infrastructure.CPU.SovereignIntrinsic — 本源自持 (A6/M7h)" $ do
-    let w3 rows cols seed = [ [ (r * 7 + c * 13 + seed) `mod` 3 | c <- [0 .. cols - 1] ] | r <- [0 .. rows - 1] ]
+    let w3 rows cols seed = [ [ mkTrit ((r * 7 + c * 13 + seed) `mod` 3) | c <- [0 .. cols - 1] ] | r <- [0 .. rows - 1] ]
         cfgI = SovereignConfig { scDim = 24, scDepth = 12, scHeads = 2, scVocab = 8
                                , scFF = 72, scEps = 1e-5 }
         mkIL = SovereignIntLayer
           { silQProj = w3 12 24 1, silOutProj = w3 24 24 2
           , silGateProj = w3 72 24 3, silUpProj = w3 72 24 4
-          , silDownProj = w3 24 72 5, silPrototype = defaultMonopolePrototype 2 }
+          , silDownProj = w3 24 72 5, silPrototype = map (map (map mkTrit)) (defaultMonopolePrototype 2) }
         wiI = SovereignIntWeights (map (map (ST.mkGF27 . ST.tritToInt)) (w3 8 24 7)) (w3 8 24 8) (w3 8 24 6) (replicate 12 mkIL)
 
     it "stays inside GF(3) end to end (bounded — the float path reaches ~1e21)" $ do
       let out = forwardIntrinsic MixMod3 cfgI wiI [1, 3, 5]
       map length out `shouldBe` [8, 8, 8]
-      and [ v >= 0 && v <= 2 | row <- out, v <- row ] `shouldBe` True
+      and [ tritToInt v >= 0 && tritToInt v <= 2 | row <- out, v <- row ] `shouldBe` True
 
     it "keeps every intermediate frame inside GF(3) across all layers" $ do
       let frames = traceStates MixMod3 cfgI wiI [1, 3, 5]
       length frames `shouldBe` 13            -- depth + 1
-      and [ v >= 0 && v <= 2 | frame <- frames, row <- frame, v <- row ] `shouldBe` True
+      and [ tritToInt v >= 0 && tritToInt v <= 2 | frame <- frames, row <- frame, v <- row ] `shouldBe` True
 
     it "三种 mix @60 层：MixMod3 与 MixLayer2 都给 12，MixQ16 退化为 1" $ do
       let cfg60 = cfgI { scDepth = 60 }
@@ -1144,8 +1165,8 @@ main = hspec $ do
                                      , scVocab = 8, scFF = 3 * dimC, scEps = 1e-5 }
                 ll = SovereignIntLayer (w3 12 dimC seedC) (w3 dimC dimC (seedC + 1))
                        (w3 (3 * dimC) dimC (seedC + 2)) (w3 (3 * dimC) dimC (seedC + 3))
-                       (w3 dimC (3 * dimC) (seedC + 4)) (defaultMonopolePrototype 2)
-                ww = SovereignIntWeights (w3 8 dimC (seedC + 6)) (w3 8 dimC (seedC + 7))
+                       (w3 dimC (3 * dimC) (seedC + 4)) (map (map (map mkTrit)) (defaultMonopolePrototype 2))
+                ww = SovereignIntWeights (map (map (ST.mkGF27 . ST.tritToInt)) (w3 8 dimC (seedC + 6))) (w3 8 dimC (seedC + 7))
                        (w3 8 dimC (seedC + 5)) (replicate depthC ll)
             in tailCycle (traceStates MixLayer2 cc ww [1, 3, 5])
       mk 24 1 60  `shouldBe` Just 12      -- 基准
@@ -1195,7 +1216,7 @@ main = hspec $ do
       tailCycle fr `shouldBe` Just 13
       tailCycle (traceStates27 cc36b ww36b [1, 3, 5]) `shouldBe` Just 13   -- 240 层仍 13
       -- 全程落在 27 个元素内（有界）
-      and [ v >= 0 && v <= 26 | f <- fr, row <- f, v <- row ] `shouldBe` True
+      and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | f <- fr, row <- f, v <- row ] `shouldBe` True
       -- α 的阶是 26，α¹³ = −1 = 2（GF(27) 的 ⟨α⟩ ≅ C₂₆）
       gf27AlphaPow 13 `shouldBe` 2
       gf27AlphaPow 26 `shouldBe` 1
@@ -1213,7 +1234,7 @@ main = hspec $ do
       length fr `shouldBe` 241
       -- tailCycle 只看 d <= 120；找不到 ⟹ 周期 > 120（状态空间 27^24 ≈ 10^34）
       tailCycle fr `shouldBe` Nothing
-      and [ v >= 0 && v <= 26 | f <- fr, row <- f, v <- row ] `shouldBe` True
+      and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | f <- fr, row <- f, v <- row ] `shouldBe` True
 
     it "GF(81) = GF(3⁴)：x⁴+x+2 不可约，⟨α⟩ 的群阶 80 = 2⁴×5" $ do
       -- 参考 Sovereign.Algebra.GF81：x⁴+x+2（α⁴ = 2α+1），GF(81)* ≅ Z/80Z
@@ -1317,11 +1338,13 @@ main = hspec $ do
                    (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (map (map (map mkTrit)) (defaultMonopolePrototype 2))
           ww = SovereignIntWeights (map (map (ST.mkGF27 . ST.tritToInt)) (w3 8 dimC 7)) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 60 lyr0)
           x0 = take dimC (siwTokenEmbed ww !! 1)
+          -- x0 是 GF(27) 嵌入向量；christoffelInt 的激活参数属 GF(3) 范畴
+          x0t = map (mkTrit . ST.gf27ToInt) x0
           nz v = length (filter (/= 0) v)
-          chr = christoffelInt MixLayer2 2 (silQProj lyr0) (silPrototype lyr0) 0 1 x0
-          tr  = z3rMatmul (silOutProj lyr0) chr
+          chr = christoffelInt MixLayer2 2 (silQProj lyr0) (silPrototype lyr0) 0 1 x0t
+          tr  = z3rMatmul (silOutProj lyr0) (map mkTrit chr)
       nz chr `shouldBe` 24            -- christoffel 本身有信号
-      tr `shouldBe` replicate dimC 0  -- 但 out_proj 后被零因子抹平
+      map tritToInt tr `shouldBe` replicate dimC 0  -- 但 out_proj 后被零因子抹平
       tailCycle (traceStates MixLayer2 cc ww [1, 3, 5]) `shouldBe` Just 1
 
     it "自持：60 层后落入周期 12 的稳态轨道（不是吸收态）" $ do
@@ -1335,14 +1358,14 @@ main = hspec $ do
       length f `shouldBe` 61                      -- depth + 1
       tailCycle f `shouldBe` Just 12              -- ★ 本源自持：周期 = 12
       tailCycle f `shouldSatisfy` (/= Just 1)     -- 明确排除不动点
-      and [ v >= 0 && v <= 2 | frame <- f, row <- frame, v <- row ] `shouldBe` True
+      and [ tritToInt v >= 0 && tritToInt v <= 2 | frame <- f, row <- frame, v <- row ] `shouldBe` True
 
     it "每层都在做 C3 旋转（⊕ 步进）：帧之间逐元素 +1 mod 3" $ do
       -- 这是 Trit.agda 的 ⊕³ = id（char 3）在整型前向里的可见形态。
       let f = traceStates MixLayer2 cfgI wiI [1]
           z = head (head f)                -- f0 的第一个 token 向量
           o = head (head (drop 1 f))       -- f1 的第一个 token 向量
-      take 8 o `shouldBe` map (\v -> (v + 1) `mod` 3) (take 8 z)
+      map tritToInt (take 8 o) `shouldBe` map (\v -> (tritToInt v + 1) `mod` 3) (take 8 z)
   describe "Infrastructure.CPU.SovereignModel — 本源相位推进 (A6/M7g)" $ do
     let mkL = SovereignLayer
           { slQProj     = [ [ fromIntegral ((r + c) `mod` 3) | c <- [0 .. 23] ] | r <- [0 .. 11] ]
@@ -1457,15 +1480,15 @@ main = hspec $ do
       -- from cell 0 to cell 1: not adjacent → direction = _adj_lookup[0][1] = 1
       let shift1 = gf3Shift 0 (getDirection 0 1)
       shift1 `shouldBe` 2
-      transportTryte [0,1,2,0,1,2] [1,1,1,1,1,1] shift1 `shouldBe` [1,1,0,1,1,0]
+      map tritToInt (transportTryte (map mkTrit [0,1,2,0,1,2]) (map mkTrit [1,1,1,1,1,1]) shift1) `shouldBe` [1,1,0,1,1,0]
       -- from cell 0 to cell 4: adjacent, direction 0 → shift 1
       let shift2 = gf3Shift 0 (getDirection 0 4)
       shift2 `shouldBe` 1
-      transportTryte [2,2,2,2,2,2] [0,1,2,0,1,2] shift2 `shouldBe` [0,1,1,0,1,1]
+      map tritToInt (transportTryte (map mkTrit [2,2,2,2,2,2]) (map mkTrit [0,1,2,0,1,2]) shift2) `shouldBe` [0,1,1,0,1,1]
 
     it "collapses a tryte to Σtrits/6 and scales the head slice" $ do
       let closeD a b = abs (a - b) < 1e-12
-          out = christoffelMix [0,1,1,0,1,1] [1,2,3]     -- Σ = 4 → 4/6
+          out = christoffelMix (map mkTrit [0,1,1,0,1,1]) [1,2,3]   -- Σ = 4 → 4/6
       and (zipWith closeD out [0.6666666666666666, 1.3333333333333333, 2.0]) `shouldBe` True
 
     it "runs the whole forward: quantise → transport → mix (structure)" $ do

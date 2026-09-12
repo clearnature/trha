@@ -108,12 +108,14 @@ z3rRmsNorm lut gamma x =
   where rsqrt = lut !! length (filter (\t -> tritToInt t /= 0) x)
 
 -- | @z3r_dot_product@：层2 的点积 —— Σ GF(3)乘，__整数累加不归约__（值域 [0, 2·dim]）。
-z3rDotProduct :: [Trit] -> [Trit] -> Trit
-z3rDotProduct a b = mkTrit (sum [ tritToInt (tritMul x y) | (x, y) <- zip a b ] `mod` 3)
+z3rDotProduct :: [Trit] -> [Trit] -> Int
+z3rDotProduct a b = sum [ tritToInt (tritMul x y) | (x, y) <- zip a b ]
 
 -- | @z3r_matmul@：层1 矩阵乘 —— 点积后 @% 3@ 归约（3 ≡ 0）。
+--
+-- ⚠️ 归约在这里做，不在 'z3rDotProduct'：后者是**层2**语义（整数累加不归约）。
 z3rMatmul :: [[Trit]] -> [Trit] -> [Trit]
-z3rMatmul w x = [ z3rDotProduct row x | row <- w ]
+z3rMatmul w x = [ mkTrit (z3rDotProduct row x) | row <- w ]
 
 -- | @z3r_gate@：层2 √3 门控 —— 用__非零计数__与 Q16 阈值做整数比较。
 -- 能隙 Δ = √3，阈值取 Δ² × 2¹⁶ = 3 × 65536。
