@@ -23,6 +23,7 @@ import Infrastructure.CPU.SovereignWuxingLayer
 import Infrastructure.CPU.SovereignFull
 import Infrastructure.CPU.SovereignPacked
 import qualified Infrastructure.CPU.SovereignTypes as ST
+import Infrastructure.CPU.SovereignTypes (mkTrit)
 import System.Environment (lookupEnv)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as BS
@@ -123,9 +124,9 @@ main = hspec $ do
     let dim = 8
         lut = rsqrtLutQ16 dim 1e-5
         x = [0, 1, 2, 0, 1, 2, 0, 1]
-        gw = [ [ (r * 7 + c * 13 + 3) `mod` 3 | c <- [0 .. dim - 1] ] | r <- [0 .. 2] ]
-        uw = [ [ (r * 7 + c * 13 + 4) `mod` 3 | c <- [0 .. dim - 1] ] | r <- [0 .. 2] ]
-        dw = [ [ (r * 7 + c * 13 + 5) `mod` 3 | c <- [0 .. 2] ] | r <- [0 .. dim - 1] ]
+        gw = [ [ mkTrit ((r * 7 + c * 13 + 3) `mod` 3) | c <- [0 .. dim - 1] ] | r <- [0 .. 2] ]
+        uw = [ [ mkTrit ((r * 7 + c * 13 + 4) `mod` 3) | c <- [0 .. dim - 1] ] | r <- [0 .. 2] ]
+        dw = [ [ mkTrit ((r * 7 + c * 13 + 5) `mod` 3) | c <- [0 .. 2] ] | r <- [0 .. dim - 1] ]
         gamma = replicate dim 1
 
     it "reproduces the sov-math C++ Q16 rsqrt LUT bit for bit" $ do
@@ -232,13 +233,13 @@ main = hspec $ do
       take 12 [ c | (c, _) <- pairs ] `shouldBe` [0, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
 
     it "M9：GF(27) 整链 × 真实十二律相位，60 层数值有界（∈[0,26]）" $ do
-      let w3 r c sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+      let w3 r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
           dimC = 24
           cc = SovereignConfig { scDim = dimC, scDepth = 60, scHeads = 2
                                , scVocab = 8, scFF = 3 * dimC, scEps = 1e-5 }
           ll = SovereignIntLayer (w3 12 dimC 1) (w3 dimC dimC 2) (w3 (3 * dimC) dimC 3)
-                 (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (defaultMonopolePrototype 2)
-          ww = SovereignIntWeights (w3 8 dimC 7) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 60 ll)
+                 (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (map (map (map mkTrit)) (defaultMonopolePrototype 2))
+          ww = SovereignIntWeights (map (map (ST.mkGF27 . ST.tritToInt)) (w3 8 dimC 7)) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 60 ll)
           emb = [ take dimC (siwTokenEmbed ww !! (t `mod` 8) ++ repeat 0) | t <- [1, 3, 5] ]
           pairs = [ pr | (_, pr) <- map layerStep12 (take 60 (iterate step12 phase12Init)) ]
           run = foldl (\hs (i, pr) -> map (layerIntrinsic27At cc (siwLayers ww !! i) pr) hs)
@@ -250,7 +251,7 @@ main = hspec $ do
     it "训练后 .sov（step31000）的 token_emb 切片 → GF(27)×十二律相位（diagnostic）" $ do
       let base = "/data/trit/pyBitNet/scripts/artifacts/sov_native/"
           dimC = 24
-          w3 r' c' sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c' - 1] ] | i <- [0 .. r' - 1] ]
+          w3 r' c' sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c' - 1] ] | i <- [0 .. r' - 1] ]
           probe p = do
             rr <- loadSOV3 (base ++ p)
             case rr of
@@ -263,8 +264,8 @@ main = hspec $ do
                       cc = SovereignConfig { scDim = dimC, scDepth = 60, scHeads = 2
                                            , scVocab = 8, scFF = 3 * dimC, scEps = 1e-5 }
                       ll = SovereignIntLayer (w3 12 dimC 1) (w3 dimC dimC 2) (w3 (3 * dimC) dimC 3)
-                             (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (defaultMonopolePrototype 2)
-                      ww = SovereignIntWeights rows (w3 8 dimC 8) (w3 8 dimC 6) (replicate 60 ll)
+                             (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (map (map (map mkTrit)) (defaultMonopolePrototype 2))
+                      ww = SovereignIntWeights (map (map ST.mkGF27) rows) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 60 ll)
                       pairs = [ pr | (_, pr) <- map layerStep12 (take 60 (iterate step12 phase12Init)) ]
                       run = foldl (\hs (i, pr) -> map (layerIntrinsic27At cc (siwLayers ww !! i) pr) hs)
                                   (embed27 cc ww [1, 3, 5]) (zip [0 ..] pairs)
@@ -280,7 +281,7 @@ main = hspec $ do
       -- = 1536*1440/5）。
       let raw = "/home/yanli/work/trha/models/20260721-033421_step31000/data/0"
           dimC = 24
-          w3 r' c' sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c' - 1] ] | i <- [0 .. r' - 1] ]
+          w3 r' c' sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c' - 1] ] | i <- [0 .. r' - 1] ]
       exists <- doesFileExist raw
       if not exists
         then pendingWith ("模型文件不存在: " ++ raw)
@@ -292,8 +293,8 @@ main = hspec $ do
               cc = SovereignConfig { scDim = dimC, scDepth = 60, scHeads = 2
                                    , scVocab = 8, scFF = 3 * dimC, scEps = 1e-5 }
               ll = SovereignIntLayer (w3 12 dimC 1) (w3 dimC dimC 2) (w3 (3 * dimC) dimC 3)
-                     (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (defaultMonopolePrototype 2)
-              ww = SovereignIntWeights rows (w3 8 dimC 8) (w3 8 dimC 6) (replicate 60 ll)
+                     (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (map (map (map mkTrit)) (defaultMonopolePrototype 2))
+              ww = SovereignIntWeights (map (map ST.mkGF27) rows) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 60 ll)
               pairs = [ pr | (_, pr) <- map layerStep12 (take 60 (iterate step12 phase12Init)) ]
               run = foldl (\hs (i, pr) -> map (layerIntrinsic27At cc (siwLayers ww !! i) pr) hs)
                           (embed27 cc ww [1, 3, 5]) (zip [0 ..] pairs)
@@ -340,7 +341,7 @@ main = hspec $ do
       (81 - 1) `shouldBe` 80                       -- |GF(81)*|
 
   describe "Infrastructure.CPU.SovereignWuxingLayer — 五行推理层本源实现 (A6/M14)" $ do
-    let w3 r c sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+    let w3 r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
         dimC = 24; heads = 3; steps = 2; hex = 6; trit = 3
         nd = dimC `div` hex
         hh = dimC `div` heads
@@ -396,7 +397,7 @@ main = hspec $ do
     --   dim=1440, heads=12, steps=4, N_HEX=6, N_TRIT=3
     --   hh = 1440/12 = 120 (ginit 末维), nd = 1440/6 = 240 (attn 维)
     -- 为控制运行时间，这里用 dim=240（= 1440/6，nd 与真实同为 40 的结构同构版）。
-    let w3 r c sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+    let w3 r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
         dimR = 240; heads = 12; steps = 4; hex = 6; trit = 3
         nd = dimR `div` hex          -- 40
         hh = dimR `div` heads        -- 20
@@ -432,7 +433,7 @@ main = hspec $ do
     -- 完全照训练后 checkpoint 的 wuxing_reasoning：
     --   dim=1440, heads=12, steps=4, N_HEX=6, N_TRIT=3
     --   nd = 1440/6 = 240（attn 维）、hh = 1440/12 = 120（ginit 末维）
-    let w3 r c sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+    let w3 r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
         dimF = 1440; heads = 12; steps = 4; hex = 6; trit = 3
         nd = dimF `div` hex          -- 240
         hh = dimF `div` heads        -- 120
@@ -466,15 +467,15 @@ main = hspec $ do
       and [ v >= 0 && v <= 26 | v <- updated ] `shouldBe` True
 
   describe "Infrastructure.CPU.SovereignFull — 完整链路 60 层 GF(27) → 五行推理 (A6/M17)" $ do
-    let w3 r c sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+    let w3 r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
         dimC = 24; heads = 3; steps = 2; hex = 6; trit = 3
         nd = dimC `div` hex
         hh = dimC `div` heads
         layerCfg = SovereignConfig { scDim = dimC, scDepth = 6, scHeads = 2
                                    , scVocab = 8, scFF = 3 * dimC, scEps = 1e-5 }
         mkIL = SovereignIntLayer (w3 12 dimC 1) (w3 dimC dimC 2) (w3 (3 * dimC) dimC 3)
-                 (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (defaultMonopolePrototype 2)
-        ww = SovereignIntWeights (w3 8 dimC 7) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 6 mkIL)
+                 (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (map (map (map mkTrit)) (defaultMonopolePrototype 2))
+        ww = SovereignIntWeights (map (map (ST.mkGF27 . ST.tritToInt)) (w3 8 dimC 7)) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 6 mkIL)
         wcfg = WuxingConfig dimC heads steps hex trit
         wl = WuxingLayerW
           { wlNodeProj = w3 dimC (hex * nd) 1
@@ -535,7 +536,8 @@ main = hspec $ do
           b13 <- BS.readFile (base ++ "13")
           b17 <- BS.readFile (base ++ "17")
           b21 <- BS.readFile (base ++ "21")
-          let m r c bs = chunk c (take (r * c) (map round (unpackTrits bs (r * c))))
+          let m r c bs = map (map mkTrit)
+                           (chunk c (take (r * c) (map round (unpackTrits bs (r * c)))))
               nodeProj = m dimF dimF b1
               attnQ    = m 1 nd   b2
               attnK    = m 1 nd   b3
@@ -584,10 +586,11 @@ main = hspec $ do
         chunk n xs = case xs of
           [] -> []
           _  -> take n xs : chunk n (drop n xs)
-        m r c bs = chunk c (take (r * c) (map round (unpackTrits bs (r * c))))
+        m r c bs = map (map mkTrit)
+                     (chunk c (take (r * c) (map round (unpackTrits bs (r * c)))))
         cfgR = SovereignConfig { scDim = dimF, scDepth = 1, scHeads = heads
                                , scVocab = 8, scFF = ffF, scEps = 1e-5 }
-        gammaR = replicate dimF gf27One
+        gammaR = replicate dimF ST.gf27One
 
     it "真实 layers.0（q_proj/out_proj/gate/up/down 全来自 checkpoint）跑一次" $ do
       ex <- doesFileExist (base ++ "27")
@@ -605,8 +608,8 @@ main = hspec $ do
                 (m ffF dimF b25)
                 (m ffF dimF b26)
                 (m dimF ffF b27)
-                (defaultMonopolePrototype heads)
-              x0 = take dimF (cycle [0, 1, 2])
+                (map (map (map mkTrit)) (defaultMonopolePrototype heads))
+              x0 = map ST.mkGF27 (take dimF (cycle [0, 1, 2]))
               x1 = layerIntrinsic27At cfgR lyr0 (0, 1) x0
               x2 = gf27RmsNorm gammaR x1
           -- 真实权重取值必须是 trit
@@ -848,7 +851,7 @@ main = hspec $ do
       let dim = 1440 :: Int; rounds = 300 :: Int
           w = [ (j * 13 + 7) `mod` 27 | j <- [0 .. dim - 1] ]       -- 一行权重
           x = [ (i * 11) `mod` 27 | i <- [0 .. dim - 1] ]           -- 激活
-          dotWith f = foldl (\ !a !(u, v) -> gf27Add a (f u v)) gf27Zero (zip w x)
+          dotWith f = foldl (\ !a !(u, v) -> gf27Add a (f u v)) ST.gf27Zero (zip w x)
           timeIt g = do
             t0 <- getCPUTime
             -- acc + r 使每轮的 r 都真被消费，避免 GHC 提升常量计算
@@ -898,8 +901,8 @@ main = hspec $ do
 
   describe "降维修复验证：gf27RmsNorm / gf27SwiGLU 的逐分量性" $ do
     let dim = 24 :: Int
-        gamma = replicate dim gf27One
-        base = [ (i * 5 + 1) `mod` 27 | i <- [0 .. dim - 1] ]
+        gamma = replicate dim ST.gf27One
+        base = map ST.mkGF27 [ (i * 5 + 1) `mod` 27 | i <- [0 .. dim - 1] ]
 
     it "矢量版 gf27RmsNorm 是逐分量的：扰动 x_j 只改变 out_j" $ do
       let out0 = gf27RmsNorm gamma base
@@ -920,9 +923,11 @@ main = hspec $ do
       (maximum [ affect k | k <- [0 .. dim - 1] ]) `shouldSatisfy` (> 1)
 
     it "矢量版 gf27SwiGLU 逐分量门控：gated_j = g_j ⊗ u_j" $ do
-      let gw = [ [ (i * 3 + j) `mod` 27 | j <- [0 .. dim - 1] ] | i <- [0 .. dim - 1] ]
-          uw = [ [ (i * 7 + j * 2) `mod` 27 | j <- [0 .. dim - 1] ] | i <- [0 .. dim - 1] ]
-          dw = [ [ (i + j * 5) `mod` 27 | j <- [0 .. dim - 1] ] | i <- [0 .. dim - 1] ]
+      -- 权重是 GF(3) 元素（Trit）：原为 `mod 27` 的随手造数，按 gf27Matmul
+      -- 的范畴约定收窄到 GF(3)。测试目的（gf27SwiGLU 输出长度）不变。
+      let gw = [ [ mkTrit ((i * 3 + j) `mod` 3) | j <- [0 .. dim - 1] ] | i <- [0 .. dim - 1] ]
+          uw = [ [ mkTrit ((i * 7 + j * 2) `mod` 3) | j <- [0 .. dim - 1] ] | i <- [0 .. dim - 1] ]
+          dw = [ [ mkTrit ((i + j * 5) `mod` 3) | j <- [0 .. dim - 1] ] | i <- [0 .. dim - 1] ]
           g = gf27Matmul gw base
           u = gf27Matmul uw base
       -- 用同样输入走一遍，验证门控是逐分量 g_j ⊗ u_j
@@ -981,7 +986,7 @@ main = hspec $ do
   describe "SovereignTypes 类型化 API — 与 Int 版对拍（迁移验证）" $ do
     -- ⚠️ 范畴：权重是 GF(3) 元素（Trit，值 0..2），激活是 GF(27) 元素（0..26）。
     -- 对拍必须两边同域：权重用 mod 3 生成，激活用 mod 27。
-    let mkW r c sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+    let mkW r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
         vx n sd = [ (i * 11 + sd) `mod` 27 | i <- [0 .. n - 1] ]
 
     it "matmulGF27 ≡ gf27Matmul（5 组形状 × 3 种子，逐元素全等）" $ do
@@ -990,7 +995,7 @@ main = hspec $ do
           | (r, c) <- [(3,5),(8,8),(12,30),(30,12),(60,60)], sd <- [0 .. 2] ] `shouldBe` True
 
     it "rmsNormGF27 ≡ gf27RmsNorm（逐分量，逐元素全等）" $ do
-      let g = replicate 24 gf27One
+      let g = replicate 24 ST.gf27One
           x = vx 24 3
       ST.fromGF27Vec (ST.rmsNormGF27 (ST.toGF27Vec g) (ST.toGF27Vec x))
         `shouldBe` gf27RmsNorm g x
@@ -1110,7 +1115,7 @@ main = hspec $ do
           { silQProj = w3 12 24 1, silOutProj = w3 24 24 2
           , silGateProj = w3 72 24 3, silUpProj = w3 72 24 4
           , silDownProj = w3 24 72 5, silPrototype = defaultMonopolePrototype 2 }
-        wiI = SovereignIntWeights (w3 8 24 7) (w3 8 24 8) (w3 8 24 6) (replicate 12 mkIL)
+        wiI = SovereignIntWeights (map (map (ST.mkGF27 . ST.tritToInt)) (w3 8 24 7)) (w3 8 24 8) (w3 8 24 6) (replicate 12 mkIL)
 
     it "stays inside GF(3) end to end (bounded — the float path reaches ~1e21)" $ do
       let out = forwardIntrinsic MixMod3 cfgI wiI [1, 3, 5]
@@ -1134,7 +1139,7 @@ main = hspec $ do
 
     it "周期对权重 seed / depth 不敏感；dim=36 退化为 1（根因见下一项：零因子）" $ do
       let mk dimC seedC depthC =
-            let w3 r c sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+            let w3 r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
                 cc = SovereignConfig { scDim = dimC, scDepth = depthC, scHeads = 2
                                      , scVocab = 8, scFF = 3 * dimC, scEps = 1e-5 }
                 ll = SovereignIntLayer (w3 12 dimC seedC) (w3 dimC dimC (seedC + 1))
@@ -1173,13 +1178,13 @@ main = hspec $ do
       (3 `mod` 3) `shouldBe` 0
 
     it "GF(27) 整链打破 dim=36 的不动点（1 → 13 = 26/2，即 α¹³ = −1）" $ do
-      let w3 r c sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+      let w3 r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
           mk dimC depthC =
             let cc = SovereignConfig { scDim = dimC, scDepth = depthC, scHeads = 2
                                      , scVocab = 8, scFF = 3 * dimC, scEps = 1e-5 }
                 ll = SovereignIntLayer (w3 12 dimC 1) (w3 dimC dimC 2) (w3 (3 * dimC) dimC 3)
-                       (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (defaultMonopolePrototype 2)
-                ww = SovereignIntWeights (w3 8 dimC 7) (w3 8 dimC 8) (w3 8 dimC 6) (replicate depthC ll)
+                       (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (map (map (map mkTrit)) (defaultMonopolePrototype 2))
+                ww = SovereignIntWeights (map (map (ST.mkGF27 . ST.tritToInt)) (w3 8 dimC 7)) (w3 8 dimC 8) (w3 8 dimC 6) (replicate depthC ll)
             in (cc, ww)
           (cc36, ww36) = mk 36 60
           (cc36b, ww36b) = mk 36 240
@@ -1197,13 +1202,13 @@ main = hspec $ do
       gf27AlphaPow 0  `shouldBe` 1
 
     it "GF(27) 的 dim=24 轨道远长于 120 层（27^24 状态空间）" $ do
-      let w3 r c sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+      let w3 r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
           dimC = 24
           cc = SovereignConfig { scDim = dimC, scDepth = 240, scHeads = 2
                                , scVocab = 8, scFF = 3 * dimC, scEps = 1e-5 }
           ll = SovereignIntLayer (w3 12 dimC 1) (w3 dimC dimC 2) (w3 (3 * dimC) dimC 3)
-                 (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (defaultMonopolePrototype 2)
-          ww = SovereignIntWeights (w3 8 dimC 7) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 240 ll)
+                 (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (map (map (map mkTrit)) (defaultMonopolePrototype 2))
+          ww = SovereignIntWeights (map (map (ST.mkGF27 . ST.tritToInt)) (w3 8 dimC 7)) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 240 ll)
           fr = traceStates27 cc ww [1, 3, 5]
       length fr `shouldBe` 241
       -- tailCycle 只看 d <= 120；找不到 ⟹ 周期 > 120（状态空间 27^24 ≈ 10^34）
@@ -1264,7 +1269,7 @@ main = hspec $ do
     it "验证2：训练后 .sov（step31000）的 token_emb 切片 → GF(27) 整链" $ do
       let path = "/data/trit/pyBitNet/scripts/artifacts/sov_native/20260721-033421_step31000.sov"
           dimC = 24
-          w3 r c sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+          w3 r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
       r <- loadSOV3 path
       case r of
         Left e -> pendingWith ("loadSOV3: " ++ show e)
@@ -1276,21 +1281,21 @@ main = hspec $ do
                 cc = SovereignConfig { scDim = dimC, scDepth = 120, scHeads = 2
                                      , scVocab = 8, scFF = 3 * dimC, scEps = 1e-5 }
                 ll = SovereignIntLayer (w3 12 dimC 1) (w3 dimC dimC 2) (w3 (3 * dimC) dimC 3)
-                       (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (defaultMonopolePrototype 2)
-                ww = SovereignIntWeights rows24 (w3 8 dimC 8) (w3 8 dimC 6) (replicate 120 ll)
+                       (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (map (map (map mkTrit)) (defaultMonopolePrototype 2))
+                ww = SovereignIntWeights (map (map ST.mkGF27) rows24) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 120 ll)
             and [ v >= 0 && v <= 2 | row <- rows24, v <- row ] `shouldBe` True
             pendingWith ("trained token_emb(2x8)=" ++ show (map (take 8) (take 2 rows24))
                       ++ " nz24x8=" ++ show nz
                       ++ " | GF27@120=" ++ show (tailCycle (traceStates27 cc ww [1, 3, 5])))
 
     it "MEASURES MixGF27 @dim=36 (diagnostic: 只换 mix 够不够？)" $ do
-      let w3 r c sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+      let w3 r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
           dimC = 36
           cc = SovereignConfig { scDim = dimC, scDepth = 60, scHeads = 2
                                , scVocab = 8, scFF = 3 * dimC, scEps = 1e-5 }
           ll = SovereignIntLayer (w3 12 dimC 1) (w3 dimC dimC 2) (w3 (3 * dimC) dimC 3)
-                 (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (defaultMonopolePrototype 2)
-          ww = SovereignIntWeights (w3 8 dimC 7) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 60 ll)
+                 (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (map (map (map mkTrit)) (defaultMonopolePrototype 2))
+          ww = SovereignIntWeights (map (map (ST.mkGF27 . ST.tritToInt)) (w3 8 dimC 7)) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 60 ll)
           f m = traceStates m cc ww [1, 3, 5]
       pendingWith ("dim36: MixGF27=" ++ show (tailCycle (f MixGF27))
                 ++ " MixLayer2=" ++ show (tailCycle (f MixLayer2)))
@@ -1304,13 +1309,13 @@ main = hspec $ do
       -- ⚠️ 结论：用 GF(3) 编码「Σtrits/6」必然有损 —— 参考用浮点 /6，
       -- 无损的整数载体应是 GF(27)（Σtrits ∈ [0,12] ⊂ 27 个元素），
       -- 这也与嵌入层的「9 基球谐 → 27 维」一致。属下一步工作，不在此处硬修。
-      let w3 r c sd = [ [ (i * 7 + j * 13 + sd) `mod` 3 | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+      let w3 r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
           dimC = 36
           cc = SovereignConfig { scDim = dimC, scDepth = 60, scHeads = 2
                                , scVocab = 8, scFF = 3 * dimC, scEps = 1e-5 }
           lyr0 = SovereignIntLayer (w3 12 dimC 1) (w3 dimC dimC 2) (w3 (3 * dimC) dimC 3)
-                   (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (defaultMonopolePrototype 2)
-          ww = SovereignIntWeights (w3 8 dimC 7) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 60 lyr0)
+                   (w3 (3 * dimC) dimC 4) (w3 dimC (3 * dimC) 5) (map (map (map mkTrit)) (defaultMonopolePrototype 2))
+          ww = SovereignIntWeights (map (map (ST.mkGF27 . ST.tritToInt)) (w3 8 dimC 7)) (w3 8 dimC 8) (w3 8 dimC 6) (replicate 60 lyr0)
           x0 = take dimC (siwTokenEmbed ww !! 1)
           nz v = length (filter (/= 0) v)
           chr = christoffelInt MixLayer2 2 (silQProj lyr0) (silPrototype lyr0) 0 1 x0
