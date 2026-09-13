@@ -1,6 +1,11 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 
--- | GF(27) 行点积的 SIMD 入口（AVX2），带运行时检测与标量回退。
+-- | GF(27) 行点积的 AVX2 入口（含运行时检测与标量回退）。
+--
+-- ⚠️ **目的不是提速，而是给 GF(27) 的代数结构提供第 4 个独立实现**（Haskell 标量 /
+-- C 标量 / 本模块 AVX2 / GPU WGSL），四者逐元素全等才说明结构在异构实现下一致。
+-- **性能不作判据**：本机实测 AVX2 反而略慢于标量，但那不影响其验证价值。
+-- 判据见 @docs\/plans\/verification-criteria.md@。
 --
 -- C 层见 @cbits\/gf27_avx2.c@。**数学约定只在 Haskell 侧定义**：
 -- log\/exp 表来自 'Infrastructure.CPU.GF3Intrinsic' 的 'gf27LogTable' \/

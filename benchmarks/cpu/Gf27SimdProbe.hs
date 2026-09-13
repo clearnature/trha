@@ -63,7 +63,7 @@ main = do
   (_, tSimd) <- timeIt (mapM (\(w, x) -> gf27Rowdot w x) inputs >>= \rs -> evaluate (sum rs))
   (_, tScalarC) <- timeIt (mapM (\(w, x) -> gf27RowdotScalarOnly w x) inputs >>= \rs -> evaluate (sum rs))
   (_, tRef) <- timeIt (evaluate (foldl' (+) 0 (map (\(w, x) -> rowdotRef w x) inputs)))
-  putStrLn ("\n基准（n=1440 × " ++ show rounds ++ " 轮，墙钟）：")
+  putStrLn ("\n参考计时（n=1440 × " ++ show rounds ++ " 轮，墙钟）—— **仅记录，不作判据**：")
   putStrLn ("  [bench] gf27Rowdot (AVX2 派发) = " ++ show tSimd ++ " ms")
   putStrLn ("  [bench] 标量 C                = " ++ show tScalarC ++ " ms")
   putStrLn ("  [bench] 纯 Haskell            = " ++ show tRef ++ " ms")

@@ -250,7 +250,9 @@ ls /usr/lib/x86_64-linux-gnu/libvulkan* ; ls /usr/lib/x86_64-linux-gnu/libEGL*
 | T3 rpath | ✅ `cabal.project.local` 的 `-optl-Wl,-rpath,…`，不再需要 `LD_LIBRARY_PATH` |
 | T4 独立 hspec 套件 | ✅ `trha-webgpu-test`（2 例；无 GPU 时 pending） |
 
-### 实测：GPU vs CPU（AMD/Vulkan/radv）
+### 参考计时：GPU vs CPU（AMD/Vulkan/radv）—— **仅记录，不作判据**
+
+> 判据见 `docs/plans/verification-criteria.md`：正确性以数学/理论为准，性能是环境标量。
 
 | 规模 | GPU（含提交往返） | CPU（`gf27Matmul`） | 比值 |
 |---|---|---|---|
