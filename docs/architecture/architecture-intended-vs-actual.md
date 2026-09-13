@@ -140,7 +140,7 @@
 | **D-4** | 依赖类型论 / Liquid Haskell | 0 处代码 | 未开始 | 大 |
 | **D-5** | 草稿模型（speculative draft） | 0 命中（概念出自 llama.cpp `speculative.md`） | 未开始 | 中 |
 | **D-6** | WebGPU 后端 | **已更新（2026-09-13 核实）**：旧层（simulation，1344 行）**已归档**至 `archive/webgpu-legacy/`；**新高层**（`Context`/`Buffer`/`Kernel`/`Error` + `Raw/**` 共 9 模块）**在构建**，另有 5 个探针可执行（`trha-webgpu-hello`/`-compute`/`-errorprobe`/`-gf27`/`-gf27matmul`）与 `test-webgpu` **真机对拍**（GF(27) 乘法全 729 组、matmul 16×32、四实现同批全等）。**仍缺**：未接入**生产推理路径**（属 §5「C 未接线」档）。 | 已建成、**未接生产** | 中 |
-| **D-7** | Agda 作证明流程 | 仅注释里的对拍目标 | 流程未集成 | 中 |
+| **D-7** | Agda 作证明流程 | **已更新（2026-09-13 核实）**：对拍**已系统化**（非"仅注释目标"）—— `test-cpu/Spec.hs` 引用 Agda 权威 17 处，每个判据主题都标注权威文件（如 `Sovereign.MetaStructure.WuXing`、`HolographicPi.agda`、`FiniteInnerProduct.agda`）并逐条验证，含穷举与边界。**仍缺**：Agda 代码本身**未参与执行**（不编译、不进 CI），维持「外部规范源」定位 —— 即 §7 待澄清④ | 对拍已成体系；Agda 未进 CI | 中 |
 | **D-8** | 缓存 | **已更新（2026-09-13 核实）**：`src/Core/Cache/*.hs` 约 70 行，实现 `cacheLookup`/`cacheInsert`/`cacheStats` 且**有** hits/misses/hitRate 统计（原记"无命中率实现"不准确）；问题仅在 README 凭空宣称 **99%+** —— 已改为不写具体数字 | ✅ 已修正（README 与实现一致） | 小 |
 | ~~**D-9**~~ | ~~Haskell 侧 Orchestration 层~~ | **已处置（2026-09-13）**：199 行遗迹归档出构建 → `archive/orchestration/` | 归档 | 小 |
 
