@@ -30,13 +30,16 @@ module Infrastructure.CPU.ConstraintVerdict
   , projectToGF27
     -- * 判定入口
   , verdictOf
+  , verdictOfWithState
+  , T6State (..)
   ) where
 
 import Data.Char (ord)
 
 import Infrastructure.CPU.SovereignTypes (GF27, Trit, mkGF27, mkTrit, tritToInt)
 import Infrastructure.CPU.SovereignWuxingLayer
-  ( WuxingConfig (..)
+  ( T6State (..)
+  , WuxingConfig (..)
   , WuxingLayerW (..)
   , causalGraphStep
   , wuxingForward
@@ -150,3 +153,34 @@ verdictOf out =
              else "constraint warn: T6 unreachable at step " ++ show reached
                     ++ "/" ++ show (length oks) ++ ", causal edges = " ++ show edges
        }
+
+-- | 与 'verdictOf' 相同，但**同时返回末态推理状态** 'T6State'。
+--
+-- 存在的理由（D-3）：'wuxingForward' 的返回值里本来就带终态 @T6State@（其返回形状是
+-- @([GF27], T6State, [[(Int,Int)]], [Bool])@），只是 'verdictOf' 为保持判定结果精简而
+-- 用 @_@ 丢弃了它。推理内核的**状态**要被上浮到内核会话（作为 @Session.projections@
+-- 的投影），故在此把它一并交出来 —— 不修改 'verdictOf' 的签名与 'ConstraintVerdict'
+-- 的字段，保证零回归。
+--
+-- 分层：返回的是 CPU 层的 'T6State'；把它装箱进 @Dynamic@ 由调用方（API.Server）负责，
+-- @Core@ 侧只经 'Core.Session.Manager.setProjection' 碰 @Dynamic@，不反向依赖本层。
+verdictOfWithState :: [Char] -> (ConstraintVerdict, T6State)
+verdictOfWithState out =
+  let xs               = projectToGF27 dimV out
+      (adj, _)         = causalGraphStep verdictCfg verdictLayer xs
+      (_, st, _, oks)  = wuxingForward verdictCfg verdictLayer xs
+      edges            = length [ () | row <- adj, v <- row, tritToInt v /= 0 ]
+      t6ok             = and oks
+      reached          = length (takeWhile id oks)
+  in ( ConstraintVerdict
+         { cvStatus = if t6ok then VerdictPass else VerdictWarn
+         , cvT6     = t6ok
+         , cvReach  = oks
+         , cvEdges  = edges
+         , cvReason =
+             if t6ok
+               then "constraint ok: T6 reachable in all steps, causal edges = " ++ show edges
+               else "constraint warn: T6 unreachable at step " ++ show reached
+                      ++ "/" ++ show (length oks) ++ ", causal edges = " ++ show edges
+         }
+     , st )
