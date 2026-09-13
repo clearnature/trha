@@ -128,8 +128,8 @@ main = hspec $ do
   -- ------------------------------------------------------------------
   describe "C1 · 十二律损益链 ↔ Agda 权威（Sovereign.Coupling.LossGain）" $ do
     it "黄钟 = 81（huangzhong），两个口径的起点一致" $ do
-      head lengSequenceDiv `shouldBe` 81
-      head lengSequenceRound `shouldBe` 81
+      take 1 lengSequenceDiv `shouldBe` [81]
+      take 1 lengSequenceRound `shouldBe` [81]
 
     it "整除算子与 Agda 同式：sunOp n = n*2 div 3、yiOp n = n*4 div 3" $ do
       and [ sunOpDiv n == (n * 2) `div` 3 | n <- [81, 54, 72, 64, 30, 1, 7, 1000] ] `shouldBe` True
@@ -430,6 +430,22 @@ main = hspec $ do
 
     it "全息 π 的原子对不可求商/约分（编译必须失败）" $ \_ -> do
       code <- ghcExitCode "test-cpu/negative/HoloPiReduce.hs"
+      code `shouldNotBe` ExitSuccess
+
+    it "GF(9) 的元素不能当 GF(27) 用（次数 2 vs 3 的扩域，编译必须失败）" $ \_ -> do
+      code <- ghcExitCode "test-cpu/negative/DomainGF9VsGF27.hs"
+      code `shouldNotBe` ExitSuccess
+
+    it "谐波指数 Harmonic 不能当域元素 GF27 用（「不是元素值」，编译必须失败）" $ \_ -> do
+      code <- ghcExitCode "test-cpu/negative/HarmonicVsGF27.hs"
+      code `shouldNotBe` ExitSuccess
+
+    it "打包表示 Pv 不能当 [Int] 用（解包出口不可绕过，编译必须失败）" $ \_ -> do
+      code <- ghcExitCode "test-cpu/negative/PvVsList.hs"
+      code `shouldNotBe` ExitSuccess
+
+    it "Z[ζ₁₂] 的 Z12 不能当有理数 Q 用（4 维 vs 1 维，编译必须失败）" $ \_ -> do
+      code <- ghcExitCode "test-cpu/negative/Z12VsQ.hs"
       code `shouldNotBe` ExitSuccess
 
 
