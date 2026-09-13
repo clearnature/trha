@@ -51,6 +51,7 @@ library trha-llm
     Infrastructure.CPU.GF3Ops
     Infrastructure.CPU.Christoffel
     Infrastructure.CPU.SovereignModel
+    Infrastructure.CPU.GF27SIMD
     Infrastructure.CPU.GF3Intrinsic
     Infrastructure.CPU.SovereignIntrinsic
     Infrastructure.CPU.SovereignGF27
@@ -81,6 +82,7 @@ library trha-llm
                   , stm
                   , network
   default-language: Haskell2010
+  c-sources:        cbits/gf27_avx2.c
 
 -- API Server (OpenAI/Anthropic/Responses protocols)
 -- visibility: public so the standalone CLI package (packages/app/CLI) can
@@ -236,6 +238,15 @@ test-suite trha-webgpu-test
                   , trha:trha-webgpu
                   , trha:trha-llm
                   , hspec
+  ghc-options:      -rtsopts -threaded
+  default-language: Haskell2010
+
+-- GF(27) 行点积 AVX2 的对拍与基准
+executable trha-cpu-gf27simd
+  main-is:          Gf27SimdProbe.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
   ghc-options:      -rtsopts -threaded
   default-language: Haskell2010
 
