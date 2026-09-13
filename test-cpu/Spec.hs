@@ -15,9 +15,12 @@ import Infrastructure.CPU.SovereignLossGain
   , tones, yiOpDiv )
 import Infrastructure.CPU.ConstraintVerdict
   ( ConstraintVerdict (..), VerdictStatus (..), projectToGF27, verdictOf )
-import Infrastructure.CPU.GF3Intrinsic (tritMul)
+import Control.Monad (forM_, unless)
+import Infrastructure.CPU.GF27SIMD (gf27Rowdot, gf27RowdotScalarOnly, hasAVX2)
+import Infrastructure.CPU.GF3Intrinsic (gf27Mul, tritMul)
 import Infrastructure.CPU.SovereignPhase12
   ( Phase12 (..), breatheCount, phase12Init, phaseSeq12, step12 )
+import Infrastructure.CPU.SovereignGF27 (gf27Add)
 import Infrastructure.CPU.SovereignWuxingLayer
   ( T6State (..), WuxingConfig (..), WuxingLayerW (..)
   , argMaxIdx, causalGraphStep, t6Init, t6Verify, wuxingForward, wuxingStep )
@@ -443,6 +446,75 @@ main = hspec $ do
       and [ tritToInt v == 0 | row <- adjN, v <- row ] `shouldBe` True
 
 
+
+  -- ------------------------------------------------------------------
+  -- C3 · 多实现逐元素全等 —— GF(27) 行点积
+  --
+  -- 判据 C3 的实质：同一数学结构的不同**独立实现**在**同一批输入**上结果全等，
+  -- 这才是"跨实现/跨硬件一致"的证据。本仓现有三个实现：
+  --   ① Haskell 标量：foldl gf27Add 0 . zipWith gf27Mul（权威定义在 GF3Intrinsic）
+  --   ② C 标量      ：trha_gf27_rowdot_scalar_only（rowdot_scalar：acc = add(acc, mul(..))）
+  --   ③ AVX2        ：trha_gf27_rowdot（8 路并行，累加器用 (Z/3)³ 分离表示）
+  -- ④ GPU(WGSL)   ：**缺失** —— 见下方覆盖度一条，不假装完整。
+  --
+  -- ⚠️ 判据纪律：性能**不是**判据。本机 AVX2 实测反而略慢于标量，这**不影响**其验证
+  -- 价值（宪法原文：AVX2 是"第 4 个独立实现"，用于结构一致性，不是提速手段）。
+  -- ------------------------------------------------------------------
+  describe "C3 · GF(27) 行点积的多实现全等（Haskell 标量 / C 标量 / AVX2）" $ do
+    it "★ 穷举全对：a ∈ [0,26] × b ∈ [0,26] 上 ① ≡ ②（729 组）" $ do
+      -- 穷举比抽样强：不留"恰好没测到"的缝隙。
+      forM_ [0 .. 26] $ \a ->
+        forM_ [0 .. 26] $ \b -> do
+          let hsRef = foldl gf27Add 0 (zipWith gf27Mul [a] [b])
+          cScalar <- gf27RowdotScalarOnly [a] [b]
+          hsRef `shouldBe` cScalar
+
+    it "★ 三实现在同一批输入上全等（① ≡ ② ≡ ③）" $ do
+      forM_ c3Cases $ \(w, x) -> do
+        let hsRef = foldl gf27Add 0 (zipWith gf27Mul w x)
+        cScalar <- gf27RowdotScalarOnly w x
+        hsRef    `shouldBe` cScalar
+        dispatched <- gf27Rowdot w x
+        dispatched `shouldBe` cScalar
+
+    it "边界输入：空 / 单个零元 / 单个单位元" $ do
+      foldl gf27Add 0 (zipWith gf27Mul [] []) `shouldBe` 0
+      c0 <- gf27RowdotScalarOnly [] []
+      c0 `shouldBe` 0
+      c1 <- gf27RowdotScalarOnly [0] [26]
+      c1 `shouldBe` 0                      -- 0 ⊗ x = 0
+      c2 <- gf27RowdotScalarOnly [1] [17]
+      c2 `shouldBe` 17                     -- 1 ⊗ x = x
+
+    it "跨 8 路边界：长度 7 / 8 / 9 / 15 / 16 / 17 都与标量一致（AVX2 分块）" $ do
+      forM_ [7, 8, 9, 15, 16, 17] $ \n -> do
+        let w = take n (cycle [1 .. 26])
+            x = take n (cycle [26, 25 .. 1])
+            hsRef = foldl gf27Add 0 (zipWith gf27Mul w x)
+        cScalar <- gf27RowdotScalarOnly w x
+        cScalar `shouldBe` hsRef
+        dispatched <- gf27Rowdot w x
+        dispatched `shouldBe` hsRef
+
+    it "长向量（1000 元素）三实现一致" $ do
+      let w = map (`mod` 27) [i * 7 + 3 | i <- [0 .. 999]]
+          x = map (`mod` 27) [i * 11 + 5 | i <- [0 .. 999]]
+          hsRef = foldl gf27Add 0 (zipWith gf27Mul w x)
+      cScalar <- gf27RowdotScalarOnly w x
+      cScalar `shouldBe` hsRef
+      dispatched <- gf27Rowdot w x
+      dispatched `shouldBe` hsRef
+
+    it "★ 覆盖度如实标注：GPU(WGSL) 实现缺失，C3 当前覆盖 3/4" $ do
+      -- 不是断言"完整"，而是把缺口固定下来：第四实现（GPU WGSL）在本仓尚不存在，
+      -- 故 C3 只覆盖 Haskell 标量 / C 标量 / AVX2 三条路径。
+      -- 无 GPU 时按项目约定用 pendingWith 兜底，而不是假装通过。
+      avx <- hasAVX2
+      unless avx $
+        pendingWith ("本机无 AVX2；C3 仅验证 ①Haskell 标量 ≡ ②C 标量 两条路径。"
+                     ++ "GPU(WGSL) 实现缺失：C3 覆盖 3/4。")
+      avx `shouldBe` True
+
   -- ------------------------------------------------------------------
   -- C5（D-1）· 约束 ↔ 外部推理 —— 作用点 = 响应侧的「采纳判定」
   --
@@ -562,6 +634,19 @@ c4X0 = map mkGF27 (take dimC4 (cycle [0, 1, 2]))
 -- | 确定性 trit 矩阵：元素 = (i*7 + j*13 + seed) mod 3。
 w3c :: Int -> Int -> Int -> [[Trit]]
 w3c r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
+
+
+-- | C3 对拍的输入批（含空、跨 8 路边界、多块等）。
+c3Cases :: [([Int], [Int])]
+c3Cases =
+  [ ([], [])
+  , ([1], [1])
+  , ( [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    , [8, 7, 6, 5, 4, 3, 2, 1, 0] )                       -- 9：跨 8 路
+  , ( map (`mod` 27) [1, 5, 9, 13, 17, 21, 25, 2, 6, 10, 14, 18, 22, 26, 3, 7]
+    , map (`mod` 27) [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 1, 3, 5] )  -- 16：两块
+  , (replicate 100 7, replicate 100 11)                   -- 多块
+  ]
 
 -- | 用本项目环境（cabal exec 提供包数据库）编译一个文件，返回退出码。
 -- 期望是 'ExitFailure'；若返回 'ExitSuccess' 则说明该文件本应报错却没报。
