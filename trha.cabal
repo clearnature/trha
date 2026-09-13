@@ -164,8 +164,10 @@ library trha-webgpu
     Infrastructure.WebGPU.Raw.Enums
     Infrastructure.WebGPU.Raw.Structs
     Infrastructure.WebGPU.Raw.FFI
+    Infrastructure.WebGPU.Raw.Async
   hs-source-dirs:   src
   include-dirs:     3rdparty/wgpu-native/include
+  c-sources:        cbits/wgpu_callback_shim.c
   extra-libraries:         wgpu_native
   -- 库目录用 extra-lib-dirs-static（Cabal 规范 3.8+：接受相对路径，适合仓库内 3rdparty/）。
   -- 运行时查找 .so 由 LD_LIBRARY_PATH 或 rpath 负责，见 webgpu-wiring-plan.md 的 W4/W6。
