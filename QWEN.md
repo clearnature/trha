@@ -120,8 +120,9 @@ Three GitHub Actions workflows in `.github/workflows/`:
 
 `docs/` is organised by document lifecycle (reorganised 2026-09-13; see `docs/plans/code-docs-reconciliation.md` §5 for the classification rationale).
 
-**Structure authority — `docs/architecture/`**
-- `docs/architecture/architecture.md` — System architecture overview
+**Structure authority & project intent — `docs/architecture/`**
+- `docs/architecture/architecture-intended-vs-actual.md` — **Project intent vs actual state**: spec base (Agda「律算合一」→ pyBitNet《架构宪法》→ this repo's CPU layer) → intended architecture → actual architecture (✅/⚠️/❌) → deviations D-1…D-9 → status tiers A–E. **Read this first**: the project intent (kernel as a *reasoning hub* with type-theoretic/causal constraints) had never been documented, which caused a serious misread.
+- `docs/architecture/architecture.md` — System architecture overview. ⚠️ §6 package layout is out of date (see `docs/plans/code-docs-reconciliation.md` §6)
 - `docs/architecture/presentation-layer.md` — Presentation layer (Desktop/Web/TUI) design
 - `docs/architecture/event-matrix.md` — Event producer / consumer / persistence matrix
 - `docs/architecture/agent-lifecycle-notes.md` — One step → rounds → tool execution
