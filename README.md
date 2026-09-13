@@ -9,8 +9,8 @@ trha/
 ├── src/                        # 核心引擎源代码 (Haskell)
 │   ├── Core/                   # 核心引擎层
 │   ├── LLM/                    # LLM 适配器层
+│   ├── API/                    # 协议面 (servant: HTTP/SSE)
 │   ├── Infrastructure/         # 基础设施层
-│   ├── Orchestration/          # 调度层桥接
 │   └── Presentation/           # 表示层
 ├── packages/                   # 可安装包
 │   ├── app/                    # 应用程序

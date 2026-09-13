@@ -151,36 +151,6 @@ library trha-infra
                   , http-types
   default-language: Haskell2010
 
--- Orchestration Layer (TypeScript bridge)
-library trha-orchestration
-  exposed-modules:
-    Orchestration.Bridge.Types
-    Orchestration.Bridge.HTTP
-    Orchestration.Parallel.Types
-    Orchestration.Parallel.Scheduler
-    Orchestration.Subagent.Types
-    Orchestration.Subagent.Manager
-  other-modules:
-    Infrastructure.Network.HTTP
-  hs-source-dirs:   src
-  build-depends:    base ^>=4.22
-                  , trha-core
-                  , trha-infra
-                  , text
-                  , aeson
-                  , servant
-                  , servant-server
-                  , tagged
-                  , warp
-                  , containers
-                  , stm
-                  , async
-                  , bytestring
-                  , http-client
-                  , http-client-tls
-                  , http-types
-  default-language: Haskell2010
-
 -- CLI Application
 executable trha
   main-is:          Main.hs

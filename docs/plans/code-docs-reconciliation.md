@@ -9,7 +9,11 @@
 
 ## 0. 一句话结论
 
-内核（Haskell）的**分层与协议是真实且自洽的**；但有三处「宣称 ✅ / 实际没有」：**WebGPU 未进构建**、**缓存命中率无实现**、**`trha-orchestration` 是无使用者的库**。另有 4 个包不在根构建里。
+内核（Haskell）的**分层与协议是真实且自洽的**；但有三处「宣称 ✅ / 实际没有」：**WebGPU 未进构建**、**缓存命中率无实现**、**本地推理曾无入口**。另有 4 个包不在根构建里。
+
+> **2026-09-13 更新（两处已闭合）**
+> ① `library trha-orchestration`（6 模块 199 行、零 stanza 依赖、零 `import Orchestration.*`、零测试，且 `verifyType` 是恒返 `True` 的假实现）已按所有者裁定**归档出构建** → `archive/orchestration/README.md`；
+> ②「本地推理无入口」已由批次 2（D-2）闭合：`"cpu"` 成为一等 provider kind，`adapterFor` / `providerStream` 可达本地引擎（见 `docs/architecture/architecture-intended-vs-actual.md`）。
 
 ---
 
@@ -28,16 +32,15 @@ cabal.project ──▶ packages:  .  +  packages/app/CLI          ← 只有这
 
 | stanza | 源码根 | 依赖的内部库 | 被谁使用 |
 |---|---|---|---|
-| `library trha-core` | `src` | — | trha-infra / trha-llm / trha-api / trha-orchestration / trha-test |
-| `library trha-infra` | `src` | trha-core | trha-llm / trha-orchestration / trha-test |
+| `library trha-core` | `src` | — | trha-infra / trha-llm / trha-api / trha-test |
+| `library trha-infra` | `src` | trha-core | trha-llm / trha-test |
 | `library trha-llm` | `src` | trha-core, trha-infra | trha-api / trha-test |
 | `library trha-api` | `src` | trha-core, trha-llm | executable `trha`(CLI) / `trha-kernel-stub` / trha-test |
-| `library trha-orchestration` | `src` | trha-core, trha-infra | **无** ★ |
 | `executable trha` (CLI) | `packages/app/CLI` | `trha:trha-api` | — |
 | `executable trha-kernel-stub` | `packages/kernel-stub` | `trha-api` | — |
 | `test-suite trha-test` | `test` | core, llm, infra, api | — |
 
-★ `trha-orchestration` 不在任何 executable/test-suite 的 `build-depends` 中。
+★ **`library trha-orchestration` 已于 2026-09-13 移除**（6 模块 199 行、编译通过但零 stanza 依赖、零 `import Orchestration.*`、零测试，且 `verifyType` 为恒返 `True` 的假实现）→ 归档至 `archive/orchestration/`（归档理由与取回步骤见该目录 README）。
 
 **不在根构建（需 `cd` 进去单独构建）**：
 
@@ -57,14 +60,14 @@ cabal.project ──▶ packages:  .  +  packages/app/CLI          ← 只有这
 ```bash
 grep -rn "WebGPU\|Presentation" --include=*.cabal . | grep -v dist-newstyle   # → 无输出
 grep -rn "Infrastructure.WebGPU\|Presentation\." --include=*.hs . | grep -v dist-newstyle
-grep -rn "^import.*Orchestration\." --include=*.hs src test packages          # → 无输出
+ls archive/orchestration/          # 原 src/Orchestration 6 模块已于 2026-09-13 归档至此
 ```
 
 | 项 | 规模 | 实测状态 |
 |---|---|---|
 | `src/Infrastructure/WebGPU/**` | 14 文件 / 1344 行 | **不在任何 cabal**；**无外部引用**；`Buffer.hs:49` 自述 `"Buffer mapping not implemented in simulation"`；`FFI.hs` 声明了 `webgpuCreateDevice` 等绑定，需外部 C 库（wgpu-native / Dawn） |
 | `src/Presentation/**` | 8 文件（Desktop 6 / Web 1 / TUI 1） | **不在任何 cabal**；无外部引用。`docs/architecture/presentation-layer.md` 定义了该层，但从未接线 |
-| `library trha-orchestration` | 6 模块 | **编译但无使用者**：无 stanza 依赖它，全库无人 `import Orchestration.*` |
+| ~~`library trha-orchestration`~~ | ~~6 模块 / 199 行~~ | **已归档（2026-09-13）** → `archive/orchestration/`。处置理由：零使用者 + `verifyType` 假实现（恒返 `True`）+ 与「编排归外壳、内核不持决策态」裁定冲突。**不是"空库"**：有真实类型骨架，但实现平凡（`parallel = mapConcurrently id`）或为假（`spawnSubAgent` 只写一条 Idle 记录、不启动任何东西） |
 | `src/Infrastructure/CPU/Main.hs`、`WebGPU/Main.hs` | 2 文件 | 随层目录存在，未被任何 stanza 声明（不参与编译） |
 
 ---
@@ -76,10 +79,10 @@ grep -rn "^import.*Orchestration\." --include=*.hs src test packages          # 
 | README 宣称 | 实测 | 判定 |
 |---|---|---|
 | 特性 6 **WebGPU 加速 ✅（Phase 3）** | 代码在，但**不在构建**、simulation、FFI 未接库 | ❌ 未接线 |
-| 特性 7 **CPU 优化：多线程 + SIMD + BLAS ✅（Phase 4）** | 三值推理已实现（`docs/plans/pybitnet-ternary-inference-blueprint.md` M1–M20 的测试全绿）；但 `createCPUAdapter` **无生产调用点**（`grep -rn createCPUAdapter src packages` 只命中定义与测试）；BLAS/SIMD 按 A6 记录仅有"检测 + 标量回退" | 🟡 能力有、入口缺 |
+| 特性 7 **CPU 优化：多线程 + SIMD + BLAS ✅（Phase 4）** | 三值推理已实现（`docs/plans/pybitnet-ternary-inference-blueprint.md` M1–M20 的测试全绿）；**入口已于 2026-09-13 接通（D-2）**：`"cpu"` 为合法 provider kind，`adapterFor`/`providerStream` 可达 `createCPUAdapter`，引擎按模型路径 memo（`cpuAdapterCache`）；BLAS/SIMD 按 A6 记录仅有"检测 + 标量回退" | 🟡 能力有、性能待办 |
 | 特性 4 **99%+ 缓存命中率** | `wc -l src/Core/Cache/*.hs` = **70 行**（Engine 54 + Types 16）；测试 1 例 | ❌ 无对应实现 |
 | 特性 5 **完整 SDK ✅（Phase 2）** | `packages/sdk` 存在（4 库 + exe + test），但**不在根构建** | 🟡 存在、未纳入 |
-| 特性 3/9 极致并行 / 多 Agent 协作 | TS 侧完成（scheduler 115 用例）；**Haskell 侧 `trha-orchestration` 无人用** | 🟡 仅 TS 侧 |
+| 特性 3/9 极致并行 / 多 Agent 协作 | TS 侧完成（scheduler 115 用例）；Haskell 侧原 `trha-orchestration` 已归档出构建（2026-09-13） | 🟡 仅 TS 侧 |
 | 技术栈 **静态编译（Alpine + musl）** | `Dockerfile.static` 存在，未验证 | 🟡 未验证 |
 | 技术栈 **网络库 Haskell Warp + Network** | `packages/haskell-network`（不在根构建） | 🟡 同 |
 | 特性 10 桌面应用 | `electron-builder.yml` 配了 `win/nsis`（`extraResources` 带 scheduler-dist + node-runtime），注释提及 mac/linux 的 `NODE_BIN` | 🟡 部分平台 |
@@ -121,7 +124,7 @@ grep -rn "^import.*Orchestration\." --include=*.hs src test packages          # 
 | 文档 | 它描述的结构 | 与现状 |
 |---|---|---|
 | `QWEN.md` §Architecture Layers / §Module naming | `src/Core/`、`src/LLM/`…**层目录，5 库共享 `src` 为层根** | ✅ **与代码一致** |
-| `README.md` §项目结构 | `src/{Core,LLM,Infrastructure,Orchestration,Presentation}` | ✅ 与现状一致（但未提 `API/`） |
+| `README.md` §项目结构 | `src/{Core,LLM,API,Infrastructure,Presentation}` | ✅ **已同步（2026-09-13）**：补上 `API/`、去掉已归档的 `Orchestration/` |
 | `docs/architecture/architecture.md` §6 | `trha-core/`、`trha-desktop/`、`trha-web/`、`trha-storage/`（**每包独立目录**） | ❌ 现状不是 |
 | `docs/archive/implementation-roadmap.md` §1.2 | `pi-trha/{core-engine,orchestration,presentation,shared}` | ❌ 从未采用 |
 | `docs/archive/code-migration-plan.md` | `src/core-engine/`、`src/orchestration/*.ts` | ❌ 从未采用 |
@@ -144,9 +147,9 @@ grep -rn "^import.*Orchestration\." --include=*.hs src test packages          # 
 | ~~9~~ | ~~`docs/` 按分类建立五个目录并归置 37 份 + 同步引用~~ | 文档 | **已完成（2026-09-13）** |
 | 2 | 修正 `docs/architecture/architecture.md` §6，使其与现状（层根结构）一致，或明确标注"规划 vs 现状" | 文档 | 无 |
 | 4 | 给 `README.md` 的 Phase 表加实测注记（WebGPU 未接线 / 缓存 70 行 / SDK 不在构建） | 文档 | 无 |
-| 5 | 处置 `library trha-orchestration`（死库）：接入、或移出构建 | 代码 | **需所有者确认**（不得擅自删模块） |
+| ~~5~~ | ~~处置 `library trha-orchestration`（死库）：接入、或移出构建~~ | 代码 | **已完成（2026-09-13）**：所有者裁定「归档出构建」→ `archive/orchestration/` |
 | 6 | 丢弃 `stash@{0}`（一次已回退的按包重排 `src/` 尝试） | 仓库卫生 | 无 |
-| 7 | 决定本地推理后端如何接入内核（provider `kind` / 启动参数）—— 见 `docs/plans/desktop-provider-design.md` 的 provider 体系 | 架构 | 需所有者裁定 |
+| ~~7~~ | ~~决定本地推理后端如何接入内核（provider `kind` / 启动参数）~~ | 架构 | **已完成（2026-09-13）**：裁定方案 A —— 本地推理即 provider `kind="cpu"`（`peBaseUrl` 承载模型路径） |
 | 8 | WebGPU / Presentation 层：接线或显式标注为未接线 | 代码 | 需所有者裁定 |
 
 ---
@@ -157,6 +160,8 @@ grep -rn "^import.*Orchestration\." --include=*.hs src test packages          # 
 |---|---|
 | 2026-09-13 | 初版：构建拓扑 / 未接线清单 / README 宣称核对 / 文档分类建议（A–E）/ 结构矛盾 |
 | 2026-09-13 | `docs/` 归置落地：建 `architecture/` `contracts/` `plans/` `reference/` `archive/` 五目录并移动全部 37 份；同步更新 `README.md` 链接与 `QWEN.md`（规则段路径、Secrets 条、重写的 §Documentation 索引）；本文档自身移入 `plans/` 并更新全部路径引用 |
+| 2026-09-13 | **D-2 闭合**（`commit 9a6dd6f`）：「本地推理无入口」已修 —— `"cpu"` 成一等 provider kind，`adapterFor` / `providerStream` 可达 `createCPUAdapter`，引擎按模型路径 memo（`cpuAdapterCache`）；整套 177/0/4、CLI 182/0、`build all` EXIT=0。同步更新本文 §0 / §3（特性 7）/ §7 #7 与 `architecture-intended-vs-actual.md`（§0 现状行、§3 现状图、§4 D-2、§5 状态分档、§6 批次表） |
+| 2026-09-13 | **`library trha-orchestration` 归档出构建**（所有者裁定「A. 归档出构建」）：6 模块 199 行、编译通过但零 stanza 依赖 / 零 `import Orchestration.*` / 零测试，且 `verifyType` 为恒返 `True` 的假实现 → `archive/orchestration/`（含 README：实测事实 / 逐块评估 / 架构理由 / 取回步骤）；同时从 `trha.cabal` 删除该 stanza。同步更新本文 §0 / §1 拓扑 / §2 清单 / §3（特性 3·9）/ §6，以及 `README.md` §项目结构、`docs/README.md` 索引 |
 
 ---
 
@@ -165,14 +170,17 @@ grep -rn "^import.*Orchestration\." --include=*.hs src test packages          # 
 ```bash
 cat cabal.project
 grep -nE "^(library|executable|test-suite)" trha.cabal
-grep -n "trha-orchestration" trha.cabal
-grep -rn "^import.*Orchestration\." --include=*.hs src test packages
+grep -n "trha-orchestration" trha.cabal                    # → 无输出（2026-09-13 已移除）
+ls archive/orchestration/                                   # → 归档位置（6 模块 + README）
+grep -rn "^import.*Orchestration\." --include=*.hs src test packages   # → 无输出
 grep -rn "WebGPU\|Presentation" --include=*.cabal . | grep -v dist-newstyle
 grep -rn "Infrastructure.WebGPU\|Presentation\." --include=*.hs . | grep -v dist-newstyle
 wc -l src/Core/Cache/*.hs
 sed -n '45,52p' src/Infrastructure/WebGPU/Buffer.hs
 head -14 src/Infrastructure/WebGPU/README.md
-grep -rn "createCPUAdapter" --include=*.hs src packages | grep -v dist-newstyle
+# 原生推理接入（D-2，已闭合）
+grep -n '"cpu"' src/Core/Provider/Types.hs
+grep -n "cpuAdapterFor\|cpuAdapterCache" src/API/ProviderRuntime.hs
 diff <(sed -n '/^executable trha$/,/ghc-options/p' trha.cabal | grep "^    ") \
      <(sed -n '/^executable trha$/,/ghc-options/p' packages/app/CLI/trha-cli.cabal | grep "^    ")
 # docs 归置后的引用体检（应只命中新路径）

@@ -49,7 +49,7 @@
 - `desktop-ui-progress.md` — Desktop/Electron 跨会话 checkpoint（已完成基线 + 待办索引）
 - `pybitnet-ternary-inference-blueprint.md` — CPU 三值推理内核蓝图（M1–M20，逐条标注参考实现行号）
 - `plan-reconciliation.md` — 计划 vs 现实（**功能面**）；文末「架构原则」是内核/外壳职责分界的用户裁定
-- `code-docs-reconciliation.md` — 代码 vs 文档（**构建 / 接线 / 使用面**）；未接线清单（WebGPU / Presentation / `trha-orchestration`）与待办
+- `code-docs-reconciliation.md` — 代码 vs 文档（**构建 / 接线 / 使用面**）；未接线清单（WebGPU / Presentation）与待办（原 `trha-orchestration` 199 行已于 2026-09-13 归档出构建 → `../../archive/orchestration/`）
 
 ### `reference/` — 参考、研究、运维（11）
 
