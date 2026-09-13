@@ -1,10 +1,12 @@
--- | CPU 侧数学正确性套件（判据 C1：代数结构 ↔ 权威规范）。
+-- | CPU 侧数学正确性套件（判据 C1 + C2，见 docs/plans/verification-criteria.md）。
 --
--- 为什么不塞进 test/Spec.hs：主套件 2000+ 行；这里按"判据"主题独立成套件，
--- 便于逐条核对"仓内实现 ↔ 外部权威"的对应关系（见 docs/plans/verification-criteria.md）。
+-- 为什么不塞进 test/Spec.hs：主套件 2000+ 行；这里按**判据**主题独立成套件，
+-- 便于逐条核对"仓内实现 ↔ 外部权威"（C1）与"类型不变量是否被编译期强制"（C2）。
 module Main (main) where
 
 import Data.List (sort)
+import System.Exit (ExitCode (..))
+import System.Process (readProcessWithExitCode)
 import Test.Hspec
 
 import Infrastructure.CPU.SovereignWuXing
@@ -75,3 +77,34 @@ main = hspec $ do
 
     it "五正多面体对称群阶（Agda 跃迁链 A₄→O_h→I_h→I→O）" $ do
       map (\(_, _, o) -> o) platonicsOrders `shouldBe` [12, 48, 120, 60, 24]
+
+  -- ------------------------------------------------------------------
+  -- C2：类型不变量必须由**编译期**强制。
+  --
+  -- 做法：test-cpu/negative/ 下的文件是**故意写错**的（跨范畴、跨句柄类型），
+  -- 它们**必须编译失败**。这比任何正向断言都更本质 —— 若某天它们能通过，
+  -- 说明范畴隔离被削弱了，而此时正向测试仍会全绿（那才是危险的）。
+  -- ------------------------------------------------------------------
+  describe "C2 · 类型不变量：范畴隔离（负面编译测试）" $ do
+    it "Trit 不能当 GF27 用（编译必须失败）" $ \_ -> do
+      code <- ghcExitCode "test-cpu/negative/CrossCategoryTritGF27.hs"
+      code `shouldNotBe` ExitSuccess
+
+    it "Z3r（环）不能当 GF27（域）用（编译必须失败）" $ \_ -> do
+      code <- ghcExitCode "test-cpu/negative/RingVsFieldZ3rGF27.hs"
+      code `shouldNotBe` ExitSuccess
+
+    it "WebGPU Device 不能当 Buffer 用（编译必须失败）" $ \_ -> do
+      code <- ghcExitCode "test-cpu/negative/HandleMixDeviceBuffer.hs"
+      code `shouldNotBe` ExitSuccess
+
+-- | 用本项目环境（cabal exec 提供包数据库）编译一个文件，返回退出码。
+-- 期望是 'ExitFailure'；若返回 'ExitSuccess' 则说明该文件本应报错却没报。
+ghcExitCode :: FilePath -> IO ExitCode
+ghcExitCode path = do
+  (code, _, _) <-
+    readProcessWithExitCode
+      "cabal"
+      ["exec", "--", "ghc", "-fno-code", "-v0", path]
+      ""
+  pure code

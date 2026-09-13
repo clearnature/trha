@@ -258,6 +258,7 @@ test-suite trha-cpu-test
   build-depends:    base ^>=4.22
                   , trha:trha-llm
                   , hspec
+                  , process
   ghc-options:      -rtsopts -threaded
   default-language: Haskell2010
 
