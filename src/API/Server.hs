@@ -27,6 +27,7 @@ import Network.Wai.Handler.Warp (run)
 import Network.HTTP.Types (ResponseHeaders, status200, status400)
 import qualified Data.ByteString.Builder as Builder
 import Control.Concurrent (threadDelay)
+import Control.Applicative ((<|>))
 import Control.Monad.IO.Class (liftIO)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -43,6 +44,7 @@ import GHC.Generics
 import qualified Data.Map as Map
 import Control.Concurrent.STM
 import Data.IORef
+import Data.Dynamic (toDyn)
 
 -- Core modules
 import Core.Session.Types
@@ -61,7 +63,8 @@ import LLM.Adapter.Interface (LLMAdapter(..), createCPUAdapter)
 import LLM.Adapter.Types (ChatMessage(..), ChatTurn(..), StreamChunk(..), ToolCall(..), ToolSpec, Usage(..))
 import qualified LLM.Stream as Stream
 import Infrastructure.CPU.ConstraintVerdict
-  ( ConstraintVerdict (..), VerdictStatus (..), verdictOf )
+  ( ConstraintVerdict (..), T6State (..), VerdictStatus (..)
+  , verdictOf, verdictOfWithState )
 
 --------------------------------------------------------------------------------
 -- 1. Full API type: custom + OpenAI + Anthropic + Responses (stream + non-stream)
@@ -95,11 +98,29 @@ type API =
   :<|> "v1" :> "responses" :> "stream" :> Raw
 
 -- Request types
+--
+-- ⚠️ 契约对齐（2026-09-13 修复）：这两个类型原为 @deriving (Generic, FromJSON)@，
+-- 而 aeson 的 Generic 默认用**字段名**（srMode / srSessionId / srMessage）作为 JSON key。
+-- 但真实客户端用的是去掉 sr 前缀的名字：
+--     packages/app/CLI/Bridge/Scheduler.hs:92   object ["mode" .= ...]
+--     packages/app/CLI/Bridge/Scheduler.hs:132  object ["sessionId" .= ..., "message" .= ...]
+--     packages/scheduler/test/*.ts              JSON.stringify({ mode / sessionId / message })
+-- 于是 POST /session/start 与 POST /agent/step 一直返回 400（此前无测试覆盖这两个端点，
+-- 所以未暴露）。现改为手写 FromJSON，**同时接受**两种写法（含 sr 前缀的旧名）以保向后兼容。
 data StartReq = StartReq { srMode :: Maybe Text }
-  deriving (Generic, FromJSON)
+  deriving (Generic)
 
 data StepReq = StepReq { srSessionId :: Text, srMessage :: Text }
-  deriving (Generic, FromJSON)
+  deriving (Generic)
+
+instance FromJSON StartReq where
+  parseJSON = withObject "StartReq" $ \o ->
+    StartReq <$> (o .:? "mode" <|> o .:? "srMode")
+
+instance FromJSON StepReq where
+  parseJSON = withObject "StepReq" $ \o ->
+    StepReq <$> (o .: "sessionId" <|> o .: "srSessionId")
+             <*> (o .: "message"   <|> o .: "srMessage")
 
 --------------------------------------------------------------------------------
 -- 2. Server implementation
@@ -150,16 +171,37 @@ agentStepHandler adapter sessionsVar req = do
   sessions <- liftIO $ readTVarIO sessionsVar
   case Map.lookup (srSessionId req) sessions of
     Nothing -> throwError err404 { errBody = "Session not found" }
-    Just _ -> do
+    Just session -> do
       let userMsg = LLM.Message LLM.User (srMessage req)
       chunks <- liftIO $ llmChat adapter [userMsg]
       let reply = T.concat [t | LLM.ChunkDelta t <- chunks]
       let usage = case [u | LLM.ChunkDone u <- chunks] of
             (u:_) -> u
             []    -> LLM.Usage 0 0 0
+      ----------------------------------------------------------------------
+      -- D-3：推理状态上浮为**会话投影**。
+      --
+      -- 推理内核（T⁶ 几何 / 6×6 因果图 / 五行四步链）的状态此前只活在 CPU 层，内核
+      -- 看不到"推理过程"。这里把每步的**末态 T6State** 与**约束判定**写入
+      -- session.projections（event-sourcing 式派生状态），使内核可见。
+      --
+      -- 分层：CPU 层类型在此**装箱**成 Dynamic；Core 只经 setProjection 碰 Dynamic，
+      -- 不反向依赖 Infrastructure。
+      ----------------------------------------------------------------------
+      let (verdict, t6st) = verdictOfWithState (T.unpack reply)
+      liftIO $ setProjection session "t6state" (toDyn t6st)
+      liftIO $ setProjection session "constraint" (toDyn verdict)
+      names <- liftIO $ projectionNames session
       return $ object
         [ "reply" .= reply
         , "usage" .= toJSON usage
+        -- 让"上浮"可被观测：回显投影名与本步的推理状态摘要（不改变既有字段语义）
+        , "session_projections" .= names
+        , "t6" .= object
+            [ "polar"    .= t6Polar t6st
+            , "toroidal" .= t6Toroidal t6st
+            , "berry"    .= t6Berry t6st
+            ]
         ]
 
 --------------------------------------------------------------------------------

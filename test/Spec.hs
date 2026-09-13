@@ -2109,6 +2109,45 @@ main = hspec $ do
           | k <- [ "\"t6\"", "\"reach\"", "\"edges\"", "\"reason\"" ] ] `shouldBe` True
 
 
+    -- ── D-3：推理状态上浮为会话投影 ───────────────────────────────────────
+    -- 推理内核（T⁶ / 因果图 / 五行链）的状态此前只活在 CPU 层；这里验它经
+    -- Core.Session.projections 上浮到内核会话，且在内核 API 响应中可观测。
+    it "★ D-3：/agent/step 把推理状态上浮为会话投影，并在响应回显" $ do
+      app <- mkCPUApp "/dev/null"
+      -- 必须在**同一个** withApp 内两次 POST（每次 withApp 会新起 server，session 会丢）
+      (cStart, cStep, body) <- withApp app $ \mgr base -> do
+        (cs, _bs) <- httpPost mgr (base ++ "/session/start")
+                       (object [ "mode" .= ("standard" :: T.Text) ])
+        -- createSession 用 "session-" <> mode 生成 ID，故可预知
+        (ct, bt) <- httpPost mgr (base ++ "/agent/step")
+                      (object [ "sessionId" .= ("session-standard" :: T.Text)
+                              , "message"   .= ("hello" :: T.Text) ])
+        pure (cs, ct, bt)
+      cStart `shouldBe` 200
+      cStep  `shouldBe` 200
+      -- ★ 上浮可观测：投影名（t6state / constraint）出现在响应里
+      and [ k `isInfixOf` body | k <- [ "session_projections", "t6state", "constraint" ] ]
+        `shouldBe` True
+      -- ★ 推理状态的分量：T⁶ 极向/环向/Berry
+      and [ k `isInfixOf` body | k <- [ "\"polar\"", "\"toroidal\"", "\"berry\"" ] ]
+        `shouldBe` True
+      -- 既有字段语义未被破坏
+      ("reply" `isInfixOf` body) `shouldBe` True
+
+    it "★ D-3：投影是覆盖写 —— 多步后仍只有两个键（不累积）" $ do
+      app <- mkCPUApp "/dev/null"
+      n2 <- withApp app $ \mgr base -> do
+        _ <- httpPost mgr (base ++ "/session/start")
+               (object [ "mode" .= ("standard" :: T.Text) ])
+        b2 <- snd <$> httpPost mgr (base ++ "/agent/step")
+                (object [ "sessionId" .= ("session-standard" :: T.Text)
+                        , "message"   .= ("a" :: T.Text) ])
+        b3 <- snd <$> httpPost mgr (base ++ "/agent/step")
+                (object [ "sessionId" .= ("session-standard" :: T.Text)
+                        , "message"   .= ("b" :: T.Text) ])
+        pure b3
+      and [ k `isInfixOf` n2 | k <- [ "t6state", "constraint" ] ] `shouldBe` True
+
     it "CPU adapter 经 HTTP 走 SSE 流式（/v1/chat/completions/stream）" $ do
       app <- mkCPUApp "/dev/null"
       (code, body) <- withApp app $ \mgr base ->
