@@ -194,3 +194,4 @@ packages/scheduler/studio-public/
 .vite/
 # 通用构建输出目录（dist 是构建约定；各子包另有显式规则）
 dist/
+cabal.project.local
