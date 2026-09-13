@@ -117,14 +117,21 @@
   「不落不动点 / 最小周期」（该函数是 `test/Spec.hs` 的测试辅助，已有 3 条断言覆盖
   退化与 13-周期，但**语义层面**的最小性未单独论证）。
 
-### C3 · 多实现逐元素全等 —— ✅ 达成（3/4）
+### C3 · 多实现逐元素全等 —— ✅ **4/4 达成**
 
-| # | 实现 | 入口 | 覆盖 |
+| # | 实现 | 入口 | 对拍位置 |
 |---|---|---|---|
-| ① | Haskell 标量 | `foldl gf27Add 0 . zipWith gf27Mul` | ✅ |
-| ② | C 标量 | `trha_gf27_rowdot_scalar_only` → `gf27RowdotScalarOnly` | ✅ |
-| ③ | AVX2 | `trha_gf27_rowdot` → `gf27Rowdot`（8 路并行） | ✅（本机 `/proc/cpuinfo` 含 `avx2`） |
-| ④ | GPU WGSL | — | ❌ **缺失**（本仓无 `.wgsl`） |
+| ① | Haskell 标量 | `foldl gf27Add 0 . zipWith gf27Mul` | `trha-cpu-test` |
+| ② | C 标量 | `trha_gf27_rowdot_scalar_only` → `gf27RowdotScalarOnly` | `trha-cpu-test` |
+| ③ | AVX2 | `trha_gf27_rowdot` → `gf27Rowdot`（8 路并行） | `trha-cpu-test`（本机 `/proc/cpuinfo` 含 `avx2`） |
+| ④ | GPU WGSL | `gf27MulWgsl` / `matmulWgsl` | `trha-webgpu-test`（AMD Navi 44 + Vulkan/radv 真机） |
+
+四者**同批输入全等**亦已在 `trha-webgpu-test` 的 `checkCase` 里验证（含长度 0/1/8/33，
+33 跨 AVX2 的 8 路块）。
+
+> 更正：本节此前误写"GPU(WGSL) 实现**缺失**、C3 覆盖 **3/4**"。实际第四实现**早已存在**
+> （WGSL + 真机对拍，见 `test-webgpu/Spec.hs`），只是与 ①②③ 分在两个套件，故未在同一处
+> 呈现。已改为 4/4。
 
 对拍：穷举 `[0,26]²`（729 组）验 ①≡②；同批输入验 ①≡②≡③；边界（空/零元/单位元）；
 跨 8 路边界（7/8/9/15/16/17）；长向量 1000。无 AVX2 的机器上按项目约定用 `pendingWith`

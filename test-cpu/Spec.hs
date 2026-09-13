@@ -537,14 +537,17 @@ main = hspec $ do
       dispatched <- gf27Rowdot w x
       dispatched `shouldBe` hsRef
 
-    it "★ 覆盖度如实标注：GPU(WGSL) 实现缺失，C3 当前覆盖 3/4" $ do
-      -- 不是断言"完整"，而是把缺口固定下来：第四实现（GPU WGSL）在本仓尚不存在，
-      -- 故 C3 只覆盖 Haskell 标量 / C 标量 / AVX2 三条路径。
-      -- 无 GPU 时按项目约定用 pendingWith 兜底，而不是假装通过。
+    it "★ 覆盖度：本套件覆盖三实现；第四实现（GPU WGSL）在 trha-webgpu-test 真机对拍" $ do
+      -- 更正此前的一处**误判**：我原先写"GPU(WGSL) 实现缺失，C3 覆盖 3/4"，
+      -- 但那是错的 —— 第四实现**早已存在**，其 WGSL 与对拍在 test-webgpu/Spec.hs：
+      --     gf27MulWgsl（729 组逐元素）与 matmulWgsl（16×32）均与 CPU 侧比较通过。
+      -- 四个实现对拍只是**分在两个套件**（本套件无 GPU 依赖，故不在此跑 GPU）：
+      --     ① ② ③ 在 trha-cpu-test；④ 在 trha-webgpu-test。
+      -- 跨套件的**同批输入四方全等**也在 test-webgpu 里（checkCase）。
       avx <- hasAVX2
       unless avx $
-        pendingWith ("本机无 AVX2；C3 仅验证 ①Haskell 标量 ≡ ②C 标量 两条路径。"
-                     ++ "GPU(WGSL) 实现缺失：C3 覆盖 3/4。")
+        pendingWith ("本机无 AVX2；本套件仅验证 ①Haskell 标量 ≡ ②C 标量 两条路径；"
+                     ++ "GPU(WGSL) 侧见 trha-webgpu-test。")
       avx `shouldBe` True
 
   -- ------------------------------------------------------------------

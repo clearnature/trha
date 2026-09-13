@@ -9,11 +9,14 @@
 module Main (main) where
 
 import Control.Exception (evaluate)
+import Control.Monad (when)
 import Data.List (foldl')
 import Data.Word (Word32)
 import Test.Hspec
 
-import Infrastructure.CPU.GF3Intrinsic (gf27MulRef)
+import Infrastructure.CPU.GF3Intrinsic (gf27Mul, gf27MulRef)
+import Infrastructure.CPU.GF27SIMD (gf27Rowdot, gf27RowdotScalarOnly, hasAVX2)
+import Infrastructure.CPU.SovereignGF27 (gf27Add)
 import Infrastructure.CPU.SovereignGF27 (gf27Matmul)
 import Infrastructure.CPU.SovereignTypes (gf27ToInt, mkGF27, mkTrit)
 import Infrastructure.WebGPU.Buffer (newReadBackBuffer, newStorageBuffer, uploadWords)
@@ -107,6 +110,53 @@ main = do
             -- 但保持与基准脚本一致的严格性）
             _ <- evaluate (foldl' (+) 0 want)
             got `shouldBe` want
+
+          it "★ C3 四实现全等：Haskell 标量 / C 标量 / AVX2 / GPU 在同一批输入上一致" $ do
+            -- 判据 C3 的完整形式：同一数学结构（GF(27) 行点积）的**四个独立实现**
+            -- 在**同一批输入**上结果全等。此前四者的对拍分散在两个套件里
+            -- （① ② ③ 在 trha-cpu-test，④ 在 test-webgpu），从未同批对照过。
+            --
+            -- 取 4 组覆盖边界与不同长度（含 1 / 8 / 9 / 33，后者跨 AVX2 的 8 路块）。
+            let cases =
+                  [ ([], [])
+                  , ([1], [1])
+                  , ( [0, 1, 2, 3, 4, 5, 6, 7]
+                    , [8, 7, 6, 5, 4, 3, 2, 1] )
+                  , ( map (\i -> (i * 7 + 3) `mod` 27) [0 .. 32]
+                    , map (\i -> (i * 11 + 5) `mod` 27) [0 .. 32] )
+                  ]
+            avx <- hasAVX2
+            mapM_ (checkCase avx ctx) cases
+
+
+
+-- | 对一组输入跑四实现对照：① Haskell 标量 ② C 标量 ③ AVX2 ④ GPU（行点积即 1×n matmul）。
+checkCase :: Bool -> Context -> ([Int], [Int]) -> IO ()
+checkCase avx ctx (ws, xs) = do
+  let n = length ws
+      hsRef = foldl gf27Add 0 (zipWith gf27Mul ws xs)          -- ① Haskell 标量
+  cScalar <- gf27RowdotScalarOnly ws xs                        -- ② C 标量
+  hsRef `shouldBe` cScalar
+  when avx $ do
+    avxRes <- gf27Rowdot ws xs                                 -- ③ AVX2
+    avxRes `shouldBe` hsRef
+  -- ④ GPU：复用 matmulWgsl，令 m = 1（第 0 行即行点积）
+  let kk = max 1 n
+      wBytes = kk * 4
+      xBytes = kk * 4
+      yBytes = 4
+      pad xs' = take kk (xs' ++ repeat 0)
+  wb <- newStorageBuffer ctx wBytes
+  xb <- newStorageBuffer ctx xBytes
+  yb <- newStorageBuffer ctx yBytes
+  rb <- newReadBackBuffer ctx yBytes
+  dimsBuf <- newStorageBuffer ctx 8
+  uploadWords ctx wb (map fromIntegral (pad ws))
+  uploadWords ctx xb (map fromIntegral (pad xs))
+  uploadWords ctx dimsBuf [1, fromIntegral kk]
+  kern <- newKernel ctx matmulWgsl 4 "main"
+  got <- runKernel ctx kern [wb, xb, yb, dimsBuf] (1, 1, 1) (Just (yb, rb, 1))
+  (case got of (v : _) -> fromIntegral v; [] -> -1) `shouldBe` hsRef
 
 matmulWgsl :: String
 matmulWgsl =
