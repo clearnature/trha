@@ -217,6 +217,28 @@ executable trha-webgpu-gf27
   ghc-options:      -rtsopts -threaded
   default-language: Haskell2010
 
+-- GF(27) 矩阵乘 kernel（含 GPU/CPU 实测计时）
+executable trha-webgpu-gf27matmul
+  main-is:          Gf27Matmul.hs
+  hs-source-dirs:   benchmarks/webgpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-webgpu
+                  , trha:trha-llm
+  ghc-options:      -rtsopts -threaded
+  default-language: Haskell2010
+
+-- WebGPU 真机测试（独立套件：无 GPU 时 pending，不拖累主套件）
+test-suite trha-webgpu-test
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test-webgpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-webgpu
+                  , trha:trha-llm
+                  , hspec
+  ghc-options:      -rtsopts -threaded
+  default-language: Haskell2010
+
 -- CLI Application
 executable trha
   main-is:          Main.hs
