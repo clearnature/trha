@@ -35,6 +35,7 @@ module Infrastructure.CPU.SovereignWuxingLayer
   , WuxingLayerW(..)
   , T6State(..)
   , t6Init
+  , fuseCoefInv
   , t6Verify
   , causalGraphStep
   , argMaxIdx
@@ -82,6 +83,18 @@ data T6State = T6State
 
 t6Init :: T6State
 t6Init = T6State 0 0 0
+
+-- | 「0.1 系数」在 **GF(27)** 里的本源形式：@10⁻¹ = 23@。
+--
+-- ⚠️ 注意这**不是**整数环 @Z/27@ 的逆元 —— 那是 19（因 @10 × 19 ≡ 190 ≡ 1 mod 27@）。
+-- GF(27) 的元素按**三进制**编码（@n = n₀ + 3n₁ + 9n₂@），乘法是**多项式乘 mod @α³ = α + 2@**，
+-- 全程**不做**整数取模。故 10 的域内逆元必须用域乘法求：@gf27Mul 10 23 = 1@（穷举唯一解）。
+-- 把 Z/27 的逆元用在这里是**范畴混淆**（域 vs 环，见判据 C2）。
+--
+-- 用它替代旧的 @\`div\` 10@，从而**不截断**（27 进 → 27 出，且 d ≠ 0 ⇒ 23 ⊗ d ≠ 0）。
+-- 见 'wuxingStep' 里 h' 的注释。
+fuseCoefInv :: GF27
+fuseCoefInv = ST.mkGF27 23
 
 -- | T⁶ 几何验证：极向与环向必须落在各自缠绕内，Berry 相位必须**连续**
 -- （对应参考里的 @(b − pb).abs() < 1.05@；这里用整数的相位差阈值）。
@@ -187,8 +200,16 @@ wuxingStep cfg w k ph st x =
       ok = reachable && confOk
       fused = if ok then gf27Matmul (wlFuse w) (map ST.embedGF3 (take (heads * hh) modVec))
                     else replicate (wcDim cfg) ST.gf27Zero
-      -- 0.1 系数（整数缩放）：先在 Int 上除，再升回域元素
-      h' = zipWith ST.plusGF27 x (map (ST.mkGF27 . (`div` 10) . gf27ToInt) fused)
+      -- 0.1 系数：参考实现是 h + 0.1 * fuse(...)（**浮点**标量乘）。
+      -- 本源化到 GF(27) 时把"0.1"读作"**除以 10**"，即**乘 10 的域内逆元**（见 'fuseCoefInv'）。
+      -- 于是 h' = x ⊕ (fused ⊗ 23)，是**域内乘法**，因而
+      --   · **不截断**：27 个输入给 27 个输出（单射）；旧实现用 `div` 10，
+      --     gf27ToInt ∈ [0,26] ⇒ 结果只有 {0,1,2}，其中 [1..9] 全被压成 0；
+      --   · **可逆**：10 ⊗ (23 ⊗ d) = d；
+      --   · **无零因子**：d ≠ 0 ⇒ 23 ⊗ d ≠ 0（GF(27) 是域）。
+      -- 这与本模块既有的本源化同构（tanh(·)×24 → 相位增量、−1e9 → Bool、
+      -- sigmoid → GF(3) 乘）：去掉浮点，改用**所在代数结构**的运算。
+      h' = zipWith ST.plusGF27 x (map (ST.mulGF27 fuseCoefInv) fused)
       ph' = step12 ph
   in (ph', st', h', zip nodeIdx tritIdx, ok)
 

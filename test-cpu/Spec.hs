@@ -4,7 +4,7 @@
 -- 便于逐条核对"仓内实现 ↔ 外部权威"（C1）与"类型不变量是否被编译期强制"（C2）。
 module Main (main) where
 
-import Data.List (sort)
+import Data.List (nub, sort)
 import System.Exit (ExitCode (..))
 import System.Process (readProcessWithExitCode)
 import Test.Hspec
@@ -21,7 +21,8 @@ import Infrastructure.CPU.ConstraintVerdict
 import Control.Monad (forM_, unless)
 import Infrastructure.CPU.GF27SIMD (gf27Rowdot, gf27RowdotScalarOnly, hasAVX2)
 import Infrastructure.CPU.GF3Intrinsic (gf27Mul, tritMul)
-import Infrastructure.CPU.SovereignTypes (mulGF9)
+import Infrastructure.CPU.SovereignWuxingLayer (fuseCoefInv)
+import Infrastructure.CPU.SovereignTypes (mulGF9, mulGF27)
 import Infrastructure.CPU.SovereignPhase12
   ( Phase12 (..), breatheCount, phase12Init, phaseSeq12, step12 )
 import Infrastructure.CPU.SovereignGF27 (gf27Add)
@@ -432,15 +433,41 @@ main = hspec $ do
       length adjZ `shouldBe` wcHex c4Cfg
       updZ `shouldBe` c4X0      -- ★ 无边 ⇒ 不传播 ⇒ 输出恒等于输入
 
-    it "0.1 系数的整数语义：fused 经 div 10 后只能取 {0,1,2}（已知退化，如实记录）" $ do
-      -- 实现：h' = x + (gf27ToInt fused `div` 10)。gf27ToInt 的值域是 [0,26]，
-      -- 所以 div 10 只能得 {0, 1, 2} —— "0.1 系数"在整数域上是**截断**而非精确缩放。
-      -- 实测：本测试层的数据使 fused 分量全部 < 10，于是 updated ≡ x。
-      -- 这里把它固定成断言，避免日后误以为"有边就该改变输出"。
-      -- （先前我按"有边 ⇒ 输出改变"写对照用例，被这条实现细节否证 —— 记录于此。）
-      let (_, upd) = causalGraphStep c4Cfg c4Layer c4X0
-      upd `shouldBe` c4X0
-      and [ gf27ToInt v `div` 10 <= 2 | v <- upd ] `shouldBe` True
+    it "★ 0.1 系数 = GF(27) 里的 10⁻¹ = 23（不是 Z/27 的 19）：**不截断**（单射）且可逆" $ do
+      -- 旧实现是 `gf27ToInt fused \`div\` 10`：值域 [0,26] ⇒ 输出只有 {0,1,2}，其中 [1..9] 全被压成 0。
+      -- 现实现取"0.1 = 除以 10 = 乘 10 的**域内**逆元"。⚠️ 该逆元是 **23**，不是 Z/27 的 19：
+      -- GF(27) 元素按三进制编码、乘法为多项式乘 mod (α³ = α+2)，不做整数取模 —— 19 属于环的范畴。
+      let enc d = gf27ToInt (mulGF27 fuseCoefInv (mkGF27 d))
+      fuseCoefInv `shouldBe` mkGF27 23                -- 钉住逆元本身
+      gf27Mul 10 23 `shouldBe` 1                      -- 23 确是 10 的域内逆元
+      length (nub (map enc [0 .. 26])) `shouldBe` 27  -- ① 单射：27 进 → 27 出（不截断）
+      and [ gf27ToInt (mulGF27 (mkGF27 10) (mulGF27 fuseCoefInv (mkGF27 d))) == d
+          | d <- [0 .. 26] ] `shouldBe` True          -- ② 可逆：10 ⊗ (23 ⊗ d) = d
+      and [ enc d /= 0 | d <- [1 .. 26] ] `shouldBe` True   -- ③ 无零因子（是域）
+      and [ enc d /= 0 | d <- [1 .. 9] ] `shouldBe` True    -- ④ ★ 旧法恰在此全丢信息
+
+    it "旧行为的对照：div 10 会把 27 个输入压成 3 个（记录被替换掉的那条路）" $ do
+      -- 保留对照，说明为什么必须改：旧式 `\`div\` 10` 的像只有 {0,1,2}。
+      length (nub [ d `div` 10 | d <- [0 .. 26] ]) `shouldBe` 3
+
+    it "★ 非零邻接层：adj 确实非零（但 fused 恰为 0，故 hidden 不变 —— 如实记录）" $ do
+      -- 说明为什么不能靠"hidden 改变"来证明不截断：本层 adj 非零，但 wlFuse 与 modVec
+      -- 恰好使 fused = 0，于是 h' = x ⊕ 0 = x，改不改系数都观测不到差别。
+      -- 因此"不截断"的证据放在**系数本身**（上一条的 ①–④），不放在 hidden 上。
+      let nd = wcDim c4Cfg `div` wcHex c4Cfg
+          onesAttn = replicate nd [mkTrit 1]
+          layerOnes = c4Layer { wlAttnQ = onesAttn, wlAttnK = onesAttn }
+          (adjOnes, upd) = causalGraphStep c4Cfg layerOnes c4X0
+      or [ tritToInt v /= 0 | row <- adjOnes, v <- row ] `shouldBe` True  -- adj 非零
+      upd `shouldBe` c4X0                                                 -- 但 fused = 0
+
+    it "★ 不截断的直接证据：旧法丢掉的 [1..9] 在新法下全部非零" $ do
+      -- div 10 把 d ∈ [1..9] 全部压成 0（信息丢失）；乘 23 给出 9 个互不相同的非零值。
+      let oldWay d = d `div` 10
+          newWay d = gf27ToInt (mulGF27 fuseCoefInv (mkGF27 d))
+      and [ oldWay d == 0 | d <- [1 .. 9] ] `shouldBe` True
+      and [ newWay d /= 0 | d <- [1 .. 9] ] `shouldBe` True
+      length (nub [ newWay d | d <- [1 .. 9] ]) `shouldBe` 9
 
     it "★ 覆盖局限（如实记录）：本测试层下 adj 恒为零，因果图恒为空图" $ do
       -- scalarOf 取 GF(27) 向量的首元素再 mod 3；在本层（w3c 的确定性 trit 矩阵，
@@ -707,8 +734,8 @@ main = hspec $ do
     it "★ 覆盖度的诚实说明：非零邻接**已**可构造，但传播对 hidden 的可观测影响仍被截断" $ do
       -- 两个独立事实，都在这里固定住，避免日后被误读：
       --   ① adj 非零**可以**构造（见上三条）—— 此前"恒零"是默认层的性质，不是普遍性质。
-      --   ② 但 h' = x + (gf27ToInt fused `div` 10)，而 gf27ToInt ∈ [0,26] ⇒ div 10 ∈ {0,1,2}，
-      --      故传播对 hidden 的影响是**截断后**的，通常仍观测不到变化（见 C4 第三批）。
+      --   ② h' = x ⊕ (fused ⊗ 19)，19 = 10⁻¹ 于 GF(27) —— 已改为**不截断**的域内乘法
+      --      （旧实现 `gf27ToInt fused \`div\` 10` 只给 {0,1,2}，已修）。
       let nd = wcDim c4Cfg `div` wcHex c4Cfg
           onesAttn = replicate nd [mkTrit 1]
           layerOnes = c4Layer { wlAttnQ = onesAttn, wlAttnK = onesAttn }
