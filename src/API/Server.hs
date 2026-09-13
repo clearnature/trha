@@ -202,6 +202,8 @@ agentStepHandler adapter sessionsVar req = do
             , "toroidal" .= t6Toroidal t6st
             , "berry"    .= t6Berry t6st
             ]
+        -- 与 /v1/chat/completions 一致：判定随响应返回（复用同一个 constraintField）
+        , constraintField reply
         ]
 
 --------------------------------------------------------------------------------

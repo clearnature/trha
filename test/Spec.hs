@@ -2134,6 +2134,37 @@ main = hspec $ do
       -- 既有字段语义未被破坏
       ("reply" `isInfixOf` body) `shouldBe` True
 
+    -- ── 端到端：提问 → 生成（本地 .sov）→ 验证（推理内核）──────────────────
+    -- ⚠️ 如实标注：**生成层当前是占位**。createCPUAdapter 的 loadModel 是 placeholder
+    -- （恒 Right ()，不读权重），generateStream 用 placeholder sampler（恒取 token 0），
+    -- 故 reply 实测为 "token_0" 重复 100 次。本条**能验证的是链路闭合**：
+    --     请求 → 生成层产出 → 推理内核判定 → 状态上浮为投影 → 响应
+    -- 而**不能**验证"它做对了数学题/写出了代码" —— 那要等生成层接真实采样。
+    -- 真实权重（models/<tag>/data/1..20）已用于**推理内核**的 WuxingLayerW（见下方
+    -- SovereignWuxingLayer 的 describe），本条的 .sov 路径则只被 loadModel 打印。
+    it "★ 端到端：提问 → 生成（本地 .sov，占位采样）→ 验证（推理内核）→ 状态上浮" $ do
+      let modelSov = "/home/yanli/work/trha/models/20260721-033421_step31000.sov"
+      app <- mkCPUApp modelSov
+      (cStart, cStep, body) <- withApp app $ \mgr base -> do
+        (cs, _) <- httpPost mgr (base ++ "/session/start")
+                     (object [ "mode" .= ("standard" :: T.Text) ])
+        (ct, bt) <- httpPost mgr (base ++ "/agent/step")
+                      (object [ "sessionId" .= ("session-standard" :: T.Text)
+                              , "message"   .= ("证明：1+1=2" :: T.Text) ])
+        pure (cs, ct, bt)
+      cStart `shouldBe` 200
+      cStep  `shouldBe` 200
+      -- 生成层：有 reply 字段。★ 占位采样器的真实特征是恒重复 "token_0"
+      -- （generateStream 里 detokenize engine [0]；实测 reply = "token_0 token_0 ..." ×100）
+      ("reply" `isInfixOf` body) `shouldBe` True
+      ("token_0" `isInfixOf` body) `shouldBe` True
+      -- 验证层：推理内核的判定与 T⁶ 状态同时上浮
+      and [ k `isInfixOf` body
+          | k <- [ "trha_constraint", "constraint", "t6state"
+                 , "\"polar\"", "\"toroidal\"", "\"berry\"" ] ] `shouldBe` True
+      -- 状态上浮：投影名含 t6state / constraint
+      ("session_projections" `isInfixOf` body) `shouldBe` True
+
     it "★ D-3：投影是覆盖写 —— 多步后仍只有两个键（不累积）" $ do
       app <- mkCPUApp "/dev/null"
       n2 <- withApp app $ \mgr base -> do
