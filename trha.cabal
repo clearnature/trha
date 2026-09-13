@@ -163,6 +163,7 @@ library trha-webgpu
     Infrastructure.WebGPU.Raw.Types
     Infrastructure.WebGPU.Raw.Enums
     Infrastructure.WebGPU.Raw.Structs
+    Infrastructure.WebGPU.Raw.FFI
   hs-source-dirs:   src
   include-dirs:     3rdparty/wgpu-native/include
   build-depends:    base ^>=4.22
