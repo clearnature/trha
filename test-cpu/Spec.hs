@@ -10,6 +10,7 @@ import System.Process (readProcessWithExitCode)
 import Test.Hspec
 
 import Infrastructure.CPU.HoloPi
+import Infrastructure.CPU.SovereignLossGain
 import Infrastructure.CPU.SovereignWuXing
 
 -- | Agda 权威出处：
@@ -24,6 +25,10 @@ import Infrastructure.CPU.SovereignWuXing
 --       → a 的奇偶 = Z₂ 手性
 --   · Sovereign.Structology.HolographicPi
 --       全息 π = 144/46 的**原子对**；"禁止约分由类型保证"
+--   · Sovereign.Coupling.LossGain（src/03-neutral-144d/LossGain.agda）
+--       data LossGain = Sun（×2/3）| Yi（×4/3）
+--       huangzhong = 81；standardChain = Sun Yi … Sun（11 步）
+--       twelveLüSequence = computeSequence 81 standardChain（12 项，整除）
 main :: IO ()
 main = hspec $ do
   describe "C1 · 五行 ↔ Agda 权威（Sovereign.MetaStructure.WuXing）" $ do
@@ -99,6 +104,61 @@ main = hspec $ do
     it "原子对与 Winding/IhC60 的常量同源（两处实现一致）" $ do
       polarRepValue polar144 `shouldBe` polarWinding144
       toroidalRepValue toroidal46 `shouldBe` toroidalWinding46
+
+  -- ------------------------------------------------------------------
+  -- C1 · 十二律损益链 ↔ Sovereign.Coupling.LossGain（src/03-neutral-144d/LossGain.agda）
+  --   权威：huangzhong = 81；standardChain = Sun Yi … Sun（11 步，Sun/Yi 交替）
+  --         twelveLüSequence = computeSequence 81 standardChain（12 项）
+  --         sunOp n = (n*2)/3，yiOp n = (n*4)/3（均为**整除**）
+  -- ------------------------------------------------------------------
+  describe "C1 · 十二律损益链 ↔ Agda 权威（Sovereign.Coupling.LossGain）" $ do
+    it "黄钟 = 81（huangzhong），两个口径的起点一致" $ do
+      head lengSequenceDiv `shouldBe` 81
+      head lengSequenceRound `shouldBe` 81
+
+    it "整除算子与 Agda 同式：sunOp n = n*2 div 3、yiOp n = n*4 div 3" $ do
+      and [ sunOpDiv n == (n * 2) `div` 3 | n <- [81, 54, 72, 64, 30, 1, 7, 1000] ] `shouldBe` True
+      and [ yiOpDiv n == (n * 4) `div` 3 | n <- [81, 54, 72, 64, 30, 1, 7, 1000] ] `shouldBe` True
+
+    it "standardChain 是 11 步 Sun/Yi 交替，序列恰 12 项（起点 + 11 步）" $ do
+      let standardChain = concat (replicate 5 ["Sun", "Yi"]) ++ ["Sun"]
+      length standardChain `shouldBe` 11
+      take 4 standardChain `shouldBe` ["Sun", "Yi", "Sun", "Yi"]
+      length lengSequenceDiv `shouldBe` 12
+      length lengSequenceRound `shouldBe` 12
+
+    it "lengSequenceDiv ≡ Agda twelveLüSequence（按权威原文独立重算后比对）" $ do
+      -- 在测试里**独立实现** Agda 的 computeSequence/applyChain（不调用仓内算子），
+      -- 这样两边是独立算法，比对才有意义。
+      let standardChain = concat (replicate 5 ["Sun", "Yi"]) ++ ["Sun"]
+          step n "Sun" = (n * 2) `div` 3
+          step n _     = (n * 4) `div` 3
+          twelveLu = scanl step 81 standardChain
+      lengSequenceDiv `shouldBe` twelveLu
+
+    it "数学性质：(2/3)·(4/3) = 8/9 在实数上成立，但整除截断下只是「不超过」" $ do
+      -- ⚠️ 这里刻意**不**写成 "yiOpDiv (sunOpDiv n) == n*8 div 9"：
+      -- 逐次整除会截断，故实现层只能保证 ≤ —— 这正说明"两步不可合并成一步 ×8/9"，
+      -- 与《架构宪法 v1.1》"数学结构不可简化"一致。
+      and [ yiOpDiv (sunOpDiv n) <= (n * 8) `div` 9 | n <- [1 .. 200] ] `shouldBe` True
+      or [ yiOpDiv (sunOpDiv n) /= (n * 8) `div` 9 | n <- [1 .. 200] ] `shouldBe` True
+
+    it "两处口径差异被显式保留：整除版第 6 项 = 42，四舍五入版 = 43" $ do
+      -- LossGain.agda 用整除（64×2/3 = 42）；Zhonglv.lengToNat 的表是四舍五入（42.67 → 43）
+      (lengSequenceDiv !! 5, lengSequenceRound !! 5) `shouldBe` (42, 43)
+
+    it "四舍五入版 = Zhonglv.lengToNat 的 12 项表（另一权威）" $ do
+      lengSequenceRound `shouldBe` [81, 54, 72, 48, 64, 43, 57, 38, 51, 34, 45, 30]
+
+    it "十二律名：半音次序与损益次序是两个不同次序（都保留）" $ do
+      tones
+        `shouldBe` [ "黄钟", "大吕", "太簇", "夹钟", "姑洗", "仲吕"
+                   , "蕤宾", "林钟", "夷则", "南吕", "无射", "应钟" ]
+      lossGainTones
+        `shouldBe` [ "黄钟", "林钟", "太簇", "南吕", "姑洗", "应钟"
+                   , "蕤宾", "大吕", "夷则", "夹钟", "无射", "仲吕" ]
+      -- 第 2 位：半音次序是「大吕」，损益次序是「林钟」—— 不可混用
+      (tones !! 1) `shouldNotBe` (lossGainTones !! 1)
 
   -- ------------------------------------------------------------------
   -- C2：类型不变量必须由**编译期**强制。
