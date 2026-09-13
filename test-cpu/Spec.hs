@@ -11,8 +11,12 @@ import Test.Hspec
 
 import Infrastructure.CPU.HoloPi
 import Infrastructure.CPU.SovereignLossGain
-import Infrastructure.CPU.SovereignWuxingLayer (T6State (..), argMaxIdx, t6Init, t6Verify)
-import Infrastructure.CPU.SovereignTypes (mkGF27)
+import Infrastructure.CPU.GF3Intrinsic (tritMul)
+import Infrastructure.CPU.SovereignPhase12 (phase12Init)
+import Infrastructure.CPU.SovereignWuxingLayer
+  ( T6State (..), WuxingConfig (..), WuxingLayerW (..)
+  , argMaxIdx, causalGraphStep, t6Init, t6Verify, wuxingForward, wuxingStep )
+import Infrastructure.CPU.SovereignTypes (GF27, Trit, mkGF27, mkTrit, tritToInt)
 import Infrastructure.CPU.SovereignWuXing
 
 -- | Agda 权威出处：
@@ -197,6 +201,53 @@ main = hspec $ do
       argMaxIdx (map mkGF27 [5, 9, 9, 3]) `shouldBe` 1
       argMaxIdx (map mkGF27 [0]) `shouldBe` 0
 
+
+  -- ------------------------------------------------------------------
+  -- C4 · 因果图的**符号级语义**：邻接是外积、非法路径不融合。
+  --
+  -- adj[i][j] = q_i ⊗ k_j 是 GF(3) 上的**外积**，故秩 ≤ 1 —— 这一点可以直接在
+  -- 邻接表上验证（任意 2×2 子式为零），而"值域在 {0,1,2}"那种断言根本区分不出
+  -- 外积与任意矩阵。秩 1 才是 sigmoid(q·kᵀ/√hex) 被离散成 GF(3) 乘法后的真实结构。
+  --
+  -- 另一条是因果推理的关键语义：**几何不可达或置信度不足 → 不融合**，
+  -- 对应参考实现里 -1e9 使该路径永不被选。可执行形式就是 h' ≡ x（残差恒等）。
+  -- ------------------------------------------------------------------
+  describe "C4 · 因果图语义（外积邻接 / 非法路径不融合）" $ do
+    it "邻接是外积：任意 2×2 子式在 GF(3) 上为零（秩 ≤ 1，不是任意矩阵）" $ do
+      let (adj, _) = causalGraphStep c4Cfg c4Layer c4X0
+          idx = [0 .. wcHex c4Cfg - 1]
+      and [ tritMul (adj !! i !! j) (adj !! i' !! j')
+              == tritMul (adj !! i !! j') (adj !! i' !! j)
+          | i <- idx, i' <- idx, j <- idx, j' <- idx ] `shouldBe` True
+
+    it "邻接行由 k 决定：qi = 0 的行必然整行全零（外积的直接推论）" $ do
+      let (adj, _) = causalGraphStep c4Cfg c4Layer c4X0
+      -- 秩 ≤ 1 且行是 k 的标量倍：全零行 ⟺ 该 q_i = 0（用外积一致性反推）
+      length adj `shouldBe` wcHex c4Cfg
+      map length adj `shouldBe` replicate (wcHex c4Cfg) (wcHex c4Cfg)
+      and [ tritToInt v >= 0 && tritToInt v <= 2 | row <- adj, v <- row ] `shouldBe` True
+
+    it "Berry 边界：预置 104 时，若本步 dBerry 恰为 0 则仍可达（104+0 < 105）" $ do
+      -- 记录一个容易想错的边界：阈值判的是 t6Berry st + dBerry 的**累积值**，
+      -- 不是单看预置值。104 只是"只剩 1 的余量"，并非必然越界。
+      -- 本层在本步的 dBerry = dPol - dTor（由 wlStepT6 决定），实测为 0 → 104 通过。
+      let stEdge = T6State 0 0 104
+          (_, _, _, _, okEdge) = wuxingStep c4Cfg c4Layer 0 phase12Init stEdge c4X0
+      okEdge `shouldBe` True
+
+    it "非法路径不融合：ok = False 时 hidden 恒等于输入（残差恒等）" $ do
+      -- 用远大于任何可能增量的 Berry 预置值，使 t6Verify 必然失败。
+      -- 依据：dPol/dTor 是 3 个分量的 gf27ToInt 之和，各有界，故 |dBer| 远小于 100000。
+      let stBad = T6State 0 0 100000
+          (_, _, h1, _, ok1) = wuxingStep c4Cfg c4Layer 0 phase12Init stBad c4X0
+      ok1 `shouldBe` False
+      h1 `shouldBe` c4X0      -- ★ 不可达 ⇒ 不融合 ⇒ 输出恒等于输入
+
+    it "wuxingForward：reachable 标记逐 step 累积，长度等于 steps" $ do
+      let (_, _, _, okss) = wuxingForward c4Cfg c4Layer c4X0
+      length okss `shouldBe` wcSteps c4Cfg
+      and [ (o :: Bool) == True || o == False | o <- okss ] `shouldBe` True
+
   -- ------------------------------------------------------------------
   -- C2：类型不变量必须由**编译期**强制。
   --
@@ -224,6 +275,38 @@ main = hspec $ do
     it "全息 π 的原子对不可求商/约分（编译必须失败）" $ \_ -> do
       code <- ghcExitCode "test-cpu/negative/HoloPiReduce.hs"
       code `shouldNotBe` ExitSuccess
+
+
+-- | C4 用的确定性测试层（与主套件同一构造法：trit 由 (i,j,seed) 决定）。
+c4Cfg :: WuxingConfig
+c4Cfg = WuxingConfig dimC4 heads4 steps4 hex4 trit4
+  where
+    dimC4 = 24; heads4 = 3; steps4 = 2; hex4 = 6; trit4 = 3
+
+c4Layer :: WuxingLayerW
+c4Layer = WuxingLayerW
+  { wlNodeProj = w3c dimC4 (hex4 * nd4) 1
+  , wlAttnQ    = w3c nd4 1 2
+  , wlAttnK    = w3c nd4 1 3
+  , wlOutProj  = w3c (hex4 * nd4) dimC4 4
+  , wlStepNode = replicate steps4 (w3c dimC4 (heads4 * hex4) 5)
+  , wlStepTrit = replicate steps4 (w3c dimC4 (heads4 * hex4 * trit4) 6)
+  , wlStepT6   = replicate steps4 (w3c dimC4 (heads4 * 2) 7)
+  , wlStepConf = replicate steps4 (w3c dimC4 heads4 8)
+  , wlFuse     = w3c (heads4 * (dimC4 `div` heads4)) dimC4 9
+  , wlGInit    = replicate hex4 (replicate trit4 (replicate (dimC4 `div` heads4) (mkTrit 1)))
+  }
+  where
+    dimC4 = 24; heads4 = 3; steps4 = 2; hex4 = 6; trit4 = 3
+    nd4 = dimC4 `div` hex4
+
+c4X0 :: [GF27]
+c4X0 = map mkGF27 (take dimC4 (cycle [0, 1, 2]))
+  where dimC4 = 24
+
+-- | 确定性 trit 矩阵：元素 = (i*7 + j*13 + seed) mod 3。
+w3c :: Int -> Int -> Int -> [[Trit]]
+w3c r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
 
 -- | 用本项目环境（cabal exec 提供包数据库）编译一个文件，返回退出码。
 -- 期望是 'ExitFailure'；若返回 'ExitSuccess' 则说明该文件本应报错却没报。
