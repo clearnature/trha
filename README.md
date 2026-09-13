@@ -36,7 +36,7 @@ trha/
 1. **类型驱动**: GHC 类型论推理，编译时保证正确性
 2. **可热插拔**: Cordis 插件系统，运行时动态替换
 3. **极致并行**: Pi 风格子代理，独立进程隔离
-4. **高性能缓存**: Reasonix 级缓存，99%+ 命中率
+4. **缓存引擎**: LRU 式 lookup/insert + 命中统计（hits/misses/hitRate）；**具体命中率未基准测试**
 5. **完整 SDK**: Haskell SDK，覆盖所有功能
 6. **WebGPU 加速**: GPU 加速计算，参考 llama.cpp ggml-webgpu
 7. **CPU 优化**: 多线程 + SIMD + BLAS，参考 llama.cpp ggml-cpu
@@ -124,9 +124,9 @@ cabal build
 |---|---|---|---|
 | 1 | 核心引擎 (Haskell) | ✅ | ✅ 已建成且可达（引擎原语 + 协议面 + provider 注册表） |
 | 2 | SDK 封装 | ✅ | 🟡 `packages/sdk` 存在，但**不在根构建**（需 `cd packages/sdk` 单独 build） |
-| 3 | WebGPU 后端 | ✅ | ❌ **未接线**：1344 行不在任何 cabal 组件；`Buffer.hs:49` 自述 simulation；`FFI.hs` 的 `webgpu_*` 符号**不是** wgpu-native 的真实 API（真实为 `wgpuCreateInstance` 等）；外部 C 库未安装 |
+| 3 | WebGPU 后端 | ✅ | 🟡 **已建成、未接生产**（2026-09-13 核实并更新）：旧 simulation 层（1344 行）已归档 `archive/webgpu-legacy/`；新高层 `Infrastructure.WebGPU.*`（9 模块）**在构建**，另有 5 个探针可执行与 `test-webgpu` **真机对拍**（AMD Navi 44 + Vulkan/radv，GF(27) 乘法 729 组、matmul、四实现同批全等）；**未接入生产推理路径** |
 | 4 | CPU 后端 | ✅ | 🟡 能力完整（M1–M20 全绿）、入口已通（provider `kind="cpu"`，2026-09-13）；BLAS/SIMD 仅有"检测 + 标量回退" |
 | 5 | 调度层 (TypeScript) | ✅ | ✅ TS scheduler 完整（115 vitest 用例） |
 | 6 | 并行子代理 (Pi) | ✅ | 🟡 仅 TS 侧；Haskell 侧原 `trha-orchestration` 已归档出构建（2026-09-13） |
 | 7 | 桌面应用 (Electron + React) | ✅ | 🟡 linux deb 已验；win/mac 未验；GUI 冒烟待宿主 |
-| — | （§核心特性 声称）缓存 **99%+ 命中率** | — | ❌ 实为 **70 行**（`src/Core/Cache/*.hs`），无命中率实现 |
+| — | （§核心特性 声称）缓存 **99%+ 命中率** | — | ⚠️ **数字未经验证**：`src/Core/Cache/*.hs` 约 70 行，实现 lookup/insert 与 hits/misses/hitRate 统计，但**没有基准测试支撑「99%+」**。§核心特性已改为不写具体数字 |
