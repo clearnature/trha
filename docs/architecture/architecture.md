@@ -250,10 +250,16 @@ trha-web
 └─────────────┘
 ```
 
-## 6. 包结构规划
+## 6. 包结构规划（⚠️ **规划，不是现状**）
+
+> **⚠️ 本节是早期构想，从未采用。** 现状是**层根结构**：`src/` 下按层分目录（`Core/`、`LLM/`、`API/`、`Infrastructure/`、`Presentation/`），由**同一个 `trha.cabal` 内的 4 个 library**（`trha-core` / `trha-infra` / `trha-llm` / `trha-api`）**共享 `src` 作为层根** —— 而不是下面这种"每包独立目录"。
+>
+> **结构权威**是 `QWEN.md` §Architecture Layers / §Module naming；对账见 `docs/plans/code-docs-reconciliation.md` §6。
+>
+> **照下面这张图去重构目录会破坏既有约定**：2026-09-13 曾据此尝试按包重排 `src/`（68 个 rename），已全部回退。
 
 ```
-trha/
+trha/                      ← 以下为**未采用的规划**
 ├── trha-core/        # 核心库 (纯函数 + IO)
 │   ├── Core/
 │   │   ├── Plugin.hs

@@ -1,6 +1,17 @@
 # Presentation 层设计
 
+> ## ⚠️ 状态：**设计稿，未接线**（2026-09-13 核）
+>
+> - `src/Presentation/**`（8 个文件）**不在任何 cabal 组件**，全仓**无 `import Presentation.*`** → 该层**从未参与编译**。
+> - 本文的**文件清单与现状不符**：下文列出的 `Web/{API,WebSocket,Static}.hs` 与 `TUI/{Render,Input,Theme}.hs` **共 6 个文件并不存在**（`[ -f ]` 逐项实测缺失）；`src/Presentation/Web/` 实际只有 `Main.hs`，`src/Presentation/TUI/` 实际只有 `Main.hs`。
+> - **TUI 的真实实现不在本层**，而在外壳包 `packages/app/CLI/UI/**`（`UI.Render.*` / `UI.Theme` / `UI.Commands.Registry` / `UI.Brick`，由 `trha-cli-test` 182 用例覆盖）。
+> - **Desktop 的真实实现也不在本层**，而在 `packages/app/Desktop`（Electron + React）。
+>
+> **结论**：本层是早期分层构想，其职责已被三个真实外壳各自实现。处置：**显式标注为未接线**（2026-09-13 所有者裁定）—— 不归档、不删除。状态分档见 `docs/plans/code-docs-reconciliation.md` §2 与 `docs/architecture/architecture-intended-vs-actual.md` §5（C 档）。
+
 ## 概述
+
+> 以下为**设计稿原内容**（保留作历史与意图参考，**勿当成现状**）。
 
 Presentation 层负责用户界面交互，包含三个子模块：
 

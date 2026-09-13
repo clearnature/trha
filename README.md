@@ -118,10 +118,15 @@ cabal build
 
 ## 下一步
 
-1. **Phase 1**: 核心引擎 (Haskell) ✅
-2. **Phase 2**: SDK 封装 ✅
-3. **Phase 3**: WebGPU 后端 ✅
-4. **Phase 4**: CPU 后端 ✅
-5. **Phase 5**: 调度层 (TypeScript) ✅
-6. **Phase 6**: 并行子代理 (Pi) ✅
-7. **Phase 7**: 桌面应用 (Electron + React) ✅
+> ⚠️ **实测注记（2026-09-13）**：下表的 ✅ 表示**开发进度**，**不等于"已接线可用"**。逐项实测见 `docs/plans/code-docs-reconciliation.md` §3。
+
+| Phase | 内容 | 进度 | 实测状态 |
+|---|---|---|---|
+| 1 | 核心引擎 (Haskell) | ✅ | ✅ 已建成且可达（引擎原语 + 协议面 + provider 注册表） |
+| 2 | SDK 封装 | ✅ | 🟡 `packages/sdk` 存在，但**不在根构建**（需 `cd packages/sdk` 单独 build） |
+| 3 | WebGPU 后端 | ✅ | ❌ **未接线**：1344 行不在任何 cabal 组件；`Buffer.hs:49` 自述 simulation；`FFI.hs` 的 `webgpu_*` 符号**不是** wgpu-native 的真实 API（真实为 `wgpuCreateInstance` 等）；外部 C 库未安装 |
+| 4 | CPU 后端 | ✅ | 🟡 能力完整（M1–M20 全绿）、入口已通（provider `kind="cpu"`，2026-09-13）；BLAS/SIMD 仅有"检测 + 标量回退" |
+| 5 | 调度层 (TypeScript) | ✅ | ✅ TS scheduler 完整（115 vitest 用例） |
+| 6 | 并行子代理 (Pi) | ✅ | 🟡 仅 TS 侧；Haskell 侧原 `trha-orchestration` 已归档出构建（2026-09-13） |
+| 7 | 桌面应用 (Electron + React) | ✅ | 🟡 linux deb 已验；win/mac 未验；GUI 冒烟待宿主 |
+| — | （§核心特性 声称）缓存 **99%+ 命中率** | — | ❌ 实为 **70 行**（`src/Core/Cache/*.hs`），无命中率实现 |
