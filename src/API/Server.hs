@@ -47,6 +47,7 @@ import Data.IORef
 import Data.Dynamic (toDyn)
 
 -- Core modules
+import Core.Agent.StateMachine (AgentCommand (..))
 import Core.Session.Types
 import Core.Session.Manager
 import Core.Agent.Modes
@@ -192,6 +193,9 @@ agentStepHandler adapter sessionsVar req = do
       liftIO $ setProjection session "t6state" (toDyn t6st)
       liftIO $ setProjection session "constraint" (toDyn verdict)
       names <- liftIO $ projectionNames session
+      -- D-3：推进内核 FSM（Core.Agent.StateMachine 的 transition 为唯一语义来源）
+      stBefore <- liftIO $ getAgentState session
+      stAfter  <- liftIO $ advanceAgent session (StartCommand (T.unpack (srSessionId req)))
       return $ object
         [ "reply" .= reply
         , "usage" .= toJSON usage
@@ -204,6 +208,11 @@ agentStepHandler adapter sessionsVar req = do
             ]
         -- 与 /v1/chat/completions 一致：判定随响应返回（复用同一个 constraintField）
         , constraintField reply
+        -- D-3：内核 FSM 状态（推理"走到哪一步"）也随之可见
+        , "agent_state" .= object
+            [ "before" .= show stBefore
+            , "after"  .= show stAfter
+            ]
         ]
 
 --------------------------------------------------------------------------------

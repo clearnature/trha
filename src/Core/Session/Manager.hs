@@ -5,9 +5,14 @@ module Core.Session.Manager
   , setProjection
   , getProjection
   , projectionNames
+  , getAgentState
+  , setAgentState
+  , advanceAgent
   ) where
 
 import Core.Session.Types
+import Core.Agent.Types (AgentState (..))
+import Core.Agent.StateMachine (AgentCommand (..), transition)
 import Data.IORef
 import Data.Dynamic (Dynamic)
 import qualified Data.Map as Map
@@ -17,7 +22,8 @@ createSession :: SessionId -> IO Session
 createSession sid = do
   logRef <- newIORef []
   projRef <- newIORef Map.empty
-  return $ Session sid logRef projRef
+  stRef <- newIORef Idle          -- D-3：新会话的内核 FSM 从 Idle 开始
+  return $ Session sid logRef projRef stRef
 
 -- | Append an event to the session log
 appendEvent :: Session -> SessionEvent -> IO ()
@@ -52,3 +58,28 @@ getProjection session name = Map.lookup name <$> readIORef (projections session)
 -- | 当前已写入的投影名（便于测试与诊断）。
 projectionNames :: Session -> IO [String]
 projectionNames session = Map.keys <$> readIORef (projections session)
+
+--------------------------------------------------------------------------------
+-- 内核 FSM 状态（D-3）
+--
+-- Core.Agent.StateMachine 的状态机此前只有测试覆盖、无生产调用点（§5「B 档」）。
+-- 这里把它接到会话上：每个会话持有一个 AgentState，随每步经 'transition' 推进，
+-- 于是"推理走到哪一步"对内核可见。
+--------------------------------------------------------------------------------
+
+-- | 读取会话的内核 FSM 状态。
+getAgentState :: Session -> IO AgentState
+getAgentState = readIORef . agentState
+
+-- | 直接设置内核 FSM 状态（供测试/恢复用）。
+setAgentState :: Session -> AgentState -> IO ()
+setAgentState session st = writeIORef (agentState session) st
+
+-- | 按一条命令推进内核 FSM，返回推进后的状态。
+--   用 'transition' 而非自造规则 —— 保持与 Core.Agent.StateMachine 的语义单一来源。
+advanceAgent :: Session -> AgentCommand -> IO AgentState
+advanceAgent session cmd = do
+  cur <- getAgentState session
+  let nxt = transition cur cmd
+  setAgentState session nxt
+  pure nxt

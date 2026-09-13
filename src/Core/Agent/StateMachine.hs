@@ -3,6 +3,7 @@ module Core.Agent.StateMachine
   , updateState
   , getState
   , transition
+  , AgentCommand (..)   -- D-3：会话层要用它推进 FSM（此前未导出）
   ) where
 
 import Core.Agent.Types

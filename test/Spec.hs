@@ -33,6 +33,7 @@ import Core.Plugin.Types
 import Core.Plugin.Free
 import Core.Session.Types
 import Core.Session.Manager
+import Core.Agent.StateMachine (AgentCommand (..))
 import Core.Agent.Types
 import Core.Agent.StateMachine
 import Core.Tools.Types
@@ -1714,6 +1715,16 @@ main = hspec $ do
       fmap fromDynamic m `shouldBe` Just (Just (2 :: Int))
       projectionNames session `shouldReturn` ["k"]
 
+    it "★ D-3：会话持有内核 FSM 状态 —— 新建 Idle，advanceAgent 后推进" $ do
+      session <- createSession "test-session-fsm"
+      getAgentState session `shouldReturn` Idle
+      st1 <- advanceAgent session (StartCommand "sid")
+      st1 `shouldBe` Processing "step-1"
+      getAgentState session `shouldReturn` Processing "step-1"
+      -- 用 transition 的语义（唯一来源）：Processing 上再发 Start 不改变状态
+      st2 <- advanceAgent session (StartCommand "sid")
+      st2 `shouldBe` Processing "step-1"
+
     it "★ projections：不同名互不干扰；类型不符时 fromDynamic 得 Nothing" $ do
       session <- createSession "test-session-proj3"
       setProjection session "a" (toDyn (1 :: Int))
@@ -2142,6 +2153,21 @@ main = hspec $ do
     -- 而**不能**验证"它做对了数学题/写出了代码" —— 那要等生成层接真实采样。
     -- 真实权重（models/<tag>/data/1..20）已用于**推理内核**的 WuxingLayerW（见下方
     -- SovereignWuxingLayer 的 describe），本条的 .sov 路径则只被 loadModel 打印。
+    it "★ D-3：/agent/step 推进内核 FSM 并在响应回显 agent_state" $ do
+      app <- mkCPUApp "/dev/null"
+      (cStart, cStep, body) <- withApp app $ \mgr base -> do
+        (cs, _) <- httpPost mgr (base ++ "/session/start")
+                     (object [ "mode" .= ("standard" :: T.Text) ])
+        (ct, bt) <- httpPost mgr (base ++ "/agent/step")
+                      (object [ "sessionId" .= ("session-standard" :: T.Text)
+                              , "message"   .= ("hi" :: T.Text) ])
+        pure (cs, ct, bt)
+      cStart `shouldBe` 200
+      cStep  `shouldBe` 200
+      ("agent_state" `isInfixOf` body) `shouldBe` True
+      ("Idle" `isInfixOf` body) `shouldBe` True          -- before
+      ("Processing" `isInfixOf` body) `shouldBe` True    -- after（transition Idle (StartCommand _)）
+
     it "★ 端到端：提问 → 生成（本地 .sov，占位采样）→ 验证（推理内核）→ 状态上浮" $ do
       let modelSov = "/home/yanli/work/trha/models/20260721-033421_step31000.sov"
       app <- mkCPUApp modelSov

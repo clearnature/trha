@@ -130,14 +130,17 @@ library trha-api
   --
   -- 分类（**仅**当将来有人拿出"真有障碍"的证据、坚持要拆时，用它做核对清单）：
   -- · 24 项 = trha-llm 的 exposed-modules：20 × `Infrastructure.CPU.*` + 4 × `LLM.*`
-  -- ·  3 项 = trha-core 的 exposed-modules：`Core.Agent.Modes` / `Core.Session.Manager`
-  -- / `Core.Session.Types`
+  -- ·  5 项 = trha-core 的 exposed-modules：`Core.Agent.Modes` / `Core.Agent.StateMachine`
+  -- / `Core.Agent.Types` / `Core.Session.Manager` / `Core.Session.Types`
+  --   （后两项 StateMachine/Types 是 D-3 接内核 FSM 后新增的 —— 会话层依赖它们）
   -- ⚠️ 注意 `build-depends` 里**已经**列了 `trha:trha-core` 与 `trha:trha-llm` ——
   -- 所以这不是"依赖没写"，而是"共享 src/ 导致的被迫重编"。两者不是一回事。
   -- ⚠️ 若将来把 `src/` 拆开，本节应随之**大幅缩短**（甚至清空）；届时用这 27 项做核对清单。
   --
   other-modules:
     Core.Agent.Modes
+    Core.Agent.StateMachine
+    Core.Agent.Types
     Core.Session.Manager
     Core.Session.Types
     Infrastructure.CPU.ConstraintVerdict
