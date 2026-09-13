@@ -62,6 +62,7 @@ library trha-llm
     Infrastructure.CPU.SovereignPhase12
     Infrastructure.CPU.SovereignWuXing
     Infrastructure.CPU.SovereignWuxingLayer
+    Infrastructure.CPU.ConstraintVerdict
     Infrastructure.CPU.SovereignFull
     Infrastructure.CPU.SovereignPacked
     Infrastructure.CPU.SovereignTypes

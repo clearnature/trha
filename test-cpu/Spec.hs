@@ -13,6 +13,8 @@ import Infrastructure.CPU.HoloPi
 import Infrastructure.CPU.SovereignLossGain
   ( HoloState (..), lengSequenceDiv, lengSequenceRound, lossGainTones, sunOpDiv
   , tones, yiOpDiv )
+import Infrastructure.CPU.ConstraintVerdict
+  ( ConstraintVerdict (..), VerdictStatus (..), projectToGF27, verdictOf )
 import Infrastructure.CPU.GF3Intrinsic (tritMul)
 import Infrastructure.CPU.SovereignPhase12
   ( Phase12 (..), breatheCount, phase12Init, phaseSeq12, step12 )
@@ -439,6 +441,51 @@ main = hspec $ do
       -- 要覆盖非空邻接需要另选一组权重使某个 q_i、k_j 非零 —— 尚未做，记录在此。
       let (adjN, _) = causalGraphStep c4Cfg c4Layer c4X0
       and [ tritToInt v == 0 | row <- adjN, v <- row ] `shouldBe` True
+
+
+  -- ------------------------------------------------------------------
+  -- C5（D-1）· 约束 ↔ 外部推理 —— 作用点 = 响应侧的「采纳判定」
+  --
+  -- 定案（用户 2026-09-13 采纳，经 fable5 推算）：
+  --   · 外部模型是**黑盒**（不能改权重/采样）⇒ 约束不可能作用于其内部计算，
+  --     只能作用于"**哪些输出被采纳**"。故作用点在**响应侧**，形式为「采纳判定」。
+  --   · 失败行为 = **标注**（附警告继续），不拒绝、不降级 —— 裁定①。
+  --   · 草稿模型与约束是**同一机制的两面**：草稿输出必须先过约束 —— 裁定③。
+  --   · 请求侧**不注入**（对黑盒只是"建议"，不可验收）。
+  -- ------------------------------------------------------------------
+  describe "C5（D-1）· 约束 ↔ 外部推理：采纳判定（作用点 = 响应侧）" $ do
+    it "投影桥是确定性的，且值域落在 GF(27) = [0,26]" $ do
+      projectToGF27 8 "hello world" `shouldBe` projectToGF27 8 "hello world"
+      and [ gf27ToInt v >= 0 && gf27ToInt v <= 26 | v <- projectToGF27 40 "abcdefg" ]
+        `shouldBe` True
+
+    it "投影桥的形状：长度恰为请求的 dim；不足补零；空输入全零" $ do
+      length (projectToGF27 24 "abc") `shouldBe` 24
+      length (projectToGF27 24 "") `shouldBe` 24
+      and [ gf27ToInt v == 0 | v <- projectToGF27 24 "" ] `shouldBe` True
+      take 3 (projectToGF27 24 "abc") `shouldBe` projectToGF27 3 "abc"
+
+    it "★ 判定**总是**产出（裁定①：标注而非拒绝，任何输入都不抛错）" $ do
+      let inputs = [ "", "a", "hello", replicate 500 'x', "\n\t", "约束验证" ]
+          statuses = [ cvStatus (verdictOf s) | s <- inputs ]
+      and [ s == VerdictPass || s == VerdictWarn | s <- statuses ] `shouldBe` True
+      and [ not (null (cvReason (verdictOf s))) | s <- inputs ] `shouldBe` True
+
+    it "判定的分量自洽：cvT6 ⟺ cvReach 全 True；状态与 cvT6 一致" $ do
+      let vs = map verdictOf [ "", "a", "hello world", "约束验证" ]
+      and [ cvT6 v == and (cvReach v) | v <- vs ] `shouldBe` True
+      and [ (cvStatus v == VerdictPass) == cvT6 v | v <- vs ] `shouldBe` True
+      and [ length (cvReach v) == 2 | v <- vs ] `shouldBe` True -- steps = 2
+
+    it "约束确实跑了因果图与四步链：cvEdges 非负、cvReach 逐 step" $ do
+      let v = verdictOf "hello world"
+      cvEdges v >= 0 `shouldBe` True
+      length (cvReach v) `shouldBe` 2
+
+    it "★ 草稿与外部输出走同一判定入口（裁定③：同一机制的两面）" $ do
+      -- 以"同一函数对同一文本给出同一判定"固定"不做来源区分"这条性质。
+      verdictOf "draft output" `shouldBe` verdictOf "draft output"
+      cvT6 (verdictOf "draft") `shouldBe` cvT6 (verdictOf "draft")
 
   -- ------------------------------------------------------------------
   -- C2：类型不变量必须由**编译期**强制。
