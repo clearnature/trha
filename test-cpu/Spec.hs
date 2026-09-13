@@ -10,6 +10,9 @@ import System.Process (readProcessWithExitCode)
 import Test.Hspec
 
 import Infrastructure.CPU.HoloPi
+import Infrastructure.CPU.HolographicSpace
+  ( VectorSpace, basisAt, basisVec, gOrder, galoisConjugate, galoisNorm
+  , hermitianIP, infoDim, isOrthogonal, nCells, nOrbits, normSq, zeroVec )
 import Infrastructure.CPU.SovereignLossGain
   ( HoloState (..), lengSequenceDiv, lengSequenceRound, lossGainTones, sunOpDiv
   , tones, yiOpDiv )
@@ -18,13 +21,15 @@ import Infrastructure.CPU.ConstraintVerdict
 import Control.Monad (forM_, unless)
 import Infrastructure.CPU.GF27SIMD (gf27Rowdot, gf27RowdotScalarOnly, hasAVX2)
 import Infrastructure.CPU.GF3Intrinsic (gf27Mul, tritMul)
+import Infrastructure.CPU.SovereignTypes (mulGF9)
 import Infrastructure.CPU.SovereignPhase12
   ( Phase12 (..), breatheCount, phase12Init, phaseSeq12, step12 )
 import Infrastructure.CPU.SovereignGF27 (gf27Add)
 import Infrastructure.CPU.SovereignWuxingLayer
   ( T6State (..), WuxingConfig (..), WuxingLayerW (..)
   , argMaxIdx, causalGraphStep, t6Init, t6Verify, wuxingForward, wuxingStep )
-import Infrastructure.CPU.SovereignTypes (GF27, Trit, gf27ToInt, mkGF27, mkTrit, tritToInt)
+import Infrastructure.CPU.SovereignTypes
+  ( GF9, GF27, Trit, gf9One, gf9ToPair, gf27ToInt, mkGF9, mkGF27, mkTrit, tritToInt )
 import Infrastructure.CPU.Z12Sys
   ( Z12, addZ, conjZ, mulZ, negZ, qnum, z12one, z12zero, zeta3, zeta4, zeta12 )
 import Infrastructure.CPU.SovereignWuXing
@@ -559,6 +564,69 @@ main = hspec $ do
       verdictOf "draft output" `shouldBe` verdictOf "draft output"
       cvT6 (verdictOf "draft") `shouldBe` cvT6 (verdictOf "draft")
 
+
+  -- ------------------------------------------------------------------
+  -- C1 · 全息态与基模 ↔ 权威（HolographicSpace.agda / FiniteInnerProduct.agda）
+  --
+  -- 权威逐字（本仓此前**完全没有**内积空间，属"权威有、仓内无"，按 §6 不变量清单补齐）：
+  --   galoisConjugate (a , b) = a , negate b      —— σ 是**对合**
+  --   galoisNorm      (a , b) = (a⊗a) ⊕ (b⊗b)     —— 共轭下不变
+  --   hermitianIP n f g = sumGF9 n (λ i → f i *gf9 galoisConjugate (g i))
+  --       ★ 共轭在**第二个**参数上（写成第一个会得到另一套内积）
+  --   normSq n f = hermitianIP n f f
+  --   basisVec = 对角为 1、其余 0；basisAt-self / normSq-basisVec / basis-orthogonal
+  --   hermitian-conj-sym : ⟨f,g⟩ ≡ σ(⟨g,f⟩)
+  -- ------------------------------------------------------------------
+  describe "C1 · 全息态与基模 ↔ 权威（HolographicSpace / FiniteInnerProduct）" $ do
+    it "★ galoisConjugate 是对合（权威 galoisConjugate²）：σ(σ x) = x，且 (a,b) ↦ (a,−b)" $ do
+      and [ galoisConjugate (galoisConjugate x) == x | x <- allGF9 ] `shouldBe` True
+      and [ gf9ToPair (galoisConjugate x) == (a, negate b `mod` 3)
+          | x <- allGF9, let (a, b) = gf9ToPair x ] `shouldBe` True
+
+    it "★ galoisFixedPoint：σ x = x ⟺ x 的第二分量为 0（落在 GF(3) 嵌入里）" $ do
+      and [ (galoisConjugate x == x) == (snd (gf9ToPair x) == 0) | x <- allGF9 ] `shouldBe` True
+
+    it "★ galoisNorm 在共轭下不变（权威 galoisNorm-conjugate），且 = a² + b²" $ do
+      and [ galoisNorm (galoisConjugate x) == galoisNorm x | x <- allGF9 ] `shouldBe` True
+      and [ galoisNorm x == (a * a + b * b) `mod` 3
+          | x <- allGF9, let (a, b) = gf9ToPair x ] `shouldBe` True
+
+    it "★ basisAt-self：标准基在自身索引处 = 1（权威 basisAt-self）" $ do
+      forM_ [1 .. 6] $ \n ->
+        forM_ [0 .. n - 1] $ \i ->
+          (basisVec n i !! i) `shouldBe` gf9One
+
+    it "★ normSq-basisVec：每个基向量的范数 = 1（权威 BasisMode.normOne）" $ do
+      forM_ [1 .. 6] $ \n ->
+        forM_ [0 .. n - 1] $ \i ->
+          snd (basisAt n i) `shouldBe` gf9One
+
+    it "★ basis-orthogonal：i ≠ j 时 ⟨b_i, b_j⟩ = 0（权威 basis-orthogonal）" $ do
+      and [ isOrthogonal (basisVec n i) (basisVec n j)
+          | n <- [1 .. 5], i <- [0 .. n - 1], j <- [0 .. n - 1], i /= j ] `shouldBe` True
+
+    it "★ hermitian-conj-sym：⟨f,g⟩ = σ(⟨g,f⟩)（穷举 GF(9)² 的 81 组）" $ do
+      -- 这条同时**钉住共轭的方向**：若把 σ 挪到第一个参数，本式不再普遍成立。
+      and [ hermitianIP [x] [y] == galoisConjugate (hermitianIP [y] [x])
+          | x <- allGF9, y <- allGF9 ] `shouldBe` True
+
+    it "hermitian-linearˡ（首参线性）：⟨a·f, h⟩ = a·⟨f,h⟩（1 维穷举）" $ do
+      and [ hermitianIP [scalarTimes a x] [h] == scalarTimes a (hermitianIP [x] [h])
+          | a <- allGF9, x <- allGF9, h <- allGF9 ] `shouldBe` True
+      and [ hermitianIP [x] [scalarTimes c h] == gf9Conj c `scalarTimes'` hermitianIP [x] [h]
+          | c <- allGF9, x <- allGF9, h <- allGF9 ] `shouldBe` True
+
+    it "零向量：‖0‖² = 0（权威 normSq-of-zero）；zeroVec 长度为 n" $ do
+      normSq (zeroVec 7) `shouldBe` mkGF9 (0, 0)
+      length (zeroVec 7) `shouldBe` 7
+
+    it "宪法常量：INFO-DIM = 4320 · N-CELLS = 729 = 3⁶ · N-ORBITS = 14 · G-ORDER = 54" $ do
+      infoDim `shouldBe` 4320
+      nCells  `shouldBe` 729
+      (729 :: Int) `shouldBe` 3 ^ (6 :: Int)
+      nOrbits `shouldBe` 14
+      gOrder  `shouldBe` 54
+
   -- ------------------------------------------------------------------
   -- C2：类型不变量必须由**编译期**强制。
   --
@@ -635,6 +703,21 @@ c4X0 = map mkGF27 (take dimC4 (cycle [0, 1, 2]))
 w3c :: Int -> Int -> Int -> [[Trit]]
 w3c r c sd = [ [ mkTrit ((i * 7 + j * 13 + sd) `mod` 3) | j <- [0 .. c - 1] ] | i <- [0 .. r - 1] ]
 
+
+
+-- | GF(9) 的全部 9 个元素（穷举用）。
+allGF9 :: [GF9]
+allGF9 = [ mkGF9 (a, b) | a <- [0 .. 2], b <- [0 .. 2] ]
+
+-- | GF(9) 标量乘（供内积性质测试用；与 plusGF9 同源，不改产品代码）。
+scalarTimes :: GF9 -> GF9 -> GF9
+scalarTimes x y = mulGF9 x y
+
+scalarTimes' :: GF9 -> GF9 -> GF9
+scalarTimes' = flip mulGF9
+
+gf9Conj :: GF9 -> GF9
+gf9Conj = galoisConjugate
 
 -- | C3 对拍的输入批（含空、跨 8 路边界、多块等）。
 c3Cases :: [([Int], [Int])]

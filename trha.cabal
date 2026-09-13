@@ -53,6 +53,7 @@ library trha-llm
     Infrastructure.CPU.SovereignModel
     Infrastructure.CPU.GF27SIMD
     Infrastructure.CPU.HoloPi
+    Infrastructure.CPU.HolographicSpace
     Infrastructure.CPU.GF3Intrinsic
     Infrastructure.CPU.SovereignIntrinsic
     Infrastructure.CPU.SovereignGF27
@@ -102,6 +103,7 @@ library trha-api
     Core.Session.Manager
     Core.Session.Types
     Infrastructure.CPU.ConstraintVerdict
+    Infrastructure.CPU.HolographicSpace
     Infrastructure.CPU.S2Geometry
     Infrastructure.CPU.GF3Ops
     Infrastructure.CPU.Christoffel
