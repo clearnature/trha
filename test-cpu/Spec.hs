@@ -17,6 +17,8 @@ import Infrastructure.CPU.SovereignWuxingLayer
   ( T6State (..), WuxingConfig (..), WuxingLayerW (..)
   , argMaxIdx, causalGraphStep, t6Init, t6Verify, wuxingForward, wuxingStep )
 import Infrastructure.CPU.SovereignTypes (GF27, Trit, mkGF27, mkTrit, tritToInt)
+import Infrastructure.CPU.Z12Sys
+  ( Z12, addZ, conjZ, mulZ, negZ, qnum, z12one, z12zero, zeta3, zeta4, zeta12 )
 import Infrastructure.CPU.SovereignWuXing
 
 -- | Agda 权威出处：
@@ -191,6 +193,57 @@ main = hspec $ do
       -- "隔八"取自含端点的第 8 个律位；相邻两者在半音次序上相差 7（= 8 − 1）
       (idxs !! 1 - idxs !! 0) `shouldBe` 7
       length (take 12 (iterate (\x -> (x + 7) `mod` 12) 0)) `shouldBe` 12
+
+
+  -- ------------------------------------------------------------------
+  -- C1 · 分圆单位根 ↔ 权威 Sovereign.Algebra.GroupTheory.PhaseSubgroup
+  --
+  -- PhaseSubgroup 给出"相位旋转的群论本质"：GF(9)* ≅ C₈，α = gen⁶，
+  --   ⟨α⟩ = {1, α, α²=-1, α³=-α} ≅ C₄（阶恰为 4：α⁴=1 上界 + α²≠1 下界）
+  --   rot x = x *s sα（左乘 α），rot²  = 乘 α² = 取负（180°）—— rot-2-is-neg
+  --
+  -- 仓内在**另一个范畴**里实现了同一个 C₄：Z[ζ₁₂]（Z12Sys）里的 ζ₄ = i。
+  -- 二者不是矛盾，是同一群结构的两种表示（GF(9)* 的 ⟨α⟩ ≅ Z[ζ₁₂] 的 ⟨i⟩ ≅ C₄）。
+  -- 因此这里验的是**群结构本身**：阶、180° 对应取负、单位圆、共轭为环自同构。
+  -- ------------------------------------------------------------------
+  describe "C1 · 分圆单位根 ↔ 权威（PhaseSubgroup 的 C₄ / Z12Sys 的 C₁₂）" $ do
+    it "ζ₄ = i：ζ₄² = −1（对应 rot-2-is-neg 的 180°），ζ₄⁴ = 1，ζ₄ ≠ 1" $ do
+      mulZ zeta4 zeta4 `shouldBe` negZ z12one                      -- ★ ζ₄² = −1
+      mulZ (mulZ (mulZ zeta4 zeta4) zeta4) zeta4 `shouldBe` z12one -- ★ ζ₄⁴ = 1
+      zeta4 `shouldNotBe` z12one
+
+    it "ζ₄ 的阶恰为 4（上界 4 + 下界非 2）—— 与 GF(9)* 的 ⟨α⟩ ≅ C₄ 同构" $ do
+      -- 对应 Agda alpha-order-exactly-4：(sα^s 4 ≡ s1) × (sα^s 2 ≠ s1) × (sα ≠ s1)
+      mulZ (mulZ (mulZ zeta4 zeta4) zeta4) zeta4 `shouldBe` z12one
+      mulZ zeta4 zeta4 `shouldNotBe` z12one
+      zeta4 `shouldNotBe` z12one
+
+    it "ζ₃ 的阶恰为 3" $ do
+      mulZ (mulZ zeta3 zeta3) zeta3 `shouldBe` z12one
+      mulZ zeta3 zeta3 `shouldNotBe` z12one
+      zeta3 `shouldNotBe` z12one
+
+    it "ζ₁₂ = ζ₃·ζ₄ 的阶恰为 12（gcd(3,4)=1 ⇒ lcm(3,4)=12）" $ do
+      let pow n = foldr (\_ acc -> mulZ zeta12 acc) z12one [1 .. n]
+      zeta12 `shouldBe` mulZ zeta3 zeta4
+      pow 12 `shouldBe` z12one
+      pow 11 `shouldNotBe` z12one
+
+    it "单位根都落在单位圆上：ζ · conj ζ = 1" $ do
+      mulZ zeta3 (conjZ zeta3) `shouldBe` z12one
+      mulZ zeta4 (conjZ zeta4) `shouldBe` z12one
+      mulZ zeta12 (conjZ zeta12) `shouldBe` z12one
+
+    it "conjZ 是对合，且是环自同构（反保乘法）" $ do
+      conjZ (conjZ zeta12) `shouldBe` zeta12
+      conjZ (mulZ zeta3 zeta4) `shouldBe` mulZ (conjZ zeta3) (conjZ zeta4)
+      conjZ z12one `shouldBe` z12one
+      conjZ z12zero `shouldBe` z12zero
+
+    it "环公理抽查：乘法交换、单位元、加法负元（Z[ζ₁₂] 是交换环）" $ do
+      mulZ zeta3 zeta4 `shouldBe` mulZ zeta4 zeta3
+      mulZ z12one zeta12 `shouldBe` zeta12
+      addZ zeta12 (negZ zeta12) `shouldBe` z12zero
 
   -- ------------------------------------------------------------------
   -- C4 · 因果推理内核的**语义**（而不只是"看起来有界"）。
