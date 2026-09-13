@@ -16,9 +16,12 @@ module API.ProviderRuntime
   , openAICompatStream
   , anthropicStream
   , responsesStream
+  , cpuAdapterFor
+  , cpuAdapterCacheSize
   , StreamCall
   ) where
 
+import Control.Concurrent.MVar (MVar, newMVar, modifyMVar, withMVar)
 import Data.Aeson (Object, Value(..), decode, encode, object, toJSON, (.=))
 import Data.Aeson.Key (fromText)
 import qualified Data.Aeson.KeyMap as KM
@@ -36,19 +39,50 @@ import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Header (Header)
 import Network.HTTP.Types.Status (statusCode, statusIsSuccessful)
+import System.IO.Unsafe (unsafePerformIO)
 
 import Core.Provider.Types
-import LLM.Adapter.Interface (LLMAdapter(..), StreamCall)
+import LLM.Adapter.Interface (LLMAdapter(..), StreamCall, createCPUAdapter)
 import qualified LLM.Stream as LStream
 import LLM.Adapter.Types
 import LLM.Providers.DeepSeek (buildDeepSeekChatRequest, parseDeepSeekChatTurn)
 
+--------------------------------------------------------------------------------
+-- Local inference backend ("cpu" kind)
+--------------------------------------------------------------------------------
+
+-- | Local-inference adapters, cached **by model path**.
+--
+-- @createCPUAdapter@ calls @loadModel@ on every invocation (a local .sov/GGUF
+-- can be hundreds of MB), so building one per request would be unusable.  The
+-- adapter closes over its engine, so caching the adapter caches the engine.
+{-# NOINLINE cpuAdapterCache #-}
+cpuAdapterCache :: MVar (Map.Map FilePath LLMAdapter)
+cpuAdapterCache = unsafePerformIO (newMVar Map.empty)
+
+-- | Get (or build) the local-inference adapter for a model path.
+cpuAdapterFor :: FilePath -> IO LLMAdapter
+cpuAdapterFor path = modifyMVar cpuAdapterCache $ \m ->
+  case Map.lookup path m of
+    Just a  -> pure (m, a)
+    Nothing -> do
+      a <- createCPUAdapter path
+      pure (Map.insert path a m, a)
+
+-- | Number of cached local adapters (lets tests assert path reuse).
+cpuAdapterCacheSize :: IO Int
+cpuAdapterCacheSize = withMVar cpuAdapterCache (pure . Map.size)
+
 -- | Build an adapter for a saved provider entry, given its key.
+--
+-- @"cpu"@ is the in-kernel local inference backend: no key, no network — for
+-- this kind @peBaseUrl@ carries the **model path**.
 adapterFor :: ProviderEntry -> Text -> IO (Either Text LLMAdapter)
 adapterFor entry key = case peKind entry of
   "openai"    -> Right <$> openAICompatAdapter (peBaseUrl entry) key (peDefault entry)
   "anthropic" -> Right <$> anthropicAdapter (peBaseUrl entry) key (peDefault entry)
   "responses" -> Right <$> responsesAdapter (peBaseUrl entry) key (peDefault entry)
+  "cpu"       -> Right <$> cpuAdapterFor (T.unpack (T.strip (peBaseUrl entry)))
   other       -> pure (Left ("provider kind not implemented yet: " <> other))
 
 --------------------------------------------------------------------------------
@@ -102,6 +136,11 @@ providerStream entry key = case peKind entry of
   "openai"    -> openAICompatStream (peBaseUrl entry) key (peDefault entry)
   "anthropic" -> anthropicStream (peBaseUrl entry) key (peDefault entry)
   "responses" -> responsesStream (peBaseUrl entry) key (peDefault entry)
+  -- 本地推理 backend：走**真实流式**（cpuStream 逐 token 回调），
+  -- 不落到下面的 blockingStream 回退。
+  "cpu"       -> do
+    a <- cpuAdapterFor (T.unpack (T.strip (peBaseUrl entry)))
+    pure (llmChatToolsStream a)
   _        -> do
     built <- adapterFor entry key
     pure $ case built of

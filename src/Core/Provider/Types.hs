@@ -48,7 +48,7 @@ import GHC.Generics (Generic)
 -- | One endpoint as the connection panel edits it.
 data ProviderEntry = ProviderEntry
   { peName          :: Text
-  , peKind          :: Text      -- ^ openai | anthropic | responses | extension
+  , peKind          :: Text      -- ^ openai | anthropic | responses | extension | cpu
   , peBaseUrl       :: Text
   , peModels        :: [Text]
   , peDefault       :: Text
@@ -332,9 +332,10 @@ insertKey n k (ProviderKeys m) = ProviderKeys (Map.insert n k m)
 emptyStore :: ProviderStore
 emptyStore = ProviderStore []
 
--- | Kinds the kernel understands (same four words as the reference's KIND_LABEL).
+-- | Kinds the kernel understands: the reference implementation's KIND_LABEL
+-- words, plus @"cpu"@ for the in-kernel local inference backend.
 validKinds :: [Text]
-validKinds = ["openai", "anthropic", "responses", "extension"]
+validKinds = ["openai", "anthropic", "responses", "extension", "cpu"]
 
 -- | Never throws: coerces arbitrary persisted data into a usable store.
 -- Drops entries without a name, de-duplicates by name (last one wins),
@@ -370,6 +371,9 @@ protocolCatalog =
   , Protocol "anthropic" "anthropic" False True
   , Protocol "responses" "openai"    True  True
   , Protocol "extension" "openai"    False False
+  -- 本地推理 backend：不走 listing 发现（discovery="none"）、无服务端 web search、
+  -- 无 reasoning 参数。
+  , Protocol "cpu"       "none"      False False
   ]
 
 -- | A name may become a config table name and part of a model reference

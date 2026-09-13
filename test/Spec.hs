@@ -24,7 +24,7 @@ import Infrastructure.CPU.SovereignFull
 import Infrastructure.CPU.SovereignPacked
 import qualified Infrastructure.CPU.SovereignTypes as ST
 import Infrastructure.CPU.SovereignTypes (mkTrit, tritToInt)
-import System.Environment (lookupEnv)
+import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as BS
 import Infrastructure.CPU.Quant (QuantType(..))
@@ -45,7 +45,7 @@ import LLM.Adapter.Types
 import qualified LLM.Adapter.Types as LLM
 import LLM.Adapter.Interface
 import LLM.Providers.DeepSeek (buildDeepSeekChatRequest, createDeepSeekProvider, parseDeepSeekChatTurn)
-import API.Server (OpenAIRequest(..), parseOpenAIRequest, mkStubApp, mkCPUApp)
+import API.Server (OpenAIRequest(..), parseOpenAIRequest, mkApp, mkStubApp, mkCPUApp)
 import Network.Wai (Application)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Network.HTTP.Client (Manager, newManager, defaultManagerSettings, parseRequest,
@@ -53,6 +53,7 @@ import Network.HTTP.Client (Manager, newManager, defaultManagerSettings, parseRe
                             requestHeaders, RequestBody(..))
 import Network.HTTP.Types (statusCode)
 import API.ProviderProbe (classifyListing, parseModelIds)
+import API.ProviderRuntime (adapterFor, cpuAdapterCacheSize)
 import Core.Provider.Types
 import Data.IORef
 import Data.Word (Word8)
@@ -1868,6 +1869,32 @@ main = hspec $ do
       map prKind protocolCatalog `shouldBe` validKinds
       (prKind <$> protocolCatalog) `shouldSatisfy` all (`elem` validKinds)
 
+    -- T6（先红）：本地推理 backend 作为一等 provider kind
+    it "懂 \"cpu\"（本地推理 backend）这个 kind" $ do
+      ("cpu" `elem` validKinds) `shouldBe` True
+
+    it "normalizeStore 不把 kind=\"cpu\" 的条目改写成 openai" $ do
+      let s = normalizeStore (ProviderStore [mk "local-cpu" "cpu"])
+      map peName (psProviders s) `shouldBe` ["local-cpu"]
+      map peKind (psProviders s) `shouldBe` ["cpu"]
+
+    -- T7：cpu kind 能被 adapterFor 构造，且本地引擎按路径复用
+    it "adapterFor 能按 kind=\"cpu\" 构造本地推理适配器" $ do
+      r <- adapterFor ((mk "local-cpu" "cpu") { peBaseUrl = "/dev/null" }) ""
+      case r of
+        Left why -> expectationFailure ("cpu kind 未实现: " ++ T.unpack why)
+        Right _  -> pure ()
+
+    it "本地引擎按模型路径复用：同一路径不重复构建" $ do
+      -- 注意：缓存是模块级的，前面的用例可能已用同一路径预热过，
+      -- 所以这里只断言“再次取用不新建”，不假设“本次是首次”。
+      let e = (mk "local-cpu" "cpu") { peBaseUrl = "/dev/null" }
+      _ <- adapterFor e ""            -- 预热/取用
+      mid <- cpuAdapterCacheSize
+      _ <- adapterFor e ""            -- 同路径再来一次
+      after <- cpuAdapterCacheSize
+      after `shouldBe` mid            -- 复用：不再新建
+
     it "accepts the names the reference accepts and refuses the rest" $ do
       validProviderName "deepseek"   `shouldBe` True
       validProviderName "9router"    `shouldBe` True
@@ -2026,3 +2053,30 @@ main = hspec $ do
       code `shouldBe` 200
       ("data: " `isInfixOf` body)        `shouldBe` True
       ("data: [DONE]" `isInfixOf` body)  `shouldBe` True
+
+    -- T8：provider 名分派到本地 backend —— 完整链路
+    --   HTTP → resolveAdapterIO → findProvider(providers.json) → adapterFor "cpu" → 本地引擎
+    -- 用 TRHA_PROVIDERS_FILE 指向临时文件，避免污染 ~/.trha。
+    it "provider=\"local-cpu\"（kind=cpu）的请求经 providers.json 分派，由本地引擎回答" $ do
+      let pfile = "/tmp/trha-test-providers.json"
+          entry = ProviderEntry
+            { peName = "local-cpu", peKind = "cpu", peBaseUrl = "/dev/null"
+            , peModels = ["cpu"], peDefault = "cpu", peHasKey = False, peKeyEnv = Nothing
+            , peVisionModels = [], pePreset = False, peInUse = False, peContextWindow = Nothing
+            , peWebSearch = Nothing, peSendsThinking = Nothing }
+      BLC.writeFile pfile (encode (ProviderStore [entry]))
+      setEnv "TRHA_PROVIDERS_FILE" pfile
+      r <- adapterFor entry ""
+      case r of
+        Left why -> expectationFailure ("cpu adapter 构造失败: " ++ T.unpack why)
+        Right defAdapter -> do
+          app <- mkApp defAdapter
+          (code, body) <- withApp app $ \mgr base ->
+            httpPost mgr (base ++ "/v1/chat/completions")
+              (object [ "provider" .= ("local-cpu" :: T.Text)
+                      , "model"    .= ("cpu" :: T.Text)
+                      , "messages" .= [ object [ "role"    .= ("user" :: T.Text)
+                                               , "content" .= ("hi" :: T.Text) ] ] ])
+          unsetEnv "TRHA_PROVIDERS_FILE"
+          code `shouldBe` 200
+          ("cpu" `isInfixOf` body) `shouldBe` True   -- 本地引擎回答（回显模型名）
