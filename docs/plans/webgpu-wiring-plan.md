@@ -238,3 +238,46 @@ ls /usr/lib/x86_64-linux-gnu/libvulkan* ; ls /usr/lib/x86_64-linux-gnu/libEGL*
 | rpath | 现在靠 `LD_LIBRARY_PATH`；可在 cabal 加 `-optl-Wl,-rpath,…` 免去 |
 | 三值 / GF(27) kernel | 当前跑的是普通 u32 kernel；愿景所需的 kernel 需另写 WGSL 并与 `SovereignGF27` 对拍 |
 | 测试纳入 | 现以 `trha-webgpu-compute` 作冒烟；可加 hspec（无 GPU 时 pending 兜底） |
+
+---
+
+## 9. T1–T4 完成（2026-09-13）
+
+| 项 | 状态 |
+|---|---|
+| T1 GF(27) matmul kernel | ✅ 与 CPU `gf27Matmul` 逐元素一致（64×64、512×512 两档） |
+| T2 Profile 真实计时 | ✅ 墙钟（`GHC.Clock.getMonotonicTime`，base 自带） |
+| T3 rpath | ✅ `cabal.project.local` 的 `-optl-Wl,-rpath,…`，不再需要 `LD_LIBRARY_PATH` |
+| T4 独立 hspec 套件 | ✅ `trha-webgpu-test`（2 例；无 GPU 时 pending） |
+
+### 实测：GPU vs CPU（AMD/Vulkan/radv）
+
+| 规模 | GPU（含提交往返） | CPU（`gf27Matmul`） | 比值 |
+|---|---|---|---|
+| 64×64 | 3.73 ms | 1.36 ms | GPU **慢 2.7×** |
+| 512×512 | **3.61 ms** | 25.86 ms | GPU **快 7.2×** |
+
+**GPU 时间几乎不随规模变化** —— 3.6 ms 是**固定开销**（提交往返 + 映射读回 + 事件泵轮询），
+与计算量无关。交叉点约 **300×300**：小于它不划算，大于它 GPU 才开始显现优势。
+
+⚠️ 测的是**墙钟**（含主机侧开销），**不是**纯 GPU 内核时间；纯内核计时需 GPU 时间戳查询（待做）。
+
+### 又两条"照文档写会中"
+
+11. **具体尺寸的条目数组不能用固定 `allocaBytes`** —— `BindGroupLayoutEntry` 约 128 字节，
+    3 个就越界写，症状是 wgpu-native 报一个**毫不相干**的
+    `invalid sampler binding type for sampler binding layout at binding 2`。
+    只要 2 个 entry 就不会暴露（手写版正是因此蒙对，换成高层抽象后才炸）。
+12. **Haskell 惰性会让计时撒谎** —— `let want = …` 只构造 thunk，CPU 计时一度报
+    `4.2e-5 ms`（比真实快 5 个数量级）。强制求值：`evaluate (foldl' (+) 0 want)`。
+
+### 已知缺口（对抗自检的结论，**未验证项如实列出**）
+
+- **hspec 的 pending 分支未实测**：本机有 GPU，`createContext` 失败 → `pendingWith`
+    这条路径只有代码逻辑，没跑过（CI 无 GPU 时才会走到）。
+- **Profile 只有 2 个数据点**，且含固定开销；"交叉点 300" 是**合理外推**而非测量。
+- **新发现待处置**：`src/Infrastructure/CPU/Backend.hs:52,59` 里有与已归档旧 WebGPU 层
+    **同款**的 `threadDelay 1000` / `threadDelay 100` 假计时 —— 那是另一个"看起来在算、
+    其实在睡"的位置，需要定夺（它是否在构建路径上、是否该照旧 WebGPU 层处理）。
+- **未做**：纯 GPU 内核计时、tile + 共享内存优化（路径 B）、更大规模的 matmul、
+    三值（Trit）输入的量化/打包形态（当前权重按 u32 传 trit 值）。
