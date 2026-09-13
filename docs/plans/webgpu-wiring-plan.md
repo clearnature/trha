@@ -161,3 +161,36 @@ ls /usr/lib/x86_64-linux-gnu/libvulkan* ; ls /usr/lib/x86_64-linux-gnu/libEGL*
 |---|---|
 | 2026-09-13 | 初版：现状实测（1344 行不在构建、`FFI.hs` 符号经 `nm` 证伪、本机有 Vulkan）、数据流程图、原子分解 W1–W7、决策点 4 项；**W1 完成** |
 | 2026-09-13 | 所有者裁定：库入 `3rdparty/`（不在仓库外引用）／新建 `library trha-webgpu`／首批先 hello-compute／**用 GHC 强类型重构**。据此：库与参考源码落位 `3rdparty/`；新写 `Raw/Types.hs`（12 个不透明标签 + `Handle`/`Nullable`，构造子不导出）＝ W2a；确认 llama.cpp 参考用的是 **C++ API（`webgpu_cpp.h`）**、代码不可照搬（WGSL 与流程可复用）；补齐 v29 API 风格（`WGPUStringView` + `*CallbackInfo`，`wgpuDevicePoll` 已移除） |
+
+---
+
+## 7. 实测记录（2026-09-13）：W1–W6 已跑通
+
+`trha-webgpu-compute` 在 AMD/Vulkan（radv）上输出：
+
+```
+输入: [1,2,3,4]   期望: [1,4,9,16]   实际: [1,4,9,16]
+✓ GPU 结果与 CPU 参考答案逐元素一致
+```
+
+| 步骤 | 状态 | 说明 |
+|---|---|---|
+| W1 库与参考进仓 | ✅ | `3rdparty/wgpu-native`（v29.0.1.1）、`3rdparty/llama-webgpu`（ggml-webgpu 参考）、`3rdparty/llama-vulkan`（Vulkan 后端源码，按所有者指示） |
+| W2a 强类型句柄 | ✅ | 12 个不透明标签 + Handle/Nullable；负面测试证明类型不可混用 |
+| W2b 枚举/描述符 | ✅ | 值经 hsc2hs 从真头文件求值，偏移同理 |
+| W3 FFI 绑定 | ✅ | 19 个真实符号（含 CopyBufferToBuffer），均由 nm 核实存在 |
+| W4 cabal 接线 | ✅ | extra-libraries + extra-lib-dirs-static；cabal 规范升到 3.8 |
+| W5/W6 端到端 | ✅ | 完整 dispatch 链 + 读回对拍通过 |
+
+### 踩过的坑（照文档写会踩的）
+
+1. **编辑 .hsc 后 hsc2hs 可能不重跑**（cabal 缓存了预处理结果，touch 无效）→ 删掉该组件的 dist-newstyle 产物才会重新生成。
+2. **cabal 的 extra-lib-dirs 只接受绝对路径或 pkgroot 相对路径**；`extra-lib-dirs-static` 需 Cabal 规范 ≥3.8；而动态目录只能由 extra-lib-dirs（绝对）提供 → 本机绝对路径放 `cabal.project.local`（不入仓）。
+3. **Cabal 规范 ≥3.4 后同包内部库依赖要写 `trha:trha-xxx`**，否则报 unknown package。
+4. **会回调进 Haskell 的 foreign import 必须用 safe**，unsafe 会以 `schedule: re-entered unsafely` 中止。
+5. **v29 的 wgpuInstanceWaitAny 未实现**（src/unimplemented.rs 直接 panic）。
+6. **让 C 回调进 Haskell 会死锁**：回调在 ProcessEvents 的**调用线程**上同步触发，而该线程正处在 FFI 栈里，拿不到 RTS 锁 → 改为「C 侧槽位 + Haskell 轮询」。
+7. **v29 的 \*Status 枚举 Success = 0x1**，不是 0（按 0 判会把成功误判为失败）。
+8. **MAP_READ 只能与 COPY_DST 搭配、不能叠 STORAGE** → 两个 buffer + CopyBufferToBuffer 搬运。
+9. **描述符必须先清零**（含未填的内嵌结构，如 bind group layout entry 的 sampler/texture/storageTexture）。
+10. 运行时需 `LD_LIBRARY_PATH=$PWD/3rdparty/wgpu-native/lib`（尚未设 rpath）。
