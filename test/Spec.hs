@@ -25,7 +25,7 @@ import Infrastructure.CPU.SovereignPacked
 import qualified Infrastructure.CPU.SovereignTypes as ST
 import Infrastructure.CPU.SovereignTypes (mkTrit, tritToInt)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import qualified Data.ByteString as BS
 import Infrastructure.CPU.Quant (QuantType(..))
 import System.Directory (doesFileExist)
@@ -1693,6 +1693,37 @@ main = hspec $ do
       appendEvent session (AssistantMessage "Hi there!")
       events <- getEvents session
       length events `shouldBe` 2
+
+    -- projections：投影是"由事件日志重放得出的派生状态"。
+    -- 推理状态（CPU 层 T6State）与内核 FSM 状态（Core.Agent.AgentState）经这里上浮到
+    -- 会话，使"推理过程"对内核可见。本模块只碰 Dynamic，装箱由调用方完成（不破坏分层）。
+    it "★ projections：未设返回 Nothing；写入后可读回" $ do
+      session <- createSession "test-session-proj"
+      (isJust <$> getProjection session "t6state") `shouldReturn` False
+      projectionNames session `shouldReturn` []
+      setProjection session "t6state" (toDyn (42 :: Int))
+      m <- getProjection session "t6state"
+      fmap fromDynamic m `shouldBe` Just (Just (42 :: Int))
+      projectionNames session `shouldReturn` ["t6state"]
+
+    it "★ projections：同名覆盖写生效（不累积重复键）" $ do
+      session <- createSession "test-session-proj2"
+      setProjection session "k" (toDyn (1 :: Int))
+      setProjection session "k" (toDyn (2 :: Int))
+      m <- getProjection session "k"
+      fmap fromDynamic m `shouldBe` Just (Just (2 :: Int))
+      projectionNames session `shouldReturn` ["k"]
+
+    it "★ projections：不同名互不干扰；类型不符时 fromDynamic 得 Nothing" $ do
+      session <- createSession "test-session-proj3"
+      setProjection session "a" (toDyn (1 :: Int))
+      setProjection session "b" (toDyn ("x" :: String))
+      ma <- getProjection session "a"
+      mb <- getProjection session "b"
+      fmap fromDynamic ma `shouldBe` Just (Just (1 :: Int))
+      fmap fromDynamic mb `shouldBe` Just (Just ("x" :: String))
+      -- 以错误的类型解包应失败（Dynamic 的类型安全）
+      (fmap fromDynamic ma :: Maybe (Maybe String)) `shouldBe` Just Nothing
 
   describe "Core.Agent" $ do
     it "can create an agent and update state" $ do
