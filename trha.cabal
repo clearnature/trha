@@ -154,14 +154,16 @@ library trha-infra
 -- WebGPU backend —— 真实绑定 wgpu-native 的 C API
 -- 计划与进度：docs/plans/webgpu-wiring-plan.md
 -- 外部库落在 3rdparty/wgpu-native/（**不在仓库外引用**）。
--- 阶段说明：本组件当前只含强类型句柄层（无外部库依赖）；W3 起再加
+-- 阶段说明：W2 阶段只有强类型句柄层 + 枚举（值经 hsc2hs 从真头文件求值），
+-- 因此这里只用到 include-dirs（编译期）；W3 起再加
 --   extra-libraries: wgpu_native
 --   extra-lib-dirs:  3rdparty/wgpu-native/lib
---   include-dirs:    3rdparty/wgpu-native/include/webgpu
 library trha-webgpu
   exposed-modules:
     Infrastructure.WebGPU.Raw.Types
+    Infrastructure.WebGPU.Raw.Enums
   hs-source-dirs:   src
+  include-dirs:     3rdparty/wgpu-native/include
   build-depends:    base ^>=4.22
   default-language: Haskell2010
 
