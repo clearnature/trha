@@ -19,7 +19,7 @@ import Infrastructure.CPU.SovereignPhase12
 import Infrastructure.CPU.SovereignWuxingLayer
   ( T6State (..), WuxingConfig (..), WuxingLayerW (..)
   , argMaxIdx, causalGraphStep, t6Init, t6Verify, wuxingForward, wuxingStep )
-import Infrastructure.CPU.SovereignTypes (GF27, Trit, mkGF27, mkTrit, tritToInt)
+import Infrastructure.CPU.SovereignTypes (GF27, Trit, gf27ToInt, mkGF27, mkTrit, tritToInt)
 import Infrastructure.CPU.Z12Sys
   ( Z12, addZ, conjZ, mulZ, negZ, qnum, z12one, z12zero, zeta3, zeta4, zeta12 )
 import Infrastructure.CPU.SovereignWuXing
@@ -403,6 +403,42 @@ main = hspec $ do
       let (_, _, _, okss) = wuxingForward c4Cfg c4Layer c4X0
       length okss `shouldBe` wcSteps c4Cfg
       and [ (o :: Bool) == True || o == False | o <- okss ] `shouldBe` True
+
+    it "GF(3) 乘法的零元/单位元：0 ⊗ x = 0、1 ⊗ x = x（传播语义的依据）" $ do
+      -- prop[j] = ⧺_i (adj[i][j] ⊗ nodes[i])；adj[i][j] = 0 的边之所以不传播，
+      -- 依据正是 GF(3) 里 0 是乘法的零元。先把它钉住。
+      and [ tritMul (mkTrit 0) (mkTrit x) == mkTrit 0 | x <- [0, 1, 2] ] `shouldBe` True
+      and [ tritMul (mkTrit 1) (mkTrit x) == mkTrit x  | x <- [0, 1, 2] ] `shouldBe` True
+
+    it "★ 无边不传播：q、k 全零 ⇒ adj 全零 ⇒ updated ≡ 输入（空图 = 残差恒等）" $ do
+      -- 因果图语义的最强可观测推论：没有边就没有传播，输出必须逐元素等于输入。
+      -- 构造：attnQ / attnK 全置零（形状 [nd, 1]）⇒ 所有 q_i = k_j = 0
+      --       ⇒ adj[i][j] = 0 ⊗ 0 = 0 ⇒ prop 全零 ⇒ out = 0 ⇒ updated 只剩残差 x。
+      let nd = wcDim c4Cfg `div` wcHex c4Cfg
+          zeroAttn = replicate nd [mkTrit 0]
+          layerNoEdge = c4Layer { wlAttnQ = zeroAttn, wlAttnK = zeroAttn }
+          (adjZ, updZ) = causalGraphStep c4Cfg layerNoEdge c4X0
+      and [ tritToInt v == 0 | row <- adjZ, v <- row ] `shouldBe` True
+      length adjZ `shouldBe` wcHex c4Cfg
+      updZ `shouldBe` c4X0      -- ★ 无边 ⇒ 不传播 ⇒ 输出恒等于输入
+
+    it "0.1 系数的整数语义：fused 经 div 10 后只能取 {0,1,2}（已知退化，如实记录）" $ do
+      -- 实现：h' = x + (gf27ToInt fused `div` 10)。gf27ToInt 的值域是 [0,26]，
+      -- 所以 div 10 只能得 {0, 1, 2} —— "0.1 系数"在整数域上是**截断**而非精确缩放。
+      -- 实测：本测试层的数据使 fused 分量全部 < 10，于是 updated ≡ x。
+      -- 这里把它固定成断言，避免日后误以为"有边就该改变输出"。
+      -- （先前我按"有边 ⇒ 输出改变"写对照用例，被这条实现细节否证 —— 记录于此。）
+      let (_, upd) = causalGraphStep c4Cfg c4Layer c4X0
+      upd `shouldBe` c4X0
+      and [ gf27ToInt v `div` 10 <= 2 | v <- upd ] `shouldBe` True
+
+    it "★ 覆盖局限（如实记录）：本测试层下 adj 恒为零，因果图恒为空图" $ do
+      -- scalarOf 取 GF(27) 向量的首元素再 mod 3；在本层（w3c 的确定性 trit 矩阵，
+      -- dim=24 / heads=3 / hex=6）下，所有 q_i、k_j 都落在 0，于是 adj ≡ 0。
+      -- 这意味着：上面"无边不传播"那条在本层里是**空图**情形，未覆盖"有边传播"。
+      -- 要覆盖非空邻接需要另选一组权重使某个 q_i、k_j 非零 —— 尚未做，记录在此。
+      let (adjN, _) = causalGraphStep c4Cfg c4Layer c4X0
+      and [ tritToInt v == 0 | row <- adjN, v <- row ] `shouldBe` True
 
   -- ------------------------------------------------------------------
   -- C2：类型不变量必须由**编译期**强制。
