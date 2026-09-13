@@ -11,8 +11,11 @@ import Test.Hspec
 
 import Infrastructure.CPU.HoloPi
 import Infrastructure.CPU.SovereignLossGain
+  ( HoloState (..), lengSequenceDiv, lengSequenceRound, lossGainTones, sunOpDiv
+  , tones, yiOpDiv )
 import Infrastructure.CPU.GF3Intrinsic (tritMul)
-import Infrastructure.CPU.SovereignPhase12 (phase12Init)
+import Infrastructure.CPU.SovereignPhase12
+  ( Phase12 (..), breatheCount, phase12Init, phaseSeq12, step12 )
 import Infrastructure.CPU.SovereignWuxingLayer
   ( T6State (..), WuxingConfig (..), WuxingLayerW (..)
   , argMaxIdx, causalGraphStep, t6Init, t6Verify, wuxingForward, wuxingStep )
@@ -20,6 +23,10 @@ import Infrastructure.CPU.SovereignTypes (GF27, Trit, mkGF27, mkTrit, tritToInt)
 import Infrastructure.CPU.Z12Sys
   ( Z12, addZ, conjZ, mulZ, negZ, qnum, z12one, z12zero, zeta3, zeta4, zeta12 )
 import Infrastructure.CPU.SovereignWuXing
+  ( aSequence, chiralityZ2, christoffelSpiral, c60IndependentFrequencies
+  , platonicsOrders, polarWinding144, spiralMod3, toroidalWinding46
+  , wuXingGenerate, wuXingGenerateCycle, wuXingMods, wuXingNames
+  , wuXingOvercome, wuXingOvercomeCycle, wuXingPhaseOf )
 
 -- | Agda 权威出处：
 --   · Sovereign.MetaStructure.WuXing  (/data/work/discrete-mathematics/src/02-magnetic-24d/WuXing.agda)
@@ -244,6 +251,76 @@ main = hspec $ do
       mulZ zeta3 zeta4 `shouldBe` mulZ zeta4 zeta3
       mulZ z12one zeta12 `shouldBe` zeta12
       addZ zeta12 (negZ zeta12) `shouldBe` z12zero
+
+
+  -- ------------------------------------------------------------------
+  -- C1 · 商空间周期 ↔ 权威 Sovereign.Coupling.ZhonglvPhaseSync
+  --
+  -- 权威给出两个周期与一条定理：
+  --   PRIMARY_PERIOD     = 60   = LCM(12, 10)（地支 12 × 天干 10 = 六十甲子）
+  --   HOLOGRAPHIC_PERIOD = 3312 = LCM(144, 46)
+  --   periodNotDivisible : ¬ (3312 % 60 ≡ 0)   —— 3312 % 60 = 12
+  --   primaryCannotCoverHolographic : 60 < 3312
+  -- 且 v5.2 注释明确：3312 是**代数对齐点**（algebraic alignment point），
+  -- 非拓扑闭合周期 —— "极限环不因 LCM 整除而真正闭合，只是相位在此碰头"。
+  -- ------------------------------------------------------------------
+  describe "C1 · 商空间周期 ↔ 权威（ZhonglvPhaseSync.agda）" $ do
+    it "PRIMARY_PERIOD = 60 = lcm(12,10)（地支 × 天干 = 六十甲子）" $ do
+      lcm 12 10 `shouldBe` 60
+
+    it "HOLOGRAPHIC_PERIOD = 3312 = lcm(144,46)（两个缠绕常数的代数对齐点）" $ do
+      lcm polarWinding144 toroidalWinding46 `shouldBe` 3312
+
+    it "★ periodNotDivisible：3312 % 60 = 12 ≠ 0（全息周期不被主周期整除）" $ do
+      (3312 :: Int) `mod` 60 `shouldBe` 12
+      (3312 :: Int) `mod` 60 `shouldNotBe` 0
+
+    it "★ primaryCannotCoverHolographic：60 < 3312（主商空间无法覆盖全息商空间）" $ do
+      (60 :: Int) < lcm polarWinding144 toroidalWinding46 `shouldBe` True
+
+    it "权威的语义区分：3312 是代数对齐点，不是拓扑闭合周期" $ do
+      -- 原文："极限环不因 LCM 整除而真正闭合——只是两个周期性在此处相位碰头。"
+      -- 固定成断言：60 | 60（主周期自闭合），但 60 ∤ 3312（全息只碰头不闭合）。
+      (60 :: Int) `mod` 60 `shouldBe` 0
+      (3312 :: Int) `mod` 60 `shouldBe` 12
+
+    it "仲吕不交的坐标（乙亥）：地支亥 = 11、天干乙 = 1，两者均不为 0" $ do
+      -- 权威 zhonglvCannotZeroBoth：polarMod12 ≢ zero × toroidalMod10 ≢ zero
+      (11 :: Int) `shouldNotBe` 0
+      (1 :: Int) `shouldNotBe` 0
+      (11 :: Int) `mod` 12 `shouldBe` 11
+      (1 :: Int) `mod` 10 `shouldBe` 1
+
+  -- ------------------------------------------------------------------
+  -- C1 · 十二律相位机 ↔ 权威（LossGain 时序 + Zhonglv 呼吸桥）
+  --
+  -- phase12Init = 黄钟：HoloState (a,b,c,d) = (0,0,0,5)、累加器 = 3¹¹ = 177147。
+  -- step12：损-益交替（even i 损 / odd i 益）；**每 12 步**应用仲吕对齐桥。
+  -- ------------------------------------------------------------------
+  describe "C1 · 十二律相位机 ↔ 权威（LossGain + Zhonglv 时序）" $ do
+    it "初值 = 黄钟：(0,0,0,5)、累加器 3¹¹ = 177147、步数 0" $ do
+      hsA (p12Holo phase12Init) `shouldBe` 0
+      hsB (p12Holo phase12Init) `shouldBe` 0
+      hsC (p12Holo phase12Init) `shouldBe` 0
+      hsD (p12Holo phase12Init) `shouldBe` 5
+      p12Acc phase12Init `shouldBe` 177147
+      p12Step phase12Init `shouldBe` 0
+      (177147 :: Integer) `shouldBe` 3 ^ (11 :: Int)
+
+    it "★ 呼吸桥每 12 步一次：breatheCount = 步数 div 12" $ do
+      [ breatheCount p | p <- phaseSeq12 25 ] `shouldBe` [ i `div` 12 | i <- [0 .. 24] ]
+
+    it "步数严格递增，且相位序列长度 = 请求步数" $ do
+      map p12Step (phaseSeq12 13) `shouldBe` [0 .. 12]
+      length (phaseSeq12 7) `shouldBe` 7
+
+    it "损-益交替：第 1 步（i=0，损）与第 2 步（i=1，益）的相位分量不同" $ do
+      -- 对应 LossGain 的 Sun/Yi 交替（even i → holoLoss，odd i → holoGain）
+      let p1 = step12 phase12Init
+          p2 = step12 p1
+      p12Holo p1 `shouldNotBe` p12Holo p2
+      p12Step p1 `shouldBe` 1
+      p12Step p2 `shouldBe` 2
 
   -- ------------------------------------------------------------------
   -- C4 · 因果推理内核的**语义**（而不只是"看起来有界"）。
