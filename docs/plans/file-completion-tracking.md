@@ -11,7 +11,7 @@
 | 本轮提交数 | **36**（`13b0b53^..HEAD`） |
 | 涉及文件数 | 25 |
 | `cabal build all` | **0 error / 0 warning** |
-| `trha-test` | **189 examples, 0 failures**, 4 pending |
+| `trha-test` | **190 examples, 0 failures**, 4 pending |
 | `trha-cpu-test` | **99 examples, 0 failures**（会话开始时为 0） |
 | `trha-webgpu-test` | **3 examples, 0 failures**（真机 GPU） |
 | `trha-cli-test` | **182 examples, 0 failures** |
@@ -36,7 +36,7 @@
 | `src/Core/Session/Types.hs` | `Session` 新增 `agentState :: IORef AgentState`（内核 FSM 进会话） | `trha-test` C1·会话层（Idle→Processing） | `020dc25` |
 | `src/Core/Session/Manager.hs` | 新增 `setProjection`/`getProjection`/`projectionNames`（T1）+ `getAgentState`/`setAgentState`/`advanceAgent`（T3） | `trha-test`：projections 3 例 + FSM 1 例 | `910b90a` / `020dc25` |
 | `src/Core/Agent/StateMachine.hs` | 导出 `AgentCommand (..)`（此前定义在模块内但未导出，会话层要用） | 编译期（未导出则 `trha-core` 编译失败） | `020dc25` |
-| `src/API/Server.hs` | ① `ConstraintVerdict` 接线 + `constraintField`（D-1）；② `StartReq`/`StepReq` 手写 `FromJSON`（**修 400 契约 bug**）；③ `agentStepHandler`：写投影 + 推 FSM + 回显 | `trha-test` 端到端 ×6 | `25587ea` / `ca8afa6` / `8719f5` / `020dc25` |
+| `src/API/Server.hs` | ① `ConstraintVerdict` 接线 + `constraintField`（D-1）；② `StartReq`/`StepReq` 手写 `FromJSON`（**修 400 契约 bug**）；③ `agentStepHandler`：写投影 + 推 FSM + 回显；④ 状态字段改名 `t6`→`t6_state`（**修同 key 冲突**） | `trha-test` 端到端 ×7（含**深度验证**：解析嵌套 JSON 核对值域） | `25587ea` / `ca8afa6` / `8719f5` / `020dc25` |
 | `trha.cabal` | 注册新模块（`HoloPi`/`HolographicSpace`/`ConstraintVerdict`）；`trha-api` 的 `other-modules` 27→29 并加**禁止删除**警示注释；`trha-cpu-test` 套件 | `cabal build all` 0 error；删任一项会**链接期**失败 | `ac7ba18` 等 |
 | `test/Spec.hs` | D-1/C5 端到端（4 例）+ D-3 投影/FSM/端到端（5 例）+ projections 3 例 | `cabal test trha-test` | 181→189 |
 | `test-webgpu/Spec.hs` | C3 四实现**同批全等**（`checkCase`：Haskell 标量 / C 标量 / AVX2 / GPU） | `cabal test trha-webgpu-test`（真机 AMD Navi 44 + Vulkan） | `84e9f6e` |
@@ -85,7 +85,7 @@
 
 ```bash
 cabal build all                      # 期望 0 error / 0 warning
-cabal test trha-test                 # 189/0/4
+cabal test trha-test                 # 190/0/4
 cabal test trha-cpu-test             # 99/0
 cabal test trha-webgpu-test          # 3/0（需 GPU，否则 pendingWith）
 cabal test trha-cli-test             # 182/0

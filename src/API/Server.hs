@@ -201,7 +201,8 @@ agentStepHandler adapter sessionsVar req = do
         , "usage" .= toJSON usage
         -- 让"上浮"可被观测：回显投影名与本步的推理状态摘要（不改变既有字段语义）
         , "session_projections" .= names
-        , "t6" .= object
+        -- 注意：不叫 "t6"，因为 constraintField 里已有同名的判定字段（避免同 key 冲突）
+        , "t6_state" .= object
             [ "polar"    .= t6Polar t6st
             , "toroidal" .= t6Toroidal t6st
             , "berry"    .= t6Berry t6st

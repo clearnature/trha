@@ -60,7 +60,10 @@ import Data.IORef
 import Data.Word (Word8)
 import Data.Dynamic
 import qualified Data.Text as T
-import Data.Aeson (Value(..), decode, encode, object, (.=))
+import Data.Aeson (Value(..), decode, encode, object, parseJSON, toJSON, withObject, (.:), (.=))
+import Data.Aeson.Types (parseMaybe)
+import qualified Data.ByteString.Lazy as BL
+import qualified Data.Text.Encoding as TE
 import qualified Data.Vector as V
 import System.CPUTime (getCPUTime)
 import qualified Data.List as List
@@ -2186,10 +2189,50 @@ main = hspec $ do
       ("token_0" `isInfixOf` body) `shouldBe` True
       -- 验证层：推理内核的判定与 T⁶ 状态同时上浮
       and [ k `isInfixOf` body
-          | k <- [ "trha_constraint", "constraint", "t6state"
+          | k <- [ "trha_constraint", "constraint", "t6state", "t6_state"
                  , "\"polar\"", "\"toroidal\"", "\"berry\"" ] ] `shouldBe` True
       -- 状态上浮：投影名含 t6state / constraint
       ("session_projections" `isInfixOf` body) `shouldBe` True
+
+    -- ── D-3 深度验证：不只查"投影存在"，而验**投影内容的数值合法性** ──────────
+    -- 此前只断言投影名出现；这里解析 JSON，核对 T⁶ 三分量的值域与判定分量，
+    -- 才算真的验证了"推理状态被正确地上浮"，而不是"某处出现了字符串"。
+    it "★ D-3 深度验证：t6_state 三分量合法（polar<144、toroidal<46）+ 判定分量 + 投影恰两个" $ do
+      app <- mkCPUApp "/dev/null"
+      (cStep, body) <- withApp app $ \mgr base -> do
+        _ <- httpPost mgr (base ++ "/session/start")
+               (object [ "mode" .= ("standard" :: T.Text) ])
+        httpPost mgr (base ++ "/agent/step")
+          (object [ "sessionId" .= ("session-standard" :: T.Text)
+                  , "message"   .= ("hi" :: T.Text) ])
+      cStep `shouldBe` 200
+      let mval = decode (BL.fromStrict (TE.encodeUtf8 (T.pack body))) :: Maybe Value
+      case mval of
+        Nothing -> expectationFailure ("响应不是合法 JSON: " ++ take 200 body)
+        Just v -> do
+          -- 注意 JSON 是**嵌套**的：polar/toroidal/berry 在 "t6_state" 对象内部，
+          -- 而 t6/edges/status 在 "trha_constraint" 对象内部（顶层没有这些键）。
+          let mt6 = parseMaybe (withObject "resp" (\o -> do
+                      s6 <- o .: "t6_state"
+                      (,,) <$> s6 .: "polar" <*> s6 .: "toroidal" <*> s6 .: "berry")) v
+                     :: Maybe (Int, Int, Int)
+          case mt6 of
+            Nothing -> expectationFailure "缺 t6_state 字段"
+            Just (polar, toroidal, _berry) -> do
+              (polar >= 0 && polar < 144)   `shouldBe` True   -- 极向 mod polarWinding(144)
+              (toroidal >= 0 && toroidal < 46) `shouldBe` True -- 环向 mod toroidalWinding(46)
+          let mcv = parseMaybe (withObject "resp" (\o -> do
+                      c <- o .: "trha_constraint"
+                      (,,) <$> c .: "t6" <*> c .: "edges" <*> c .: "status")) v
+                     :: Maybe (Bool, Int, T.Text)
+          case mcv of
+            Nothing -> expectationFailure "缺 constraint 判定字段"
+            Just (_t6ok, edges, status) -> do
+              (edges >= 0) `shouldBe` True
+              (status == "pass" || status == "warn") `shouldBe` True  -- 无「拒绝」
+          let mnames = parseMaybe (withObject "p" (.: "session_projections")) v
+                        :: Maybe [T.Text]
+          fmap List.sort mnames `shouldBe` Just ["constraint", "t6state"]
 
     it "★ D-3：投影是覆盖写 —— 多步后仍只有两个键（不累积）" $ do
       app <- mkCPUApp "/dev/null"
