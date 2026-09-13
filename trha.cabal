@@ -250,6 +250,17 @@ executable trha-cpu-gf27simd
   ghc-options:      -rtsopts -threaded
   default-language: Haskell2010
 
+-- CPU 侧数学正确性套件（判据 C1：代数结构 ↔ 权威规范）
+test-suite trha-cpu-test
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test-cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+                  , hspec
+  ghc-options:      -rtsopts -threaded
+  default-language: Haskell2010
+
 -- CLI Application
 executable trha
   main-is:          Main.hs

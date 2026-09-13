@@ -26,6 +26,10 @@ module Infrastructure.CPU.SovereignWuXing
   , aSequence
   , wuXingPhaseOf
   , chiralityZ2
+  , wuXingGenerate
+  , wuXingOvercome
+  , wuXingGenerateCycle
+  , wuXingOvercomeCycle
   , nayin
   , polarWinding144
   , toroidalWinding46
@@ -71,6 +75,50 @@ wuXingPhaseOf a = lookup a (zip [0, 1, 3, 4, 6] wuXingNames)
 -- | 手性 Z₂ 因子：a 奇数 → 含反射（Present），偶数 → 纯旋转（Absent）。
 chiralityZ2 :: Int -> Bool
 chiralityZ2 a = odd a
+
+-- | **相生关系**（Generating Cycle）—— 逐条照抄 Agda 权威
+-- @/data/work/discrete-mathematics/src/02-magnetic-24d/WuXing.agda@ 的 @generate@：
+--
+-- > generate Fire  = Earth      -- 火→土
+-- > generate Earth = Metal      -- 土→金
+-- > generate Metal = Water      -- 金→水
+-- > generate Water = Wood       -- 水→木
+-- > generate Wood  = Fire       -- 木→火
+--
+-- 这是**主权状态机正常演化**的路径（Agda 原文注释）；它是一个**5-循环**，
+-- 即任意起点连续套用 5 次回到自身、且不存在不动点。
+wuXingGenerate :: String -> String
+wuXingGenerate "\28779" = "\22303" -- 火 → 土
+wuXingGenerate "\22303" = "\37329" -- 土 → 金
+wuXingGenerate "\37329" = "\27700" -- 金 → 水
+wuXingGenerate "\27700" = "\26408" -- 水 → 木
+wuXingGenerate "\26408" = "\28779" -- 木 → 火
+wuXingGenerate other = other
+
+-- | **相克关系**（Overcoming Cycle）—— 逐条照抄 Agda 权威的 @overcome@：
+--
+-- > overcome Fire  = Metal      -- 火→金
+-- > overcome Metal = Wood       -- 金→木
+-- > overcome Wood  = Earth      -- 木→土
+-- > overcome Earth = Water      -- 土→水
+-- > overcome Water = Fire       -- 水→火
+--
+-- Agda 原文注明这是"导致手性分离与能隙打开的干涉路径"。同样是 **5-循环、无不动点**。
+wuXingOvercome :: String -> String
+wuXingOvercome "\28779" = "\37329" -- 火 → 金
+wuXingOvercome "\37329" = "\26408" -- 金 → 木
+wuXingOvercome "\26408" = "\22303" -- 木 → 土
+wuXingOvercome "\22303" = "\27700" -- 土 → 水
+wuXingOvercome "\27700" = "\28779" -- 水 → 火
+wuXingOvercome other = other
+
+-- | 从某一行星出发，取 6 步相生（第 6 步应回到起点 —— 证明阶为 5）。
+wuXingGenerateCycle :: String -> [String]
+wuXingGenerateCycle = take 6 . iterate wuXingGenerate
+
+-- | 同上，相克。
+wuXingOvercomeCycle :: String -> [String]
+wuXingOvercomeCycle = take 6 . iterate wuXingOvercome
 
 -- | 纳音：@(五行模数 × 极向相位) mod 60@（pyBitNet @dialect.py:86@）。
 nayin :: Int -> Int -> Int
