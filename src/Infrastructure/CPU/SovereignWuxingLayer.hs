@@ -35,8 +35,6 @@ module Infrastructure.CPU.SovereignWuxingLayer
   , WuxingLayerW(..)
   , T6State(..)
   , t6Init
-  , T6State (..)
-  , t6Init
   , t6Verify
   , causalGraphStep
   , argMaxIdx
