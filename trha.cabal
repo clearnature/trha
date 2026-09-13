@@ -207,6 +207,16 @@ executable trha-webgpu-errorprobe
   ghc-options:      -rtsopts -threaded
   default-language: Haskell2010
 
+-- GF(27) 乘法 kernel 的 GPU↔CPU 对拍
+executable trha-webgpu-gf27
+  main-is:          Gf27Probe.hs
+  hs-source-dirs:   benchmarks/webgpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-webgpu
+                  , trha:trha-llm
+  ghc-options:      -rtsopts -threaded
+  default-language: Haskell2010
+
 -- CLI Application
 executable trha
   main-is:          Main.hs

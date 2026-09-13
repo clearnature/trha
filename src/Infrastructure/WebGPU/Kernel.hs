@@ -70,6 +70,14 @@ noLabel = StringView nullPtr 0
 withCleared :: (Ptr a -> IO b) -> IO b
 withCleared f = allocaBytes 256 $ \p -> fillBytes p 0 256 >> f p
 
+-- | 指定字节数的清零分配。
+--
+-- 条目**数组**必须按个数算尺寸：@BindGroupLayoutEntry@ 约 128 字节，固定 256 只能装
+-- 两个；装 3 个就会越界写，后续字段读到垃圾（实测报
+-- "invalid sampler binding type for sampler binding layout at binding 2"）。
+withClearedN :: Int -> (Ptr a -> IO b) -> IO b
+withClearedN sz f = allocaBytes sz $ \p -> fillBytes p 0 sz >> f p
+
 -- | 由 WGSL 源码建内核；@nBindings@ 是 storage buffer 绑定个数（binding 0..n-1）。
 newKernel :: Context -> String -> Int -> String -> IO Kernel
 newKernel ctx wgsl nBindings entry = do
@@ -85,8 +93,9 @@ newKernel ctx wgsl nBindings entry = do
         poke smPtr (ShaderModuleDescriptor { smdNextInChain = castPtr wgslPtr, smdLabel = noLabel })
         createShaderModule (ctxDevice ctx) smPtr
 
-  bgl <- withCleared $ \(entriesPtr :: Ptr BindGroupLayoutEntry) -> do
-    let stride = sizeOf (undefined :: BindGroupLayoutEntry)
+  let bglStride = sizeOf (undefined :: BindGroupLayoutEntry)
+  bgl <- withClearedN (bglStride * nBindings + 64) $ \(entriesPtr :: Ptr BindGroupLayoutEntry) -> do
+    let stride = bglStride
         mkEntry i = BindGroupLayoutEntry
           { bgleNextInChain = nullPtr
           , bgleBinding = fromIntegral i
@@ -155,8 +164,9 @@ runKernel
   -- ^ @(拷贝源, 读回目标, 元素个数)@；@Nothing@ 表示不读回
   -> IO [Word32]
 runKernel ctx k buffers (wx, wy, wz) readBack = do
-  bindGroup <- withCleared $ \(bgEntriesPtr :: Ptr BindGroupEntry) -> do
-    let stride = sizeOf (undefined :: BindGroupEntry)
+  let bgStride = sizeOf (undefined :: BindGroupEntry)
+  bindGroup <- withClearedN (bgStride * length buffers + 64) $ \(bgEntriesPtr :: Ptr BindGroupEntry) -> do
+    let stride = bgStride
         mkBge i gb = BindGroupEntry
           { bgeNextInChain = nullPtr
           , bgeBinding = fromIntegral i
