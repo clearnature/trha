@@ -194,3 +194,47 @@ ls /usr/lib/x86_64-linux-gnu/libvulkan* ; ls /usr/lib/x86_64-linux-gnu/libEGL*
 8. **MAP_READ 只能与 COPY_DST 搭配、不能叠 STORAGE** → 两个 buffer + CopyBufferToBuffer 搬运。
 9. **描述符必须先清零**（含未填的内嵌结构，如 bind group layout entry 的 sampler/texture/storageTexture）。
 10. 运行时需 `LD_LIBRARY_PATH=$PWD/3rdparty/wgpu-native/lib`（尚未设 rpath）。
+
+---
+
+## 8. 旧层处置与新高层（2026-09-13）
+
+### 旧层：已归档 —— 结论是"没有可接入的逻辑"
+
+所有者最初裁定「D. 重写接入新层」。逐文件读完后发现旧层（14 文件 1344 行）**不是**
+"待接线的分层 API"，而是一组空壳：
+
+| 位置 | 代码 | 事实 |
+|---|---|---|
+| `Backend.hs` `executeCompute` | `threadDelay 1000; return (Right ())` | 拿 sleep 假装算过 |
+| `Buffer.hs` `createBuffer` | `let bufferId = 1  -- Would generate unique ID in production` | 假 ID，恒为 1 |
+| `Buffer.hs` `mapBuffer` | `Left (UnknownWebGPUError "… simulation")` | 占位 |
+| `Compute.hs` `matrixMultiply` | 只 `createBuffer` 就返回 | **从不 dispatch** |
+| `FFI.hs` | `webgpu_create_*` 等 11 个符号 | 真实库 `nm` 实测 0 命中 |
+
+唯一"真"的 `WGSL.hs`/`ShaderLib.hs` 只是 llama.cpp shader 的 f32 转写，而原始 `.wgsl`
+已在 `3rdparty/llama-webgpu/wgsl-shaders/`（41 个文件）。
+
+→ 按所有者确认的方案 A 执行：**新写高层 + 归档旧层**。旧层移至
+`archive/webgpu-legacy/`，含 README（空壳证据 / 取代关系表 / 取回方式与警告）。
+
+### 新高层（已建，真机验证）
+
+| 模块 | 职责 | 状态 |
+|---|---|---|
+| `Infrastructure.WebGPU.Context` | instance → adapter → device → queue 生命周期 | ✅ |
+| `Infrastructure.WebGPU.Buffer` | `GpuBuffer` 创建/上传/读回；封装 `MAP_READ` 的「两 buffer + CopyBufferToBuffer」两步法 | ✅ |
+| `Infrastructure.WebGPU.Kernel` | WGSL → ShaderModule → BindGroup(Layout) → PipelineLayout → Pipeline → dispatch | ✅ |
+
+效果：`benchmarks/webgpu/Compute.hs` 由 231 行降到 50 行，低层细节（描述符/指针偏移/
+事件泵/usage 组合）不再出现在调用点。
+
+### 仍待做
+
+| 项 | 说明 |
+|---|---|
+| `Profile` | 真实 GPU 计时（旧层是 `threadDelay` 假计时） |
+| `Error` | 错误类型 + **uncaptured error** 回调 —— 目前任何 WebGPU 校验错误都会让 wgpu-native 的默认处理器直接 abort 进程（调试期靠它的消息定位问题，但库化后需要自己接管） |
+| rpath | 现在靠 `LD_LIBRARY_PATH`；可在 cabal 加 `-optl-Wl,-rpath,…` 免去 |
+| 三值 / GF(27) kernel | 当前跑的是普通 u32 kernel；愿景所需的 kernel 需另写 WGSL 并与 `SovereignGF27` 对拍 |
+| 测试纳入 | 现以 `trha-webgpu-compute` 作冒烟；可加 hspec（无 GPU 时 pending 兜底） |
