@@ -139,7 +139,7 @@
 | **D-3** | 内核状态机承载**推理过程** | `Core.Agent.StateMachine` 是朴素 FSM（4 状态 5 命令）；真正的推理状态在 CPU 层 `T6State` | 概念未上浮 | 中 |
 | **D-4** | 依赖类型论 / Liquid Haskell | 0 处代码 | 未开始 | 大 |
 | **D-5** | 草稿模型（speculative draft） | 0 命中（概念出自 llama.cpp `speculative.md`） | 未开始 | 中 |
-| **D-6** | WebGPU 后端 | 1344 行不在构建、simulation | 未接线 | 中 |
+| **D-6** | WebGPU 后端 | **已更新（2026-09-13 核实）**：旧层（simulation，1344 行）**已归档**至 `archive/webgpu-legacy/`；**新高层**（`Context`/`Buffer`/`Kernel`/`Error` + `Raw/**` 共 9 模块）**在构建**，另有 5 个探针可执行（`trha-webgpu-hello`/`-compute`/`-errorprobe`/`-gf27`/`-gf27matmul`）与 `test-webgpu` **真机对拍**（GF(27) 乘法全 729 组、matmul 16×32、四实现同批全等）。**仍缺**：未接入**生产推理路径**（属 §5「C 未接线」档）。 | 已建成、**未接生产** | 中 |
 | **D-7** | Agda 作证明流程 | 仅注释里的对拍目标 | 流程未集成 | 中 |
 | **D-8** | 缓存 | 70 行 vs README "99%+" | 宣称不符 | 小 |
 | ~~**D-9**~~ | ~~Haskell 侧 Orchestration 层~~ | **已处置（2026-09-13）**：199 行遗迹归档出构建 → `archive/orchestration/` | 归档 | 小 |
@@ -152,7 +152,7 @@
 |---|---|---|
 | **A 已建成且可达** | 外部模型接入（三 wire + 真流式 + provider 注册表）、协议面、引擎原语、TS 编排全功能、CLI 外壳、宿主导出协议、**本地三值推理（D-2 后：`kind="cpu"` 装配可达）** | 有测试 + 有调用点 + 端到端证据 |
 | ~~**B 已建成但不可达**~~ → **A** | 推理约束原语（T⁶ / 因果图 / 五行链）——**已作用于外部 API**（D-1 于 2026-09-13 闭合，`commit 25587ea`）：响应侧携带 `trha_constraint` 采纳判定 | 有测试 + **有生产调用点**（`API/Server.hs` 的 `constraintField`）+ 端到端证据（4 examples） |
-| **C 未接线** | WebGPU（1344 行）、`Presentation/**`（8 文件）。原 `Orchestration.*`（199 行遗迹）已于 2026-09-13 归档出构建 | 不在 cabal / 无引用 |
+| **C 未接线** | **WebGPU 新高层**（`Infrastructure.WebGPU.*` 9 模块在构建 + 5 探针 + 真机对拍，**但未接入生产推理路径**）、`Presentation/**`（8 文件）。旧 WebGPU simulation 层（1344 行）与原 `Orchestration.*`（199 行）已于 2026-09-13 归档出构建（`archive/`） | 不在 cabal / 无生产引用 |
 | **D 未开始** | 依赖类型论 / Liquid Haskell（D-4，0 命中）；草稿模型（D-5）——**概念已定案**（用户 2026-09-13 裁定：与约束是同一机制的两面）但**实现未做**。**约束 ↔ 外部推理的连接层已从本档移出**（D-1 已闭合） | 0 命中 |
 | **E 宣称与实现不符** | 缓存 99%（实 70 行）、README 的 WebGPU "Phase 3 ✅" | 文档 vs 实测 |
 
