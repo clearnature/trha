@@ -76,7 +76,7 @@
 | 6 | 十二律两序 + 隔八相生（+7 半音纯五度循环） | 古律学（用户 2026-09-13 指正） | ✅ 3 例 |
 | 7 | 分圆单位根：C₄ / C₃ / C₁₂ 群结构 | `PhaseSubgroup.agda`（⟨α⟩ ≅ C₄） | ✅ 7 例（经 Z[ζ₁₂] 验证） |
 | 8 | 商空间周期 60 / 3312 + `periodNotDivisible` | `Sovereign.Coupling.ZhonglvPhaseSync` | ✅ 10 例 |
-| 9 | `HolographicSpace`（`Orthogonal` / `basisAt`） | `Sovereign.Structology.HolographicSpace` | ⬜ **未做** |
+| 9 | 全息态与基模（`hermitianIP`/`normSq`/`basisVec`/`basisAt`/`Orthogonal`） | `HolographicSpace.agda` + `FiniteInnerProduct.agda` + `GF9.agda` | ✅ 10 例（**补齐实现**：`src/Infrastructure/CPU/HolographicSpace.hs`） |
 
 ### C2 · 类型不变量由**编译期**强制（负面编译用例）
 
@@ -102,16 +102,32 @@
 | 4 | `adj = q ⊗ k` 是 GF(3) **外积**（任意 2×2 子式为零 ⇒ 秩 ≤ 1） | ✅ |
 | 5 | 非法路径**不融合**：`ok = False ⟹ h' ≡ x`（残差恒等） | ✅ |
 | 6 | 传播语义：GF(3) 零元/单位元；**空图** ⟹ 残差恒等 | ✅ |
-| 7 | **非空邻接**的传播行为（按 `adj[i][j]` 缩放 `nodes[i]`） | ⬜ **未覆盖**（见局限） |
+| 7 | **非空邻接**：可构造（`attnQ=attnK=全1`），且**秩 ≤ 1 在非零下仍成立** | ✅ |
+| 8 | `wuxingForward` 可达标记语义：选择合法性、全可达 ⟹ 末态 Berry 在界内、模封闭性 | ✅ |
 
 **已知局限（不掩盖）**：
 
-- `test-cpu` 现用的层（`w3c` 确定性 trit 矩阵，`dim=24` / `heads=3` / `hex=6`）使
-  `scalarOf` 之后的 `q_i`、`k_j` **全为 0** ⇒ **`adj` 恒零、因果图恒为空图**。
-  因此第 6 条只证了**空图**情形；要覆盖第 7 条需另选一组使某些 `q_i`/`k_j` 非零的权重。
+- ~~`test-cpu` 现用的层使 `adj` 恒零~~ → **已补**：`adj` 恒零是**默认层**的性质而非
+  `causalGraphStep` 的普遍性质；取 `wlAttnQ = wlAttnK = 全 1` 即得非零邻接，且**非零下
+  秩仍 ≤ 1**（见第 7 条）。**仍存**的限制是：传播对 `hidden` 的**可观测**影响被
+  `h' = x + (gf27ToInt fused \`div\` 10)` 的截断掩盖（`gf27ToInt ∈ [0,26]` ⇒ `div 10 ∈ {0,1,2}`），
+  故"非空邻接 ⟹ hidden 改变"这条**未**成立 —— 这是实现细节，已在测试里固定。
 - C4 未触及：`wuxingForward` 的**可达标记语义**（目前只验长度）、`tailCycle` 的
   「不落不动点 / 最小周期」（该函数是 `test/Spec.hs` 的测试辅助，已有 3 条断言覆盖
   退化与 13-周期，但**语义层面**的最小性未单独论证）。
+
+### C3 · 多实现逐元素全等 —— ✅ 达成（3/4）
+
+| # | 实现 | 入口 | 覆盖 |
+|---|---|---|---|
+| ① | Haskell 标量 | `foldl gf27Add 0 . zipWith gf27Mul` | ✅ |
+| ② | C 标量 | `trha_gf27_rowdot_scalar_only` → `gf27RowdotScalarOnly` | ✅ |
+| ③ | AVX2 | `trha_gf27_rowdot` → `gf27Rowdot`（8 路并行） | ✅（本机 `/proc/cpuinfo` 含 `avx2`） |
+| ④ | GPU WGSL | — | ❌ **缺失**（本仓无 `.wgsl`） |
+
+对拍：穷举 `[0,26]²`（729 组）验 ①≡②；同批输入验 ①≡②≡③；边界（空/零元/单位元）；
+跨 8 路边界（7/8/9/15/16/17）；长向量 1000。无 AVX2 的机器上按项目约定用 `pendingWith`
+兜底。**判据纪律**：性能不是判据，AVX2 是"独立实现"而非提速手段。
 
 ### C5（D-1）· 约束 ↔ 外部 API 推理 —— ✅ 已实现
 
