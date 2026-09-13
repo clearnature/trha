@@ -55,3 +55,88 @@
 
 **事实仍然保留**：AVX2 版本机确实慢于标量（原因是 `i32gather` 为微码 + 乘法表仅 27 项驻留 L1）
 —— 这条**记录**有价值，但它**不是结论**，更不是否决理由。
+
+---
+
+## 4. 覆盖进度表（2026-09-13，北京时间）
+
+工具：`test-cpu/Spec.hs`（独立套件）+ `test-cpu/negative/*.hs`（负面编译用例，不参与构建）。
+全绿基线：`cabal build all` **0 error / 0 warning**；`trha-test` 177/0（4 pending）；
+`trha-cpu-test` **65/0**；`trha-webgpu-test` 2/0。
+
+### C1 · 代数结构 ↔ 权威规范（Agda）
+
+| # | 主题 | 权威出处 | 状态 |
+|---|---|---|---|
+| 1 | 五行相生/相克（`generate`/`overcome`） | `Sovereign.MetaStructure.WuXing` | ✅ 补齐 + 6 例 |
+| 2 | 五行相位 / Christoffel 螺旋 | `Sovereign.Structology.WuXingTransition` | ✅ 5 例 |
+| 3 | 缠绕常数 144/46 | `Winding.agda` / `IhC60Vibration.agda` | ✅ 3 例 |
+| 4 | 全息 π 原子对（禁止约分由类型保证） | `Sovereign.Structology.HolographicPi` | ✅ 3 例 + 2 负面 |
+| 5 | 十二律损益链（整除 / 四舍五入两口径） | `Sovereign.Coupling.LossGain` | ✅ 7 例 |
+| 6 | 十二律两序 + 隔八相生（+7 半音纯五度循环） | 古律学（用户 2026-09-13 指正） | ✅ 3 例 |
+| 7 | 分圆单位根：C₄ / C₃ / C₁₂ 群结构 | `PhaseSubgroup.agda`（⟨α⟩ ≅ C₄） | ✅ 7 例（经 Z[ζ₁₂] 验证） |
+| 8 | 商空间周期 60 / 3312 + `periodNotDivisible` | `Sovereign.Coupling.ZhonglvPhaseSync` | ✅ 10 例 |
+| 9 | `HolographicSpace`（`Orthogonal` / `basisAt`） | `Sovereign.Structology.HolographicSpace` | ⬜ **未做** |
+
+### C2 · 类型不变量由**编译期**强制（负面编译用例）
+
+| # | 不变量（左侧**不得**当作右侧用） | 用例文件 | 状态 |
+|---|---|---|---|
+| 1 | `Trit` ⊄ `GF27` | `CrossCategoryTritGF27.hs` | ✅ |
+| 2 | 环 `Z3r` ⊄ 域 `GF27`（`3 ≠ 0`） | `RingVsFieldZ3rGF27.hs` | ✅ |
+| 3 | `Device` ⊄ `Buffer`（WebGPU 句柄） | `HandleMixDeviceBuffer.hs` | ✅ |
+| 4 | 全息 π 原子不可做算术 | `HoloPiArithmetic.hs` | ✅ |
+| 5 | 全息 π 原子对不可求商/约分 | `HoloPiReduce.hs` | ✅ |
+| 6 | `GF9`（GF(3²)）⊄ `GF27`（GF(3³)） | `DomainGF9VsGF27.hs` | ✅ |
+| 7 | `Harmonic`（相位周次计数）⊄ `GF27`（元素值） | `HarmonicVsGF27.hs` | ✅ |
+| 8 | `Pv`（5-trit/字节打包）⊄ `[Int]`（元素序列） | `PvVsList.hs` | ✅ |
+| 9 | `Z12`（4 维 = φ(12)）⊄ `Q`（1 维） | `Z12VsQ.hs` | ✅ |
+
+### C4 · 因果推理内核的语义
+
+| # | 语义 | 状态 |
+|---|---|---|
+| 1 | `t6Verify` 实质判据 = **Berry 相位连续**（`|nb| < 105`） | ✅ |
+| 2 | `t6Verify` 有状态：边界由「已有相位 + 增量」累积值决定 | ✅ |
+| 3 | `argMaxIdx`：最大元素**首个**下标、平局取最小、空向量 0 | ✅ |
+| 4 | `adj = q ⊗ k` 是 GF(3) **外积**（任意 2×2 子式为零 ⇒ 秩 ≤ 1） | ✅ |
+| 5 | 非法路径**不融合**：`ok = False ⟹ h' ≡ x`（残差恒等） | ✅ |
+| 6 | 传播语义：GF(3) 零元/单位元；**空图** ⟹ 残差恒等 | ✅ |
+| 7 | **非空邻接**的传播行为（按 `adj[i][j]` 缩放 `nodes[i]`） | ⬜ **未覆盖**（见局限） |
+
+**已知局限（不掩盖）**：
+
+- `test-cpu` 现用的层（`w3c` 确定性 trit 矩阵，`dim=24` / `heads=3` / `hex=6`）使
+  `scalarOf` 之后的 `q_i`、`k_j` **全为 0** ⇒ **`adj` 恒零、因果图恒为空图**。
+  因此第 6 条只证了**空图**情形；要覆盖第 7 条需另选一组使某些 `q_i`/`k_j` 非零的权重。
+- C4 未触及：`wuxingForward` 的**可达标记语义**（目前只验长度）、`tailCycle` 的
+  「不落不动点 / 最小周期」（该函数是 `test/Spec.hs` 的测试辅助，已有 3 条断言覆盖
+  退化与 13-周期，但**语义层面**的最小性未单独论证）。
+
+### C5（D-1）· 约束 ↔ 外部 API 推理
+
+⬜ **未开始 —— 需用户先定义三要素**：约束作用点 / 失败行为 / 草稿模型角色。
+
+---
+
+## 5. 本轮查证出的三处实现事实（**记录，非修 bug**）
+
+1. **`t6Verify` 的两条缠绕子条件恒真**：`np < 144`、`nt < 46` 因 `np`/`nt` 都过 `mod`，
+   永远成立；唯一有约束力的是 Berry 相位 `|nb| < berryThresholdQ (105)`。
+   它们保留无害（是几何意图的注释），但**不能**当作有效判据来验收。
+2. **「0.1 系数」在整数域上是截断**：实现为 `gf27ToInt fused \`div\` 10`，而 `gf27ToInt`
+   值域 `[0,26]`，故 `div 10` 只能取 `{0,1,2}`。本层数据下 `fused` 分量全 `< 10`，
+   于是 `updated ≡ x`。「有边就该改变输出」的直觉在此**不成立**。
+3. **本测试层下 `adj` 恒零**（见上方「已知局限」）。
+
+以上三条都已写成断言固定在 `test-cpu/Spec.hs` 里，避免日后被误读为「缺陷」或「正常」。
+
+---
+
+## 6. 不变量清单（供对照检查）
+
+- 判据是**数学/理论正确性**（C1–C4），**不是**性能数字；性能只入附录并标注测量环境。
+- 对拍必须**按权威原文独立实现算法**后比对，不得把仓内输出抄成期望值。
+- 隐藏口径差异（整除 vs 四舍五入）**两个版本都保留**，各自对到自己的权威。
+- 类型不变量只用**负面编译**证明；正向断言证明不了隔离。
+- 遇到「权威有、仓内无」时**补齐实现**（如五行 `generate`/`overcome`），而非改叙述。
