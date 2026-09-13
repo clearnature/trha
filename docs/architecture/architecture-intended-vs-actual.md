@@ -136,7 +136,7 @@
 |---|---|---|---|---|
 | ~~**D-1**~~ | ~~推理约束**作用于外部 API 推理**~~ | **已闭合（2026-09-13，`commit 25587ea`）**：作用点定为**响应侧的「采纳判定」**；外部输出视为 draft → 过 T⁶/因果图/四步链 → 判定 `trha_constraint` **总是**随响应返回（标注而非拒绝）；草稿（本地三值）与外部输出走同一入口 | ✅ 已关闭 | 大 |
 | ~~**D-2**~~ | ~~原生推理"内核自带"~~ | **已闭合（2026-09-13，`commit 9a6dd6f`）**：`"cpu"` 成一等 provider kind，`adapterFor`/`providerStream` 可达 `createCPUAdapter`，引擎按模型路径 memo（`cpuAdapterCache`）；端到端用例 5/0 通过 | ✅ 已关闭 | 小 |
-| **D-3** | 内核状态机承载**推理过程** | `Core.Agent.StateMachine` 是朴素 FSM（4 状态 5 命令）；真正的推理状态在 CPU 层 `T6State` | 概念未上浮 | 中 |
+| ~~**D-3**~~ | ~~内核状态机承载**推理过程**~~ | **已闭合（2026-09-13）**：先把推理状态（CPU 层 `T6State`）经 `Session.projections` 上浮（`910b90a`/`6f4baf5`），再把内核 FSM（`Core.Agent.StateMachine`）接入会话 —— `Session` 新增 `agentState :: IORef AgentState`，`advanceAgent` 用 `transition` 推进并每步随响应回显（`020dc25`）。`Core.Agent.StateMachine` **首次获得生产调用点** ⇒ 由 §5「B 档」升入「A 档」 | ✅ 已关闭 | 中 |
 | **D-4** | 依赖类型论 / Liquid Haskell | 0 处代码 | 未开始 | 大 |
 | **D-5** | 草稿模型（speculative draft） | 0 命中（概念出自 llama.cpp `speculative.md`） | 未开始 | 中 |
 | **D-6** | WebGPU 后端 | **已更新（2026-09-13 核实）**：旧层（simulation，1344 行）**已归档**至 `archive/webgpu-legacy/`；**新高层**（`Context`/`Buffer`/`Kernel`/`Error` + `Raw/**` 共 9 模块）**在构建**，另有 5 个探针可执行（`trha-webgpu-hello`/`-compute`/`-errorprobe`/`-gf27`/`-gf27matmul`）与 `test-webgpu` **真机对拍**（GF(27) 乘法全 729 组、matmul 16×32、四实现同批全等）。**仍缺**：未接入**生产推理路径**（属 §5「C 未接线」档）。 | 已建成、**未接生产** | 中 |
