@@ -165,6 +165,9 @@ library trha-webgpu
     Infrastructure.WebGPU.Raw.Structs
     Infrastructure.WebGPU.Raw.FFI
     Infrastructure.WebGPU.Raw.Async
+    Infrastructure.WebGPU.Context
+    Infrastructure.WebGPU.Buffer
+    Infrastructure.WebGPU.Kernel
   hs-source-dirs:   src
   include-dirs:     3rdparty/wgpu-native/include
   c-sources:        cbits/wgpu_callback_shim.c
