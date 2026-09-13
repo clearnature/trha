@@ -98,6 +98,39 @@ library trha-api
     API.ProviderProbe
     API.ProviderRuntime
     Core.Provider.Types
+
+  --------------------------------------------------------------------------
+  -- ⚠️⚠️  禁 止 删 除 本 节 —— 下面 27 项是【必需】的，不是冗余  ⚠️⚠️
+  --------------------------------------------------------------------------
+  --
+  -- 为什么必须列在这里：
+  -- 本库与 trha-llm **共享 `hs-source-dirs: src`**。GHC 带 `-isrc` 时会在同一目录找到这些
+  -- 源文件，并把它们当成本库要引用的模块。若不在 other-modules 里列出，cabal 就**不编译**
+  -- 它们 —— 于是「引用了却没人编」，并且失败发生在**链接期**（不是编译期），极易被误判成
+  -- "冗余项，可以删掉优化"。
+  --
+  -- 实测证据（2026-09-13，本仓）：
+  -- 删掉本节后：
+  -- cabal build trha-api  → EXIT=0        ★ 单库构建**骗过了**，看不出问题
+  -- cabal build all       → EXIT=1，链接器报
+  -- undefined reference to
+  -- `...inplacezmtrhazmapi_LLMziProvidersziDeepSeek_parseDeepSeekChatTurn_closure`
+  -- （符号前缀 `...trhazmapi_` 表明 trha-api 在找 DeepSeek，但没人编译它）
+  -- cabal build trha-api 的产物此时只剩 4 个 .o（API/*），Infrastructure.*/LLM.*/Core.* 全消失
+  -- 随后已完整回滚（`git diff` 为空，四个套件全绿）。请不要重蹈：**先看本注释再动**。
+  --
+  -- 正解（未做，属大重构）：
+  -- **拆分 `hs-source-dirs`** —— 把 `src/` 按库拆成各自独立的目录，使每个库只看到自己的源。
+  -- 在完成之前，本节必须保持 27 项完整。
+  --
+  -- 分类（将来拆分时的对照表）：
+  -- · 24 项 = trha-llm 的 exposed-modules：20 × `Infrastructure.CPU.*` + 4 × `LLM.*`
+  -- ·  3 项 = trha-core 的 exposed-modules：`Core.Agent.Modes` / `Core.Session.Manager`
+  -- / `Core.Session.Types`
+  -- ⚠️ 注意 `build-depends` 里**已经**列了 `trha:trha-core` 与 `trha:trha-llm` ——
+  -- 所以这不是"依赖没写"，而是"共享 src/ 导致的被迫重编"。两者不是一回事。
+  -- ⚠️ 若将来把 `src/` 拆开，本节应随之**大幅缩短**（甚至清空）；届时用这 27 项做核对清单。
+  --
   other-modules:
     Core.Agent.Modes
     Core.Session.Manager
@@ -284,6 +317,9 @@ test-suite trha-cpu-test
 executable trha
   main-is:          Main.hs
   hs-source-dirs:   packages/app/CLI
+  -- 注：本可执行的 hs-source-dirs 是 `packages/app/CLI`，**独立目录**，与其它库无共享，
+  -- 故下面 20 项是它自己的真文件，属**正常**。这与 library trha-api 那 27 项
+  -- （共享 `src/` 被迫重编）**性质不同**，不要互相对照或"清理"。
   other-modules:
     Bridge.Scheduler
     Config.Settings

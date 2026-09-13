@@ -186,3 +186,10 @@
 - 隐藏口径差异（整除 vs 四舍五入）**两个版本都保留**，各自对到自己的权威。
 - 类型不变量只用**负面编译**证明；正向断言证明不了隔离。
 - 遇到「权威有、仓内无」时**补齐实现**（如五行 `generate`/`overcome`），而非改叙述。
+- **`trha.cabal` 里 `library trha-api` 的 `other-modules`（27 项）禁止删除** ——
+  它不是冗余，而是「`trha-api` 与 `trha-llm` **共享 `hs-source-dirs: src`**」这条设定的
+  被迫产物。删掉后 **`cabal build trha-api` 仍会 EXIT=0**（骗过单库构建），但
+  `cabal build all` 在**链接期**失败：
+  `undefined reference to ...trhazmapi_LLMziProvidersziDeepSeek_..._closure`
+  （2026-09-13 实测；已完整回滚）。**真正的根治是拆分 `hs-source-dirs`（挪文件），属大重构。**
+  详见 `trha.cabal` 中该节的警示注释（含分类对照表，供将来拆分时核对）。
