@@ -175,13 +175,13 @@ instance Storable BufferDescriptor where
     BufferDescriptor
       <$> peekByteOff p #{offset WGPUBufferDescriptor, nextInChain}
       <*> peekByteOff p #{offset WGPUBufferDescriptor, label}
-      <*> peekByteOff p #{offset WGPUBufferDescriptor, usage}
+      <*> (fromRawFlags <$> peekByteOff p #{offset WGPUBufferDescriptor, usage})
       <*> peekByteOff p #{offset WGPUBufferDescriptor, size}
       <*> peekByteOff p #{offset WGPUBufferDescriptor, mappedAtCreation}
   poke p x = do
     pokeByteOff p #{offset WGPUBufferDescriptor, nextInChain} (bdNextInChain x)
     pokeByteOff p #{offset WGPUBufferDescriptor, label} (bdLabel x)
-    pokeByteOff p #{offset WGPUBufferDescriptor, usage} (bdUsage x)
+    pokeByteOff p #{offset WGPUBufferDescriptor, usage} (toRawFlags (bdUsage x))
     pokeByteOff p #{offset WGPUBufferDescriptor, size} (bdSize x)
     pokeByteOff p #{offset WGPUBufferDescriptor, mappedAtCreation} (bdMappedAtCreation x)
 
