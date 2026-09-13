@@ -52,6 +52,7 @@ library trha-llm
     Infrastructure.CPU.Christoffel
     Infrastructure.CPU.SovereignModel
     Infrastructure.CPU.GF27SIMD
+    Infrastructure.CPU.HoloPi
     Infrastructure.CPU.GF3Intrinsic
     Infrastructure.CPU.SovereignIntrinsic
     Infrastructure.CPU.SovereignGF27

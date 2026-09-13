@@ -9,6 +9,7 @@ import System.Exit (ExitCode (..))
 import System.Process (readProcessWithExitCode)
 import Test.Hspec
 
+import Infrastructure.CPU.HoloPi
 import Infrastructure.CPU.SovereignWuXing
 
 -- | Agda 权威出处：
@@ -21,6 +22,8 @@ import Infrastructure.CPU.SovereignWuXing
 --       Christoffel 螺旋 1→2→4→8→7→5（×2 mod 9，周期 6）
 --       → 模 3 投影 [1,2,1,2,1,2] → scanl 累加 [0,1,3,4,6] = a 序列
 --       → a 的奇偶 = Z₂ 手性
+--   · Sovereign.Structology.HolographicPi
+--       全息 π = 144/46 的**原子对**；"禁止约分由类型保证"
 main :: IO ()
 main = hspec $ do
   describe "C1 · 五行 ↔ Agda 权威（Sovereign.MetaStructure.WuXing）" $ do
@@ -79,13 +82,32 @@ main = hspec $ do
       map (\(_, _, o) -> o) platonicsOrders `shouldBe` [12, 48, 120, 60, 24]
 
   -- ------------------------------------------------------------------
+  -- C1 · 全息 π：权威要求 144 与 46 是**不可约的原子对**，
+  --      这条数学约束必须由类型强制（见 Infrastructure.CPU.HoloPi）。
+  -- ------------------------------------------------------------------
+  describe "C1 · 全息 π ↔ Agda 权威（Sovereign.Structology.HolographicPi）" $ do
+    it "原子对 (144, 46)：数值出口唯一，等于宪法常量" $ do
+      polarRepValue polar144 `shouldBe` 144
+      toroidalRepValue toroidal46 `shouldBe` 46
+      holoPiNumerator `shouldBe` 144
+      holoPiDenominator `shouldBe` 46
+
+    it "极向 144 = I_h(120) + 手征四面体(24)；环向 46 = C60 独立基频数" $ do
+      polarRepValue polar144 `shouldBe` 120 + 24
+      toroidalRepValue toroidal46 `shouldBe` 46
+
+    it "原子对与 Winding/IhC60 的常量同源（两处实现一致）" $ do
+      polarRepValue polar144 `shouldBe` polarWinding144
+      toroidalRepValue toroidal46 `shouldBe` toroidalWinding46
+
+  -- ------------------------------------------------------------------
   -- C2：类型不变量必须由**编译期**强制。
   --
-  -- 做法：test-cpu/negative/ 下的文件是**故意写错**的（跨范畴、跨句柄类型），
-  -- 它们**必须编译失败**。这比任何正向断言都更本质 —— 若某天它们能通过，
-  -- 说明范畴隔离被削弱了，而此时正向测试仍会全绿（那才是危险的）。
+  -- 做法：test-cpu/negative/ 下的文件是**故意写错**的（跨范畴、跨句柄类型、
+  -- 对原子做算术），它们**必须编译失败**。这比任何正向断言都更本质 ——
+  -- 若某天它们能通过，说明不变量被削弱了，而正向测试仍会全绿（那才危险）。
   -- ------------------------------------------------------------------
-  describe "C2 · 类型不变量：范畴隔离（负面编译测试）" $ do
+  describe "C2 · 类型不变量（负面编译测试）" $ do
     it "Trit 不能当 GF27 用（编译必须失败）" $ \_ -> do
       code <- ghcExitCode "test-cpu/negative/CrossCategoryTritGF27.hs"
       code `shouldNotBe` ExitSuccess
@@ -96,6 +118,14 @@ main = hspec $ do
 
     it "WebGPU Device 不能当 Buffer 用（编译必须失败）" $ \_ -> do
       code <- ghcExitCode "test-cpu/negative/HandleMixDeviceBuffer.hs"
+      code `shouldNotBe` ExitSuccess
+
+    it "全息 π 的原子不可做算术（编译必须失败）" $ \_ -> do
+      code <- ghcExitCode "test-cpu/negative/HoloPiArithmetic.hs"
+      code `shouldNotBe` ExitSuccess
+
+    it "全息 π 的原子对不可求商/约分（编译必须失败）" $ \_ -> do
+      code <- ghcExitCode "test-cpu/negative/HoloPiReduce.hs"
       code `shouldNotBe` ExitSuccess
 
 -- | 用本项目环境（cabal exec 提供包数据库）编译一个文件，返回退出码。
