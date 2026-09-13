@@ -40,6 +40,7 @@ module Infrastructure.WebGPU.Raw.Enums
     -- * 原始值互转（仅供 Raw 层）
   , toRawFlags
   , fromRawFlags
+  , mapModeToRaw
   , toRawEnum
   , fromRawEnum
   ) where
@@ -180,6 +181,10 @@ toRawFlags (BufferUsage w) = w
 -- | 由原始值构造位标志（FFI 返回值方向）。
 fromRawFlags :: Word64 -> BufferUsage
 fromRawFlags = BufferUsage
+
+-- | 取映射模式的原始值（@wgpuBufferMapAsync@ 需要）。
+mapModeToRaw :: MapMode -> Word64
+mapModeToRaw (MapMode w) = w
 
 -- | 枚举 → C 整数（WGPU 的 @WGPU*@ 枚举在 C 侧是 @int32@）。
 toRawEnum :: (Integral a) => a -> CInt

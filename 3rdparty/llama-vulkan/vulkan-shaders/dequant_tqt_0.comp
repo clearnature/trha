@@ -1,0 +1,72 @@
+#version 450
+
+#include "dequant_head.glsl"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {block_tqt_0 data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
+
+// Krystal Spiral inverse mapping: element 'elem' is stored at
+//   krystal_pos = (elem * 205) % 256   (since 5*205 = 1025 ≡ 1 mod 256)
+//   byte_idx = krystal_pos / 5
+//   pos = krystal_pos % 5
+// Decode: value = (qs[byte_idx] / 3^(4-pos)) % 3 - 1
+
+// Powers of 3 for decoding: 3^4=81, 3^3=27, 3^2=9, 3^1=3, 3^0=1
+const uint div3[5] = uint[](81u, 27u, 9u, 3u, 1u);
+
+// Decode a single ternary value from qs array
+int decode_qqs(uint byte_val, uint pos) {
+    return int((byte_val / div3[pos]) % 3u) - 1;
+}
+
+// Decode a single ternary value from qh array (2-bit encoding)
+int decode_qh(uint byte_val, uint pos) {
+    return int((byte_val >> (2u * pos)) & 3u) - 1;
+}
+
+void main() {
+    // Each workgroup processes 4 blocks (256*4 = 1024 elements)
+    const uint i = gl_WorkGroupID.x * 4 + gl_LocalInvocationID.x / 64;
+
+    const uint tid = gl_LocalInvocationID.x % 64;
+    const uint il  = tid / 4;     // element index within quarter-block (0-15)
+    const uint ir  = tid % 4;     // quarter-block index (0-3)
+    const uint ib = 4u * i + ir;  // block index
+
+    if (ib >= p.nel / 256u) {
+        return;
+    }
+
+    const uint base_out = 1024u * i + 256u * ir + 64u * il;
+    const float d = float(data_a[ib].d);
+
+    // Decode 64 elements per thread
+    [[unroll]] for (uint l = 0u; l < 64u; ++l) {
+        // Original element position within the 256-element block
+        const uint elem = 64u * il + l;
+
+        // Krystal Spiral inverse mapping
+        const uint krystal_pos = (elem * 205u) % 256u;
+        const uint byte_idx = krystal_pos / 5u;
+        const uint pos = krystal_pos % 5u;
+
+        int w;
+        if (elem < 240u) {
+            // Decode from qs: 5 ternary values packed per byte
+            const uint byte_val = uint(data_a[ib].qs[byte_idx]);
+            w = decode_qqs(byte_val, pos);
+        } else {
+            // Decode from qh: 2-bit encoding, 4 values per byte
+            const uint qh_elem = elem - 240u;  // 0-15
+            const uint qh_krystal_pos = (qh_elem * 205u) % 16u;
+            const uint qh_bi = qh_krystal_pos / 4u;
+            const uint qh_pi = qh_krystal_pos % 4u;
+            const uint byte_val = uint(data_a[ib].qh[qh_bi]);
+            w = decode_qh(byte_val, qh_pi);
+        }
+
+        data_b[base_out + l] = D_TYPE(float(w) * d);
+    }
+}

@@ -1,130 +1,106 @@
 /*
- * cbits/wgpu_callback_shim.c —— 让 Haskell 能接 WebGPU 的异步回调。
+ * cbits/wgpu_callback_shim.c —— 让 Haskell 能用 wgpu-native v29 的三个异步入口。
  *
- * 为什么需要这一层：
- *   wgpu-native v29 的三个异步入口（wgpuInstanceRequestAdapter /
- *   wgpuAdapterRequestDevice / wgpuBufferMapAsync）都要求传 *CallbackInfo，
- *   其中的 callback 函数指针第二个参数是 **按值** 的 WGPUStringView：
+ * 为什么不能用 Haskell 回调（两层原因）：
+ *   1. WebGPU 回调的第二个参数是**按值** WGPUStringView，Haskell FFI 表达不了；
+ *   2. 更要命：v29 的 wgpuInstanceWaitAny 尚未实现（src/unimplemented.rs 会 panic），
+ *      只能自己驱动事件循环（wgpuInstanceProcessEvents）；而 ProcessEvents 会在
+ *      **调用它的那个线程**上同步触发回调 —— 若那是 Haskell 的 FFI 调用栈，
+ *      回调要进 Haskell 却拿不到 RTS 锁，会自己等自己。
+ *      实测症状：C 侧打印了 "buffer_map cb status=..." 却始终不返回，
+ *      Haskell 回调一次都没进（adapter/device 因回调来自 wgpu worker 线程而侥幸可用）。
  *
- *     typedef void (*WGPUBufferMapCallback)(WGPUMapAsyncStatus status,
- *                                           WGPUStringView message,   // ← 按值 struct
- *                                           void* userdata1, void* userdata2);
+ * 因此本 shim **不调用任何 Haskell 回调**：trampoline 只把结果写进一个 C 侧槽位，
+ * Haskell 侧轮询该槽位。跨语言传递的全是标量/指针。
  *
- *   而 Haskell 的 FFI **不支持按值传 struct**，所以 Haskell 无法直接实现这个回调。
- *   这里用一个 C 蹦床（trampoline）把 WGPUStringView 拆成 (data 指针, length)
- *   两个标量再回调 Haskell —— 结构只在 C 侧出现，Haskell 侧全是标量/指针。
+ * 用法（Haskell 侧）：
+ *   trha_wgpu_request_adapter(inst, opts);
+ *   while (!trha_wgpu_poll()) trha_wgpu_process_events(inst);   // 同时 threadDelay 让出
+ *   status = trha_wgpu_last_status();  obj = trha_wgpu_last_object();
  *
- *   另外 WGPUFuture / WGPUFutureWaitInfo 也是 struct，本 shim 一律以 uint64_t
- *   （future.id）与标量出参形式对外，避免 Haskell 侧再碰按值 struct。
- *
- * 约定：Haskell 侧回调统一为 (status, msgPtr, msgLen, userdata) 四参，
- *       其中 msgPtr/msgLen 来自 WGPUStringView（可能为 NULL/0）。
+ * 槽位是全局的 —— 本项目的 WebGPU 调用是**串行**的（一次只推进一个异步操作），
+ * 所以不需要每请求上下文。
  */
-
 #include <webgpu/webgpu.h>
 #include <stdint.h>
 #include <stddef.h>
 
-/* ------------------------------------------------------------------ */
-/* Haskell 侧回调类型（全标量/指针，规避按值 struct）                    */
-/* ------------------------------------------------------------------ */
+typedef struct {
+    int32_t status; /* 0 = 成功（已归一化：v29 的 *Status 是 Success=0x1） */
+    void   *object; /* adapter / device（按调用类型解释） */
+    int     done;
+} trha_slot;
 
-typedef void (*trha_buffer_map_cb)(int32_t status, const char *msg, size_t msgLen, void *userdata);
-typedef void (*trha_request_adapter_cb)(int32_t status, WGPUAdapter adapter,
-                                        const char *msg, size_t msgLen, void *userdata);
-typedef void (*trha_request_device_cb)(int32_t status, WGPUDevice device,
-                                       const char *msg, size_t msgLen, void *userdata);
+static trha_slot g_slot = { -1, NULL, 0 };
 
-/* ------------------------------------------------------------------ */
-/* 蹦床：把按值 WGPUStringView 拆成 (指针, 长度)                        */
-/* ------------------------------------------------------------------ */
-
-static void trha_bm_trampoline(WGPUMapAsyncStatus status, WGPUStringView message,
-                               void *userdata1, void *userdata2)
+static void slot_reset(void)
 {
-    (void)userdata2;
-    trha_buffer_map_cb cb = (trha_buffer_map_cb)userdata1;
-    if (cb) {
-        cb(status == WGPUMapAsyncStatus_Success ? 0 : (int32_t)status,
-           message.data, message.length, NULL);
-    }
+    g_slot.status = -1;
+    g_slot.object = NULL;
+    g_slot.done = 0;
 }
 
-static void trha_ra_trampoline(WGPURequestAdapterStatus status, WGPUAdapter adapter,
-                               WGPUStringView message, void *userdata1, void *userdata2)
+static void bm_trampoline(WGPUMapAsyncStatus s, WGPUStringView m, void *u1, void *u2)
 {
-    (void)userdata2;
-    trha_request_adapter_cb cb = (trha_request_adapter_cb)userdata1;
-    if (cb) {
-        cb(status == WGPURequestAdapterStatus_Success ? 0 : (int32_t)status,
-           adapter, message.data, message.length, NULL);
-    }
+    (void)m; (void)u1; (void)u2;
+    g_slot.status = (s == WGPUMapAsyncStatus_Success) ? 0 : (int32_t)s;
+    g_slot.object = NULL;
+    g_slot.done = 1;
 }
 
-static void trha_rd_trampoline(WGPURequestDeviceStatus status, WGPUDevice device,
-                               WGPUStringView message, void *userdata1, void *userdata2)
+static void ra_trampoline(WGPURequestAdapterStatus s, WGPUAdapter a, WGPUStringView m, void *u1, void *u2)
 {
-    (void)userdata2;
-    trha_request_device_cb cb = (trha_request_device_cb)userdata1;
-    if (cb) {
-        cb(status == WGPURequestDeviceStatus_Success ? 0 : (int32_t)status,
-           device, message.data, message.length, NULL);
-    }
+    (void)m; (void)u1; (void)u2;
+    g_slot.status = (s == WGPURequestAdapterStatus_Success) ? 0 : (int32_t)s;
+    g_slot.object = (void *)a;
+    g_slot.done = 1;
 }
 
-/* ------------------------------------------------------------------ */
-/* 对外接口：返回 future.id（uint64_t），不开 struct                    */
-/* ------------------------------------------------------------------ */
+static void rd_trampoline(WGPURequestDeviceStatus s, WGPUDevice d, WGPUStringView m, void *u1, void *u2)
+{
+    (void)m; (void)u1; (void)u2;
+    g_slot.status = (s == WGPURequestDeviceStatus_Success) ? 0 : (int32_t)s;
+    g_slot.object = (void *)d;
+    g_slot.done = 1;
+}
 
-/* 用 AllowSpontaneous：v29 的 wgpuInstanceWaitAny 尚未实现（src/unimplemented.rs
- * 会 panic），故改为「回调在任意线程触发 + Haskell 侧 MVar 阻塞等待」的标准异步用法。 */
-uint64_t trha_wgpu_instance_request_adapter(WGPUInstance instance,
-                                            const WGPURequestAdapterOptions *options,
-                                            trha_request_adapter_cb cb)
+void trha_wgpu_request_adapter(WGPUInstance inst, const WGPURequestAdapterOptions *opts)
 {
     WGPURequestAdapterCallbackInfo info;
+    slot_reset();
     info.nextInChain = NULL;
     info.mode = WGPUCallbackMode_AllowSpontaneous;
-    info.callback = trha_ra_trampoline;
-    info.userdata1 = (void *)cb;
+    info.callback = ra_trampoline;
+    info.userdata1 = NULL;
     info.userdata2 = NULL;
-    return wgpuInstanceRequestAdapter(instance, options, info).id;
+    (void)wgpuInstanceRequestAdapter(inst, opts, info);
 }
 
-uint64_t trha_wgpu_adapter_request_device(WGPUAdapter adapter,
-                                          const WGPUDeviceDescriptor *descriptor,
-                                          trha_request_device_cb cb)
+void trha_wgpu_request_device(WGPUAdapter adapter, const WGPUDeviceDescriptor *desc)
 {
     WGPURequestDeviceCallbackInfo info;
+    slot_reset();
     info.nextInChain = NULL;
     info.mode = WGPUCallbackMode_AllowSpontaneous;
-    info.callback = trha_rd_trampoline;
-    info.userdata1 = (void *)cb;
+    info.callback = rd_trampoline;
+    info.userdata1 = NULL;
     info.userdata2 = NULL;
-    return wgpuAdapterRequestDevice(adapter, descriptor, info).id;
+    (void)wgpuAdapterRequestDevice(adapter, desc, info);
 }
 
-uint64_t trha_wgpu_buffer_map_async(WGPUBuffer buffer, uint64_t mode,
-                                    size_t offset, size_t size,
-                                    trha_buffer_map_cb cb)
+void trha_wgpu_buffer_map(WGPUBuffer buf, uint64_t mode, size_t off, size_t size)
 {
     WGPUBufferMapCallbackInfo info;
+    slot_reset();
     info.nextInChain = NULL;
     info.mode = WGPUCallbackMode_AllowSpontaneous;
-    info.callback = trha_bm_trampoline;
-    info.userdata1 = (void *)cb;
+    info.callback = bm_trampoline;
+    info.userdata1 = NULL;
     info.userdata2 = NULL;
-    return wgpuBufferMapAsync(buffer, (WGPUMapMode)mode, offset, size, info).id;
+    (void)wgpuBufferMapAsync(buf, (WGPUMapMode)mode, off, size, info);
 }
 
-/* 阻塞等待一个 future（内部构造 WGPUFutureWaitInfo，Haskell 侧只见标量）。
- * 返回 WGPUWaitStatus 的原始值。timeoutNS 传 UINT64_MAX 表示不限时。 */
-int32_t trha_wgpu_instance_wait_any(WGPUInstance instance, uint64_t futureId,
-                                    uint64_t timeoutNS)
-{
-    WGPUFutureWaitInfo waitInfo;
-    waitInfo.future.id = futureId;
-    waitInfo.completed = WGPU_FALSE;
-    WGPUWaitStatus st = wgpuInstanceWaitAny(instance, (size_t)1, &waitInfo, timeoutNS);
-    return (int32_t)st;
-}
+int     trha_wgpu_poll(void)           { return g_slot.done; }
+int32_t trha_wgpu_last_status(void)    { return g_slot.status; }
+void   *trha_wgpu_last_object(void)    { return g_slot.object; }
+void    trha_wgpu_process_events(WGPUInstance inst) { wgpuInstanceProcessEvents(inst); }

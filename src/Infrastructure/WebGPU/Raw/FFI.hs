@@ -41,6 +41,7 @@ module Infrastructure.WebGPU.Raw.FFI
   , createComputePipeline
   , createBindGroup
     -- * 命令编码与提交
+  , copyBufferToBuffer
   , createCommandEncoder
   , beginComputePass
   , setPipeline
@@ -225,6 +226,14 @@ foreign import ccall unsafe "wgpuComputePassEncoderEnd"
 -- 命令缓冲在 Haskell 侧不建模（只提交一次、随即由 wgpu 回收），故给裸指针。
 foreign import ccall unsafe "wgpuCommandEncoderFinish"
   finishCommandEncoder :: Ptr CommandEncoderOD -> Ptr () -> IO (Ptr ())
+
+-- | @void wgpuCommandEncoderCopyBufferToBuffer(WGPUCommandEncoder, WGPUBuffer, uint64_t, WGPUBuffer, uint64_t, uint64_t)@。
+--
+-- 为什么需要它：WebGPU 规定 MAP_READ 只能与 COPY_DST 搭配（不能叠加 STORAGE），
+-- 所以"shader 写结果"与"CPU 可映射读回"必须落在两个 buffer 上，中间用本函数搬运。
+foreign import ccall unsafe "wgpuCommandEncoderCopyBufferToBuffer"
+  copyBufferToBuffer
+    :: Ptr CommandEncoderOD -> Ptr BufferOD -> Word64 -> Ptr BufferOD -> Word64 -> Word64 -> IO ()
 
 -- | @void wgpuQueueSubmit(WGPUQueue, size_t, WGPUCommandBuffer const*)@。
 foreign import ccall unsafe "wgpuQueueSubmit"
