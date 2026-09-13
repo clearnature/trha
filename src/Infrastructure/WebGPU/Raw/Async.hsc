@@ -82,15 +82,15 @@ foreign import ccall "wrapper"
 -- C shim 入口（返回 future.id，避免按值 struct 跨界）
 -- ---------------------------------------------------------------------------
 
-foreign import ccall unsafe "trha_wgpu_instance_request_adapter"
+foreign import ccall safe "trha_wgpu_instance_request_adapter"
   cInstanceRequestAdapter
     :: Ptr InstanceOD -> Ptr RequestAdapterOptions -> RequestAdapterCb -> IO Word64
 
-foreign import ccall unsafe "trha_wgpu_adapter_request_device"
+foreign import ccall safe "trha_wgpu_adapter_request_device"
   cAdapterRequestDevice
     :: Ptr AdapterOD -> Ptr () -> RequestDeviceCb -> IO Word64
 
-foreign import ccall unsafe "trha_wgpu_buffer_map_async"
+foreign import ccall safe "trha_wgpu_buffer_map_async"
   cBufferMapAsync
     :: Ptr BufferOD -> Word64 -> CSize -> CSize -> BufferMapCb -> IO Word64
 
@@ -118,11 +118,10 @@ requestAdapterSync inst opts = do
   cb <-
     mkRequestAdapterCb $ \status adapterPtr _msgPtr _msgLen _ud ->
       putMVar mv (status, adapterPtr)
-  fut <- cInstanceRequestAdapter (toPtr inst) opts cb
-  waitStatus <- cInstanceWaitAny (toPtr inst) fut maxBound
+  _fut <- cInstanceRequestAdapter (toPtr inst) opts cb
   (status, adapterPtr) <- takeMVar mv
   freeHaskellFunPtr cb
-  if waitStatus == waitStatusSuccess && status == 0 && adapterPtr /= nullPtr
+  if status == 0 && adapterPtr /= nullPtr
     then pure (Right (fromPtr adapterPtr))
     else pure (Left status)
 
@@ -133,11 +132,10 @@ requestDeviceSync inst adptr desc = do
   cb <-
     mkRequestDeviceCb $ \status devicePtr _msgPtr _msgLen _ud ->
       putMVar mv (status, devicePtr)
-  fut <- cAdapterRequestDevice (toPtr adptr) desc cb
-  waitStatus <- cInstanceWaitAny (toPtr inst) fut maxBound
+  _fut <- cAdapterRequestDevice (toPtr adptr) desc cb
   (status, devicePtr) <- takeMVar mv
   freeHaskellFunPtr cb
-  if waitStatus == waitStatusSuccess && status == 0 && devicePtr /= nullPtr
+  if status == 0 && devicePtr /= nullPtr
     then pure (Right (fromPtr devicePtr))
     else pure (Left status)
 
@@ -147,10 +145,9 @@ bufferMapSync :: Instance -> Buffer -> Word64 -> CSize -> CSize -> IO (Either CI
 bufferMapSync inst buf mode off sz = do
   mv <- newEmptyMVar
   cb <- mkBufferMapCb $ \status _msgPtr _msgLen _ud -> putMVar mv status
-  fut <- cBufferMapAsync (toPtr buf) mode off sz cb
-  waitStatus <- cInstanceWaitAny (toPtr inst) fut maxBound
+  _fut <- cBufferMapAsync (toPtr buf) mode off sz cb
   status <- takeMVar mv
   freeHaskellFunPtr cb
-  if waitStatus == waitStatusSuccess && status == 0
+  if status == 0
     then pure (Right ())
     else pure (Left status)

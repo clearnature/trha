@@ -176,6 +176,15 @@ library trha-webgpu
   build-depends:    base ^>=4.22
   default-language: Haskell2010
 
+-- WebGPU 真机探针 / hello-compute（W6）
+executable trha-webgpu-hello
+  main-is:          HelloCompute.hs
+  hs-source-dirs:   benchmarks/webgpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-webgpu
+  ghc-options:      -rtsopts
+  default-language: Haskell2010
+
 -- CLI Application
 executable trha
   main-is:          Main.hs

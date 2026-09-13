@@ -45,7 +45,8 @@ static void trha_bm_trampoline(WGPUMapAsyncStatus status, WGPUStringView message
     (void)userdata2;
     trha_buffer_map_cb cb = (trha_buffer_map_cb)userdata1;
     if (cb) {
-        cb((int32_t)status, message.data, message.length, NULL);
+        cb(status == WGPUMapAsyncStatus_Success ? 0 : (int32_t)status,
+           message.data, message.length, NULL);
     }
 }
 
@@ -55,7 +56,8 @@ static void trha_ra_trampoline(WGPURequestAdapterStatus status, WGPUAdapter adap
     (void)userdata2;
     trha_request_adapter_cb cb = (trha_request_adapter_cb)userdata1;
     if (cb) {
-        cb((int32_t)status, adapter, message.data, message.length, NULL);
+        cb(status == WGPURequestAdapterStatus_Success ? 0 : (int32_t)status,
+           adapter, message.data, message.length, NULL);
     }
 }
 
@@ -65,7 +67,8 @@ static void trha_rd_trampoline(WGPURequestDeviceStatus status, WGPUDevice device
     (void)userdata2;
     trha_request_device_cb cb = (trha_request_device_cb)userdata1;
     if (cb) {
-        cb((int32_t)status, device, message.data, message.length, NULL);
+        cb(status == WGPURequestDeviceStatus_Success ? 0 : (int32_t)status,
+           device, message.data, message.length, NULL);
     }
 }
 
@@ -73,15 +76,15 @@ static void trha_rd_trampoline(WGPURequestDeviceStatus status, WGPUDevice device
 /* 对外接口：返回 future.id（uint64_t），不开 struct                    */
 /* ------------------------------------------------------------------ */
 
-/* 用 WGPUCallbackMode_WaitAnyOnly：回调只在 wgpuInstanceWaitAny 里触发，
- * 因此"发起 → WaitAny → 取结果"在单线程是确定的。 */
+/* 用 AllowSpontaneous：v29 的 wgpuInstanceWaitAny 尚未实现（src/unimplemented.rs
+ * 会 panic），故改为「回调在任意线程触发 + Haskell 侧 MVar 阻塞等待」的标准异步用法。 */
 uint64_t trha_wgpu_instance_request_adapter(WGPUInstance instance,
                                             const WGPURequestAdapterOptions *options,
                                             trha_request_adapter_cb cb)
 {
     WGPURequestAdapterCallbackInfo info;
     info.nextInChain = NULL;
-    info.mode = WGPUCallbackMode_WaitAnyOnly;
+    info.mode = WGPUCallbackMode_AllowSpontaneous;
     info.callback = trha_ra_trampoline;
     info.userdata1 = (void *)cb;
     info.userdata2 = NULL;
@@ -94,7 +97,7 @@ uint64_t trha_wgpu_adapter_request_device(WGPUAdapter adapter,
 {
     WGPURequestDeviceCallbackInfo info;
     info.nextInChain = NULL;
-    info.mode = WGPUCallbackMode_WaitAnyOnly;
+    info.mode = WGPUCallbackMode_AllowSpontaneous;
     info.callback = trha_rd_trampoline;
     info.userdata1 = (void *)cb;
     info.userdata2 = NULL;
@@ -107,7 +110,7 @@ uint64_t trha_wgpu_buffer_map_async(WGPUBuffer buffer, uint64_t mode,
 {
     WGPUBufferMapCallbackInfo info;
     info.nextInChain = NULL;
-    info.mode = WGPUCallbackMode_WaitAnyOnly;
+    info.mode = WGPUCallbackMode_AllowSpontaneous;
     info.callback = trha_bm_trampoline;
     info.userdata1 = (void *)cb;
     info.userdata2 = NULL;
