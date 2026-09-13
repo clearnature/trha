@@ -627,6 +627,95 @@ main = hspec $ do
       nOrbits `shouldBe` 14
       gOrder  `shouldBe` 54
 
+
+  -- ------------------------------------------------------------------
+  -- C4 · 五行四步链的可达标记语义（wuxingForward）
+  --
+  -- 此前只验了"长度 = steps"。这里补上语义：每一步的选择合法性、可达标记与
+  -- 末态 T⁶ 状态的一致性、以及缠绕相位的模封闭性。
+  -- ------------------------------------------------------------------
+  describe "C4 · 五行四步链的可达标记语义（wuxingForward）" $ do
+    it "★ chain / oks 与 steps 一一对应" $ do
+      let (_, _, chain, oks) = wuxingForward c4Cfg c4Layer c4X0
+      length chain `shouldBe` wcSteps c4Cfg
+      length oks `shouldBe` wcSteps c4Cfg
+
+    it "★ 每步选择合法：heads 个 (node, trit)，node ∈ [0,hex)、trit ∈ [0,trit)" $ do
+      let (_, _, chain, _) = wuxingForward c4Cfg c4Layer c4X0
+      and [ length sel == wcHeads c4Cfg | sel <- chain ] `shouldBe` True
+      and [ n >= 0 && n < wcHex c4Cfg  | sel <- chain, (n, _) <- sel ] `shouldBe` True
+      and [ t >= 0 && t < wcTrit c4Cfg | sel <- chain, (_, t) <- sel ] `shouldBe` True
+
+    it "★ 全步可达 ⟹ 末态 Berry 相位仍在阈值内（与 t6Verify st 0 0 0 同义）" $ do
+      -- 依据：最后一步的 reachable = t6Verify st_{n-1} dPol dTor dBer，而
+      -- st_final 的 berry = t6Berry st_{n-1} + dBer（**不 mod**），故
+      -- t6Verify st_final 0 0 0 = |t6Berry st_final| < 105 与最后一步的可达判定**同义**。
+      -- 注意方向：这里是**蕴含**（全可达 ⟹ 末态在界内），不是等价 —— 若中途某步不可达，
+      -- 末态仍可能恰好落在界内。
+      let (_, st, _, oks) = wuxingForward c4Cfg c4Layer c4X0
+      (not (and oks) || t6Verify st 0 0 0) `shouldBe` True
+
+    it "★ 缠绕相位恒在环面内（mod 封闭性，与增量大小无关）" $ do
+      let (_, st, _, _) = wuxingForward c4Cfg c4Layer c4X0
+      (t6Polar st >= 0 && t6Polar st < polarWinding144) `shouldBe` True
+      (t6Toroidal st >= 0 && t6Toroidal st < toroidalWinding46) `shouldBe` True
+
+    it "末 hidden 长度 = dim，且各分量落在 GF(27) = [0,26]" $ do
+      let (h, _, _, _) = wuxingForward c4Cfg c4Layer c4X0
+      length h `shouldBe` wcDim c4Cfg
+      and [ gf27ToInt v >= 0 && gf27ToInt v <= 26 | v <- h ] `shouldBe` True
+
+
+  -- ------------------------------------------------------------------
+  -- C4 · 非空邻接的传播结构（补上此前"本层 adj 恒零"留下的覆盖缺口）
+  --
+  -- 此前 C4 第三批记录了一个**覆盖局限**：默认测试层（c4Layer）的 wlAttnQ/K 经
+  -- scalarOf（mod 3）后 q_i、k_j 全为 0，于是 adj 恒零、因果图恒为空图。
+  -- 本节构造一个**使 adj 非零**的层来补这个缺口。
+  --
+  -- 构造：取 wlAttnQ = wlAttnK = 全 1，则 q_i = k_j = (Σ_j n_j) mod 3 对所有 head 相同，
+  -- 于是 adj[i][j] = q ⊗ q —— **对称**且**秩 ≤ 1**，只要 q ≠ 0 就非零。
+  -- ------------------------------------------------------------------
+  describe "C4 · 非空邻接的传播结构（补覆盖缺口）" $ do
+    it "★ 构造非零邻接：全 1 的 attnQ/K 使 adj 非零（推翻「恒零」结论）" $ do
+      let nd = wcDim c4Cfg `div` wcHex c4Cfg
+          onesAttn = replicate nd [mkTrit 1]
+          layerOnes = c4Layer { wlAttnQ = onesAttn, wlAttnK = onesAttn }
+          (adjOnes, _) = causalGraphStep c4Cfg layerOnes c4X0
+          (adjBase, _) = causalGraphStep c4Cfg c4Layer c4X0
+      and [ tritToInt v == 0 | row <- adjBase, v <- row ] `shouldBe` True   -- 默认层恒零
+      or  [ tritToInt v /= 0 | row <- adjOnes, v <- row ] `shouldBe` True   -- 本节层非零
+
+    it "★ 非零邻接下秩仍 ≤ 1（任意 2×2 子式为零）—— 外积结构不因非零而失效" $ do
+      let nd = wcDim c4Cfg `div` wcHex c4Cfg
+          onesAttn = replicate nd [mkTrit 1]
+          layerOnes = c4Layer { wlAttnQ = onesAttn, wlAttnK = onesAttn }
+          (adj, _) = causalGraphStep c4Cfg layerOnes c4X0
+          idx = [0 .. wcHex c4Cfg - 1]
+      and [ tritMul (adj !! i !! j) (adj !! i' !! j')
+              == tritMul (adj !! i !! j') (adj !! i' !! j)
+          | i <- idx, i' <- idx, j <- idx, j' <- idx ] `shouldBe` True
+
+    it "★ q 相同 ⟹ 邻接对称（adj[i][j] = adj[j][i]）" $ do
+      let nd = wcDim c4Cfg `div` wcHex c4Cfg
+          onesAttn = replicate nd [mkTrit 1]
+          layerOnes = c4Layer { wlAttnQ = onesAttn, wlAttnK = onesAttn }
+          (adj, _) = causalGraphStep c4Cfg layerOnes c4X0
+          idx = [0 .. wcHex c4Cfg - 1]
+      and [ adj !! i !! j == adj !! j !! i | i <- idx, j <- idx ] `shouldBe` True
+
+    it "★ 覆盖度的诚实说明：非零邻接**已**可构造，但传播对 hidden 的可观测影响仍被截断" $ do
+      -- 两个独立事实，都在这里固定住，避免日后被误读：
+      --   ① adj 非零**可以**构造（见上三条）—— 此前"恒零"是默认层的性质，不是普遍性质。
+      --   ② 但 h' = x + (gf27ToInt fused `div` 10)，而 gf27ToInt ∈ [0,26] ⇒ div 10 ∈ {0,1,2}，
+      --      故传播对 hidden 的影响是**截断后**的，通常仍观测不到变化（见 C4 第三批）。
+      let nd = wcDim c4Cfg `div` wcHex c4Cfg
+          onesAttn = replicate nd [mkTrit 1]
+          layerOnes = c4Layer { wlAttnQ = onesAttn, wlAttnK = onesAttn }
+          (_, updOnes) = causalGraphStep c4Cfg layerOnes c4X0
+      length updOnes `shouldBe` wcDim c4Cfg
+      and [ gf27ToInt v >= 0 && gf27ToInt v <= 26 | v <- updOnes ] `shouldBe` True
+
   -- ------------------------------------------------------------------
   -- C2：类型不变量必须由**编译期**强制。
   --
