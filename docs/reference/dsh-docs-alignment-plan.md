@@ -37,7 +37,7 @@
 - ✅ T1 `Core.Transcript` 信封：写入 `{v,id,ts,type,payload}`（保留扁平字段），读取兼容旧行 → 证据：182/182；真会话 5/5 行 `v:1`；16 个旧档回放正常
 - ✅ T2 事件类型注册表：`EventKind`(7)/`eventRegistry`/`legacyEventName` 迁移点 → 证据：registry 单测（唯一/全覆盖/别名）
 - ✅ T3 「模型可见即记录」：编排每轮 `queryModel` 前 emit `agent:model-request`；CLI 记录 `model-request` → 证据：E2E 4 次模型请求 = 4 事件且收敛
-- ✅ T4 `docs/event-matrix.md`：事件生产者/消费者/持久化矩阵 → 证据：与 grep 全事件清单一致
+- ✅ T4 `docs/architecture/event-matrix.md`：事件生产者/消费者/持久化矩阵 → 证据：与 grep 全事件清单一致
 
 ### 组 B · 工具管线与防御（tool-execution-pipeline / tool-catalog / defensive）
 - ✅ T5 工具服务化：`ctx.tools`（list/execute，能力 tools:list/execute）→ 证据：`/api/services` 返回 5 服务含 tools
@@ -45,12 +45,12 @@
 - ✅ T7 防御硬化：`toolGuard.confineWritePath`（realpath 拒 symlink 逃逸）+ `limitOutput`(64 KiB) → 证据：guard 单测（越界/逃逸/截断）
 
 ### 组 C · 能力缝与文档（architecture / capability-seams）
-- ✅ T8 `docs/dsh-capability-seams.md`：「加 X → 机制」表（每行 grep 抽查存在；不在本架构缝如实标注）
+- ✅ T8 `docs/architecture/dsh-capability-seams.md`：「加 X → 机制」表（每行 grep 抽查存在；不在本架构缝如实标注）
 - ✅ T9 sessions 服务键：`ctx.sessions`（get/has/list）→ 证据：`/api/services` 含 sessions（sessions:get/list）
 
 ### 组 D · 目录化收尾（config-catalog / agent-lifecycle）
 - ✅ T10 `settings-schema` JSON 导出：`trha settings-schema` 输出 15 键（key/kind/description/default）→ 证据：冒烟 15 行 JSON；单测字段对齐
-- ✅ T11 `docs/agent-lifecycle-notes.md`：turn/round/工具展开图 + 概念对照 + 遥测缺口标注
+- ✅ T11 `docs/architecture/agent-lifecycle-notes.md`：turn/round/工具展开图 + 概念对照 + 遥测缺口标注
 
 ## Step 4-9 工作法（执行记录）
 - 每原子单测先行 → 全量回归（最终 Haskell 182 / TS 89）→ E2E 附证据

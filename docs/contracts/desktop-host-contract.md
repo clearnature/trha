@@ -1,6 +1,6 @@
 # trha Desktop ↔ Scheduler 宿主契约（desktop-host-contract）
 
-> 对齐 `docs/electron-desktop-plan.md` 与 Reasonix DESKTOP_HOOKS 语义差异记录。
+> 对齐 `docs/reference/electron-desktop-plan.md` 与 Reasonix DESKTOP_HOOKS 语义差异记录。
 > 版本：契约 v1（2026-09）。
 
 ## 派生与握手

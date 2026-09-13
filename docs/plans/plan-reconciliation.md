@@ -38,7 +38,7 @@
 ### Phase3 插件化 + 三端
 | 项 | 状态 | 证据 |
 |---|---|---|
-| P3-0 协议总账 | ✅ | docs/protocol-shell-kernel.md |
+| P3-0 协议总账 | ✅ | docs/contracts/protocol-shell-kernel.md |
 | P3-1 PluginManager 运行时 | ✅ | ServerConfig.plugins + 钩子 + GET /api/plugins |
 | P3-2/3 契约测试 | ✅ | plugins-runtime（TS 89/89 内）|
 | P3-4/5 动态插件管理 | ✅ | POST/DELETE /api/plugins（409/404）|

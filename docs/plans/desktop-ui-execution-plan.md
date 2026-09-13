@@ -1,7 +1,7 @@
 # Desktop UI 完整移植 — Fable5 执行计划（详细原子分裂 + 预算管理）
 
-> 2026-09（北京时间）· 前置：`docs/desktop-ui-port-plan.md`（分析/路径/能力矩阵，本文件为可执行细化）。
-> 进度归档/基线：`docs/desktop-ui-progress.md`。执行时逐原子更新本文档「状态列」并回写归档。
+> 2026-09（北京时间）· 前置：`docs/plans/desktop-ui-port-plan.md`（分析/路径/能力矩阵，本文件为可执行细化）。
+> 进度归档/基线：`docs/plans/desktop-ui-progress.md`。执行时逐原子更新本文档「状态列」并回写归档。
 > 原则：每原子 = 红测 → 实现 → 绿 → 轻冒烟；验收必须可执行命令；完成声明附证据（防虚假完成）。
 > 预算模型：原子按 S(≤0.5h)/M(1h)/L(2h) 估；批次预算 + 20% 风险预留；P0/P1/P2 裁剪优先级。
 
@@ -56,7 +56,7 @@ T2 ─────────────────────────�
 | ✅ T10b | i18n 骨架（zh/en 键集：壳/卡/状态行文案）| T4a | `ui/i18n.ts`（键集+插值）+ 壳/卡/状态行接 `useT()` | i18n 4/4（键覆盖/插值/回退）+ 组件文案断言改中文全绿 | M | — | P1 |
 | ✅ T11 | E2E 冒烟脚本（随包链：scheduler 起 → UI 建会话/发消息/收卡→断言）| 批次2 完成 | `scripts/e2e-desktop.mjs` + `test/e2e-protocol.test.ts`（CI 覆盖）| `RESULT: PASS`（握手/health/modes/models/读放行200/写401/session CRUD/租约 exit 0）| L | GUI 级待 Electron 宿主 | P0(收口) |
 | T12a | 清理：删除直 fetch 旧路径/未用组件 | 全 | diff 干净 | `tsc`+全量 vitest 绿 | S | **删除需用户确认清单（见 progress 待办 4）** | P1 |
-| ✅ T12b | 契约文档：port 接口表 + 事件→卡映射表 + 本计划状态 | 全 | `docs/desktop-port-contract.md` | 文档与代码 grep 一致（12 方法/11 端点/12 ui 文件）| S | — | P1 |
+| ✅ T12b | 契约文档：port 接口表 + 事件→卡映射表 + 本计划状态 | 全 | `docs/contracts/desktop-port-contract.md` | 文档与代码 grep 一致（12 方法/11 端点/12 ui 文件）| S | — | P1 |
 
 ## 4. 预算管理
 ### 4.1 批次预算与分配

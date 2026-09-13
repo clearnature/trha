@@ -14,7 +14,7 @@
 | `ctx.tools` | { list, execute }（宿主工具）| `tools:list`, `tools:execute` | 同上 |
 | `ctx.sessions` | 会话存储视图（Map 只读快照）| `sessions:get` | 同上（T9）|
 
-## 事件面（详见 `docs/event-matrix.md`）
+## 事件面（详见 `docs/architecture/event-matrix.md`）
 
 `agent:message` / `agent:plan` / `agent:decision` / `tool:update` / `agent:model-request` / `session:created` / `session:deleted`
 + 插件分派：`ctx.on`（广播）、`ctx.waterfall`（改写）、`ctx.bail`（短路）、`ctx.parallel`、`ctx.serial`。

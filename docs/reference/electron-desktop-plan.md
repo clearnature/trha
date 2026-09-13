@@ -4,7 +4,7 @@
 > Windows/跨平台渲染上出问题（见其 `DESKTOP_CRASH_DIAGNOSTICS_RUNBOOK`，多处
 > “Wails 启动前”生命周期限制）——因此桌面方案改为 **Electron**。
 > trha `packages/app/Desktop` 已是 Electron 28 + React；本计划把它的宿主协议与
-> 你裁定的架构原则（见 `docs/plan-reconciliation.md` 文末「架构原则」）对齐。
+> 你裁定的架构原则（见 `docs/plans/plan-reconciliation.md` 文末「架构原则」）对齐。
 > 参照：`/home/yanli/work/DeepSeek-Reasonix-studio-v2.11.0/docs/DESKTOP_HOOKS.zh-CN.md`
 > （stdout/stderr 捕获与特殊 stdout 语义，作为桌面↔子进程约定参照）。
 
@@ -28,7 +28,7 @@
 | ✅ E2-1 | main 握手解析纯模块 `src/main/handshake.ts`：`parseHandshake(line)` + `isSupported` | vitest 8/8（合法/空白/日志行非握手/坏 JSON/缺字段/版本≠1/名称不符）|
 | ✅ E2-2 | `startScheduler` 改造：首行握手解析 → 版本/名称校验拒启；stderr 转发；`before-quit` 释放 stdin 租约（kill 兜底 3s）；`sandbox:true`；路径可 `TRHA_SCHEDULER_PATH` 覆盖 | main tsc 通过；Desktop vitest 14/14 |
 | ✅ E2-3 | preload 动词面核对：仅 getToken/getSchedulerPort/getAppVersion + 只读 platform（无多余能力面）| 检查清单已核 |
-| ✅ E2-4 | `docs/desktop-host-contract.md` 已产出（握手/租约/日志/安全基线 + Reasonix hooks 差异对照）| 文档存在 |
+| ✅ E2-4 | `docs/contracts/desktop-host-contract.md` 已产出（握手/租约/日志/安全基线 + Reasonix hooks 差异对照）| 文档存在 |
 | 🟡 E2-5 | 协议端已实测（E1：spawn 编排 → 握手 v1 → 关 stdin exit 0/11ms）；Desktop 内真实 GUI 冒烟待有显示环境 | 待 GUI 环境运行 `npm start` |
 
 ## 不做（本期范围外）
@@ -43,7 +43,7 @@
 
 ## 与 Reasonix Studio v2.11.0 发布说明核对（2026-09）
 
-来源：`docs/Electron 外壳.txt`（Reasonix Studio v2.11.0 pre-release 说明，含 Wails→Electron 迁移背景）。
+来源：`docs/reference/Electron 外壳.txt`（Reasonix Studio v2.11.0 pre-release 说明，含 Wails→Electron 迁移背景）。
 
 | Reasonix 表述 | trha 状态 |
 |---|---|

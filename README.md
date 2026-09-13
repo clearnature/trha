@@ -88,7 +88,7 @@ cabal build
 
 ## 架构
 
-详见 [docs/architecture.md](docs/architecture.md)。
+详见 [docs/architecture/architecture.md](docs/architecture/architecture.md)。
 
 ## 调度层文档
 

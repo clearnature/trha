@@ -1,6 +1,6 @@
 # trha Phase2 S2/S3 执行纪律与验收标准
 
-**依据**: docs/plan-phase2-s2-s3-atomic.md（Planner）+ team-discipline/team-executor 职能
+**依据**: docs/archive/plan-phase2-s2-s3-atomic.md（Planner）+ team-discipline/team-executor 职能
 **生效范围**: Phase 2 剩余切片执行（S2、S3、R1-R5）及后续本仓库所有实现工作
 
 ---

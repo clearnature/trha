@@ -1,6 +1,6 @@
 # Phase 2 实施规划（L1 垂直切片）— 修订版
 
-**基线**: docs/implementation-plan-cli-tui.md（原 Phase 2 S1-S3）
+**基线**: docs/archive/implementation-plan-cli-tui.md（原 Phase 2 S1-S3）
 **日期**: 2026-09-04（北京时间）
 **触发**: Phase 2 启动前拓扑扫描发现**三端协议从未闭环**（阻塞性前置 S0）。
 

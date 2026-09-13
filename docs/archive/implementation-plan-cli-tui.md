@@ -1,6 +1,6 @@
 # trha CLI/TUI 移植实施计划（对照 Reasonix IDE 基本功能）
 
-**基线**: docs/reasonix-cli-tui-architecture-analysis.md
+**基线**: docs/reference/reasonix-cli-tui-architecture-analysis.md
 **方法**: 架构分析 → 移植计划 → TDD（红→绿→重构）→ 沙盒验证；每阶段有可验证验收标准。
 **范围**: 三端（cli/桌面/web）共享内核协议；本计划先做 CLI + TUI（L0 → L1），桌面/Web 后续复用协议与渲染语义。
 
@@ -68,7 +68,7 @@ Phase 1 完成 = 上述 hspec 全绿 + `cabal test` + TUI 人工冒烟清单。
 
 ### Phase 3 进展与路线注记（2026-09-05）
 已完成：
-- P3-0 三端共享协议总账 docs/protocol-shell-kernel.md
+- P3-0 三端共享协议总账 docs/contracts/protocol-shell-kernel.md
 - P3-1 编排层 PluginManager 接入运行时（ServerConfig.plugins、钩子 session/message/tool、GET /api/plugins）
 - P3-2/3 契约测试（plugins-runtime：init/create/message/tool/delete 全钩子）
 - P3-4/5 动态宣告型插件管理（POST/DELETE /api/plugins；409/404 语义）+ vitest

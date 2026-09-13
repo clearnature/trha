@@ -2,7 +2,7 @@
 
 > 对齐 deepseek-harness `docs/agent-lifecycle.md`：一次 step（消息）在 trha 中如何
 > 展开为多个模型轮次（round）+ 工具执行，每个阶段产生哪些可观测事件/落盘记录。
-> 事件全集见 `docs/event-matrix.md`。
+> 事件全集见 `docs/architecture/event-matrix.md`。
 
 ## Turn = 一次 `/api/agent/step`（一个用户消息 → 一个最终回复）
 
