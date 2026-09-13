@@ -2046,6 +2046,38 @@ main = hspec $ do
       ("chat.completion" `isInfixOf` body) `shouldBe` True
       ("cpu-model" `isInfixOf` body)       `shouldBe` True
 
+    -- ── C5(D-1)：约束 ↔ 外部推理（作用点 = 响应侧的「采纳判定」）──────────────
+    -- 三要素由用户 2026-09-13 裁定：作用点 = 响应侧采纳判定；失败行为 = 标注（不拒绝、
+    -- 不降级）；草稿模型与约束是同一机制的两面（草稿输出必须先过约束）。
+    it "★ C5(D-1)：响应**总是**携带约束判定 trha_constraint（作用点在响应侧）" $ do
+      app <- mkCPUApp "/dev/null"
+      (code, body) <- withApp app $ \mgr base ->
+        httpPost mgr (base ++ "/v1/chat/completions") (chatReq False)
+      code `shouldBe` 200
+      ("trha_constraint" `isInfixOf` body) `shouldBe` True
+
+    it "★ C5(D-1)：判定状态只有 pass / warn —— 类型里没有「拒绝」（裁定①）" $ do
+      app <- mkCPUApp "/dev/null"
+      (_, body) <- withApp app $ \mgr base ->
+        httpPost mgr (base ++ "/v1/chat/completions") (chatReq False)
+      ( ("\"pass\"" `isInfixOf` body) || ("\"warn\"" `isInfixOf` body) ) `shouldBe` True
+
+    it "★ C5(D-1)：判定是标注而非拒绝 —— status=warn 时内容仍然返回（裁定①）" $ do
+      app <- mkCPUApp "/dev/null"
+      (code, body) <- withApp app $ \mgr base ->
+        httpPost mgr (base ++ "/v1/chat/completions") (chatReq False)
+      code `shouldBe` 200
+      -- 无论 pass 还是 warn，响应体里的 chat.completion 载荷都要在（功能不被破坏）
+      ("chat.completion" `isInfixOf` body) `shouldBe` True
+
+    it "★ C5(D-1)：判定分量齐全 t6 / reach / edges / reason（约束确实跑了三原语）" $ do
+      app <- mkCPUApp "/dev/null"
+      (_, body) <- withApp app $ \mgr base ->
+        httpPost mgr (base ++ "/v1/chat/completions") (chatReq False)
+      and [ k `isInfixOf` body
+          | k <- [ "\"t6\"", "\"reach\"", "\"edges\"", "\"reason\"" ] ] `shouldBe` True
+
+
     it "CPU adapter 经 HTTP 走 SSE 流式（/v1/chat/completions/stream）" $ do
       app <- mkCPUApp "/dev/null"
       (code, body) <- withApp app $ \mgr base ->

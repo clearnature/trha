@@ -101,6 +101,20 @@ library trha-api
     Core.Agent.Modes
     Core.Session.Manager
     Core.Session.Types
+    Infrastructure.CPU.ConstraintVerdict
+    Infrastructure.CPU.S2Geometry
+    Infrastructure.CPU.GF3Ops
+    Infrastructure.CPU.Christoffel
+    Infrastructure.CPU.GF3Intrinsic
+    Infrastructure.CPU.SovereignIntrinsic
+    Infrastructure.CPU.SovereignModel
+    Infrastructure.CPU.SovereignPhase12
+    Infrastructure.CPU.SovereignGF27
+    Infrastructure.CPU.SovereignLossGain
+    Infrastructure.CPU.SovereignSection
+    Infrastructure.CPU.SovereignTypes
+    Infrastructure.CPU.SovereignWuxingLayer
+    Infrastructure.CPU.Z12Sys
     Infrastructure.CPU.BLAS
     Infrastructure.CPU.Inference
     Infrastructure.CPU.Ops
