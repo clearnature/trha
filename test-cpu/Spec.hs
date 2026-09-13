@@ -11,6 +11,8 @@ import Test.Hspec
 
 import Infrastructure.CPU.HoloPi
 import Infrastructure.CPU.SovereignLossGain
+import Infrastructure.CPU.SovereignWuxingLayer (T6State (..), argMaxIdx, t6Init, t6Verify)
+import Infrastructure.CPU.SovereignTypes (mkGF27)
 import Infrastructure.CPU.SovereignWuXing
 
 -- | Agda 权威出处：
@@ -159,6 +161,41 @@ main = hspec $ do
                    , "蕤宾", "大吕", "夷则", "夹钟", "无射", "仲吕" ]
       -- 第 2 位：半音次序是「大吕」，损益次序是「林钟」—— 不可混用
       (tones !! 1) `shouldNotBe` (lossGainTones !! 1)
+
+  -- ------------------------------------------------------------------
+  -- C4 · 因果推理内核的**语义**（而不只是"看起来有界"）。
+  --
+  -- 此前仓内只验"输出有界 ∈ [0,26]"与链长 —— 那是*结构*，不是*语义*。
+  -- 这一节验判据本身在算什么：
+  --   · t6Verify 真正有约束力的只有 **Berry 相位连续**（|nb| < 105 = 1.05×100）；
+  --     缠绕两条（np < 144、nt < 46）经 mod 后**恒真**，是冗余条件（此处仅记录）。
+  --   · t6Verify 是**有状态**的：nb = t6Berry st + dBerry 走累积，故边界由累积值决定。
+  --   · argMaxIdx 是整数域上的选择：取最大元素的**首个**下标（平局取最小）。
+  -- ------------------------------------------------------------------
+  describe "C4 · 因果推理语义（t6Verify / argMaxIdx）" $ do
+    it "t6Verify 的实质判据是 Berry 相位连续：|dBerry| < 105 接受、≥ 105 拒绝" $ do
+      t6Verify t6Init 0 0 0 `shouldBe` True
+      t6Verify t6Init 0 0 104 `shouldBe` True
+      t6Verify t6Init 0 0 105 `shouldBe` False
+      t6Verify t6Init 0 0 9999 `shouldBe` False
+
+    it "t6Verify 是有状态的：边界由「已有相位 + 增量」的累积值决定" $ do
+      -- 已有 t6Berry = 104 时，增量 0 通过、增量 1 即越过阈值（104+1=105 → 拒绝）
+      let st = T6State 0 0 104
+      t6Verify st 0 0 0 `shouldBe` True
+      t6Verify st 0 0 1 `shouldBe` False
+
+    it "缠绕条件经 mod 后恒真（np < 144、nt < 46 属冗余子条件）" $ do
+      -- 记录这条"冗余"：任意整数增量都不会越界，所以那两个子条件永远成立。
+      -- 它们保留在代码里无害（是几何意图的注释），但**不能**当作有效判据来验收。
+      and [ t6Verify t6Init dP dT 0 | dP <- [-2000 .. 2000], dT <- [-500, 0, 500] ] `shouldBe` True
+
+    it "argMaxIdx：取最大元素的首个下标（平局取最小），空向量为 0" $ do
+      argMaxIdx [] `shouldBe` 0
+      argMaxIdx (map mkGF27 [0, 1, 2]) `shouldBe` 2
+      argMaxIdx (map mkGF27 [26, 0, 26]) `shouldBe` 0 -- 平局 → 最小下标
+      argMaxIdx (map mkGF27 [5, 9, 9, 3]) `shouldBe` 1
+      argMaxIdx (map mkGF27 [0]) `shouldBe` 0
 
   -- ------------------------------------------------------------------
   -- C2：类型不变量必须由**编译期**强制。
