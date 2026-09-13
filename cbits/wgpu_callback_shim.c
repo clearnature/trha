@@ -24,6 +24,7 @@
 #include <webgpu/webgpu.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 
 typedef struct {
     int32_t status; /* 0 = 成功（已归一化：v29 的 *Status 是 Success=0x1） */
@@ -99,6 +100,62 @@ void trha_wgpu_buffer_map(WGPUBuffer buf, uint64_t mode, size_t off, size_t size
     info.userdata2 = NULL;
     (void)wgpuBufferMapAsync(buf, (WGPUMapMode)mode, off, size, info);
 }
+
+/* ------------------------------------------------------------------ */
+/* uncaptured error：不让 wgpu-native 的默认处理器 abort 进程           */
+/* ------------------------------------------------------------------ */
+
+/* wgpu-native 默认遇到校验错误会 panic（直接 abort 进程）。这里在创建 device 时
+ * 装上自己的回调，把错误存进槽位，Haskell 侧用 lastError 查询。 */
+
+typedef struct {
+    int32_t has;
+    int32_t type;
+    char    msg[1024];
+} trha_err_slot;
+
+static trha_err_slot g_err = { 0, 0, { 0 } };
+
+static void error_trampoline(WGPUDevice const *device, WGPUErrorType type,
+                             WGPUStringView message, void *u1, void *u2)
+{
+    (void)device; (void)u1; (void)u2;
+    size_t n = 0;
+    g_err.type = (int32_t)type;
+    g_err.has = 1;
+    if (message.data != NULL) {
+        n = (message.length < sizeof(g_err.msg) - 1) ? message.length : sizeof(g_err.msg) - 1;
+        memcpy(g_err.msg, message.data, n);
+    }
+    g_err.msg[n] = '\0';
+}
+
+/* 由 Haskell 侧调用来初始化一个 WGPUDeviceDescriptor（含错误回调）。
+ * 之所以让 C 来填：该结构含内嵌的 WGPUQueueDescriptor 与两个 callbackInfo，
+ * 在 Haskell 侧逐字段构造既冗长又易错位。size 由本文件提供，避免调用方猜。 */
+size_t trha_wgpu_device_descriptor_size(void)
+{
+    return sizeof(WGPUDeviceDescriptor);
+}
+
+void trha_wgpu_device_descriptor_init(WGPUDeviceDescriptor *desc)
+{
+    memset(desc, 0, sizeof(*desc));
+    desc->nextInChain = NULL;
+    desc->label.data = NULL;
+    desc->label.length = 0;
+    desc->requiredFeatureCount = 0;
+    desc->requiredFeatures = NULL;
+    desc->requiredLimits = NULL;
+    desc->uncapturedErrorCallbackInfo.nextInChain = NULL;
+    desc->uncapturedErrorCallbackInfo.callback = error_trampoline;
+    desc->uncapturedErrorCallbackInfo.userdata1 = NULL;
+    desc->uncapturedErrorCallbackInfo.userdata2 = NULL;
+}
+
+int32_t     trha_wgpu_last_error_type(void)    { return g_err.has ? g_err.type : 0; }
+const char *trha_wgpu_last_error_message(void) { return g_err.msg; }
+void        trha_wgpu_clear_error(void)        { g_err.has = 0; g_err.type = 0; g_err.msg[0] = '\0'; }
 
 int     trha_wgpu_poll(void)           { return g_slot.done; }
 int32_t trha_wgpu_last_status(void)    { return g_slot.status; }

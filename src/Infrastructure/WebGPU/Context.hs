@@ -11,9 +11,10 @@ module Infrastructure.WebGPU.Context
   , withContext
   ) where
 
+import Foreign.C.Types (CSize (..))
 import Foreign.Marshal.Alloc (allocaBytes)
 import Foreign.Marshal.Utils (fillBytes)
-import Foreign.Ptr (nullPtr)
+import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (poke)
 
 import Infrastructure.WebGPU.Raw.Async (requestAdapterSync, requestDeviceSync)
@@ -21,6 +22,18 @@ import Infrastructure.WebGPU.Raw.Enums (FeatureLevel (..), PowerPreference (..))
 import Infrastructure.WebGPU.Raw.FFI (createInstance, getQueue)
 import Infrastructure.WebGPU.Raw.Structs (RequestAdapterOptions (..))
 import Infrastructure.WebGPU.Raw.Types (Adapter, Device, Instance, Queue)
+
+-- | device descriptor 的大小（由 C shim 提供，免得在 Haskell 侧猜结构尺寸）。
+foreign import ccall unsafe "trha_wgpu_device_descriptor_size"
+  cDeviceDescriptorSize :: IO CSize
+
+-- | 由 C shim 初始化一个 @WGPUDeviceDescriptor@（含**我们的 uncaptured error 回调**）。
+--
+-- 为什么让 C 来填：该结构含内嵌的 @WGPUQueueDescriptor@ 与两个 callbackInfo，
+-- 在 Haskell 侧逐字段构造既冗长又易错位；而装上自己的错误回调是必须的 ——
+-- 否则 wgpu-native 的默认处理器遇到校验错误会直接 abort 进程。
+foreign import ccall unsafe "trha_wgpu_device_descriptor_init"
+  cDeviceDescriptorInit :: Ptr () -> IO ()
 
 -- | 一个可用的 WebGPU 上下文。
 data Context = Context
@@ -51,7 +64,11 @@ createContext = do
   case adapterE of
     Left st -> pure (Left ("requestAdapter 失败, status=" ++ show st))
     Right adapter -> do
-      devE <- requestDeviceSync inst adapter nullPtr
+      devE <- do
+        sz <- cDeviceDescriptorSize
+        allocaBytes (max 512 (fromIntegral sz)) $ \descPtr -> do
+          cDeviceDescriptorInit (castPtr descPtr)
+          requestDeviceSync inst adapter (castPtr descPtr)
       case devE of
         Left st -> pure (Left ("requestDevice 失败, status=" ++ show st))
         Right device -> do
