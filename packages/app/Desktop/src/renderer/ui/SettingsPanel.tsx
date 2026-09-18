@@ -25,6 +25,7 @@ import { PermissionsPanel } from './PermissionsPanel.js';
 import { SandboxPanel } from './SandboxPanel.js';
 import { BrowserPanel } from './BrowserPanel.js';
 import { AppearancePanel } from './AppearancePanel.js';
+import { StoragePanel } from './StoragePanel.js';
 import { ScaffoldPanel } from './ScaffoldPanel.js';
 import { ALL_SETTINGS_TABS, SETTINGS_GROUPS } from '../state/settingsTypes.js';
 
@@ -57,6 +58,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           {tab === 'general' && <GeneralSettingsPanel t={t} />}
 
           {tab === 'appearance' && <AppearancePanel t={t} />}
+
+          {tab === 'storage' && <StoragePanel t={t} />}
 
           {tabDef && !['general', 'appearance', 'models', 'providers'].includes(tab) && (
             <ScaffoldPanel
