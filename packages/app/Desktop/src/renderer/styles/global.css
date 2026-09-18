@@ -916,3 +916,16 @@ body {
 
 /* ── 更新：版本行 ── */
 .updates-version { font-size: 15px; margin: 0 0 10px; }
+
+/* ── 网络：模式选择 / 快捷键 / 统计表 ── */
+.net-modes { display: flex; gap: 8px; flex-wrap: wrap; }
+.net-custom { margin-top: 12px; }
+.stats-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.stats-table th, .stats-table td { border: 1px solid var(--border-color, #eee); padding: 6px 10px; text-align: left; }
+.shortcuts-list { display: flex; flex-direction: column; gap: 6px; max-width: 520px; }
+.shortcut-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+  border: 1px solid var(--border-color, #eee); border-radius: 6px; }
+.shortcut-row > span { flex: 1; font-size: 13px; }
+.shortcut-combo { background: none; border: 0; cursor: pointer; }
+.shortcut-combo kbd { background: rgba(0,0,0,.06); padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+.shortcut-row input { flex: 1; padding: 3px 8px; }

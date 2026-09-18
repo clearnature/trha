@@ -27,6 +27,11 @@ import { BrowserPanel } from './BrowserPanel.js';
 import { AppearancePanel } from './AppearancePanel.js';
 import { StoragePanel } from './StoragePanel.js';
 import { UpdatesPanel } from './UpdatesPanel.js';
+import { NetworkPanel } from './NetworkPanel.js';
+import { ModelStatsPanel } from './ModelStatsPanel.js';
+import { BotsPanel } from './BotsPanel.js';
+import { RemotePanel as RemoteSSHPanel } from './RemotePanel.js';
+import { ShortcutsPanel } from './ShortcutsPanel.js';
 import { ScaffoldPanel } from './ScaffoldPanel.js';
 import { ALL_SETTINGS_TABS, SETTINGS_GROUPS } from '../state/settingsTypes.js';
 
@@ -63,6 +68,12 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           {tab === 'storage' && <StoragePanel t={t} />}
 
           {tab === 'updates' && <UpdatesPanel t={t} />}
+
+          {tab === 'model-stats' && <ModelStatsPanel t={t} />}
+          {tab === 'bots' && <BotsPanel t={t} />}
+          {tab === 'remote' && <RemoteSSHPanel t={t} />}
+          {tab === 'network' && <NetworkPanel t={t} />}
+          {tab === 'shortcuts' && <ShortcutsPanel t={t} />}
 
           {tabDef && !['general', 'appearance', 'models', 'providers'].includes(tab) && (
             <ScaffoldPanel
