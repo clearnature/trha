@@ -249,7 +249,7 @@ openaiChatHandler defaultAdapter body = do
                        | m <- oaiMsgs req
                        , Just (r, c) <- [parseLegacyMessage m] ]
           chunks <- liftIO $ llmChat adapter hsMsgs
-          return $ openaiCompletion (oaiModel req) chunks
+          return $ openaiCompletion (oaiModel req) chunks (oaiGenParams req)
       | otherwise -> do
           -- function-calling path: full ChatMessage semantics (incl. tool
           -- results and assistant tool_calls in the history)
@@ -260,7 +260,7 @@ openaiChatHandler defaultAdapter body = do
             Nothing -> throwError err400 { errBody = "Invalid tools" }
             Just ts -> return ts
           turn <- liftIO $ llmChatTools adapter msgs specs
-          return $ openaiToolCompletion (oaiModel req) turn
+          return $ openaiToolCompletion (oaiModel req) turn (oaiGenParams req)
   where
     parseChatMsg :: Value -> Maybe LLM.ChatMessage
     parseChatMsg v = parseMaybe parseJSON v
@@ -294,6 +294,7 @@ data OpenAIRequest = OpenAIRequest
   , oaiMsgs   :: [Value]
   , oaiStream :: Bool
   , oaiTools  :: [Value]
+  , oaiGenParams :: Maybe Value   -- {"temperature","topP","maxTokens"} 透传（LLM 设置）
   }
 
 -- | Legacy role/content pair from a plain chat message.
@@ -311,6 +312,7 @@ parseOpenAIRequest val = parseMaybe parser val
       <*> (v .:? "messages" .!= ([] :: [Value]))
       <*> (v .:? "stream" .!= False)
       <*> (v .:? "tools" .!= ([] :: [Value]))
+      <*> (v .:? "genParams")
 
 -- | Legacy completion response (no tools).
 -- | C5(D-1)：约束的**采纳判定**作为一个可复用的响应字段。
@@ -334,19 +336,19 @@ constraintField content =
   where
     v = verdictOf (T.unpack content)
 
-openaiCompletion :: Text -> [LLM.StreamChunk] -> Value
-openaiCompletion model chunks = object
-  [ "id"      .= ("chatcmpl-" <> model :: Text)
-  , "object"  .= ("chat.completion" :: Text)
-  , "model"   .= model
-  , "choices" .= [object
-      [ "index"         .= (0 :: Int)
-      , "message"       .= object ["role" .= ("assistant" :: Text), "content" .= content]
-      , "finish_reason" .= ("stop" :: Text)
-      ]]
-  , "usage"   .= toJSON usage
+openaiCompletion :: Text -> [LLM.StreamChunk] -> Maybe Value -> Value
+openaiCompletion model chunks genParams = object
+  ( [ "id"      .= ("chatcmpl-" <> model :: Text)
+    , "object"  .= ("chat.completion" :: Text)
+    , "model"   .= model
+    , "choices" .= [object
+        [ "index"         .= (0 :: Int)
+        , "message"       .= object ["role" .= ("assistant" :: Text), "content" .= content]
+        , "finish_reason" .= ("stop" :: Text)
+        ]]
+    , "usage"   .= toJSON usage
   , constraintField content
-  ]
+  ] ++ genParamsEcho genParams )
   where
     content = T.concat [t | LLM.ChunkDelta t <- chunks]
     usage = case [u | LLM.ChunkDone u <- chunks] of
@@ -354,12 +356,12 @@ openaiCompletion model chunks = object
       []      -> LLM.Usage 0 0 0
 
 -- | Tool-calling completion response (Phase 3 K3).
-openaiToolCompletion :: Text -> LLM.ChatTurn -> Value
-openaiToolCompletion model turn = object
-  [ "id"      .= ("chatcmpl-" <> model :: Text)
-  , "object"  .= ("chat.completion" :: Text)
-  , "model"   .= model
-  , "choices" .= [object
+openaiToolCompletion :: Text -> LLM.ChatTurn -> Maybe Value -> Value
+openaiToolCompletion model turn genParams = object
+  ( [ "id"      .= ("chatcmpl-" <> model :: Text)
+    , "object"  .= ("chat.completion" :: Text)
+    , "model"   .= model
+    , "choices" .= [object
       [ "index"         .= (0 :: Int)
       , "message"       .= object
           ( [ "role" .= ("assistant" :: Text), "content" .= LLM.ctContent turn ]
@@ -368,7 +370,12 @@ openaiToolCompletion model turn = object
       ]]
   , "usage" .= maybe (toJSON (LLM.Usage 0 0 0)) toJSON (LLM.ctUsage turn)
   , constraintField (LLM.ctContent turn)
-  ]
+  ] ++ genParamsEcho genParams )
+
+-- | 回显内核收到的生成参数（LLM 设置透传的诚实证据；无参数时为空）。
+genParamsEcho :: Maybe Value -> [Pair]
+genParamsEcho Nothing = []
+genParamsEcho (Just v) = [ "gen_params_applied" .= v ]
 
 --------------------------------------------------------------------------------
 -- 4. Anthropic Compatible API
