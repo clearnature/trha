@@ -47,7 +47,7 @@
 | 外壳 /plugins 视图 | ✅ | CLI `/plugins`（列编排插件）|
 | **Cordis 服务化深化** | ✅（本会话新增，超出原清单）| registry/inject/waterfall/bail/parallel/serial/能力面/热载（docs/cordis-plugin-notes.md）|
 | **trha-ui 共享渲染库** | ❌ | 未做（渲染仍在 CLI 包内）|
-| **Desktop/Web 起跑基线** | ❌ | packages/app/Desktop 仅有 README+旧 dist；Web 为空壳 |
+| **Desktop/Web 起跑基线** | 🟡 | **2026-09-17 更新**：Desktop 已实质起跑（46 源文件 / 30 测试文件 / 137 用例；U0–U3 全绿；linux deb 已验）；**Web 仍为空壳**（15 个源/配置文件，不在 `cabal.project`、不在 `ci.yml` 任何 job） |
 
 ### 内核深化（kernel-tool-execution-plan 方案 A）
 | 项 | 状态 |
@@ -61,7 +61,7 @@
 | ~~G1~~ 内核（Haskell）Plan 状态机 + 回合屏障端点 | **关闭（架构决策，2026-09）** | 理由见下「架构原则」；S1 标注为“由编排层实现” |
 | ~~G2~~ 服务端会话持久化 + 恢复端点 | ✅（2026-09 完成）| `stateStore.ts` 原子写 + `stateDir` 启动恢复；store 单测 5 + E2E 双实例恢复续步（TS 94/94）|
 | G3 | 三端共享：Haskell `trha-ui` 渲染库提取 | 大 | Phase3 原目标；Desktop/Web 尚无真代码 |
-| G4 | Desktop/Web 起跑基线（三端协议共享验证）| 大 | 依赖 G3 |
+| G4 | Desktop/Web 起跑基线（三端协议共享验证）| 大 | 依赖 G3。**2026-09-17 更新：Desktop 侧已实质起跑**（46 源文件 / 30 测试文件 / 137 用例，U0–U3 全绿，linux deb 已验，见 `desktop-ui-progress.md`）；**Web 仍是空壳**（15 个源/配置文件，不在 `cabal.project`、不在 `ci.yml` 任何 job）⇒ 余量只在 Web 一侧 |
 | G5 | 内核 HTTP 请求纳入事件矩阵（遥测）| 小 | agent-lifecycle-notes 已标注缺口 |
 
 ## 建议

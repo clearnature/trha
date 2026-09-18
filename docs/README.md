@@ -1,6 +1,6 @@
 # docs/ 导览
 
-> 本目录共 **38 份文档**，按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
+> 本目录共 **44 份文档**（2026-09-17 复核），按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
 >
 > **结构权威**是 `../QWEN.md`（§Architecture Layers / §Development Conventions / §Documentation）与 `architecture/architecture.md`。本文件只是**浏览用导览**，如有冲突，一律以 `QWEN.md` 为准。
 
@@ -17,16 +17,19 @@
 ## 推荐阅读顺序（新会话 / 新人）
 
 1. `../QWEN.md` —— 开发约定、层表、完整文档索引
-2. **`architecture/architecture-intended-vs-actual.md`** —— **先读这份**：项目**意图**（推理内核）vs 现状、偏差 D-1…D-9、状态分档
-3. `architecture/architecture.md` —— 分层与数据流（注意其 §6 包结构规划与现状不符）
-4. `contracts/protocol-shell-kernel.md` —— 跨端协议总账（端点 / SSE 帧 / 凭证）
-5. `plans/plan-reconciliation.md` —— 计划 vs 现实（含**内核/外壳职责分界**的架构原则）
-6. `plans/code-docs-reconciliation.md` —— 代码 vs 文档（构建 / 接线 / 使用面 + 未接线清单）
-7. 之后按任务进入 `plans/` 的对应文档
+2. **`architecture/project-overview.md`** —— **要全貌先读这份**：技术栈 / 构建拓扑 / 现状架构图 / **逐计划完成度** / 未完成·未验证清单 / 文档漂移清单 / 复核命令
+3. **`architecture/architecture-intended-vs-actual.md`** —— **要理解意图读这份**：项目**意图**（推理内核）vs 现状、偏差 D-1…D-9、状态分档
+4. `architecture/architecture.md` —— 分层与数据流（注意其 §6 包结构规划与现状不符）
+5. `contracts/protocol-shell-kernel.md` —— 跨端协议总账（端点 / SSE 帧 / 凭证）
+6. `plans/plan-reconciliation.md` —— 计划 vs 现实（含**内核/外壳职责分界**的架构原则）
+7. `plans/code-docs-reconciliation.md` —— 代码 vs 文档（构建 / 接线 / 使用面 + 未接线清单）
+8. 之后按任务进入 `plans/` 的对应文档
 
 ## 索引
 
-### `architecture/` — 结构权威与项目意图（6）
+### `architecture/` — 结构权威与项目意图（7）
+
+- **`project-overview.md`** — **技术栈 · 架构 · 计划完成度** 的一页综合视图：分层技术表、构建拓扑（cabal stanza）、依赖清单、`3rdparty/`、现状架构图、职责分界、跨端协议、逐计划完成度总账、未完成/未验证清单、**文档漂移清单**、复核命令与机器回执 id。想**快速建立全貌**或查「某项到底做完没有」从这份进（它是视图，不是权威 —— 冲突时以本文其余各份为准）
 
 - **`architecture-intended-vs-actual.md`** — **意图 vs 现状**：规范基座链（Agda「律算合一」→ pyBitNet《架构宪法》→ 本仓 CPU 实现）· 意图架构图 · 现状架构图（带 ✅/⚠️/❌）· 偏差 D-1…D-9 · 状态分档 A–E · 待澄清项。**项目愿景此前未写入任何文档，导致过一次严重误读，故新会话应先读本文**
 - `architecture.md` — 分层、核心模块、数据流、技术选型。⚠️ §6「包结构规划」写的是"每包独立目录"，与现状不符（见 `plans/code-docs-reconciliation.md` §6）
@@ -41,15 +44,19 @@
 - `desktop-port-contract.md` — UI ↔ 后端 `Port` 契约（组件只经 `port/` 访问后端，禁止直接 `fetch`）
 - `desktop-host-contract.md` — Desktop ↔ Scheduler 宿主契约 v1（握手 / 租约 / 日志 stderr / 安全基线）
 
-### `plans/` — 进行中（7）
+### `plans/` — 进行中（11）
 
-- `desktop-provider-design.md` — Provider 三层体系（内核 registry + scheduler 透传 + Desktop UI）；P1–P8 / A1–A5 完成。**「共享 `src/` 模块唯一归属」规则的原始出处就在这里**（第 60/63 行的结构注意）
+- `desktop-provider-design.md` — Provider 三层体系（内核 registry + scheduler 透传 + Desktop UI）；P1–P8 / A1–A5 完成；A6（自研 CPU 推理）M1–M2 完成、M3–M6 未做。**「共享 `src/` 模块唯一归属」规则的原始出处就在这里**（第 60/63 行的结构注意）
 - `desktop-ui-execution-plan.md` — Desktop UI 移植的原子表与预算（T1–T12；`T5b` resume、`T12a` 清理未完成）
 - `desktop-ui-port-plan.md` — Desktop UI 分析与能力矩阵（执行计划的前置）
 - `desktop-ui-progress.md` — Desktop/Electron 跨会话 checkpoint（已完成基线 + 待办索引）
 - `pybitnet-ternary-inference-blueprint.md` — CPU 三值推理内核蓝图（M1–M20，逐条标注参考实现行号）
 - `plan-reconciliation.md` — 计划 vs 现实（**功能面**）；文末「架构原则」是内核/外壳职责分界的用户裁定
 - `code-docs-reconciliation.md` — 代码 vs 文档（**构建 / 接线 / 使用面**）；未接线清单（WebGPU / Presentation）与待办（原 `trha-orchestration` 199 行已于 2026-09-13 归档出构建 → `../../archive/orchestration/`）
+- `electron-44-upgrade.md` — **Electron 28 → 44 升级的变更与待办**：已完成部分（依赖 + 二进制已验证）、待处理（`chrome-sandbox` SUID 权限、实机启动验证、electron 二进制镜像配置、改动未提交）
+- `verification-criteria.md` — **判据是什么**：C1–C5（代数结构 / 类型不变量 / 多实现全等 / 因果语义 / 约束↔外部推理）+ 覆盖进度表；**性能不是判据**
+- `file-completion-tracking.md` — 逐**文件**的完成状态 + 验证方式 + 证据（按计划项核对见 `plan-reconciliation.md`）
+- `webgpu-wiring-plan.md` — WebGPU 后端接线：数据流程、W1–W7 / T1–T4 原子分解（均已跑通）、12 条「照文档写会踩」的坑；**未接生产推理路径**
 
 ### `reference/` — 参考、研究、运维（11）
 

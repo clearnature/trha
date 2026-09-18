@@ -65,7 +65,7 @@ ls archive/orchestration/          # 原 src/Orchestration 6 模块已于 2026-0
 
 | 项 | 规模 | 实测状态 |
 |---|---|---|
-| `src/Infrastructure/WebGPU/**` | 14 文件 / 1344 行 | **不在任何 cabal**；**无外部引用**；`Buffer.hs:49` 自述 `"Buffer mapping not implemented in simulation"`；`FFI.hs` 声明了 `webgpuCreateDevice` 等绑定，需外部 C 库（wgpu-native / Dawn） |
+| ~~`src/Infrastructure/WebGPU/**`~~ | ~~14 文件 / 1344 行~~ | **已失效（2026-09-17 更正）**：旧层（simulation，1344 行）已归档 → `archive/webgpu-legacy/`；**新高层已在构建** —— `library trha-webgpu`（`trha.cabal:222`，`Raw/Types` `Raw/Enums` `Raw/Structs` `Raw/FFI` `Raw/Async` `Context` `Buffer` `Kernel` `Error` 共 9 模块 + `cbits/wgpu_callback_shim.c`），另有 5 个探针可执行（`trha-webgpu-{hello,compute,errorprobe,gf27,gf27matmul}`）与 `trha-webgpu-test`（真机 AMD Navi 44 + Vulkan/radv，3 例）。**仍缺**：未接入**生产推理路径**（`grep -rn "Infrastructure.WebGPU" --include=*.hs src/ \| grep -v "^src/Infrastructure/WebGPU/"` → 无输出）。详见 `plans/webgpu-wiring-plan.md` 与 `architecture/project-overview.md` §5-1 |
 | `src/Presentation/**` | 8 文件（Desktop 6 / Web 1 / TUI 1） | **不在任何 cabal**；无外部引用。`docs/architecture/presentation-layer.md` 定义了该层，但从未接线 |
 | ~~`library trha-orchestration`~~ | ~~6 模块 / 199 行~~ | **已归档（2026-09-13）** → `archive/orchestration/`。处置理由：零使用者 + `verifyType` 假实现（恒返 `True`）+ 与「编排归外壳、内核不持决策态」裁定冲突。**不是"空库"**：有真实类型骨架，但实现平凡（`parallel = mapConcurrently id`）或为假（`spawnSubAgent` 只写一条 Idle 记录、不启动任何东西） |
 | `src/Infrastructure/CPU/Main.hs`、`WebGPU/Main.hs` | 2 文件 | 随层目录存在，未被任何 stanza 声明（不参与编译） |
@@ -163,6 +163,8 @@ ls archive/orchestration/          # 原 src/Orchestration 6 模块已于 2026-0
 | 2026-09-13 | `docs/` 归置落地：建 `architecture/` `contracts/` `plans/` `reference/` `archive/` 五目录并移动全部 37 份；同步更新 `README.md` 链接与 `QWEN.md`（规则段路径、Secrets 条、重写的 §Documentation 索引）；本文档自身移入 `plans/` 并更新全部路径引用 |
 | 2026-09-13 | **D-2 闭合**（`commit 9a6dd6f`）：「本地推理无入口」已修 —— `"cpu"` 成一等 provider kind，`adapterFor` / `providerStream` 可达 `createCPUAdapter`，引擎按模型路径 memo（`cpuAdapterCache`）；整套 177/0/4、CLI 182/0、`build all` EXIT=0。同步更新本文 §0 / §3（特性 7）/ §7 #7 与 `architecture-intended-vs-actual.md`（§0 现状行、§3 现状图、§4 D-2、§5 状态分档、§6 批次表） |
 | 2026-09-13 | **`library trha-orchestration` 归档出构建**（所有者裁定「A. 归档出构建」）：6 模块 199 行、编译通过但零 stanza 依赖 / 零 `import Orchestration.*` / 零测试，且 `verifyType` 为恒返 `True` 的假实现 → `archive/orchestration/`（含 README：实测事实 / 逐块评估 / 架构理由 / 取回步骤）；同时从 `trha.cabal` 删除该 stanza。同步更新本文 §0 / §1 拓扑 / §2 清单 / §3（特性 3·9）/ §6，以及 `README.md` §项目结构、`docs/README.md` 索引 |
+
+| 2026-09-17 | **§2 的 WebGPU 行更正**：原写「不在任何 cabal」已失效 —— 新高层已进构建（`library trha-webgpu`，`trha.cabal:222`，9 模块）+ 5 探针 + `trha-webgpu-test` 真机 3 例；仍缺的是**未接生产推理路径**（`grep … src/ \| grep -v WebGPU/` → 无输出）。判定依据与漂移清单见 `docs/architecture/project-overview.md` §5-1。同批更正：`QWEN.md`（层表去掉已归档的 `src/Orchestration/`、5 库组成改为 core/llm/api/infra/webgpu、模块归属表加 `Infrastructure.WebGPU.*`）、`.github/workflows/ci.yml`（GHC 9.4.8 → 9.14.1） |
 
 ---
 

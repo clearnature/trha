@@ -13,7 +13,7 @@
 | **目标** | `src/Infrastructure/WebGPU/**`（1344 行）真正进入构建并**在真实 GPU 后端上跑通**：Instance → Adapter → Device → Queue → Buffer → WGSL ComputePipeline → Dispatch → 读回 |
 | **约束 1（强类型）** | 用 **GHC 强类型**重构绑定层：句子柄用不透明标签类型 + `Handle`/`Nullable` typeclass（见 `src/Infrastructure/WebGPU/Raw/Types.hs`），**不沿用现状的裸 `Ptr ()`** —— 裸指针下 `Device`/`Buffer`/`Queue` 可互传，错用只在运行时段错误暴露 |
 | **约束 2（第三方代码进仓）** | 外部库与参考源码**一律复制进仓库 `3rdparty/`**，**不在仓库外引用**（不再依赖 `/data/trit/BitNet/...` 路径） |
-| **约束 3（参考实现）** | 流程与 WGSL 参考 `3rdparty/ref-llama.cpp-ggml-webgpu/`；但**其代码不可照搬** —— 它用 C++ 封装头 `<webgpu/webgpu_cpp.h>`（`wgpu::Instance` / `device.createBuffer(...)`），我们走 Haskell FFI（C ABI），权威来源是 `3rdparty/wgpu-native/include/webgpu/webgpu.h` |
+| **约束 3（参考实现）** | 流程与 WGSL 参考 `3rdparty/llama-webgpu/`（**旧写作 `ref-llama.cpp-ggml-webgpu/`，实际入库名不同**）；但**其代码不可照搬** —— 它用 C++ 封装头 `<webgpu/webgpu_cpp.h>`（`wgpu::Instance` / `device.createBuffer(...)`），我们走 Haskell FFI（C ABI），权威来源是 `3rdparty/wgpu-native/include/webgpu/webgpu.h` |
 | **非目标** | 不追求性能对齐；不改动 CPU 三值推理路径 |
 | **判据** | `cabal build` 链接 `libwgpu_native` 成功 + 一个 compute kernel 的 GPU 结果与 CPU 版**逐元素一致** |
 
@@ -24,7 +24,7 @@
 | 项 | 实测 |
 |---|---|
 | 代码规模 | 14 个 `.hs` + `README.md`，**1344 行**（最大 `WGSL.hs` 409、`Types.hs` 146、`ShaderLib.hs` 122） |
-| 在构建中？ | **否** —— 不在任何 cabal 组件 |
+| 在构建中？ | ~~**否** —— 不在任何 cabal 组件~~ ⚠️ **这是 2026-09-13 的快照，已过期**：同日之后 W1–W7 跑通，已有 `library trha-webgpu`（`trha.cabal:222`）。以 §7/§8 为准 |
 | 被引用？ | **否** —— 全仓无 `import Infrastructure.WebGPU.*` |
 | simulation 占位 | `Buffer.hs:49` → `Left (UnknownWebGPUError "Buffer mapping not implemented in simulation")`；全仓仅此 1 处 |
 | **FFI 符号** | ❌ **`FFI.hs` 声明的 11 个符号是编造的**：`webgpu_create_device` 等**在真实库中一个都不存在**（`nm -D` 实测出现 **0** 次）。注释自认 "In production, these would link to wgpu-native or similar" |
@@ -41,13 +41,20 @@
 ├── wgpu-native/                        9.3M   ← 运行时库（v29.0.1.1）
 │   ├── lib/libwgpu_native.so           8.9M
 │   └── include/webgpu/{webgpu.h,wgpu.h} 312K
-└── ref-llama.cpp-ggml-webgpu/          816K   ← 参考实现（llama.cpp 59237bfbb 的 ggml/src/ggml-webgpu）
-    ├── ggml-webgpu.cpp                 4262 行（C++ API 用法；流程可参考，代码不可照搬）
-    ├── ggml-webgpu-shader-lib.hpp      2805 行
-    ├── pre_wgsl.hpp                     778 行
-    ├── CMakeLists.txt
-    └── wgsl-shaders/                    41 个 WGSL（**可复用**：WGSL 跨 API 通用）
+├── llama-webgpu/                       816K   ← 参考实现（llama.cpp 59237bfbb 的 ggml/src/ggml-webgpu）
+│   ├── ggml-webgpu.cpp                 4262 行（C++ API 用法；流程可参考，代码不可照搬）
+│   ├── ggml-webgpu-shader-lib.hpp      2805 行
+│   ├── pre_wgsl.hpp                     778 行
+│   ├── CMakeLists.txt
+│   └── wgsl-shaders/                    41 个 WGSL（**可复用**：WGSL 跨 API 通用）
+└── llama-vulkan/                        ← Vulkan 后端源码（按所有者指示入库，作后端对照）
+    ├── ggml-vulkan.cpp
+    ├── vulkan-shaders/ · cmake/ · CMakeLists.txt
 ```
+
+> **目录名更正（2026-09-17）**：本节原写作 `ref-llama.cpp-ggml-webgpu/`，实际入库名是
+> **`llama-webgpu/`**（本文 §7/§8 用的就是正确名字）。以 `ls 3rdparty/`
+> → `llama-vulkan  llama-webgpu  wgpu-native` 为准。
 
 **未入库**：`libwgpu_native.a`（静态库，**50M**）—— 动态链接只需 `.so`；若将来要走 README 所述"静态编译（Alpine+musl）"再取回（同一条下载命令，版本 v29.0.1.1）。
 
@@ -65,7 +72,7 @@ src/Infrastructure/WebGPU/**（1344 行）
    ├─ Buffer.hs:49                          ← simulation 占位（map 未实现）
    └─ FFI.hs                                ← foreign import "webgpu_create_device" …
             ✗ 符号不存在（nm -D | grep → 0 次）
-            ✗ 整层不在任何 cabal 组件 → 从不参与编译
+            ✗ 整层不在任何 cabal 组件 → 从不参与编译   ← ⚠️ 2026-09-13 快照，已过期（见 §7）
 ```
 
 ### 3.2 目标（接通后）
@@ -110,7 +117,7 @@ Haskell (trha)
 
 | ID | 原子 | 验收（可执行） | 状态 |
 |---|---|---|---|
-| **W1** | **库就位 + 参考进仓**：取 wgpu-native v29.0.1.1 → `3rdparty/wgpu-native/`；复制 llama.cpp ggml-webgpu → `3rdparty/ref-llama.cpp-ggml-webgpu/`；`nm -D` 确认符号表 | `nm -D ... \| grep -c webgpu_create_device` → **0**；`grep -c wgpuCreateInstance` → **≥1**；两个 `3rdparty/` 目录存在 | ✅ **已完成** |
+| **W1** | **库就位 + 参考进仓**：取 wgpu-native v29.0.1.1 → `3rdparty/wgpu-native/`；复制 llama.cpp ggml-webgpu → `3rdparty/llama-webgpu/`；`nm -D` 确认符号表 | `nm -D ... \| grep -c webgpu_create_device` → **0**；`grep -c wgpuCreateInstance` → **≥1**；两个 `3rdparty/` 目录存在 | ✅ **已完成** |
 | **W2a** | **强类型句柄层**：12 个不透明标签 + `Handle`/`Nullable` typeclass，构造子不导出 | 编译通过 + 类型不可混用（`Device` 传给要 `Buffer` 的函数应**编译失败**） | ✅ **代码已写**（`Raw/Types.hs`，待 W4 接入组件后编译验证） |
 | **W2b** | **枚举与描述符绑定**：`Raw/Enums.hs` + `Raw/Structs.hsc`（`hsc2hs` 取 `#{size}/#{offset}`） | 每个结构的 `sizeOf`/字段偏移与 C 头一致（静态断言测试） | ◻ 待做 |
 | **W3** | **真实 FFI**：`Raw/FFI.hs` 按 `webgpu.h` 真实签名绑定（初始化链 + `WGPUStringView` + `*CallbackInfo`） | 组件在 `-lwgpu_native` 下**链接成功**（无 undefined symbol） | ◻ 待做 |
@@ -143,7 +150,7 @@ Haskell (trha)
 find 3rdparty -maxdepth 2 -type d | sort
 nm -D --defined-only 3rdparty/wgpu-native/lib/libwgpu_native.so | grep -c webgpu_create_device   # → 0（旧 FFI 是编造的）
 nm -D --defined-only 3rdparty/wgpu-native/lib/libwgpu_native.so | grep -oE 'wgpu[A-Za-z]+' | sort -u | head
-ls 3rdparty/ref-llama.cpp-ggml-webgpu/wgsl-shaders | wc -l    # → 41
+ls 3rdparty/llama-webgpu/wgsl-shaders | wc -l    # → 41
 
 # 现状：整层不在构建、无引用
 grep -rn "WebGPU" --include=*.cabal . | grep -v dist-newstyle
@@ -160,6 +167,7 @@ ls /usr/lib/x86_64-linux-gnu/libvulkan* ; ls /usr/lib/x86_64-linux-gnu/libEGL*
 | 日期 | 变更 |
 |---|---|
 | 2026-09-13 | 初版：现状实测（1344 行不在构建、`FFI.hs` 符号经 `nm` 证伪、本机有 Vulkan）、数据流程图、原子分解 W1–W7、决策点 4 项；**W1 完成** |
+| 2026-09-17 | **§2 目录名更正**：原写 `3rdparty/ref-llama.cpp-ggml-webgpu/`，实际入库名是 `llama-webgpu/`（并补上 `llama-vulkan/`）。同时补记：本层**仍未接入生产推理路径**（`grep -rn "Infrastructure.WebGPU" --include=*.hs src/ | grep -v "^src/Infrastructure/WebGPU/"` → 无输出），引用只出现在 `benchmarks/`、`test-webgpu/`、`test-cpu/negative/` |
 | 2026-09-13 | 所有者裁定：库入 `3rdparty/`（不在仓库外引用）／新建 `library trha-webgpu`／首批先 hello-compute／**用 GHC 强类型重构**。据此：库与参考源码落位 `3rdparty/`；新写 `Raw/Types.hs`（12 个不透明标签 + `Handle`/`Nullable`，构造子不导出）＝ W2a；确认 llama.cpp 参考用的是 **C++ API（`webgpu_cpp.h`）**、代码不可照搬（WGSL 与流程可复用）；补齐 v29 API 风格（`WGPUStringView` + `*CallbackInfo`，`wgpuDevicePoll` 已移除） |
 
 ---

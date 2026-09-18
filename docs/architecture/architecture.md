@@ -18,8 +18,9 @@
 ┌─────────────────────────────────────────────────────┐
 │                  Applications                        │
 │   ┌──────────────┐  ┌──────────────┐  ┌──────────┐  │
-│   │  CLI Frontend│  │Desktop Frontend│  │ Web Frontend│
-│   │  (Terminal)  │  │  (GTK/Qt)    │  │   (Warp)  │  │
+│   │ CLI / TUI    │  │ Desktop      │  │ Web      │  │
+│   │ (Terminal)   │  │ (Electron+   │  │ (React+  │  │
+│   │              │  │  React)      │  │  Vite)   │  │
 │   └──────┬───────┘  └──────┬───────┘  └─────┬─────┘  │
 │          │                 │                │        │
 │          └─────────────────┼────────────────┘        │
@@ -193,7 +194,7 @@ trha
     └── Progress.hs   # 进度条/动画
 ```
 
-### 4.3 Desktop Frontend (GTK/Qt)
+### 4.3 Desktop Frontend (GTK/Qt) —— ⚠️ **非现状**
 
 ```
 trha-desktop
@@ -207,7 +208,7 @@ trha-desktop
     └── AppState.hs   # 应用状态
 ```
 
-### 4.4 Web Frontend (Warp + WebSocket)
+### 4.4 Web Frontend (Warp + WebSocket) —— ⚠️ **非现状**
 
 ```
 trha-web
@@ -300,10 +301,18 @@ trha/                      ← 以下为**未采用的规划**
 | **日志** | fast-logger | 高性能日志 |
 | **测试** | hspec + QuickCheck | BDD + 属性测试 |
 
-## 8. 下一步计划
+## 8. 下一步计划（⚠️ **本节是早期构想，未与现状同步**）
+
+> **状态口径以 `project-overview.md` §3 为准。** 下面 5 条与 `README.md` §下一步 的 Phase 表
+> **口径不同**（README 那张表带 2026-09-13 的实测注记），两者不一致时以 README / `project-overview.md` 为准。
+> 2026-09-17 加注，避免再出现「同一件事在两份文档里一个 ✅ 一个未勾」。
 
 1. **Phase 1**: 完成 `Core.Session` 和 `Core.Agent` ✅
 2. **Phase 2**: 实现 `LLM.DeepSeek` 适配器 ✅
-3. **Phase 3**: 开发 CLI 前端
-4. **Phase 4**: 实现存储后端 (JSON/SQLite)
-5. **Phase 5**: 开发 Desktop/Web 前端
+3. **Phase 3**: 开发 CLI 前端 —— ✅ 已建成（`packages/app/CLI`，`trha-cli-test` 182 例）
+4. **Phase 4**: 实现存储后端 (JSON/SQLite) —— ✅ 已建成（`trha-infra`；会话持久化在编排层 `stateStore.ts`）
+5. **Phase 5**: 开发 Desktop/Web 前端 —— Desktop 🟡（Electron + React，**不是本文 §4.3 写的 GTK/Qt**；linux deb 已验，win/mac 与实机启动未验）；Web ❌ 空壳
+
+> 另注：本文 §4.3 的 `trha-desktop（GTK/Qt）` 与 §4.4 的 `trha-web（Warp）` **均非现状** ——
+> Desktop 是 Electron + React，Web 是 React + Vite。真实前端在 `packages/app/{Desktop,Web}`，
+> 不在 `src/Presentation/**`（该层从未参与编译，见 `presentation-layer.md` 头部标注）。

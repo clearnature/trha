@@ -14,7 +14,8 @@ Microkernel agent harness in Haskell with TypeScript orchestration, multi-protoc
 | **LLM Adapters** | Haskell, http-client | `src/LLM/` |
 | **API Server** | Haskell, Servant, Warp | `src/API/` |
 | **Infrastructure** | Haskell (SQLite, HTTP, Sandbox) | `src/Infrastructure/` |
-| **Orchestration Bridge** | Haskell ↔ TypeScript (HTTP) | `src/Orchestration/` |
+| **WebGPU Backend** | Haskell FFI → wgpu-native (Vulkan) | `src/Infrastructure/WebGPU/` |
+| **Scheduler Bridge** | TypeScript HTTP client to the kernel | `packages/scheduler/src/Bridge/` |
 | **CPU Backend** | Haskell (SIMD/BLAS/Inference) | `src/Infrastructure/CPU/` |
 | **Scheduler** | TypeScript, Express, Zod, Winston | `packages/scheduler/` |
 | **SDK** | Haskell | `packages/sdk/` |
@@ -40,7 +41,7 @@ cabal run trha -- cli    # Run CLI REPL
 cabal run trha -- tui    # Run TUI mode
 ```
 
-GHC version: requires `base ^>=4.22` (GHC 9.12+). The cabal file defines 5 internal libraries (`trha-core`, `trha-llm`, `trha-api`, `trha-infra`, `trha-orchestration`) merged where needed to work around GHC internal-lib linking bugs.
+GHC version: requires `base ^>=4.22` (GHC 9.12+). The cabal file defines 5 internal libraries (`trha-core`, `trha-llm`, `trha-api`, `trha-infra`, `trha-webgpu`), merged where needed to work around GHC internal-lib linking bugs. The former `trha-orchestration` library was archived out of the build on 2026-09-13 (see `archive/orchestration/`).
 
 ### TypeScript Scheduler
 
@@ -85,10 +86,10 @@ The Servant server (`API.Server.startServer`) listens on a configurable port and
 
 - **Language**: Haskell 2010 with GHC extensions (OverloadedStrings, DataKinds, TypeOperators, DeriveGeneric, ScopedTypeVariables). TypeScript with strict mode.
 - **Module naming**: Follows the cabal internal library structure — e.g. `Core.Plugin.Types` lives under `src/Core/Plugin/Types.hs`.
-- **Shared `src/` module ownership (read before touching `trha.cabal` or `src/`)**: All five internal libraries (`trha-core`, `trha-llm`, `trha-api`, `trha-infra`, `trha-orchestration`) declare `hs-source-dirs: src`, so GHC treats a file under `src/` as belonging to the package that imports it. Every module must therefore be owned by **exactly one** library:
+- **Shared `src/` module ownership (read before touching `trha.cabal` or `src/`)**: All five internal libraries (`trha-core`, `trha-llm`, `trha-api`, `trha-infra`, `trha-webgpu`) declare `hs-source-dirs: src`, so GHC treats a file under `src/` as belonging to the package that imports it. Every module must therefore be owned by **exactly one** library:
   - listed in **two** libraries ⇒ two incompatible types of the same name (already happened once: `Infrastructure.CPU.GGUF` / `Dequant` were briefly in both `trha-llm` and `trha-api` — `visibility: public` exposes `other-modules` downstream; recorded in `docs/plans/desktop-provider-design.md`);
   - listed in **neither** ⇒ link failure `undefined reference to trha…-inplace_<MangledModule>_…` — reproduced 2026-09-13 by deleting `trha-api`'s `other-modules` (`cabal build all`: all three executables failed to link);
-  - current ownership: `Core.Provider.Types` → **trha-api only**; `LLM.*` + `Infrastructure.CPU.*` → **trha-llm only**; `Infrastructure.{Storage,Network,Sandbox,Telemetry}.*` → **trha-infra only**; `Core.{Plugin,Session,Agent,Tools,Event,Cache}.*` → **trha-core only**; `Orchestration.*` → **trha-orchestration only**.
+  - current ownership: `Core.Provider.Types` → **trha-api only**; `LLM.*` + `Infrastructure.CPU.*` → **trha-llm only**; `Infrastructure.{Storage,Network,Sandbox,Telemetry}.*` → **trha-infra only**; `Infrastructure.WebGPU.*` → **trha-webgpu only**; `Core.{Plugin,Session,Agent,Tools,Event,Cache}.*` → **trha-core only**.
   Do **not** remove `other-modules` entries as "duplicates" — they are required by this layout. Do not re-organise `src/` per package without updating this table and `docs/architecture/architecture.md` (see `docs/plans/code-docs-reconciliation.md`).
 - **No sed for code edits**: Use the `edit` tool for all code modifications (project convention).
 - **Imports**: Qualified imports preferred for large modules (`Data.Text`, `Data.Map`, `Data.Vector`). Unqualified for small/focused imports.
@@ -121,6 +122,7 @@ Three GitHub Actions workflows in `.github/workflows/`:
 `docs/` is organised by document lifecycle (reorganised 2026-09-13; see `docs/plans/code-docs-reconciliation.md` §5 for the classification rationale).
 
 **Structure authority & project intent — `docs/architecture/`**
+- `docs/architecture/project-overview.md` — **Tech stack · architecture · plan completion** in one page: layer/tech table with measured sizes, build topology (cabal stanzas + what is *not* in the root build), dependency lists, `3rdparty/` contents, actual-state architecture diagram, kernel/shell responsibility split, cross-end protocol summary, per-plan completion ledger, explicit not-done / not-verified lists, a **documentation-drift list** (claim vs measured) and the reproducible check commands plus gate receipt ids. Entry point for a whole-project view; it is a *view*, not an authority.
 - `docs/architecture/architecture-intended-vs-actual.md` — **Project intent vs actual state**: spec base (Agda「律算合一」→ pyBitNet《架构宪法》→ this repo's CPU layer) → intended architecture → actual architecture (✅/⚠️/❌) → deviations D-1…D-9 → status tiers A–E. **Read this first**: the project intent (kernel as a *reasoning hub* with type-theoretic/causal constraints) had never been documented, which caused a serious misread.
 - `docs/architecture/architecture.md` — System architecture overview. ⚠️ §6 package layout is out of date (see `docs/plans/code-docs-reconciliation.md` §6)
 - `docs/architecture/presentation-layer.md` — Presentation layer (Desktop/Web/TUI) design
@@ -134,11 +136,15 @@ Three GitHub Actions workflows in `.github/workflows/`:
 - `docs/contracts/desktop-host-contract.md` — Desktop ↔ Scheduler host contract (v1)
 
 **Active plans — `docs/plans/`**
-- `docs/plans/desktop-provider-design.md` — Provider system (P1–P8, A1–A5)
-- `docs/plans/desktop-ui-execution-plan.md`, `desktop-ui-port-plan.md`, `desktop-ui-progress.md` — Desktop UI port
-- `docs/plans/pybitnet-ternary-inference-blueprint.md` — CPU ternary inference (M1–M20)
+- `docs/plans/desktop-provider-design.md` — Provider system (P1–P8, A1–A5; A6 self-hosted CPU inference: M1–M2 done, M3–M6 not started)
+- `docs/plans/desktop-ui-execution-plan.md`, `desktop-ui-port-plan.md`, `desktop-ui-progress.md` — Desktop UI port (T1–T12; `T5b` resume and `T12a` cleanup open)
+- `docs/plans/pybitnet-ternary-inference-blueprint.md` — CPU ternary inference (M1–M21, all done)
+- `docs/plans/webgpu-wiring-plan.md` — WebGPU backend wiring (W1–W7 / T1–T4 all done; **not wired into the production inference path**)
+- `docs/plans/verification-criteria.md` — **What counts as evidence**: criteria C1–C5 (algebra ↔ Agda, compile-time type invariants, cross-implementation equality, causal semantics, constraint ↔ external API). Performance is explicitly *not* a criterion.
+- `docs/plans/file-completion-tracking.md` — Per-**file** completion status with verification method and evidence
 - `docs/plans/plan-reconciliation.md` — Plan vs reality (feature scope)
-- `docs/plans/code-docs-reconciliation.md` — Code vs docs (build / wiring / usage scope)
+- `docs/plans/code-docs-reconciliation.md` — Code vs docs (build / wiring / usage scope). ⚠️ §2's WebGPU "not in any cabal component" is stale — see `docs/architecture/project-overview.md` §5
+- `docs/plans/electron-44-upgrade.md` — Electron 28 → 44 upgrade: done (deps + binary verified) / pending (`chrome-sandbox` SUID, live-launch check, electron binary mirror config, uncommitted)
 
 **Reference — `docs/reference/`**
 - `docs/reference/source-code-analysis.md`, `reasonix-architecture-analysis.md`, `reasonix-cli-tui-architecture-analysis.md`, `cordis-plugin-notes.md`, `dsh-docs-alignment-plan.md`, `electron-desktop-plan.md`, `layer-integration-report.md`
