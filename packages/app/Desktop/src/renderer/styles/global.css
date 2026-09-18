@@ -898,3 +898,6 @@ body {
 .sandbox-shells { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .sandbox-shell { display: flex; align-items: center; gap: 10px; font-size: 13px; }
 .sandbox-shell span:first-child { font-weight: 600; width: 90px; }
+
+/* ── 浏览器控制：危险操作按钮 ── */
+.btn--danger { border-color: #e0b4ad; color: #c0392b; }
