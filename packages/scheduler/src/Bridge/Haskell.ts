@@ -26,6 +26,8 @@ export interface QueryRequest {
   model?: string;
   /** Which saved provider answers this request (P6). */
   provider?: string;
+  /** Model generation params (LLM settings; absent = kernel defaults). */
+  genParams?: { temperature?: number; topP?: number; maxTokens?: number };
 }
 
 export interface ToolCallData {
@@ -81,6 +83,12 @@ export class HaskellBridge {
     }
     if (request.model) body.model = request.model;
     if (request.provider) body.provider = request.provider;
+    // LLM 设置 → 内核（temperature/topP/maxTokens；省略 = 内核默认）
+    if (request.genParams) {
+      if (request.genParams.temperature !== undefined) body.temperature = request.genParams.temperature;
+      if (request.genParams.topP !== undefined) body.topP = request.genParams.topP;
+      if (request.genParams.maxTokens !== undefined) body.max_tokens = request.genParams.maxTokens;
+    }
 
     const raw = await this.httpClient.post<Record<string, unknown>>('/v1/chat/completions', body);
     return parseCompletion(raw);

@@ -696,7 +696,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   const runStep = async (
     session: SchedulerSession,
     message: string,
-    target: { provider?: string; model?: string } = {},
+    target: { provider?: string; model?: string; genParams?: { temperature?: number; topP?: number; maxTokens?: number } } = {},
     onDelta?: (text: string) => void,
   ): Promise<string> => {
     const mode = MODES[session.mode];
@@ -733,6 +733,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         const request = {
           messages: session.messages, tools: toolsCfg,
           model: target.model, provider: target.provider,
+          genParams: target.genParams,
         };
         // A kernel without the streaming endpoint — or a wire that cannot
         // stream — still answers: fall back to the blocking call instead of
@@ -797,7 +798,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   };
 
   app.post('/api/agent/step', async (req, res) => {
-    const { sessionId, message, requireApproval, provider, model } = req.body;
+    const { sessionId, message, requireApproval, provider, model, temperature, topP, maxTokens } = req.body;
+    const genParams = temperature !== undefined || topP !== undefined || maxTokens !== undefined
+      ? { temperature, topP, maxTokens }
+      : undefined;
     const session = sessions.get(sessionId);
     if (!session) return res.status(404).json({ error: 'Session not found' });
     if (typeof message !== 'string' || message.trim() === '') {
@@ -813,7 +817,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 
     session.pendingApproval = null; // a regular step clears any stale gate
     // A3: stream the answer to whoever listens on this session's SSE channel.
-    const reply = await runStep(session, message, { provider, model },
+    const reply = await runStep(session, message, { provider, model, genParams },
       text => events.emit('agent:delta', { sessionId: session.id, text }));
     res.json({
       reply, messages: session.messages, mode: session.mode,
