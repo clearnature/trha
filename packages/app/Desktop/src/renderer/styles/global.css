@@ -832,3 +832,19 @@ body {
 .subagent-overrides label { font-size: 12px; color: var(--muted, #666); }
 .subagent-overrides select { padding: 3px 6px; }
 .subagent-overrides .param-hint { width: 100%; }
+
+/* ── 插件：标题行 / 卡片 ── */
+.plugins-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.plugins-title { margin: 0; }
+.plugins-stats { font-size: 13px; color: var(--muted, #666); }
+.plugins-actions { margin-left: auto; display: flex; gap: 8px; }
+.plugins-list { display: flex; flex-direction: column; gap: 10px; }
+.plugin-card { border: 1px solid var(--border-color, #e5e5e5); border-radius: 8px; padding: 12px 14px; }
+.plugin-head { display: flex; align-items: center; gap: 10px; }
+.plugin-name { font-weight: 600; font-size: 14px; }
+.plugin-publisher { font-size: 12px; color: var(--muted, #888); }
+.plugin-compat { font-size: 11px; padding: 1px 8px; border-radius: 10px; }
+.plugin-compat--full { background: #e8f7ee; color: #1a7f3a; }
+.plugin-compat--partial { background: #fff4e0; color: #a8690a; }
+.plugin-version { font-size: 12px; color: var(--muted, #888); }
+.plugin-caps { display: flex; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--muted, #666); }
