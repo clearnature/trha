@@ -208,3 +208,118 @@ int32_t trha_gf27_rowdot_scalar_only(const int32_t *w, const int32_t *x, int64_t
 {
     return rowdot_scalar(w, x, n, logT, expT);
 }
+
+/* ------------------------------------------------------------------ */
+/* 27×27 连续乘积表 matmul（方向 A：1 次连续访存替代 6 次 gather）       */
+/* ------------------------------------------------------------------ */
+
+/* 构建 27×27 连续乘积表（常驻 L1：729 × 4 B ≈ 2.9 KB）。
+ * 数学约定仍来自 Haskell 传入的 logT/expT —— 这里只是把它们「展开」成
+ * 连续查找表，避免每次乘法做 6 次 gather（2×log + 1×exp + 3×分量）。 */
+static void build_mul_table(int32_t (*t)[27], const int32_t *logT, const int32_t *expT)
+{
+    int32_t a, b, s;
+    for (a = 0; a < 27; a++) {
+        for (b = 0; b < 27; b++) {
+            if (a == 0 || b == 0) {
+                t[a][b] = 0;
+                continue;
+            }
+            s = logT[a] + logT[b];
+            if (s >= 26) {
+                s -= 26;
+            }
+            t[a][b] = expT[s];
+        }
+    }
+}
+
+/* 构建 27×27 连续加法表（加法群 (Z/3)³：逐分量 mod 3，值域 0..26）。
+ * 乘法走 t 表（乘法群 Z/26 周期，logT/expT 展开），加法走本表 ——
+ * 「加法群 × 乘法群」联合周期 = 两张连续表，全程 0 除法。
+ * （对照：gf27_add_scalar 每次加法 4 次整数除法，是 matmul 第二热点，
+ *  见 SovereignGF27.hs gf27AddTable 同款做法。） */
+static void build_add_table(int32_t (*g)[27])
+{
+    int32_t a, b;
+    for (a = 0; a < 27; a++) {
+        for (b = 0; b < 27; b++) {
+            int32_t r0 = (a % 3 + b % 3) % 3;
+            int32_t r1 = ((a / 3) % 3 + (b / 3) % 3) % 3;
+            int32_t r2 = (a / 9 + b / 9) % 3;
+            g[a][b] = r0 + 3 * r1 + 9 * r2;
+        }
+    }
+}
+
+static int32_t rowdot_table(const int32_t *w, const int32_t *x, int64_t n,
+                            const int32_t (*t)[27], const int32_t (*g)[27])
+{
+    int32_t acc = 0;
+    int64_t j;
+    for (j = 0; j < n; j++) {
+        acc = g[acc][t[w[j]][x[j]]];   /* 加法查 g 表：0 除法 */
+    }
+    return acc;
+}
+
+/* 方向 A：整块矩阵乘，用 27×27 连续表（乘法表 + 加法表，全程 0 除法）。
+ * 输入/输出契约与 'trha_gf27_matmul' 完全一致；速度应显著优于 gather 版。
+ * 数学 = 加法群×乘法群联合周期：乘查 mulTable（Z/26 周期），加查 addTable（(Z/3)³）。
+ * 行间并行（OpenMP）：每行点积彼此独立，rows ≥ 几百时接近线性加速。 */
+#include <omp.h>
+
+int trha_gf27_matmul_table(int32_t *out,
+                           const int32_t *w,
+                           const int32_t *x,
+                           int32_t rows, int32_t cols,
+                           const int32_t *logT, const int32_t *expT)
+{
+    int32_t mulTable[27][27];
+    int32_t addTable[27][27];
+    int32_t r;
+    if (out == NULL || w == NULL || x == NULL || rows < 0 || cols < 0) {
+        return -1;
+    }
+    build_mul_table(mulTable, logT, expT);
+    build_add_table(addTable);
+#pragma omp parallel for schedule(static) if (rows >= 64)
+    for (r = 0; r < rows; r++) {
+        out[r] = rowdot_table(w + (int64_t)r * cols, x, cols, mulTable, addTable);
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* 整块矩阵乘（一次 C 调用算整块，绕开逐行 FFI 开销）                    */
+/* ------------------------------------------------------------------ */
+
+/* C = W ⊗ X：权重 W 行优先 [rows × cols]，激活 X 长 cols，输出 C 长 rows。
+ *
+ * 值域 / 契约与 gf27Rowdot 完全一致：
+ *   W 元素、X 元素都是 0..26（GF(27)）；
+ *   C[r] = GF(27) 行点积（同 'trha_gf27_rowdot'，包括 AVX2/标量派发与 logT/expT）。
+ *
+ * 为什么整块而不是逐行 FFI：
+ *   Haskell 逐行调 'trha_gf27_rowdot' 时，每次都要跨 FFI 边界 + pokeArray 拷贝输入
+ *   向量，1440 维行实测 81µs（其中 FFI/拷贝是大头）。整块一次调用把边界开销摊销到
+ *   rows 行。权重保持**行优先连续布局**，在 C 内顺序遍历行 —— 缓存友好。
+ *
+ * 返回 0 成功；ptrs 为 NULL 或 rows<0 等非法输入返回 -1（不越界写）。
+ */
+int trha_gf27_matmul(int32_t *out,        /* 输出 [rows]（调用方分配） */
+                     const int32_t *w,    /* 权重 [rows][cols]，行优先 */
+                     const int32_t *x,    /* 激活 [cols] */
+                     int32_t rows, int32_t cols,
+                     const int32_t *logT, const int32_t *expT)
+{
+    int32_t r;
+    if (out == NULL || w == NULL || x == NULL || rows < 0 || cols < 0) {
+        return -1;
+    }
+#pragma omp parallel for schedule(static) if (rows >= 64)
+    for (r = 0; r < rows; r++) {
+        out[r] = trha_gf27_rowdot(w + (int64_t)r * cols, x, cols, logT, expT);
+    }
+    return 0;
+}

@@ -688,6 +688,11 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 
   // Run one full agent step: loop tools until the model replies in plain
   // text (or the round budget is exhausted).
+  // Last step's kernel causal-constraint verdict (D-1), surfaced to the UI via
+  // /api/agent/step so the frontend can show whether this reply is
+  // constraint-protected (pass / warn) — P3 wiring.
+  let stepConstraint: Record<string, unknown> | undefined;
+
   const runStep = async (
     session: SchedulerSession,
     message: string,
@@ -736,6 +741,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           ? await bridge.queryModelStream(request, onDelta)
               .catch(() => bridge.queryModel(request))
           : await bridge.queryModel(request);
+        if (response.constraint) stepConstraint = response.constraint;
       } catch {
         // Kernel unreachable: demo tool lifecycle + mode-context echo
         // (kept for Phase 2 S2 tool-event tests and offline development).
@@ -809,7 +815,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // A3: stream the answer to whoever listens on this session's SSE channel.
     const reply = await runStep(session, message, { provider, model },
       text => events.emit('agent:delta', { sessionId: session.id, text }));
-    res.json({ reply, messages: session.messages, mode: session.mode });
+    res.json({
+      reply, messages: session.messages, mode: session.mode,
+      ...(stepConstraint ? { constraint: stepConstraint } : {}),
+    });
   });
 
   // ── Approval decisions (Phase 2 S1) ───────────────────────────────────

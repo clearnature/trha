@@ -38,6 +38,9 @@ export interface QueryResponse {
   reply: string;
   toolCalls?: ToolCallData[];
   usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+  /** Kernel's causal-constraint verdict (`trha_constraint`), verbatim object,
+   *  when the kernel attaches it to the completion response (D-1). */
+  constraint?: Record<string, unknown>;
 }
 
 export interface VerifyRequest {
@@ -120,6 +123,7 @@ export class HaskellBridge {
     const decoder = new TextDecoder();
     let buf = '';
     let reply = '';
+    let constraint: Record<string, unknown> | undefined;
     const calls = new Map<number, ToolCallData>();
     for (;;) {
       const { done, value } = await reader.read();
@@ -141,6 +145,9 @@ export class HaskellBridge {
             const err = parsed.error as { message?: string };
             throw new Error(`kernel stream: ${err.message ?? 'stream error'}`);
           }
+          if (typeof parsed.trha_constraint === 'object' && parsed.trha_constraint !== null) {
+            constraint = parsed.trha_constraint as Record<string, unknown>;
+          }
           const delta = (parsed.choices as { delta?: {
             content?: string;
             tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
@@ -160,7 +167,8 @@ export class HaskellBridge {
       }
     }
     const toolCalls = [...calls.values()].filter(c => c.name !== '');
-    return toolCalls.length > 0 ? { reply, toolCalls } : { reply };
+    const base: QueryResponse = toolCalls.length > 0 ? { reply, toolCalls } : { reply };
+    return constraint ? { ...base, constraint } : base;
   }
 
   async verifyType(request: VerifyRequest): Promise<VerifyResponse> {
@@ -210,6 +218,9 @@ function parseCompletion(raw: Record<string, unknown>): QueryResponse {
   }
 
   const usageRaw = raw.usage as { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown } | undefined;
+  const constraint = typeof raw.trha_constraint === 'object' && raw.trha_constraint !== null
+    ? (raw.trha_constraint as Record<string, unknown>)
+    : undefined;
   return {
     reply: content,
     ...(toolCalls ? { toolCalls } : {}),
@@ -218,5 +229,6 @@ function parseCompletion(raw: Record<string, unknown>): QueryResponse {
       completionTokens: typeof usageRaw?.completion_tokens === 'number' ? usageRaw.completion_tokens : undefined,
       totalTokens: typeof usageRaw?.total_tokens === 'number' ? usageRaw.total_tokens : undefined,
     },
+    ...(constraint ? { constraint } : {}),
   };
 }
