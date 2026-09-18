@@ -24,6 +24,7 @@ import { DiagnosticsPanel } from './DiagnosticsPanel.js';
 import { PermissionsPanel } from './PermissionsPanel.js';
 import { SandboxPanel } from './SandboxPanel.js';
 import { BrowserPanel } from './BrowserPanel.js';
+import { AppearancePanel } from './AppearancePanel.js';
 import { ScaffoldPanel } from './ScaffoldPanel.js';
 import { ALL_SETTINGS_TABS, SETTINGS_GROUPS } from '../state/settingsTypes.js';
 
@@ -55,60 +56,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         <div className="settings-center-content" data-tab={tab}>
           {tab === 'general' && <GeneralSettingsPanel t={t} />}
 
-          {tab === 'appearance' && (
-            <div className="settings-pagebody">
-              <div className="settings-page-title">
-                <h3>{t('settings.tab.appearance')}</h3>
-                <p className="settings-page-desc">{t('settings.appearance.desc')}</p>
-              </div>
-              <div className="setting-group">
-                <label htmlFor="pref-theme">{t('settings.theme')}</label>
-                <select id="pref-theme" value={prefs.theme} onChange={e => setPrefs({ theme: e.target.value as Theme })}>
-                  <option value="light">{t('settings.theme.light')}</option>
-                  <option value="dark">{t('settings.theme.dark')}</option>
-                </select>
-              </div>
-              <div className="setting-group">
-                <label htmlFor="pref-font">{t('settings.fontSize')}</label>
-                <input id="pref-font" type="range" min={FONT_SIZE_RANGE.min} max={FONT_SIZE_RANGE.max}
-                  value={prefs.fontSize} onChange={e => setPrefs({ fontSize: Number(e.target.value) })} />
-                <span className="pref-value">{prefs.fontSize}px</span>
-              </div>
-            </div>
-          )}
-
-          {tab === 'models' && <LlmSettingsPanel t={t} />}
-
-          {tab === 'model-preferences' && <ModelPreferencesPanel t={t} />}
-
-          {tab === 'mcp' && <McpPanel t={t} />}
-
-          {tab === 'skills' && <SkillsPanel t={t} />}
-
-          {tab === 'subagents' && <SubagentsPanel t={t} />}
-
-          {tab === 'plugins' && <PluginsPanel t={t} />}
-
-          {tab === 'memory' && <MemoryPanel t={t} />}
-
-          {tab === 'hooks' && <HooksPanel t={t} />}
-
-          {tab === 'diagnostics' && <DiagnosticsPanel t={t} />}
-
-          {tab === 'permissions' && <PermissionsPanel t={t} />}
-
-          {tab === 'sandbox' && <SandboxPanel t={t} />}
-
-          {tab === 'browser' && <BrowserPanel t={t} />}
-
-          {tab === 'providers' && (
-            <div className="settings-pagebody">
-              <div className="settings-page-title">
-                <h3>{t('settings.tab.providers')}</h3>
-              </div>
-              <ProvidersPanel port={store.getState().port} />
-            </div>
-          )}
+          {tab === 'appearance' && <AppearancePanel t={t} />}
 
           {tabDef && !['general', 'appearance', 'models', 'providers'].includes(tab) && (
             <ScaffoldPanel

@@ -51,16 +51,15 @@ describe('SettingsPanel', () => {
   it('persists a theme change through the injected backend（外观 tab）', async () => {
     mount();
     await userEvent.click(screen.getByText('外观'));   // 导航到外观 tab
-    await userEvent.selectOptions(screen.getByLabelText('主题'), 'dark');
+    await userEvent.selectOptions(screen.getByLabelText('明暗模式'), 'dark');
     await waitFor(() => expect(saved.theme).toBe('dark'));
   });
 
   it('persists a font-size change（外观 tab）', async () => {
     mount();
     await userEvent.click(screen.getByText('外观'));
-    const slider = screen.getByLabelText('字号') as HTMLInputElement;
-    fireEvent.change(slider, { target: { value: '20' } });
-    await waitFor(() => expect(saved.fontSize).toBe(20));
+    await userEvent.selectOptions(screen.getByLabelText('界面字号'), 'small');
+    await waitFor(() => expect(saved.fontSize).toBe(12));
   });
 
   it('switches language and re-renders labels（通用页）', async () => {

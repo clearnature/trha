@@ -901,3 +901,9 @@ body {
 
 /* ── 浏览器控制：危险操作按钮 ── */
 .btn--danger { border-color: #e0b4ad; color: #c0392b; }
+
+/* ── 外观：主题行 / 缩放 ── */
+.appearance-theme-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.appearance-theme-row .hooks-actions { margin-left: auto; }
+.zoom-row { display: flex; align-items: center; gap: 12px; max-width: 420px; }
+.zoom-row input { flex: 1; }
