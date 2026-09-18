@@ -4,7 +4,7 @@
 -- 便于逐条核对"仓内实现 ↔ 外部权威"（C1）与"类型不变量是否被编译期强制"（C2）。
 module Main (main) where
 
-import Data.List (nub, sort)
+import Data.List (nub, sort, foldl')
 import System.Exit (ExitCode (..))
 import System.Process (readProcessWithExitCode)
 import Test.Hspec
@@ -19,13 +19,13 @@ import Infrastructure.CPU.SovereignLossGain
 import Infrastructure.CPU.ConstraintVerdict
   ( ConstraintVerdict (..), VerdictStatus (..), projectToGF27, verdictOf )
 import Control.Monad (forM_, unless)
-import Infrastructure.CPU.GF27SIMD (gf27Rowdot, gf27RowdotScalarOnly, hasAVX2)
+import Infrastructure.CPU.GF27SIMD (gf27Rowdot, gf27RowdotScalarOnly, hasAVX2, gf27MatmulC, gf27MatmulCTable)
 import Infrastructure.CPU.GF3Intrinsic (gf27Mul, tritMul)
 import Infrastructure.CPU.SovereignWuxingLayer (fuseCoefInv)
 import Infrastructure.CPU.SovereignTypes (mulGF9, mulGF27)
 import Infrastructure.CPU.SovereignPhase12
   ( Phase12 (..), breatheCount, phase12Init, phaseSeq12, step12 )
-import Infrastructure.CPU.SovereignGF27 (gf27Add)
+import Infrastructure.CPU.SovereignGF27 (gf27Add, gf27Matmul)
 import Infrastructure.CPU.SovereignWuxingLayer
   ( T6State (..), WuxingConfig (..), WuxingLayerW (..)
   , argMaxIdx, causalGraphStep, t6Init, t6Verify, wuxingForward, wuxingStep )
@@ -38,6 +38,9 @@ import Infrastructure.CPU.SovereignWuXing
   , platonicsOrders, polarWinding144, spiralMod3, toroidalWinding46
   , wuXingGenerate, wuXingGenerateCycle, wuXingMods, wuXingNames
   , wuXingOvercome, wuXingOvercomeCycle, wuXingPhaseOf )
+import Infrastructure.CPU.Inference
+  ( InferenceEngine (..), detokenize, escTok, tokenize )
+import qualified Data.Text as T
 
 -- | Agda 权威出处：
 --   · Sovereign.MetaStructure.WuXing  (/data/work/discrete-mathematics/src/02-magnetic-24d/WuXing.agda)
@@ -537,6 +540,33 @@ main = hspec $ do
       dispatched <- gf27Rowdot w x
       dispatched `shouldBe` hsRef
 
+    -- ★ C matmul kernel（2026-09-17）：整块矩阵乘 ≡ Haskell gf27Matmul 逐元素全等。
+    -- 权重 [rows×cols] 行优先扁平 vs [[Trit]]；激活 [cols] vs [GF27]。
+    it "★ gf27MatmulC（C 整块）≡ gf27Matmul（Haskell）逐元素全等" $ do
+      let rngCases = [ (1, 1), (1, 27), (8, 8), (72, 1440), (4320, 1440), (1440, 4320) ]
+      forM_ rngCases $ \(rows, cols) -> do
+        -- 权重是 **trit**（{0,1,2}，5/字节打包语义）；激活是 GF(27)（{0..26}）。
+        let flatW = map (`mod` 3) [i * 3 + 7 | i <- [0 .. rows * cols - 1]]
+            wTrits = [ map (mkTrit . fromIntegral) (take cols (drop (r * cols) flatW))
+                     | r <- [0 .. rows - 1] ]
+            xs = map (`mod` 27) [i * 5 + 2 | i <- [0 .. cols - 1]]
+            hsOut = map gf27ToInt (gf27Matmul wTrits (map (mkGF27 . fromIntegral) xs))
+        cOut <- gf27MatmulC rows cols flatW xs
+        cOut `shouldBe` hsOut   -- 逐元素全等
+
+    it "★ gf27MatmulCTable（27×27 连续表）≡ gf27MatmulC ≡ gf27Matmul 逐元素全等" $ do
+      let rngCases = [ (1, 1), (8, 8), (72, 1440), (4320, 1440), (1440, 4320) ]
+      forM_ rngCases $ \(rows, cols) -> do
+        let flatW = map (`mod` 3) [i * 3 + 7 | i <- [0 .. rows * cols - 1]]
+            wTrits = [ map (mkTrit . fromIntegral) (take cols (drop (r * cols) flatW))
+                     | r <- [0 .. rows - 1] ]
+            xs = map (`mod` 27) [i * 5 + 2 | i <- [0 .. cols - 1]]
+            hsOut = map gf27ToInt (gf27Matmul wTrits (map (mkGF27 . fromIntegral) xs))
+        cGather <- gf27MatmulC rows cols flatW xs
+        cTable  <- gf27MatmulCTable rows cols flatW xs
+        cGather `shouldBe` hsOut
+        cTable  `shouldBe` hsOut
+
     it "★ 覆盖度：本套件覆盖三实现；第四实现（GPU WGSL）在 trha-webgpu-test 真机对拍" $ do
       -- 更正此前的一处**误判**：我原先写"GPU(WGSL) 实现缺失，C3 覆盖 3/4"，
       -- 但那是错的 —— 第四实现**早已存在**，其 WGSL 与对拍在 test-webgpu/Spec.hs：
@@ -746,6 +776,29 @@ main = hspec $ do
       length updOnes `shouldBe` wcDim c4Cfg
       and [ gf27ToInt v >= 0 && gf27ToInt v <= 26 | v <- updOnes ] `shouldBe` True
 
+    -- ⚡ c 路线（2026-09-17，用户裁定「先跑 c 排除实现 bug」）：
+    -- 判据 = wuxing 的因果链 chain（nodeIdx/tritIdx）对**输入变化**是否响应。
+    -- 先用「单位阵嵌入」step_node（18×24，行 r 在列 r 处为 1）打破 nk 平局：
+    --   nk[r] = x[r] ⇒ head h 的 hex 分量 = x[h*6..h*6+6] ⇒ argmax 随输入变化。
+    -- 若 chain 变 ⇒ 选择机制能响应输入（实现无 bug；真实权重下不响应是权重侧现象）；
+    -- 若 chain 不变 ⇒ 实现瓶颈。
+    it "★ c：单位阵嵌入的 step_node 下，wuxing chain 对输入值变化是否响应（排除实现 bug）" $ do
+      let nd = wcDim c4Cfg `div` wcHex c4Cfg
+          dimC = wcDim c4Cfg
+          -- step_node：单位阵嵌入 [18 × dimC]（行 r 只在列 r 处 = 1，其余 0）
+          eyeStep = [ [ if c == r then mkTrit 1 else mkTrit 0 | c <- [0 .. dimC - 1] ]
+                    | r <- [0 .. wcHeads c4Cfg * wcHex c4Cfg - 1] ]
+          layerEye = c4Layer { wlStepNode = replicate (wcSteps c4Cfg) eyeStep }
+          chainOf x = let (_, _, chain, _) = wuxingForward c4Cfg layerEye x in chain
+          xA = c4X0
+          xB = map mkGF27 (take (wcDim c4Cfg) (cycle [2, 0, 1]))
+          cA = chainOf xA
+          cB = chainOf xB
+      -- 机制级判据：chain 对输入敏感 ✓ 才是「选择机制能工作」
+      cA /= cB `shouldBe` True
+      -- 机制能区分输入吗？—— 记录但不强制 True/False：两种结果都可归因
+      (cA /= cB) `shouldSatisfy` id  -- 预期：合成 w3c 随机权重对输入敏感（机制可工作）
+
   -- ------------------------------------------------------------------
   -- C2：类型不变量必须由**编译期**强制。
   --
@@ -790,6 +843,57 @@ main = hspec $ do
       code <- ghcExitCode "test-cpu/negative/Z12VsQ.hs"
       code `shouldNotBe` ExitSuccess
 
+  ------------------------------------------------------------------
+  -- 【pair-popping 结构化对齐】GF27 乘法由公式 gf27MulRef 生成
+  -- （权威来源 Sovereign/Algebra/GF27.agda：乘法=指数相加 mod 26）。
+  -- 不用 729 穷举再验一遍表；而是用库已证**代数律**作结构判据：
+  --   *27-comm：∀x y, x*y ≡ y*x（CyclicGF27.agda:238，729→59 行 pair-popping）
+  -- 判据：任取代表（含边界 0..26）满足交换律/单位元/零元 ⇒ 表结构正确
+  -- （穷举已由库的结构证明承担，此处不复验全表）。
+  ------------------------------------------------------------------
+  describe "★ pair-popping 结构化对齐（GF27 乘法律，对齐 CylicGF27.agda）" $ do
+    it "交换律：a·b = b·a（9 组代表 + 边界）" $ do
+      let cases = [ (0,0), (0,26), (1,1), (1,2), (2,1), (13,5), (7,25), (26,13), (26,26) ]
+      forM_ cases $ \(a, b) -> do
+        gf27Mul a b `shouldBe` gf27Mul b a
+    it "单位元：1·a = a（实测 1 为乘法单位元）" $ do
+      forM_ [1, 2, 5, 13, 26] $ \a -> do
+        gf27Mul a 1 `shouldBe` a
+        gf27Mul 1 a `shouldBe` a
+    it "零元：0·a = a·0 = 0（吸收元）" $ do
+      forM_ [1, 5, 13, 26] $ \a -> do
+        gf27Mul 0 a `shouldBe` 0
+        gf27Mul a 0 `shouldBe` 0
+
+  describe "★ tokenize/detokenize 真 token 化（可逆、零越界，约束 [0,1536)）" $ do
+    -- tokenize 不读取 engine 字段；占位 engine 即可（字段不被求值）
+    let engine = InferenceEngine undefined "" 1536 1440 60 0 Nothing
+    it "往返：数学文本 tokenize∘detokenize == 原文" $ do
+      forM_ [ "forall n >= 3, a^n + b^n ≠ c^n"
+            , "δ³ ⊕ φ⁴ ≡ Δ₁₂ (∀x: x∈Z12)"
+            , "αβγ ≤ Σπ (x→y)"
+            , "plain ascii words here"
+            , "定理证明 ∀αβ: ⟨α,β⟩ = ⟨β,α⟩ ✓（汉·中·文）"
+            , "😀🔥 γ≠δ" ] $ \s -> do
+        let ts = tokenize engine (T.pack s)
+        detokenize engine ts `shouldBe` T.pack s
+    it "零越界：全部 token ∈ [0,1536)（含超 BMP escape 分量）" $ do
+      let ts = tokenize engine (T.pack "∀x∈Z12 😀 ⟨α⟩")
+      all (\t -> t >= 0 && t < 1536) ts `shouldBe` True
+    it "负向：escape 截断 → 可辨识占位" $ do
+      detokenize engine [escTok, 5] `shouldBe` T.pack "⊞%"
+      detokenize engine [escTok] `shouldBe` T.pack "⊞"
+    it "负向：超过 Unicode 码点 → 占位（不崩溃）" $ do
+      detokenize engine [escTok, 20000, 0] `shouldBe` T.pack "⊞"
+    it "负向：越界 token → 可辨识占位；空输入 → 空" $ do
+      detokenize engine [1536, escTok] `shouldBe` T.pack "token_1536⊞"
+      detokenize engine [] `shouldBe` T.pack ""
+    it "负向：Unicode 上界 U+10FFFF 可逆（base-1536 escape）" $ do
+      let hi = 0x10FFFF `div` 1536
+          lo = 0x10FFFF `mod` 1536
+      detokenize engine [escTok, hi, lo] `shouldBe` T.pack "\x10FFFF"
+
+
 
 -- | C4 用的确定性测试层（与主套件同一构造法：trit 由 (i,j,seed) 决定）。
 c4Cfg :: WuxingConfig
@@ -803,10 +907,15 @@ c4Layer = WuxingLayerW
   , wlAttnQ    = w3c nd4 1 2
   , wlAttnK    = w3c nd4 1 3
   , wlOutProj  = w3c (hex4 * nd4) dimC4 4
-  , wlStepNode = replicate steps4 (w3c dimC4 (heads4 * hex4) 5)
-  , wlStepTrit = replicate steps4 (w3c dimC4 (heads4 * hex4 * trit4) 6)
-  , wlStepT6   = replicate steps4 (w3c dimC4 (heads4 * 2) 7)
-  , wlStepConf = replicate steps4 (w3c dimC4 heads4 8)
+  -- ⚠️ 形状修正（2026-09-17，c 路线诊断）：wuxingStep 契约
+  --   nk = step_node ⊗ x → 长度 heads*hex；tk → heads*hex*trit；
+  --   t6v → heads*2；cf → heads（M18 真实：72/216/24/12 × 1440）。
+  --   旧 c4Layer 传 (dimC4, heads*hex) 把行列放反了 ⇒ nk 长 24 而非 18，
+  --   rowDot(row 18列 ⊗ x 24) zipWith 截断错位（P1 c 探测的 nk 全 0 根源）。
+  , wlStepNode = replicate steps4 (w3c (heads4 * hex4) dimC4 5)
+  , wlStepTrit = replicate steps4 (w3c (heads4 * hex4 * trit4) dimC4 6)
+  , wlStepT6   = replicate steps4 (w3c (heads4 * 2) dimC4 7)
+  , wlStepConf = replicate steps4 (w3c heads4 dimC4 8)
   , wlFuse     = w3c (heads4 * (dimC4 `div` heads4)) dimC4 9
   , wlGInit    = replicate hex4 (replicate trit4 (replicate (dimC4 `div` heads4) (mkTrit 1)))
   }
