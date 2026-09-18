@@ -867,7 +867,7 @@ main = hspec $ do
 
   describe "★ tokenize/detokenize 真 token 化（可逆、零越界，约束 [0,1536)）" $ do
     -- tokenize 不读取 engine 字段；占位 engine 即可（字段不被求值）
-    let engine = InferenceEngine undefined "" 1536 1440 60 0 Nothing
+    let engine = InferenceEngine undefined "" 1536 1440 60 0 Nothing Nothing
     it "往返：数学文本 tokenize∘detokenize == 原文" $ do
       forM_ [ "forall n >= 3, a^n + b^n ≠ c^n"
             , "δ³ ⊕ φ⁴ ≡ Δ₁₂ (∀x: x∈Z12)"
