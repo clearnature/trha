@@ -42,10 +42,12 @@ import Network.HTTP.Types.Status (statusCode, statusIsSuccessful)
 import System.IO.Unsafe (unsafePerformIO)
 
 import Core.Provider.Types
-import LLM.Adapter.Interface (LLMAdapter(..), StreamCall, createCPUAdapter)
+import LLM.Adapter.Interface (LLMAdapter(..), StreamCall, createCPUAdapterWith)
 import qualified LLM.Stream as LStream
 import LLM.Adapter.Types
 import LLM.Providers.DeepSeek (buildDeepSeekChatRequest, parseDeepSeekChatTurn)
+import Infrastructure.CPU.InferenceGPU (gpuForwardFactory)
+import System.Environment (lookupEnv)
 
 --------------------------------------------------------------------------------
 -- Local inference backend ("cpu" kind)
@@ -66,8 +68,22 @@ cpuAdapterFor path = modifyMVar cpuAdapterCache $ \m ->
   case Map.lookup path m of
     Just a  -> pure (m, a)
     Nothing -> do
-      a <- createCPUAdapter path
-      pure (Map.insert path a m, a)
+      -- TRHA_GPU=1：尝试挂 WebGPU 前端（60 层 matmul 上 GPU；失败回退 CPU，不崩）
+      gpuOn <- maybe False (== "1") <$> lookupEnv "TRHA_GPU"
+      if not gpuOn
+        then do
+          (_, a0) <- createCPUAdapterWith Nothing path
+          pure (Map.insert path a0 m, a0)
+        else do
+          gpuF <- gpuForwardFactory path 12
+          case gpuF of
+            Left err -> do
+              putStrLn ("[gpu] 未启用 WebGPU 前端（回退 CPU）: " ++ err)
+              (_, a0) <- createCPUAdapterWith Nothing path
+              pure (Map.insert path a0 m, a0)
+            Right fwd -> do
+              (_, a') <- createCPUAdapterWith (Just fwd) path
+              pure (Map.insert path a' m, a')
 
 -- | Number of cached local adapters (lets tests assert path reuse).
 cpuAdapterCacheSize :: IO Int

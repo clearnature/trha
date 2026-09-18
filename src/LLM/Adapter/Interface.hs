@@ -7,11 +7,19 @@ module LLM.Adapter.Interface
   , blockingStream
   , createAdapter
   , createCPUAdapter
+  , createCPUAdapterWith
+  , cpuAdapterWithEngine
+  , setEngineGPU
   , unsupportedTools
   ) where
 
 import LLM.Adapter.Types
 import Infrastructure.CPU.Inference
+  ( Brain (..), InferenceEngine (..)
+  , createInferenceEngine, withBrain, generate, generateStream, tokenize, loadModel )
+import Infrastructure.CPU.SovereignModel (SovereignConfig(..))
+import Infrastructure.CPU.SovereignWuxingLayer (WuxingConfig(..))
+import Infrastructure.CPU.SovereignFull (loadWuxingFromSov)
 import Infrastructure.CPU.Types
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -70,7 +78,7 @@ mkAdapter chat tools embed models mstream = LLMAdapter
 cpuStream :: InferenceEngine -> StreamCall
 cpuStream engine msgs _specs onEvent = do
   let prompt = T.unwords (map chatText msgs)
-  result <- generateStream engine prompt 100 (\piece -> onEvent (ChunkDelta piece))
+  result <- generateStream engine prompt (engineMaxTokens engine) (\piece -> onEvent (ChunkDelta piece))
   case result of
     Left err -> do
       onEvent (ChunkError (T.pack err))
@@ -79,12 +87,19 @@ cpuStream engine msgs _specs onEvent = do
       onEvent (ChunkDone (Usage 100 200 300))
       pure (ChatTurn text [] (Just (Usage 100 200 300)) Nothing)
 
+-- | 每轮生成的最大 token 数。占位引擎（无 Brain）保持历史值 100；
+-- 真实 CPU 大脑（每 token 跑 60 层，约几分钟）用小值做「接线演示」。
+engineMaxTokens :: InferenceEngine -> Int
+engineMaxTokens e = case engineBrain e of
+  Just _  -> 3
+  Nothing -> 100
+
 -- | The CPU engine answers as plain text: it has no tool calling, but it does
 -- generate — so the blocking path goes through the same engine the streaming
 -- path does, and the two agree by construction.
 cpuTools :: InferenceEngine -> [ChatMessage] -> [ToolSpec] -> IO ChatTurn
 cpuTools engine msgs _specs = do
-  result <- generate engine (T.unwords (map chatText msgs)) 100
+  result <- generate engine (T.unwords (map chatText msgs)) (engineMaxTokens engine)
   pure $ case result of
     Left err   -> ChatTurn "" [] Nothing (Just (T.pack err))
     Right text -> ChatTurn text [] (Just (Usage 100 200 300)) Nothing
@@ -127,9 +142,17 @@ echoStream msgs _specs onEvent = do
   onEvent (ChunkDone (Usage 10 20 30))
   pure (ChatTurn txt [] (Just (Usage 10 20 30)) Nothing)
 
--- | Create a CPU adapter (local inference)
-createCPUAdapter :: FilePath -> IO LLMAdapter
-createCPUAdapter modelPath = do
+-- | Create a CPU adapter (local inference)。返回 (engine, adapter)，
+-- 上层可用 'setEngineGPU' 注入 WebGPU 前端后重建 adapter。
+createCPUAdapter :: FilePath -> IO (InferenceEngine, LLMAdapter)
+createCPUAdapter modelPath = createCPUAdapterWith Nothing modelPath
+
+-- | 同上，但允许注入 WebGPU 前向工厂（纯函数句柄 → 无类型/依赖环）。
+-- 工厂签名与 'sovereignForwardFullCompact' 对齐；@Nothing@ 走纯 CPU。
+createCPUAdapterWith
+  :: Maybe ([Int] -> IO (Either String [[Int]]))
+  -> FilePath -> IO (InferenceEngine, LLMAdapter)
+createCPUAdapterWith gpuFactory modelPath = do
   let features = CPUFeatures
         { featureSSE = True, featureSSE2 = True, featureSSE3 = True
         , featureSSSE3 = True, featureSSE41 = True, featureSSE42 = True
@@ -138,14 +161,35 @@ createCPUAdapter modelPath = do
         , featureNEON = False, featureSVE = False, featureSVE2 = False
         }
   let backend = CPUBackend defaultCPUConfig X86_64 features
-  engine <- createInferenceEngine backend modelPath
+      -- 真实 S2Sovereign 配置（pyBitNet 锁定值）：depth=60、heads=12、vocab=1536
+      realCfg = SovereignConfig { scDim = 1440, scDepth = 60, scHeads = 12
+                                , scVocab = 1536, scFF = 4320, scEps = 1e-5 }
+      realWcfg = WuxingConfig 1440 12 4 6 3
+  engine0 <- createInferenceEngine backend modelPath
+  -- 真实 wuxing 权重从 .sov 内载入；失败则回退占位引擎（不崩，提示日志）
+  wlResult <- loadWuxingFromSov modelPath 12 4 3
+  engine <- case wlResult of
+    Left err -> do
+      putStrLn $ "[cpu] 未载入 wuxing 权重（占位模式）: " ++ err
+      pure (maybe id setEngineGPU gpuFactory engine0)
+    Right wl -> pure $ withBrain (Brain modelPath realCfg realWcfg wl Nothing Nothing)
+                    (maybe id setEngineGPU gpuFactory engine0)
 
   result <- loadModel engine
   case result of
     Left err -> error $ "Failed to load model: " ++ err
     Right () -> return ()
 
-  return $ mkAdapter
+  pure (engine, cpuAdapterWithEngine engine modelPath)
+
+-- | 注入 WebGPU 前端到 engine（返回新 engine；原始值不变）。
+setEngineGPU :: ([Int] -> IO (Either String [[Int]])) -> InferenceEngine -> InferenceEngine
+setEngineGPU f e = e { engineGPU = Just f }
+
+-- | 由已建好的 engine 构造 CPU adapter（供上层注入 GPU 前端后复用逻辑）。
+cpuAdapterWithEngine :: InferenceEngine -> FilePath -> LLMAdapter
+cpuAdapterWithEngine engine modelPath =
+  mkAdapter
     (\messages -> do
         let prompt = T.unwords $ map messageContent messages
         result <- generate engine prompt 100

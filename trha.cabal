@@ -86,6 +86,8 @@ library trha-llm
                   , network
   default-language: Haskell2010
   c-sources:        cbits/gf27_avx2.c
+  cc-options:       -O2 -fopenmp
+  ld-options:       -fopenmp
 
 -- API Server (OpenAI/Anthropic/Responses protocols)
 -- visibility: public so the standalone CLI package (packages/app/CLI) can
@@ -160,17 +162,36 @@ library trha-api
     Infrastructure.CPU.Z12Sys
     Infrastructure.CPU.BLAS
     Infrastructure.CPU.Inference
+    Infrastructure.CPU.SovereignFull
+    Infrastructure.CPU.GF27SIMD
     Infrastructure.CPU.Ops
+    Infrastructure.CPU.SOV3
     Infrastructure.CPU.SIMD
     Infrastructure.CPU.Types
     LLM.Adapter.Interface
     LLM.Adapter.Types
     LLM.Providers.DeepSeek
     LLM.Stream
+    -- ⚠️ trha-gpu-infer 依赖链把 WebGPU 模块带进共享 src 编译面：
+    -- 与 trha-llm 的 27 项同理，必须列入否则链接期失败
+    Infrastructure.WebGPU.Raw.Types
+    Infrastructure.WebGPU.Raw.Enums
+    Infrastructure.WebGPU.Raw.Structs
+    Infrastructure.WebGPU.Raw.FFI
+    Infrastructure.WebGPU.Raw.Async
+    Infrastructure.WebGPU.Context
+    Infrastructure.WebGPU.Buffer
+    Infrastructure.WebGPU.Kernel
+    Infrastructure.WebGPU.Error
   hs-source-dirs:   src
+  include-dirs:     3rdparty/wgpu-native/include
+  c-sources:        cbits/wgpu_callback_shim.c
+  extra-libraries:         wgpu_native
+  extra-lib-dirs-static:   3rdparty/wgpu-native/lib
   build-depends:    base ^>=4.22
                   , trha:trha-core
                   , trha:trha-llm
+                  , trha:trha-gpu-infer
                   , servant
                   , servant-server
                   , tagged
@@ -237,8 +258,29 @@ library trha-webgpu
   -- 库目录用 extra-lib-dirs-static（Cabal 规范 3.8+：接受相对路径，适合仓库内 3rdparty/）。
   -- 运行时查找 .so 由 LD_LIBRARY_PATH 或 rpath 负责，见 webgpu-wiring-plan.md 的 W4/W6。
   extra-lib-dirs-static:   3rdparty/wgpu-native/lib
-
   build-depends:    base ^>=4.22
+                  , text
+                  , bytestring
+                  , containers
+                  , vector
+  default-language: Haskell2010
+
+-- GPU 推理桥接层：CPU 推理（trha-llm）+ WebGPU 前向（trha-webgpu）的汇合点。
+-- 独立库避免 trha-llm ↔ trha-webgpu 依赖环（两者共享 hs-source-dirs: src）。
+library trha-gpu-infer
+  exposed-modules:
+    Infrastructure.CPU.InferenceGPU
+  hs-source-dirs:   gpu-infer
+  include-dirs:     3rdparty/wgpu-native/include
+  c-sources:        cbits/wgpu_callback_shim.c
+  extra-libraries:         wgpu_native
+  extra-lib-dirs-static:   3rdparty/wgpu-native/lib
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+                  , trha:trha-webgpu
+                  , vector
+                  , text
+                  , containers
   default-language: Haskell2010
 
 -- WebGPU 真机探针 / hello-compute（W6）
@@ -288,6 +330,59 @@ executable trha-webgpu-gf27matmul
   ghc-options:      -rtsopts -threaded
   default-language: Haskell2010
 
+executable trha-webgpu-integprobe
+  main-is:          GpuIntegProbe.hs
+  hs-source-dirs:   benchmarks/webgpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-webgpu
+                  , trha:trha-llm
+                  , trha:trha-gpu-infer
+                  , vector
+  ghc-options:      -rtsopts -threaded
+  default-language: Haskell2010
+
+executable trha-webgpu-qprobe
+  main-is:          GpuQProbe.hs
+  hs-source-dirs:   benchmarks/webgpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-webgpu
+                  , trha:trha-llm
+                  , trha:trha-gpu-infer
+                  , vector
+  ghc-options:      -rtsopts -threaded
+  default-language: Haskell2010
+
+executable trha-webgpu-gpue2e
+  main-is:          GpuE2EProbe.hs
+  hs-source-dirs:   benchmarks/webgpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-webgpu
+                  , trha:trha-llm
+                  , trha:trha-gpu-infer
+                  , text
+  ghc-options:      -rtsopts -threaded
+  default-language: Haskell2010
+
+executable trha-webgpu-layer60probe
+  main-is:          GpuLayer60Probe.hs
+  hs-source-dirs:   benchmarks/webgpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-webgpu
+                  , trha:trha-llm
+                  , vector
+  ghc-options:      -rtsopts -threaded
+  default-language: Haskell2010
+
+executable trha-webgpu-layerprobe
+  main-is:          GpuLayerProbe.hs
+  hs-source-dirs:   benchmarks/webgpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-webgpu
+                  , trha:trha-llm
+                  , vector
+  ghc-options:      -rtsopts -threaded
+  default-language: Haskell2010
+
 -- WebGPU 真机测试（独立套件：无 GPU 时 pending，不拖累主套件）
 test-suite trha-webgpu-test
   type:             exitcode-stdio-1.0
@@ -309,6 +404,131 @@ executable trha-cpu-gf27simd
   ghc-options:      -rtsopts -threaded
   default-language: Haskell2010
 
+-- b 最小原型：6 变量图传播（变量=节点）
+executable trha-cpu-bproto
+  main-is:          BPrototype.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+  ghc-options:      -rtsopts -threaded -O2
+  default-language: Haskell2010
+
+-- b 真实性试金石：真实 wuxing 权重 × 6 变量图传播
+executable trha-cpu-realwuxing
+  main-is:          RealWuxingProbe.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+                  , vector
+  ghc-options:      -rtsopts -threaded -O2
+  default-language: Haskell2010
+
+-- B1 新因果层：6 变量(=6 token hidden) × enc 编码
+executable trha-cpu-b1
+  main-is:          B1LayerProbe.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+                  , vector
+  ghc-options:      -rtsopts -threaded -O2
+  default-language: Haskell2010
+
+-- b 数据地基：GF(27)* 循环群变体 × 反事实标签
+executable trha-cpu-datagen
+  main-is:          DataGenProbe.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+  ghc-options:      -rtsopts -threaded -O2
+  default-language: Haskell2010
+
+-- B1L：真实层 hidden（wuxing 前）× B1 因果层编码（路径 A 接入点验证）
+executable trha-cpu-b1l
+  main-is:          B1LProbe.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+                  , vector
+  ghc-options:      -rtsopts -threaded -O2
+  default-language: Haskell2010
+
+-- B1Full：完整 B1 因果层（enc→adj→prop→Y 槽）接真实层 hidden（路径 A 第二部）
+executable trha-cpu-b1full
+  main-is:          B1FullProbe.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+                  , vector
+  ghc-options:      -rtsopts -threaded -O2
+  default-language: Haskell2010
+
+-- FLT 文本实弹对拍：真实定理过验证层
+executable trha-cpu-fltverdict
+  main-is:          FltVerdictProbe.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+  ghc-options:      -rtsopts -threaded -O2
+  default-language: Haskell2010
+
+-- B1Traj：轨迹判据预研（不改主链，stream-trajectory-b1 前置）
+executable trha-cpu-b1traj
+  main-is:          B1TrajProbe.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+                  , vector
+  ghc-options:      -rtsopts -threaded -O2
+  default-language: Haskell2010
+
+-- B1Lm：因果层 Y 槽更新回读 lm_head（闭环验证，路径 A 第三子步）
+executable trha-cpu-b1lm
+  main-is:          B1LmProbe.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+                  , vector
+  ghc-options:      -rtsopts -threaded -O2
+  default-language: Haskell2010
+
+-- P1 探测：wuxing 架构先验的结构敏感性（3 前向）
+executable trha-cpu-p1
+  main-is:          P1Probe.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+  ghc-options:      -rtsopts -threaded -O2
+  default-language: Haskell2010
+
+-- 真实权重・层内分段 profiling
+executable trha-cpu-layerprofile
+  main-is:          LayerSegProfile.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+                  , vector
+  ghc-options:      -rtsopts -threaded -O2
+  default-language: Haskell2010
+
+-- 真实 60 层 C 双表链 vs Haskell 链计时
+executable trha-cpu-real60
+  main-is:          Real60LayerProbe.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+  ghc-options:      -rtsopts -threaded -O2
+  default-language: Haskell2010
+
+-- GF(27) matmul 真实形状公平基准（Haskell vs C gather vs C 连续表）
+executable trha-cpu-gf27matmul-probe
+  main-is:          Gf27MatmulProbe.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+                  , vector
+  ghc-options:      -rtsopts -threaded -O2
+  default-language: Haskell2010
+
 -- CPU 侧数学正确性套件（判据 C1：代数结构 ↔ 权威规范）
 test-suite trha-cpu-test
   type:             exitcode-stdio-1.0
@@ -318,6 +538,7 @@ test-suite trha-cpu-test
                   , trha:trha-llm
                   , hspec
                   , process
+                  , text
   ghc-options:      -rtsopts -threaded
   default-language: Haskell2010
 

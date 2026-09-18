@@ -992,7 +992,7 @@ mkStubApp = stubAdapter >>= mkApp
 -- Creating the engine here is also exactly where the wiring gap lives: nothing
 -- outside this module can currently inject a CPU backend.
 mkCPUApp :: FilePath -> IO Application
-mkCPUApp modelPath = createCPUAdapter modelPath >>= mkApp
+mkCPUApp modelPath = createCPUAdapter modelPath >>= mkApp . snd
 
 --------------------------------------------------------------------------------
 -- Stub kernel (K6): two-round tool loop without a real provider.

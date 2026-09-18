@@ -11,8 +11,8 @@
 
 | | 内容 |
 |---|---|
-| **意图** | 内核是**带类型论与因果约束的推理中枢**。外部模型（API）与本地三值模型都只是它的**推理基座**；内核对推理过程做**感知与约束**。 |
-| **现状** | 推理基座（本地三值，M1–M20 全绿）与约束原语（T⁶ 验证 / 6×6 因果图 / 五行四步链）**都已实现**：① ~~本地推理在内核启动路径上不可达~~ → **已闭合（D-2，2026-09-13）**：`"cpu"` 为一等 provider kind，本地引擎在内核可达；② 约束原语与**外部 API 推理通道仍完全不相交**（D-1，批次 3 待启动）。 |
+| **意图** | 内核是**带类型论与因果约束的推理中枢**。**本地 CPU/WebGPU 三值/声子模型 =「大脑」—— 自带的、不依赖 API 的神经网络推理能力**（草稿质量，但真实可算）；外部模型（API）只是补充输入。内核对推理过程做**感知与约束**。 |
+| **现状** | 推理基座（本地三值，M1–M21 全绿）与约束原语（T⁶ 验证 / 6×6 因果图 / 五行四步链）**都已实现**：① ~~本地推理在内核启动路径上不可达~~ → **已闭合（D-2，2026-09-13）**：`"cpu"` 为一等 provider kind，本地引擎在内核可达；② 约束原语与**外部 API 推理通道仍完全不相交**（D-1，批次 3 待启动）。「大脑」现状（2026-09-17）：**产 token 闭环已通**（B3c/B4：真实 .sov + `brainStepToken` → 合法 token id，不依赖 API）；**性能受限**——60 层单 token 流式 ≈ 222s（每 token 重读 .sov + 重解包 300 块权重所致；纯计算仅 ~18s），且整包装箱 ~40GB 超本机 32GB commit 上限 ⇒ **紧凑数组化（`Data.Vector.Unboxed`，~2GB）在案**（台账 `opt-b-compact-weights`）；生成已改逐 token 前向（O(N²)→O(N)）。WebGPU **已接生产推理路径（2026-09-19）**：`engineGPU` 弱耦合句柄 + `TRHA_GPU=1` 走 GPU-only 60 层闭环（q 上 WGSL，353ms/60 层 ≈5.1x CPU，hidden 与 CPU reportL 逐元素一致）。 |
 | **工程手段** | TS 全功能编排（对现有技术的利用）与 Electron（跨平台渲染）是**手段**，不是核心。 |
 
 ---
@@ -96,8 +96,10 @@
 ║   ✅ CPU：M1–M20（360=sic；真实全 60 层 292s / 峰值 41GiB / 0 fail） ║
 ║   ✅ CPU **可达（D-2，2026-09-13）**：`"cpu"` 是合法 provider kind ║
 ║      （`peBaseUrl` 载模型路径）；stub 仍是默认装配，互不冲突       ║
-║   ❌ WebGPU：1344 行 / **不在任何 cabal 组件**；`Buffer.hs:49`       ║
-║      "not implemented in simulation"；FFI 未接 C 库                 ║
+║   🟡 WebGPU（**2026-09-17 更正**）：旧 simulation 层已归档；新高层    ║
+║      9 模块**在构建**（`library trha-webgpu`）+5 探针+真机对拍 3 例  ║
+║      ✅ **已接生产推理路径（2026-09-19）**：TRHA_GPU=1 走 GPU-only 60 层 ║
+║      闭环（engineGPU 句柄注入；失败回退 CPU，不崩）                       ║
 ║ ③ 模型接入层                                                        ║
 ║   ✅ 外部：`adapterFor` 三 wire 分派 + 真流式 + tool 聚合 +         ║
 ║      provider 注册表（key 只存 env 名）                             ║
@@ -138,8 +140,8 @@
 | ~~**D-2**~~ | ~~原生推理"内核自带"~~ | **已闭合（2026-09-13，`commit 9a6dd6f`）**：`"cpu"` 成一等 provider kind，`adapterFor`/`providerStream` 可达 `createCPUAdapter`，引擎按模型路径 memo（`cpuAdapterCache`）；端到端用例 5/0 通过 | ✅ 已关闭 | 小 |
 | ~~**D-3**~~ | ~~内核状态机承载**推理过程**~~ | **已闭合（2026-09-13）**：先把推理状态（CPU 层 `T6State`）经 `Session.projections` 上浮（`910b90a`/`6f4baf5`），再把内核 FSM（`Core.Agent.StateMachine`）接入会话 —— `Session` 新增 `agentState :: IORef AgentState`，`advanceAgent` 用 `transition` 推进并每步随响应回显（`020dc25`）。`Core.Agent.StateMachine` **首次获得生产调用点** ⇒ 由 §5「B 档」升入「A 档」 | ✅ 已关闭 | 中 |
 | **D-4** | 依赖类型论 / Liquid Haskell | 0 处代码 | 未开始 | 大 |
-| **D-5** | 草稿模型（speculative draft） | 0 命中（概念出自 llama.cpp `speculative.md`） | 未开始 | 中 |
-| **D-6** | WebGPU 后端 | **已更新（2026-09-13 核实）**：旧层（simulation，1344 行）**已归档**至 `archive/webgpu-legacy/`；**新高层**（`Context`/`Buffer`/`Kernel`/`Error` + `Raw/**` 共 9 模块）**在构建**，另有 5 个探针可执行（`trha-webgpu-hello`/`-compute`/`-errorprobe`/`-gf27`/`-gf27matmul`）与 `test-webgpu` **真机对拍**（GF(27) 乘法全 729 组、matmul 16×32、四实现同批全等）。**仍缺**：未接入**生产推理路径**（属 §5「C 未接线」档）。 | 已建成、**未接生产** | 中 |
+| **D-5** | ~~草稿模型（speculative draft）~~ → **定义已修正（2026-09-17 用户裁定）**：**草稿模型 = 本地 CPU/WebGPU 三值推理「大脑」** —— 不依赖 API 的神经网络推理能力（草稿质量）。**产 token 闭环已打通（2026-09-17，B3c/B4）**：`loadWuxingFromSov`/`brainStepToken`/`loadWeightsFromSov` + `InferenceEngine(Brain)`，真实 .sov 端到端产出合法 token id（trha-test 194/0/4）。**tokenizer 升级完成（2026-09-18）**：`tokenize`/`detokenize` 从词级 hash 占位升级为**真 token 化**（白名单 1:1 + base-1536 escape，可逆、零越界 [0,1536)，支持数学符号与全 Unicode；`r-mu6p0yuj-1kmxri`，111 例全套件）。**待办**：性能（紧凑数组，见台账 `opt-b-compact-weights`）、草稿模型微调（训练链，用户裁定方向）。 | 闭环已通；tokenizer 已升级；性能/微调待办 | 部分 | 中 |
+| **D-6** | WebGPU 后端 | **已更新（2026-09-19）**：旧层（simulation，1344 行）**已归档**；新高层 9 模块在构建 + 5 探针 + 真机对拍；**生产推理路径已接入**——`engineGPU` 字段（弱耦合函数句柄）+ `createCPUAdapterWith`/`setEngineGPU` + ProviderRuntime `TRHA_GPU=1` → `gpuForwardFactory` → GPU-only 60 层（q/christoffel 上 WGSL，cur/nxt 轮换，353ms/60 层 ≈5.1x，hidden 与 CPU reportL 逐元素一致；失败回退 CPU）。 | ✅ 已接线 | 中 |
 | **D-7** | Agda 作证明流程 | **已更新（2026-09-13 核实）**：对拍**已系统化**（非"仅注释目标"）—— `test-cpu/Spec.hs` 引用 Agda 权威 17 处，每个判据主题都标注权威文件（如 `Sovereign.MetaStructure.WuXing`、`HolographicPi.agda`、`FiniteInnerProduct.agda`）并逐条验证，含穷举与边界。**仍缺**：Agda 代码本身**未参与执行**（不编译、不进 CI），维持「外部规范源」定位 —— 即 §7 待澄清④ | 对拍已成体系；Agda 未进 CI | 中 |
 | **D-8** | 缓存 | **已更新（2026-09-13 核实）**：`src/Core/Cache/*.hs` 约 70 行，实现 `cacheLookup`/`cacheInsert`/`cacheStats` 且**有** hits/misses/hitRate 统计（原记"无命中率实现"不准确）；问题仅在 README 凭空宣称 **99%+** —— 已改为不写具体数字 | ✅ 已修正（README 与实现一致） | 小 |
 | ~~**D-9**~~ | ~~Haskell 侧 Orchestration 层~~ | **已处置（2026-09-13）**：199 行遗迹归档出构建 → `archive/orchestration/` | 归档 | 小 |
@@ -152,7 +154,7 @@
 |---|---|---|
 | **A 已建成且可达** | 外部模型接入（三 wire + 真流式 + provider 注册表）、协议面、引擎原语、TS 编排全功能、CLI 外壳、宿主导出协议、**本地三值推理（D-2 后：`kind="cpu"` 装配可达）** | 有测试 + 有调用点 + 端到端证据 |
 | ~~**B 已建成但不可达**~~ → **A** | 推理约束原语（T⁶ / 因果图 / 五行链）——**已作用于外部 API**（D-1 于 2026-09-13 闭合，`commit 25587ea`）：响应侧携带 `trha_constraint` 采纳判定 | 有测试 + **有生产调用点**（`API/Server.hs` 的 `constraintField`）+ 端到端证据（4 examples） |
-| **C 未接线** | **WebGPU 新高层**（`Infrastructure.WebGPU.*` 9 模块在构建 + 5 探针 + 真机对拍，**但未接入生产推理路径**）、`Presentation/**`（8 文件）。旧 WebGPU simulation 层（1344 行）与原 `Orchestration.*`（199 行）已于 2026-09-13 归档出构建（`archive/`） | 不在 cabal / 无生产引用 |
+| **C 未接线** | **WebGPU 已接生产**（2026-09-19，见 D-6）；余下 `Presentation/**`（8 文件，从未参与编译）。旧 WebGPU simulation 层与原 `Orchestration.*` 已于 2026-09-13 归档。 | Presentation 不在 cabal |
 | **D 未开始** | 依赖类型论 / Liquid Haskell（D-4，0 命中）；草稿模型（D-5）——**概念已定案**（用户 2026-09-13 裁定：与约束是同一机制的两面）但**实现未做**。**约束 ↔ 外部推理的连接层已从本档移出**（D-1 已闭合） | 0 命中 |
 | **E 宣称与实现不符** | 缓存 99%（实 70 行）、README 的 WebGPU "Phase 3 ✅" | 文档 vs 实测 |
 

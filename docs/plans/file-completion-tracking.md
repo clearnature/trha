@@ -12,7 +12,7 @@
 | 涉及文件数 | 25 |
 | `cabal build all` | **0 error / 0 warning** |
 | `trha-test` | **190 examples, 0 failures**, 4 pending |
-| `trha-cpu-test` | **99 examples, 0 failures**（会话开始时为 0） |
+| `trha-cpu-test` | **111 examples, 0 failures**（会话开始时为 0；2026-09-18 tokenize 升级后 105 → 111） |
 | `trha-webgpu-test` | **3 examples, 0 failures**（真机 GPU） |
 | `trha-cli-test` | **182 examples, 0 failures** |
 

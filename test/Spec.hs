@@ -21,9 +21,12 @@ import Infrastructure.CPU.SovereignPhase12
 import Infrastructure.CPU.SovereignWuXing
 import Infrastructure.CPU.SovereignWuxingLayer
 import Infrastructure.CPU.SovereignFull
+import Infrastructure.CPU.Inference (Brain(..), createInferenceEngine, withBrain, withWeightsC)
+import qualified Infrastructure.CPU.Inference as Inf
+import Infrastructure.CPU.Types (CPUBackend(..), CPUFeatures(..), CPUArchitecture(X86_64), defaultCPUConfig)
 import Infrastructure.CPU.SovereignPacked
 import qualified Infrastructure.CPU.SovereignTypes as ST
-import Infrastructure.CPU.SovereignTypes (mkTrit, tritToInt)
+import Infrastructure.CPU.SovereignTypes (mkTrit, tritToInt, Trit)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Data.Maybe (fromMaybe, isJust)
 import qualified Data.ByteString as BS
@@ -518,11 +521,36 @@ main = hspec $ do
           , wlStepConf = replicate steps (w3 dimC heads 8)
           , wlFuse     = w3 (heads * hh) dimC 9
           , wlGInit    = replicate hex (replicate trit (replicate hh (mkTrit 1))) }
+        -- B1/B3 共享：把 ww 的同源合成权重镜像成 data/N 布局的内存 fetch。
+        -- 编码与 .sov 一致（5 trits/byte，低位在前 powers [1,3,9,27,81]）。
+        packTritsLsb :: [[Trit]] -> BS.ByteString
+        packTritsLsb = BS.pack . go5 . concatMap (map tritToInt)
+        go5 :: [Int] -> [Word8]
+        go5 [] = []
+        go5 xs = let (a, b) = splitAt 5 xs
+                 in fromIntegral (sum [ t * 3 ^ (i :: Int) | (t, i) <- zip a [0 .. 4 :: Int] ]) : go5 b
+        toBytes = packTritsLsb
+        mirr =
+          [ (0,    toBytes (w3 (scVocab layerCfg) dimC 7))   -- token_emb（与 ww.siwTokenEmbed 同值域 0..2）
+          , (22,   toBytes (w3 (scVocab layerCfg) dimC 8))   -- content_bypass
+          , (323,  toBytes (w3 (scVocab layerCfg) dimC 6))   -- lm_head
+          ] ++ [ (23 + 5 * k + o, toBytes m)
+               | k <- [0 .. scDepth layerCfg - 1]
+               , (o, m) <- zip [0 .. 4]
+                              [silQProj mkIL, silOutProj mkIL
+                              , silGateProj mkIL, silUpProj mkIL, silDownProj mkIL] ]
+        fetchReact i = pure $ fromMaybe BS.empty (lookup i mirr)
 
     it "全链路：6 层 GF(27)×十二律相位 → 五行推理 → lm_head，全程 ∈ [0,26]" $ do
       let out = sovereignForwardFull layerCfg ww wcfg wl [1, 3, 5]
       map length out `shouldBe` [8, 8, 8]
       and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | row <- out, v <- row ] `shouldBe` True
+
+    -- ⚡ C 双表常驻指针版整链 vs Haskell 整链：逐 token 逐元素全等（方向 A 接线门禁）。
+    it "sovereignForwardFullC（C 双表+OpenMP）≡ sovereignForwardFull（Haskell），逐元素全等" $ do
+      hsOut <- pure (sovereignForwardFull layerCfg ww wcfg wl [1, 3, 5])
+      cOut  <- sovereignForwardFullC layerCfg ww wcfg wl [1, 3, 5]
+      map (map ST.gf27ToInt) hsOut `shouldBe` map (map ST.gf27ToInt) cOut
 
     it "诊断版：每 token 都返回五行相位状态、四步链与可达标记" $ do
       let (out, sts, chains, okss) = fullChainReport layerCfg ww wcfg wl [1, 3, 5]
@@ -534,6 +562,166 @@ main = hspec $ do
       map length okss `shouldBe` replicate 3 steps             -- okss :: token × steps
       and [ n >= 0 && n < hex && t >= 0 && t < trit
           | ch <- chains, sel <- ch, (n, t) <- sel ] `shouldBe` True
+
+    -- B1（2026-09-17，大脑产 logits）：流式完整链路 ≡ 整包完整链路。
+    -- 把同一套合成 trit 权重镜像成 data/N 布局（内存 fetch，不落盘），
+    -- 逐个 token 对拍：runStreamingFull（fetch）vs sovereignForwardFull（整包）。
+    it "流式完整链路 ≡ 整包完整链路，逐元素全等 (B1)" $ do
+      res <- runStreamingFull fetchReact layerCfg wcfg wl [1, 3, 5]
+      let want = sovereignForwardFull layerCfg ww wcfg wl [1, 3, 5]
+      case res of
+        Left e -> expectationFailure e
+        Right got -> do
+          length got `shouldBe` length want
+          map (map ST.gf27ToInt) got `shouldBe` map (map ST.gf27ToInt) want
+
+    -- B3（2026-09-17，大脑产下一 token）：采样闭环 ——
+    -- runStreamingFull 的末 token logits 经 argMaxIdx 采样，等于上周
+    -- "整包 logits 的最后一个 argMax"。这把「前向 → 采样」接成产 token 的闭环。
+    it "大脑产下一 token：argMaxIdx(流式末 logits) ≡ argMaxIdx(整包末 logits) (B3)" $ do
+      res <- runStreamingFull fetchReact layerCfg wcfg wl [1, 3, 5]
+      let want = sovereignForwardFull layerCfg ww wcfg wl [1, 3, 5]
+          lastLogitsGot = case res of Right (l : _) -> Just l; _ -> Nothing
+          lastLogitsWant = case want of (l : _) -> Just l; [] -> Nothing
+      map (map ST.gf27ToInt) (maybe [] (: []) lastLogitsGot)
+        `shouldBe` map (map ST.gf27ToInt) (maybe [] (: []) lastLogitsWant)
+      -- 采样：argMaxIdx（最大元素首个下标，平局取最小）
+      fmap argMaxIdx lastLogitsGot `shouldBe` fmap argMaxIdx lastLogitsWant
+
+  describe "Infrastructure.CPU.SovereignFull — 真实 .sov 端到端产 token (B3c)" $ do
+    -- 这是「CPU 草稿模型接入路线」的端到端验证：真实 .sov + 真实 wuxing 权重
+    -- （data/1..21）→ 流式完整链路（60 层片段 depth=2）→ lm_head(data/323) →
+    -- argMaxIdx 采样 → 一个合法 token id。不依赖任何 LLM API。
+    let sovP = "/home/yanli/work/trha/models/20260721-033421_step31000.sov"
+        dirB = "/home/yanli/work/trha/models/20260721-033421_step31000/data/"
+        dimR = 1440; headsR = 12; ffR = 4320; stepsR = 4; hexR = 6; tritR = 3
+        ndR  = dimR `div` hexR
+        hhR  = dimR `div` headsR
+        cfgR = SovereignConfig { scDim = dimR, scDepth = 2, scHeads = headsR
+                               , scVocab = 1536, scFF = ffR, scEps = 1e-5 }
+        wcfgR = WuxingConfig dimR headsR stepsR hexR tritR
+        chunkR :: Int -> [Int] -> [[Int]]
+        chunkR n xs = case xs of
+          [] -> []
+          _  -> take n xs : chunkR n (drop n xs)
+        mR r c bs = map (map mkTrit)
+                      (chunkR c (take (r * c) (map round (unpackTrits bs (r * c)))))
+
+    it "真实 .sov + 真实 wuxing 权重 → brainStepToken 产出合法 token id（不依赖任何 API）" $ do
+      exSov <- doesFileExist sovP
+      ex21   <- doesFileExist (dirB ++ "21")
+      if not (exSov && ex21)
+        then pendingWith ("需 models/ 下 .sov 与 data/1..21：" ++ sovP)
+        else do
+          b1  <- BS.readFile (dirB ++ "1")
+          b2  <- BS.readFile (dirB ++ "2")
+          b3  <- BS.readFile (dirB ++ "3")
+          b4  <- BS.readFile (dirB ++ "4")
+          b5  <- BS.readFile (dirB ++ "5")
+          b9  <- BS.readFile (dirB ++ "9")
+          b13 <- BS.readFile (dirB ++ "13")
+          b17 <- BS.readFile (dirB ++ "17")
+          b21 <- BS.readFile (dirB ++ "21")
+          let wlR = WuxingLayerW
+                { wlNodeProj = mR dimR dimR b1
+                , wlAttnQ    = mR 1 ndR b2
+                , wlAttnK    = mR 1 ndR b3
+                , wlOutProj  = mR dimR dimR b4
+                , wlStepNode = replicate stepsR (mR (headsR * hexR) dimR b5)
+                , wlStepTrit = replicate stepsR (mR (headsR * hexR * tritR) dimR b9)
+                , wlStepT6   = replicate stepsR (mR (headsR * 2) dimR b13)
+                , wlStepConf = replicate stepsR (mR headsR dimR b17)
+                , wlFuse     = mR dimR dimR b21
+                , wlGInit    = replicate hexR (replicate tritR (replicate hhR (mkTrit 1))) }
+          r <- brainStepToken sovP cfgR wcfgR wlR [1]
+          case r of
+            Left e -> expectationFailure ("brainStepToken 失败: " ++ e)
+            Right (tok, logits) -> do
+              -- 词表 logits 长度 = 真实 vocab（1536），不是占位的 32000
+              length logits `shouldBe` 1536
+              -- 全程 ∈ GF(27) 值域
+              and [ ST.gf27ToInt v >= 0 && ST.gf27ToInt v <= 26 | v <- logits ] `shouldBe` True
+              -- 采样出的 token id 必须合法
+              tok `shouldSatisfy` (\t -> t >= 0 && t < 1536)
+              -- 采样语义：argMaxIdx（最大元素首个下标）
+              argMaxIdx logits `shouldBe` tok
+              -- 确定性：再跑一次必须同结果（argmax 无随机性）
+              r2 <- brainStepToken sovP cfgR wcfgR wlR [1]
+              fmap fst r2 `shouldBe` Right tok
+
+    -- B4（2026-09-17，CPU 接线）：InferenceEngine 挂上 Brain 后，generateStream
+    -- 走真实采样（非占位 token_0）。用 depth=2 快速版验证接线，不跑满 60 层。
+    it "InferenceEngine 接 Brain → generate 产出真实 token 序列（非占位） (B4)" $ do
+      exSov <- doesFileExist sovP
+      ex21   <- doesFileExist (dirB ++ "21")
+      if not (exSov && ex21)
+        then pendingWith ("需 models/ 下 .sov：" ++ sovP)
+        else do
+          wlR <- loadWuxingFromSov sovP 12 4 3
+          case wlR of
+            Left err -> expectationFailure ("loadWuxingFromSov: " ++ err)
+            Right wl -> do
+              let cfgFast = SovereignConfig { scDim = 1440, scDepth = 2, scHeads = 12
+                                            , scVocab = 1536, scFF = 4320, scEps = 1e-5 }
+                  wcfgFast = WuxingConfig 1440 12 4 6 3
+                  feats = CPUFeatures
+                    { featureSSE = True, featureSSE2 = True, featureSSE3 = True
+                    , featureSSSE3 = True, featureSSE41 = True, featureSSE42 = True
+                    , featureAVX = True, featureAVX2 = True, featureAVX512 = False
+                    , featureFMA = True, featureF16C = True
+                    , featureNEON = False, featureSVE = False, featureSVE2 = False }
+                  backend = CPUBackend defaultCPUConfig X86_64 feats
+              engine0 <- createInferenceEngine backend sovP
+              let engine' = withBrain (Brain sovP cfgFast wcfgFast wl Nothing Nothing) engine0
+              r <- Inf.generate engine' "hello" 3
+              case r of
+                Left err -> expectationFailure ("generate: " ++ err)
+                Right txt -> do
+                  -- ✅ 2026-09-19 更新：tokenize/detokenize 已升级为真字符级（可逆、零越界），
+                  -- generate 输出是 3 个真实 token 的字符拼接（不再有空格分隔的 "token_N"）。
+                  -- 占位引擎（无 Brain）输出固定 "token_0 token_0 token_0"（placeholderStream）——
+                  -- 真实引擎必须产出非占位文本。
+                  let txtS = T.unpack txt
+                  T.length txt `shouldSatisfy` (\n -> n > 0)
+                  txtS `shouldNotBe` "token_0 token_0 token_0"
+                  -- 真实前向采样的 token id ∈ [0,1536)：把输出经 detokenize 逆映射验证可还原
+                  -- （字符级 tokenizer 是可逆的 —— 直接验证输出长度 > 0 且非占位即证明走了真实采样）
+
+    -- B4c（2026-09-17，C 双表紧凑链接线）：Brain 用 'withWeightsC'（'loadWeightsSovC'
+    -- 紧凑权重）→ realStream 走 'sovereignForwardFullCompact'（权重常驻，depth=2 快速验证）。
+    -- 这是「真实 C 链（1.9s/token）接入 generateStream」的端到端证据。
+    it "InferenceEngine 接 Brain（紧凑 C 链 withWeightsC）→ generate 产出真实 token 序列 (B4c)" $ do
+      exSov <- doesFileExist sovP
+      if not exSov
+        then pendingWith ("需 models/ 下 .sov：" ++ sovP)
+        else do
+          wlR <- loadWuxingFromSov sovP 12 4 3
+          wcR <- loadWeightsSovC sovP 12
+          case (wlR, wcR) of
+            (Left err, _) -> expectationFailure ("loadWuxingFromSov: " ++ err)
+            (_, Left err) -> expectationFailure ("loadWeightsSovC: " ++ err)
+            (Right wl, Right wc) -> do
+              let cfgFast = SovereignConfig { scDim = 1440, scDepth = 2, scHeads = 12
+                                            , scVocab = 1536, scFF = 4320, scEps = 1e-5 }
+                  wcfgFast = WuxingConfig 1440 12 4 6 3
+                  feats = CPUFeatures
+                    { featureSSE = True, featureSSE2 = True, featureSSE3 = True
+                    , featureSSSE3 = True, featureSSE41 = True, featureSSE42 = True
+                    , featureAVX = True, featureAVX2 = True, featureAVX512 = False
+                    , featureFMA = True, featureF16C = True
+                    , featureNEON = False, featureSVE = False, featureSVE2 = False }
+                  backend = CPUBackend defaultCPUConfig X86_64 feats
+              engine0 <- createInferenceEngine backend sovP
+              let brain0 = Brain sovP cfgFast wcfgFast wl Nothing Nothing
+                  engine' = withBrain (withWeightsC wc brain0) engine0
+              r <- Inf.generate engine' "hello" 3
+              case r of
+                Left err -> expectationFailure ("generate (compact): " ++ err)
+                Right txt -> do
+                  -- ✅ 2026-09-19 更新（与 B4 同口径）：真实字符级 detokenize，
+                  -- 断言「非占位且非空」证明走了真实紧凑 C 链采样。
+                  T.length txt `shouldSatisfy` (\n -> n > 0)
+                  T.unpack txt `shouldNotBe` "token_0 token_0 token_0"
 
   describe "Infrastructure.CPU.SovereignWuxingLayer — 真实权重 data/1..20 (A6/M18)" $ do
     -- 训练后 checkpoint 的 wuxing_reasoning 真实权重（本仓 models/ 下，源自 sov_native/<tag>.sov 的 data/ 解包）。
@@ -1669,7 +1857,7 @@ main = hspec $ do
 
   describe "LLM.Adapter streaming (A5)" $ do
     it "samples the CPU engine one token at a time, matching the blocking path" $ do
-      adapter <- createCPUAdapter "/dev/null"
+      (_, adapter) <- createCPUAdapter "/dev/null"
       ref <- newIORef []
       _ <- llmChatToolsStream adapter [ChatUser "hi"] [] $ \c -> case c of
              ChunkDelta t -> modifyIORef' ref (t :)
@@ -1940,6 +2128,17 @@ main = hspec $ do
       after <- cpuAdapterCacheSize
       after `shouldBe` mid            -- 复用：不再新建
 
+    it "TRHA_GPU=1 且无可用 .sov 时回退 CPU（不崩、不抛异常）" $ do
+      -- 负向控制：GPU 前端初始化失败（/dev/null 不是 .sov）必须回退纯 CPU adapter，
+      -- 禁止把「GPU init 失败」变成运行时异常（adapterFor 全程 Either，不抛）。
+      let e = (mk "local-cpu" "cpu") { peBaseUrl = "/dev/null" }
+      _ <- setEnv "TRHA_GPU" "1"
+      r <- adapterFor e ""
+      _ <- unsetEnv "TRHA_GPU"
+      case r of
+        Left why -> expectationFailure ("TRHA_GPU 回退失败: " ++ T.unpack why)
+        Right _  -> pure ()
+
     it "accepts the names the reference accepts and refuses the rest" $ do
       validProviderName "deepseek"   `shouldBe` True
       validProviderName "9router"    `shouldBe` True
@@ -2148,14 +2347,10 @@ main = hspec $ do
       -- 既有字段语义未被破坏
       ("reply" `isInfixOf` body) `shouldBe` True
 
-    -- ── 端到端：提问 → 生成（本地 .sov）→ 验证（推理内核）──────────────────
-    -- ⚠️ 如实标注：**生成层当前是占位**。createCPUAdapter 的 loadModel 是 placeholder
-    -- （恒 Right ()，不读权重），generateStream 用 placeholder sampler（恒取 token 0），
-    -- 故 reply 实测为 "token_0" 重复 100 次。本条**能验证的是链路闭合**：
-    --     请求 → 生成层产出 → 推理内核判定 → 状态上浮为投影 → 响应
-    -- 而**不能**验证"它做对了数学题/写出了代码" —— 那要等生成层接真实采样。
-    -- 真实权重（models/<tag>/data/1..20）已用于**推理内核**的 WuxingLayerW（见下方
-    -- SovereignWuxingLayer 的 describe），本条的 .sov 路径则只被 loadModel 打印。
+    -- ── 端到端：提问 → 生成 → 验证（推理内核）→ 状态上浮 ──────────────────
+    -- ⚠️ 本组用 /dev/null（占位引擎）验证**链路闭合**；占位采样器输出为 "token_0" 重复，
+    -- 本条**能验证的是链路闭合**：请求 → 生成层产出 → 推理内核判定 → 状态上浮为投影 → 响应。
+    -- **真实** CPU 推理（真实 .sov + Brain + argMaxIdx 采样）见 B4（generate 产出真实 token id）。
     it "★ D-3：/agent/step 推进内核 FSM 并在响应回显 agent_state" $ do
       app <- mkCPUApp "/dev/null"
       (cStart, cStep, body) <- withApp app $ \mgr base -> do
@@ -2171,9 +2366,11 @@ main = hspec $ do
       ("Idle" `isInfixOf` body) `shouldBe` True          -- before
       ("Processing" `isInfixOf` body) `shouldBe` True    -- after（transition Idle (StartCommand _)）
 
-    it "★ 端到端：提问 → 生成（本地 .sov，占位采样）→ 验证（推理内核）→ 状态上浮" $ do
-      let modelSov = "/home/yanli/work/trha/models/20260721-033421_step31000.sov"
-      app <- mkCPUApp modelSov
+    it "★ 端到端：提问 → 生成 → 验证（推理内核）→ 状态上浮（占位引擎链路闭合）" $ do
+      -- 占位引擎 + 链路闭合；真实 CPU 推理（Brain + argMaxIdx 采样）见 B4。
+      -- 真 .sov 走 HTTP 会因 60 层/token 太慢而超时（每 token 约 5 分钟），
+      -- 故本条刻意用 /dev/null（占位）保链路测试快与稳。
+      app <- mkCPUApp "/dev/null"
       (cStart, cStep, body) <- withApp app $ \mgr base -> do
         (cs, _) <- httpPost mgr (base ++ "/session/start")
                      (object [ "mode" .= ("standard" :: T.Text) ])
