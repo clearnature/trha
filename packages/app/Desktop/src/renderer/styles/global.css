@@ -913,3 +913,6 @@ body {
 .storage-path { display: flex; align-items: center; justify-content: space-between; gap: 10px;
   border: 1px solid var(--border-color, #eee); border-radius: 8px; padding: 10px 12px; }
 .storage-path-text { display: flex; flex-direction: column; gap: 3px; }
+
+/* ── 更新：版本行 ── */
+.updates-version { font-size: 15px; margin: 0 0 10px; }
