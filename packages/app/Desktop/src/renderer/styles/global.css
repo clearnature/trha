@@ -805,3 +805,13 @@ body {
 .mcp-status--connected { background: #e8f7ee; color: #1a7f3a; }
 .mcp-status--error { background: #fdecea; color: #c0392b; }
 .mcp-status--unavailable { background: #f5f5f5; color: #888; }
+
+/* ── Skills 面板：开关行 / 计数 ── */
+.setting-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.setting-row-text { display: flex; flex-direction: column; gap: 2px; }
+.setting-row input[type=checkbox] { width: 18px; height: 18px; margin-top: 4px; }
+.skill-counts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+.skill-count { display: flex; flex-direction: column; gap: 2px; padding: 12px; background: rgba(0,0,0,.03);
+  border: 1px solid var(--border-color, #e5e5e5); border-radius: 8px; text-align: center; }
+.skill-count strong { font-size: 20px; }
+.skill-count span { font-size: 12px; color: var(--muted, #777); }
