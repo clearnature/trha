@@ -39,7 +39,7 @@
 | F5 会话控制 | `resume.go`、`rewind.go`、`transcript.go`、`checkpoint`、`compaction_card.go` | 会话在服务端；本地 transcript 已做；无 resume/rewind/compact UI | L0（协议）+L1 |
 | F6 计划与审批 | `plan_decision.go`、`control/approval.go`、`ask_queue` | 无 plan/ask 状态机 | **L1**（内核+协议） |
 | F7 模型/provider | `model_view.go`、`preset.go`、`provider.go` | `/models` 列表 + `/model` 切换；无详情视图 | L0+L1 |
-| F8 子代理/任务 | `subagent.go`、`task_machine.go`、`todopanel`、`goaleval` | trha-orchestration Subagent 骨架；TUI 无视图 | L1/L2 |
+| F8 子代理/任务 | `subagent.go`、`task_machine.go`、`todopanel`、`goaleval` | ~~trha-orchestration Subagent 骨架~~ ⚠️ **该库已于 2026-09-13 归档出构建**（`archive/orchestration/`），本行是当时的对照记录；TUI 无视图 | L1/L2 |
 | F9 召回/记忆 | `memory.go`、`retrieval/`（BM25）、`historycatalog` | 无 | L2 |
 | F10 扩展面 | `plugin.go`、`skill_*`、`mcp_*` | trha 插件系统（Core.Plugin）尚未被 CLI 使用 | L1（插件挂载） |
 
