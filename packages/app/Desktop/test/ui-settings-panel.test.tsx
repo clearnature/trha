@@ -41,7 +41,8 @@ describe('SettingsPanel', () => {
     expect(screen.getByLabelText('字号')).toBeTruthy();
     // 导航分组（对齐 Reasonix 8 组）
     expect(screen.getByText('偏好设置')).toBeTruthy();
-    expect(screen.getByText('模型参数')).toBeTruthy();
+    expect(screen.getAllByText('模型').length).toBeGreaterThan(0);   // 组名 + preferences 内 tab
+    expect(screen.getByText('模型偏好')).toBeTruthy();   // 模型组 tab（用户结构）
     expect(screen.getByText('集成与连接')).toBeTruthy();
   });
 
