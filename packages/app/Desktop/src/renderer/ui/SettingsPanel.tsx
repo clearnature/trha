@@ -16,6 +16,7 @@ import { GeneralSettingsPanel } from './GeneralSettingsPanel.js';
 import { ModelPreferencesPanel } from './ModelPreferencesPanel.js';
 import { McpPanel } from './McpPanel.js';
 import { SkillsPanel } from './SkillsPanel.js';
+import { SubagentsPanel } from './SubagentsPanel.js';
 import { ScaffoldPanel } from './ScaffoldPanel.js';
 import { ALL_SETTINGS_TABS, SETTINGS_GROUPS } from '../state/settingsTypes.js';
 
@@ -76,6 +77,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           {tab === 'mcp' && <McpPanel t={t} />}
 
           {tab === 'skills' && <SkillsPanel t={t} />}
+
+          {tab === 'subagents' && <SubagentsPanel t={t} />}
 
           {tab === 'providers' && (
             <div className="settings-pagebody">

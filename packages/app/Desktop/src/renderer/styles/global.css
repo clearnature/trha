@@ -815,3 +815,20 @@ body {
   border: 1px solid var(--border-color, #e5e5e5); border-radius: 8px; text-align: center; }
 .skill-count strong { font-size: 20px; }
 .skill-count span { font-size: 12px; color: var(--muted, #777); }
+
+/* ── 子智能体：内置 Profile 卡片 ── */
+.subagent-card { border: 1px solid var(--border-color, #e5e5e5); border-radius: 8px;
+  padding: 12px 14px; margin-bottom: 10px; }
+.subagent-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.subagent-name { font-size: 14px; font-weight: 600; }
+.subagent-badge { font-size: 11px; padding: 1px 8px; border-radius: 10px; background: #eef3fb; color: #2f6fed; }
+.subagent-tools { font-size: 12px; color: var(--muted, #777); }
+.subagent-desc { font-size: 13px; color: var(--muted, #555); margin: 4px 0 8px; }
+.subagent-command { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,.03);
+  padding: 6px 10px; border-radius: 6px; }
+.subagent-command code { font-size: 12px; }
+.subagent-command .param-hint { margin: 0 0 0 auto; }
+.subagent-overrides { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.subagent-overrides label { font-size: 12px; color: var(--muted, #666); }
+.subagent-overrides select { padding: 3px 6px; }
+.subagent-overrides .param-hint { width: 100%; }
