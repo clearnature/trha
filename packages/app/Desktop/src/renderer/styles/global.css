@@ -873,3 +873,15 @@ body {
   padding: 10px; border: 1px solid var(--border-color, #ddd); border-radius: 6px; background: rgba(0,0,0,.02); }
 .hooks-dirty { font-size: 12px; color: var(--muted, #888); margin-top: 6px; }
 .hooks-dirty--true { color: #c07a00; }
+
+/* ── 诊断：检查表 ── */
+.diag-checks { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; max-width: 620px; }
+.diag-check { display: flex; align-items: flex-start; gap: 10px; padding: 6px 10px;
+  border: 1px solid var(--border-color, #eee); border-radius: 6px; }
+.diag-check-text { display: flex; flex-direction: column; gap: 1px; }
+.diag-check-text strong { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; }
+.diag-status { font-size: 11px; padding: 1px 8px; border-radius: 10px; flex-shrink: 0; font-family: var(--mono, ui-monospace, monospace); }
+.diag-status--passed { background: #e8f7ee; color: #1a7f3a; }
+.diag-status--unknown { background: #fff4e0; color: #a8690a; }
+.diag-status--failed { background: #fdecea; color: #c0392b; }
+.diag-status--not_checked { background: #f0f0f0; color: #888; }
