@@ -22,6 +22,7 @@ import { MemoryPanel } from './MemoryPanel.js';
 import { HooksPanel } from './HooksPanel.js';
 import { DiagnosticsPanel } from './DiagnosticsPanel.js';
 import { PermissionsPanel } from './PermissionsPanel.js';
+import { SandboxPanel } from './SandboxPanel.js';
 import { ScaffoldPanel } from './ScaffoldPanel.js';
 import { ALL_SETTINGS_TABS, SETTINGS_GROUPS } from '../state/settingsTypes.js';
 
@@ -94,6 +95,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           {tab === 'diagnostics' && <DiagnosticsPanel t={t} />}
 
           {tab === 'permissions' && <PermissionsPanel t={t} />}
+
+          {tab === 'sandbox' && <SandboxPanel t={t} />}
 
           {tab === 'providers' && (
             <div className="settings-pagebody">

@@ -893,3 +893,8 @@ body {
 .perm-rule code { font-size: 12px; overflow-wrap: anywhere; }
 .perm-add { display: flex; gap: 8px; max-width: 640px; }
 .perm-add input { flex: 1; padding: 6px 10px; font-family: var(--mono, ui-monospace, monospace); font-size: 12px; }
+
+/* ── 沙箱：Shell 检测行 ── */
+.sandbox-shells { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.sandbox-shell { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.sandbox-shell span:first-child { font-weight: 600; width: 90px; }
