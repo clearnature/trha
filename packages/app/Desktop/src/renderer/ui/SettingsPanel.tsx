@@ -14,6 +14,7 @@ import { SettingsNavigation } from './SettingsNavigation.js';
 import { LlmSettingsPanel } from './LlmSettingsPanel.js';
 import { GeneralSettingsPanel } from './GeneralSettingsPanel.js';
 import { ModelPreferencesPanel } from './ModelPreferencesPanel.js';
+import { McpPanel } from './McpPanel.js';
 import { ScaffoldPanel } from './ScaffoldPanel.js';
 import { ALL_SETTINGS_TABS, SETTINGS_GROUPS } from '../state/settingsTypes.js';
 
@@ -70,6 +71,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           {tab === 'models' && <LlmSettingsPanel t={t} />}
 
           {tab === 'model-preferences' && <ModelPreferencesPanel t={t} />}
+
+          {tab === 'mcp' && <McpPanel t={t} />}
 
           {tab === 'providers' && (
             <div className="settings-pagebody">
