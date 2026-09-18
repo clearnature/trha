@@ -37,11 +37,21 @@
 
 mcp / remote / skills / plugins / memory / hooks / diagnostics / shortcuts / storage / browser
 
-## 4. 导航分组（维度 B，8 组）
+## 4. 导航分组（维度 B，8 组）—— 以用户 2026-09-19 提供的权威结构为准
 
-preferences(general) · models(models/providers/model-stats) · connections(bots/mcp/remote)
-· capabilities(skills/subagents/plugins) · context(memory) · automation(hooks/diagnostics)
-· security(permissions/sandbox/network/browser) · application(appearance/shortcuts/storage/updates)
+```
+偏好设置: 通用, 模型
+模型: 模型偏好, 模型服务, 用量统计
+集成与连接: 机器人, MCP 与工具, 远程 SSH
+能力扩展: Agent Skills, 子智能体, 插件
+记忆与上下文: 记忆
+自动化与开发者: Hooks, 诊断
+安全与控制: 权限, 沙箱, 网络, 浏览器控制
+应用: 外观, 快捷键, 存储与路径, 关于
+```
+（代码对应：preferences(general,models) · model(model-preferences,providers,model-stats) · connections(bots,mcp,remote)
+· capabilities(skills,subagents,plugins) · context(memory) · automation(hooks,diagnostics)
+· security(permissions,sandbox,network,browser) · application(appearance,shortcuts,storage,about)）
 
 ## 5. 关键机制（末端细节）
 
