@@ -21,6 +21,7 @@ import { PluginsPanel } from './PluginsPanel.js';
 import { MemoryPanel } from './MemoryPanel.js';
 import { HooksPanel } from './HooksPanel.js';
 import { DiagnosticsPanel } from './DiagnosticsPanel.js';
+import { PermissionsPanel } from './PermissionsPanel.js';
 import { ScaffoldPanel } from './ScaffoldPanel.js';
 import { ALL_SETTINGS_TABS, SETTINGS_GROUPS } from '../state/settingsTypes.js';
 
@@ -91,6 +92,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           {tab === 'hooks' && <HooksPanel t={t} />}
 
           {tab === 'diagnostics' && <DiagnosticsPanel t={t} />}
+
+          {tab === 'permissions' && <PermissionsPanel t={t} />}
 
           {tab === 'providers' && (
             <div className="settings-pagebody">

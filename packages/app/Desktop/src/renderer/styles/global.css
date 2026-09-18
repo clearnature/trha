@@ -885,3 +885,11 @@ body {
 .diag-status--unknown { background: #fff4e0; color: #a8690a; }
 .diag-status--failed { background: #fdecea; color: #c0392b; }
 .diag-status--not_checked { background: #f0f0f0; color: #888; }
+
+/* ── 权限：规则列表 + 添加行 ── */
+.perm-rules { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; max-width: 640px; }
+.perm-rule { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 6px 10px; border: 1px solid var(--border-color, #eee); border-radius: 6px; }
+.perm-rule code { font-size: 12px; overflow-wrap: anywhere; }
+.perm-add { display: flex; gap: 8px; max-width: 640px; }
+.perm-add input { flex: 1; padding: 6px 10px; font-family: var(--mono, ui-monospace, monospace); font-size: 12px; }
