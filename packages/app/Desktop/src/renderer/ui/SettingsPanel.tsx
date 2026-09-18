@@ -19,6 +19,7 @@ import { SkillsPanel } from './SkillsPanel.js';
 import { SubagentsPanel } from './SubagentsPanel.js';
 import { PluginsPanel } from './PluginsPanel.js';
 import { MemoryPanel } from './MemoryPanel.js';
+import { HooksPanel } from './HooksPanel.js';
 import { ScaffoldPanel } from './ScaffoldPanel.js';
 import { ALL_SETTINGS_TABS, SETTINGS_GROUPS } from '../state/settingsTypes.js';
 
@@ -85,6 +86,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           {tab === 'plugins' && <PluginsPanel t={t} />}
 
           {tab === 'memory' && <MemoryPanel t={t} />}
+
+          {tab === 'hooks' && <HooksPanel t={t} />}
 
           {tab === 'providers' && (
             <div className="settings-pagebody">

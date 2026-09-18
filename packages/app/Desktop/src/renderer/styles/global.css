@@ -864,3 +864,12 @@ body {
 .memory-item strong { font-size: 13px; }
 .memory-item code { font-size: 11px; color: var(--muted, #888); margin-left: 8px; }
 .memory-item p { font-size: 12px; color: var(--muted, #666); margin: 4px 0 0; }
+
+/* ── Hooks：路径行 / 动作按钮 / JSON 编辑器 ── */
+.hooks-path-row { display: flex; align-items: center; gap: 8px; }
+.hooks-path { font-size: 12px; background: rgba(0,0,0,.04); padding: 4px 8px; border-radius: 4px; }
+.hooks-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+.hooks-editor { width: 100%; font-family: var(--mono, ui-monospace, monospace); font-size: 12px;
+  padding: 10px; border: 1px solid var(--border-color, #ddd); border-radius: 6px; background: rgba(0,0,0,.02); }
+.hooks-dirty { font-size: 12px; color: var(--muted, #888); margin-top: 6px; }
+.hooks-dirty--true { color: #c07a00; }
