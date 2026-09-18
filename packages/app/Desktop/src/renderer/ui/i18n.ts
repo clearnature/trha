@@ -89,6 +89,28 @@ export const messages = {
     'settings.scaffold.modelStats.desc': '模型用量统计（预留，未接线）。',
     'settings.scaffold.model-preferences.desc': '模型偏好（识别/生成参数预设）（预留，未接线）。',
     'settings.general.desc': '界面语言、主题等基础偏好。',
+    'settings.general.desktopAndLanguage': '桌面与语言',
+    'settings.general.language': '界面语言',
+    'settings.general.lang.auto': '自动（跟随系统）',
+    'settings.general.lang.zh': '中文',
+    'settings.general.lang.en': 'English',
+    'settings.general.languageHint': '选择界面语言，或跟随操作系统。',
+    'settings.general.currency': '费用展示币种',
+    'settings.general.currencyControl': '自动（推荐）',
+    'settings.general.currencyHint': '仅影响费用显示，不换算余额或改变模型价格。自动优先账户币种，否则使用价表币种（预留）。',
+    'settings.general.sessionPermission': '新会话默认权限',
+    'settings.general.sessionPermissionControl': '工作区内修改（默认）',
+    'settings.general.sessionPermissionHint': '默认使用「工作区内修改」；此设置只影响新会话（预留）。',
+    'settings.general.systemBehavior': '系统行为',
+    'settings.general.hardwareAcceleration': '硬件加速',
+    'settings.general.hardwareAccelerationControl': '开启（默认）',
+    'settings.general.hardwareAccelerationHint': '使用 GPU 加速界面渲染（预留）。',
+    'settings.general.closeBehavior': '关闭窗口时',
+    'settings.general.closeBehaviorControl': '保持后台运行（默认）',
+    'settings.general.closeBehaviorHint': '选择关闭主窗口后是否继续运行（预留）。',
+    'settings.general.sound': '声音',
+    'settings.general.soundControl': '全部关闭（默认）',
+    'settings.general.soundHint': '背景音乐与通知音效（预留）。',
     'settings.appearance.desc': '主题与字号（UI 外观）。',
     'settings.llm.desc': '模型选择与生成参数。未填的参数使用内核默认值。',
     'settings.llm.selectedModel': '选中的模型',
@@ -218,6 +240,28 @@ export const messages = {
     'settings.scaffold.modelStats.desc': 'Model usage stats (planned, not wired).',
     'settings.scaffold.model-preferences.desc': 'Model preferences (recognition/generation presets) (planned, not wired).',
     'settings.general.desc': 'UI language, theme and other base preferences.',
+    'settings.general.desktopAndLanguage': 'Desktop & Language',
+    'settings.general.language': 'Interface language',
+    'settings.general.lang.auto': 'Auto (follow system)',
+    'settings.general.lang.zh': '中文',
+    'settings.general.lang.en': 'English',
+    'settings.general.languageHint': 'Choose the interface language, or follow the OS.',
+    'settings.general.currency': 'Fee display currency',
+    'settings.general.currencyControl': 'Auto (recommended)',
+    'settings.general.currencyHint': 'Affects fee display only; does not convert balance or change model prices (planned).',
+    'settings.general.sessionPermission': 'Default permission for new sessions',
+    'settings.general.sessionPermissionControl': 'Modify within workspace (default)',
+    'settings.general.sessionPermissionHint': 'Affects new sessions only (planned).',
+    'settings.general.systemBehavior': 'System behavior',
+    'settings.general.hardwareAcceleration': 'Hardware acceleration',
+    'settings.general.hardwareAccelerationControl': 'On (default)',
+    'settings.general.hardwareAccelerationHint': 'Use GPU to accelerate UI rendering (planned).',
+    'settings.general.closeBehavior': 'On window close',
+    'settings.general.closeBehaviorControl': 'Keep running in background (default)',
+    'settings.general.closeBehaviorHint': 'Choose whether Reasonix keeps running after the main window closes (planned).',
+    'settings.general.sound': 'Sound',
+    'settings.general.soundControl': 'All off (default)',
+    'settings.general.soundHint': 'Background music and notification sounds (planned).',
     'settings.appearance.desc': 'Theme and font size (UI appearance).',
     'settings.llm.desc': 'Model selection and generation parameters. Empty uses kernel defaults.',
     'settings.llm.selectedModel': 'Selected model',
@@ -268,8 +312,20 @@ export const messages = {
 export type MessageKey = keyof typeof messages.zh;
 
 /** Translate a key, interpolating {name} placeholders from `vars`. */
+function resolveLang(lang: Lang): 'zh' | 'en' {
+  if (lang === 'auto') {
+    // 无 navigator（node 测试环境）→ zh，保持既有「默认中文」断言语义；
+    // 浏览器/Electron 环境跟随系统语言。
+    if (typeof navigator === 'undefined') return 'zh';
+    const nav = navigator.language || navigator.languages?.[0] || '';
+    return nav.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  }
+  // zh / en 直接返回；未知 locale（遗留调用）兜底 zh
+  return messages[lang] ? lang : 'zh';
+}
+
 export function t(lang: Lang, key: MessageKey, vars?: Record<string, string | number>): string {
-  const table = messages[lang] ?? messages.zh;
+  const table = messages[resolveLang(lang)];
   let out: string = (table as Record<string, string>)[key] ?? messages.zh[key] ?? key;
   if (vars) {
     for (const [k, v] of Object.entries(vars)) {
@@ -279,4 +335,7 @@ export function t(lang: Lang, key: MessageKey, vars?: Record<string, string | nu
   return out;
 }
 
-export const LANGS: Lang[] = ['zh', 'en'];
+/** UI 语言选择项（含 auto=跟随系统）。翻译表本身只有 zh/en。 */
+export const LANGS: Lang[] = ['auto', 'zh', 'en'];
+/** 翻译表实际存在的 locale（i18n 测试遍历用）。 */
+export const LOCALE_TABLES: ('zh' | 'en')[] = ['zh', 'en'];

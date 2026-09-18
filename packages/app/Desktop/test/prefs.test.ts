@@ -25,8 +25,10 @@ describe('normalizePrefs', () => {
   });
 
   it('falls back for invalid or missing values', () => {
+    // null → DEFAULT（lang zh）；非法 lang → auto（lang 的合法回落值）
     expect(normalizePrefs(null)).toEqual(DEFAULT_PREFS);
-    expect(normalizePrefs({ theme: 'blue', lang: 'fr', fontSize: 'big' })).toEqual(DEFAULT_PREFS);
+    expect(normalizePrefs({ theme: 'blue', lang: 'fr', fontSize: 'big' }))
+      .toEqual({ theme: 'light', lang: 'auto', fontSize: DEFAULT_PREFS.fontSize });
   });
 
   it('clamps out-of-range font sizes and rounds', () => {
@@ -53,7 +55,8 @@ describe('prefs roundtrip', () => {
   it('sanitises saved data through the backend', async () => {
     const be = memoryBackend({ theme: 'dark', lang: 'xx', fontSize: 500 });
     const loaded = await loadPrefs(be);
-    expect(loaded).toEqual({ theme: 'dark', lang: 'zh', fontSize: DEFAULT_PREFS.fontSize });
+    // ✅ 2026-09-19：Lang 增加 'auto'（跟随系统）；未知 'xx' 回落 auto
+    expect(loaded).toEqual({ theme: 'dark', lang: 'auto', fontSize: DEFAULT_PREFS.fontSize });
   });
 });
 

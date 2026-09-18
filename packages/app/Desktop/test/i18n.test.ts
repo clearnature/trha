@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { LANGS, messages, t } from '../src/renderer/ui/i18n.js';
+import { LOCALE_TABLES, messages, t } from '../src/renderer/ui/i18n.js';
 
 describe('i18n', () => {
   it('covers every key in all locales (no gaps)', () => {
     const zhKeys = Object.keys(messages.zh).sort();
-    for (const lang of LANGS) {
+    for (const lang of LOCALE_TABLES) {
       expect(Object.keys(messages[lang]).sort(), `locale ${lang}`).toEqual(zhKeys);
     }
   });

@@ -12,6 +12,7 @@ import { useSession, useSessionStore } from './SessionContext.js';
 import { ProvidersPanel } from './ProvidersPanel.js';
 import { SettingsNavigation } from './SettingsNavigation.js';
 import { LlmSettingsPanel } from './LlmSettingsPanel.js';
+import { GeneralSettingsPanel } from './GeneralSettingsPanel.js';
 import { ScaffoldPanel } from './ScaffoldPanel.js';
 import { ALL_SETTINGS_TABS, SETTINGS_GROUPS } from '../state/settingsTypes.js';
 
@@ -41,50 +42,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         <SettingsNavigation activeTab={tab} onSelect={setTab} t={t} />
 
         <div className="settings-center-content" data-tab={tab}>
-          {tab === 'general' && (
-            <div className="settings-pagebody">
-              <div className="settings-page-title">
-                <h3>{t('settings.tab.general')}</h3>
-                <p className="settings-page-desc">{t('settings.general.desc')}</p>
-              </div>
-
-              <div className="setting-group">
-                <label htmlFor="pref-theme">{t('settings.theme')}</label>
-                <select
-                  id="pref-theme"
-                  value={prefs.theme}
-                  onChange={e => setPrefs({ theme: e.target.value as Theme })}
-                >
-                  <option value="light">{t('settings.theme.light')}</option>
-                  <option value="dark">{t('settings.theme.dark')}</option>
-                </select>
-              </div>
-
-              <div className="setting-group">
-                <label htmlFor="pref-lang">{t('settings.language')}</label>
-                <select
-                  id="pref-lang"
-                  value={prefs.lang}
-                  onChange={e => setPrefs({ lang: e.target.value as Lang })}
-                >
-                  {LANGS.map(l => <option key={l} value={l}>{l === 'zh' ? '简体中文' : 'English'}</option>)}
-                </select>
-              </div>
-
-              <div className="setting-group">
-                <label htmlFor="pref-font">{t('settings.fontSize')}</label>
-                <input
-                  id="pref-font"
-                  type="range"
-                  min={FONT_SIZE_RANGE.min}
-                  max={FONT_SIZE_RANGE.max}
-                  value={prefs.fontSize}
-                  onChange={e => setPrefs({ fontSize: Number(e.target.value) })}
-                />
-                <span className="pref-value">{prefs.fontSize}px</span>
-              </div>
-            </div>
-          )}
+          {tab === 'general' && <GeneralSettingsPanel t={t} />}
 
           {tab === 'appearance' && (
             <div className="settings-pagebody">

@@ -4,7 +4,8 @@
 // The normalisation is a pure function so it is trivially testable.
 
 export type Theme = 'light' | 'dark';
-export type Lang = 'zh' | 'en';
+/** 界面语言：'auto' = 跟随操作系统（Reasonix 语义：desktopLanguage ""|"en"|"zh"）。 */
+export type Lang = 'auto' | 'zh' | 'en';
 
 export interface Prefs {
   theme: Theme;
@@ -20,7 +21,12 @@ export const FONT_SIZE_RANGE = { min: 10, max: 24 } as const;
 export function normalizePrefs(raw: unknown): Prefs {
   const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   const theme: Theme = o.theme === 'dark' ? 'dark' : 'light';
-  const lang: Lang = o.lang === 'en' ? 'en' : 'zh';
+  // lang 缺失（首次运行/无数据）→ DEFAULT_PREFS.lang（zh）；
+  // 显式传入的未知值 → auto（合法回落）。两者分开：null 不等于非法输入。
+  const lang: Lang =
+    o.lang === 'zh' || o.lang === 'en' || o.lang === 'auto' ? o.lang
+    : o.lang === undefined ? DEFAULT_PREFS.lang
+    : 'auto';
   const n = typeof o.fontSize === 'number' ? o.fontSize : NaN;
   const fontSize = Number.isFinite(n) && n >= FONT_SIZE_RANGE.min && n <= FONT_SIZE_RANGE.max
     ? Math.round(n)

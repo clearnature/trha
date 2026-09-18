@@ -766,3 +766,11 @@ body {
 .settings-model-item { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--border-color, #ddd);
   border-radius: 6px; background: none; text-align: left; cursor: pointer; }
 .settings-model-item.active { border-color: var(--accent, #2f6fed); background: rgba(47,111,237,.08); }
+
+/* ── 通用设置：区块（桌面与语言 / 系统行为）+ 预留控件 ── */
+.settings-block { margin-bottom: 24px; }
+.settings-block-title { font-size: 13px; font-weight: 600; color: var(--muted, #666);
+  text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border-color, #eee);
+  padding-bottom: 6px; margin: 0 0 14px; }
+.planned-control { padding: 6px 10px; background: rgba(0,0,0,.03); border: 1px dashed var(--border-color, #ccc);
+  border-radius: 6px; color: var(--muted, #777); font-size: 13px; }
