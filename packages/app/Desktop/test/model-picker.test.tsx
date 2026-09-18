@@ -66,7 +66,8 @@ describe('ModelPicker', () => {
 
     // The step itself carries it — the assertion is on what the port received.
     await store.getState().send('hi');
-    await waitFor(() => expect(port.lastTarget).toEqual({ provider: 'gw', model: 'm-b' }));
+    // ✅ 2026-09-19 更新：step 现携带 genParams（LLM 设置接线）；target 断言改部分匹配
+    await waitFor(() => expect(port.lastTarget).toEqual(expect.objectContaining({ provider: 'gw', model: 'm-b' })));
   });
 
   it('clears the model when the provider changes', async () => {

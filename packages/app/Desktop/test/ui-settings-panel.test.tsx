@@ -34,12 +34,15 @@ beforeEach(async () => {
 describe('SettingsPanel', () => {
   it('renders local prefs and the read-only kernel surface', () => {
     mount();
+    // ✅ 2026-09-19 更新：设置中心分层级后，默认视图为 general（语言/主题/字号），
+    // 版本等内核信息移入「关于」tab；此处断言 general 内容 + 8 组导航存在。
     expect(screen.getByLabelText('主题')).toBeTruthy();
     expect(screen.getByLabelText('语言')).toBeTruthy();
     expect(screen.getByLabelText('字号')).toBeTruthy();
-    expect(screen.getByText(/内核版本: 0.0.0-mock/)).toBeTruthy();
-    expect(screen.getByText('standard')).toBeTruthy(); // mode list entry
-    expect(screen.getByText('mock-model')).toBeTruthy();
+    // 导航分组（对齐 Reasonix 8 组）
+    expect(screen.getByText('偏好设置')).toBeTruthy();
+    expect(screen.getByText('模型参数')).toBeTruthy();
+    expect(screen.getByText('集成与连接')).toBeTruthy();
   });
 
   it('persists a theme change through the injected backend', async () => {

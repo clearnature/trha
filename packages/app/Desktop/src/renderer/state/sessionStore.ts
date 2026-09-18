@@ -29,12 +29,16 @@ export interface SessionUiState {
   /** Which saved provider/model answers steps (P6); null = kernel default. */
   selectedProvider: string | null;
   selectedModel: string | null;
+  /** 模型生成参数（LLM 设置面板；null 字段 = 内核默认）。接线到 step 请求 genParams。 */
+  genParams: { temperature: number | null; topP: number | null; maxTokens: number | null };
   // catalog + shell metadata
   modes: Record<string, PortModeConfig>;
   models: PortModel[];
   tools: PortToolSpec[];
   version: StudioVersion | null;
   lastError: string | null;
+  /** Kernel causal-constraint verdict of the last step (D-1 / P3): pass | warn | null. */
+  constraint: Record<string, unknown> | null;
 
   loadCatalog(): Promise<void>;
   loadVersion(): Promise<void>;
@@ -46,6 +50,8 @@ export interface SessionUiState {
   decide(approve: boolean): Promise<void>;
   setMode(mode: string): void;
   setTarget(provider: string | null, model: string | null): void;
+  /** 设置模型生成参数（LLM 设置面板 ↔ step 请求）。 */
+  setGenParams(p: { temperature: number | null; topP: number | null; maxTokens: number | null }): void;
 }
 
 export function makeSessionStore(port?: Port) {
@@ -94,11 +100,13 @@ export function makeSessionStore(port?: Port) {
       selectedMode: 'standard',
       selectedProvider: null,
       selectedModel: null,
+      genParams: { temperature: null, topP: null, maxTokens: null },
       modes: {},
       models: [],
       tools: [],
       version: null,
       lastError: null,
+      constraint: null,
 
       loadCatalog: async () => {
         try {
@@ -148,10 +156,16 @@ export function makeSessionStore(port?: Port) {
         if (!sid || !text.trim() || get().busy) return;
         set(s => ({ busy: true, streamText: '', uiMessages: [...s.uiMessages, { kind: 'user', text }] }));
         try {
-          const { selectedProvider, selectedModel } = get();
+          const { selectedProvider, selectedModel, genParams } = get();
+          const gp = genParams ?? { temperature: null, topP: null, maxTokens: null };
           const out = await p.step(sid, text, undefined, {
             provider: selectedProvider ?? undefined,
             model: selectedModel ?? undefined,
+            genParams: {
+              temperature: gp.temperature ?? undefined,
+              topP: gp.topP ?? undefined,
+              maxTokens: gp.maxTokens ?? undefined,
+            },
           });
           if (out.status === 'awaiting_approval') {
             set({ pendingPlan: { message: text }, streamText: '' });
@@ -161,6 +175,7 @@ export function makeSessionStore(port?: Port) {
             set(s => ({
               pendingPlan: null,
               streamText: '',
+              constraint: (out.constraint as Record<string, unknown> | undefined) ?? null,
               uiMessages: [...s.uiMessages, { kind: 'assistant', text: out.reply }],
             }));
           }
@@ -188,6 +203,7 @@ export function makeSessionStore(port?: Port) {
       setMode: (mode) => set({ selectedMode: mode }),
 
       setTarget: (provider, model) => set({ selectedProvider: provider, selectedModel: model }),
+      setGenParams: (p) => set({ genParams: p }),
     };
   });
 }

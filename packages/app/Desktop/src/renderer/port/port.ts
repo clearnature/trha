@@ -53,4 +53,10 @@ export type { PortEvent, PortSession, PortSessionMessage, PortToolSpec, StepResu
 export type { Protocol, ProviderCheck, ProviderDraft, ProviderEdit, ProviderEntry, ProviderProbe } from './provider.js';
 
 /** Which saved provider/model should answer a step (P6). */
-export type StepTarget = { provider?: string; model?: string };
+export type StepTarget = {
+  provider?: string;
+  model?: string;
+  /** 模型生成参数（LLM 设置；省略 = 内核默认）。 */
+  genParams?: { temperature?: number; topP?: number; maxTokens?: number };
+};
+

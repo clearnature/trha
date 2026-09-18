@@ -78,6 +78,9 @@ export class SchedulerPort implements Port {
       body: JSON.stringify({
         sessionId, message, requireApproval,
         provider: target?.provider, model: target?.model,
+        temperature: target?.genParams?.temperature,
+        topP: target?.genParams?.topP,
+        maxTokens: target?.genParams?.maxTokens,
       }),
     });
   }
