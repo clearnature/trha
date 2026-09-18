@@ -774,3 +774,14 @@ body {
   padding-bottom: 6px; margin: 0 0 14px; }
 .planned-control { padding: 6px 10px; background: rgba(0,0,0,.03); border: 1px dashed var(--border-color, #ccc);
   border-radius: 6px; color: var(--muted, #777); font-size: 13px; }
+
+/* ── 模型偏好：压缩阈值卡片选择 ── */
+.compact-presets { display: flex; flex-direction: column; gap: 8px; max-width: 420px; }
+.compact-preset { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; text-align: left;
+  border: 1px solid var(--border-color, #ddd); border-radius: 6px; background: none; cursor: pointer; }
+.compact-preset:hover { border-color: var(--accent, #2f6fed); }
+.compact-preset.active { border-color: var(--accent, #2f6fed); background: rgba(47,111,237,.08); }
+.compact-preset strong { font-size: 13px; }
+.compact-preset span { font-size: 12px; color: var(--muted, #777); }
+.compact-custom { display: flex; align-items: center; gap: 8px; padding-top: 6px; }
+.compact-custom input { width: 70px; padding: 4px 8px; }

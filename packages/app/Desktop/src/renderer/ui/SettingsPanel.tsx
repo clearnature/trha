@@ -13,6 +13,7 @@ import { ProvidersPanel } from './ProvidersPanel.js';
 import { SettingsNavigation } from './SettingsNavigation.js';
 import { LlmSettingsPanel } from './LlmSettingsPanel.js';
 import { GeneralSettingsPanel } from './GeneralSettingsPanel.js';
+import { ModelPreferencesPanel } from './ModelPreferencesPanel.js';
 import { ScaffoldPanel } from './ScaffoldPanel.js';
 import { ALL_SETTINGS_TABS, SETTINGS_GROUPS } from '../state/settingsTypes.js';
 
@@ -67,6 +68,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           )}
 
           {tab === 'models' && <LlmSettingsPanel t={t} />}
+
+          {tab === 'model-preferences' && <ModelPreferencesPanel t={t} />}
 
           {tab === 'providers' && (
             <div className="settings-pagebody">
