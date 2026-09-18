@@ -24,7 +24,7 @@
 
 | 资产 | 内容 | 用于 |
 |---|---|---|
-| `ChainZ3toZ12.agda`（249 行） | Z/3→Z/12 六段依赖类型论等词推理，**0 postulate** | 微调种子（"展示群"证明骨架） |
+| `src/Sovereign/Algebra/ChainZ3toZ12.agda`（249 行） | Z/3→Z/12 六段依赖类型论等词推理，**0 postulate** | 微调种子（"展示群"证明骨架） |
 | `docs/techniques/pair-popping.md` | 替换证明技术（729→1 / 6561→1 / 729→59 str 化） | 结构形式化方法（用户强调：**不用穷举**） |
 | `src/Sovereign/Coding/CyclicGF27.agda` | `*27-comm`（:238）等 | 数学权威对照 |
 | `src/Sovereign/Structology/T6Rewrite.agda` | `--rewriting` 规则（div3k/mod3k） | 定义相等层（Agda 原生） |
@@ -43,7 +43,7 @@
 ## 4. 微调路线（三步）
 
 **Step A —— 数据链（建立可训练语料）**
-- 源：discrete-mathematics 的 Agda 证明（ChainZ3toZ12 起，扩到 RingChain/FieldChain/ChainComplex）
+- 源：discrete-mathematics 的 Agda 证明（src/Sovereign/Algebra/ChainZ3toZ12 起，扩到 RingChain/FieldChain/ChainComplex）
 - 转：证明 → (statement, proof-term) 对，tokenize 后进训练样本
 - 验证：tokenize 往返可逆（已有）+ agda-stdlib 大规模语料对账
 
@@ -59,7 +59,7 @@
 
 ## 5. 立即待办（下一步可开工）
 
-1. [ ] 建立微调数据 ETL（ChainZ3toZ12.agda → 训练对）——**第一个可开工项**
+1. [ ] 建立微调数据 ETL（`src/Sovereign/Algebra/ChainZ3toZ12.agda` → 训练对）——**第一个可开工项**
 2. [ ] 决定训练后端（Python/venv pytorch-cpu or 原生）——待人类裁决
 3. [ ] 与用户确认 Step B 的「相位对齐」目标函数形式
 
