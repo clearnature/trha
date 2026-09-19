@@ -83,3 +83,24 @@ mcp / remote / skills / plugins / memory / hooks / diagnostics / shortcuts / sto
 3. **模型预设**：providers 已有 defaultModel + webSearch/thinking；补 preset 列表 UI
 4. **双语**：现有 i18n 完善 settings.navGroup.*/settings.tab.* 词条
 5. **入口**：侧栏 Settings → 全窗设置中心（GroupScene 架构参考 ManagementPageShell）
+## 8. 接线现状（2026-09-19 核实，全部有代码路径可指）
+
+### 真实接线（UI → 内核链路闭合）
+| 设置项 | 链路 | 证据 |
+|---|---|---|
+| 模型参数 temperature/topP/maxTokens | LlmSettingsPanel → store.setGenParams → http.ts step → scheduler /api/agent/step 解析 → runStep → Bridge queryModel → 内核 OpenAIRequest 解析 → DeepSeek 请求体 | 4c66afb + 65e362e + fc0edbb |
+| 默认模型（模型偏好） | ModelPreferencesPanel → store.setTarget → step 请求 model → scheduler :892 消费 | b550c05 |
+| 模型服务 saveProvider | ProvidersPanel → http.ts:111 → scheduler:533 → 内核 /providers | 既有 |
+| editProvider | http.ts:117 → /api/providers/edit | 既有 |
+| webSearch 开关 | ProvidersPanel → http.ts:122 → scheduler:538 → 内核 /providers/websearch（Server.hs:87） | 既有 |
+| thinking 开关 | ProvidersPanel → http.ts:127 → scheduler:539 → 内核 /providers/thinking（Server.hs:88） | 既有 |
+| 界面语言 auto/zh/en | GeneralSettingsPanel → prefs.lang（持久化 + i18n resolveLang 跟随系统） | aa14149 |
+| 明暗模式/字号 | AppearancePanel → prefs.theme/fontSize | bcbf2c4 |
+
+### 预留（UI 完整 + plannedInterface；内核无对应能力，诚实标注）
+bots / mcp / remote / subagents / plugins / memory / hooks / diagnostics / permissions / sandbox / network(proxy) / browser / shortcuts / usageStats / updates —— 接口名已标注在各面板（port.xxx()）。
+
+### 无法接线（内核能力缺失，UI 呈现）
+- 代理配置（ProxyProbe 仅内部探测逻辑，无配置面）
+- 会话默认权限（无持久化接口）
+- 主题包/字体（无主题系统）
