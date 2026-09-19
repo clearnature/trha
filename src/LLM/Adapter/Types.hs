@@ -11,6 +11,8 @@ module LLM.Adapter.Types
   , ToolCall(..)
   , ChatMessage(..)
   , ChatTurn(..)
+  , GenParams(..)
+  , defaultGenParams
   ) where
 
 import Data.Text (Text)
@@ -123,6 +125,17 @@ data ChatMessage
   | ChatAssistant Text [ToolCall] -- ^ content may be empty when tools are called
   | ChatTool Text Text             -- ^ tool_call_id, result content
   deriving (Show, Eq)
+
+
+-- | 模型生成参数（LLM 设置预设；Nothing = 用内核/provider 默认）。
+data GenParams = GenParams
+  { gpTemperature :: Maybe Double
+  , gpTopP        :: Maybe Double
+  , gpMaxTokens   :: Maybe Int
+  } deriving (Show, Eq)
+
+defaultGenParams :: GenParams
+defaultGenParams = GenParams Nothing Nothing Nothing
 
 instance ToJSON ToolSpec where
   toJSON ts = object

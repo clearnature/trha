@@ -259,7 +259,7 @@ openaiChatHandler defaultAdapter body = do
           specs <- case mapM parseTool (oaiTools req) of
             Nothing -> throwError err400 { errBody = "Invalid tools" }
             Just ts -> return ts
-          turn <- liftIO $ llmChatTools adapter msgs specs
+          turn <- liftIO $ llmChatTools adapter msgs specs LLM.defaultGenParams
           return $ openaiToolCompletion (oaiModel req) turn (oaiGenParams req)
   where
     parseChatMsg :: Value -> Maybe LLM.ChatMessage
@@ -1013,7 +1013,7 @@ stubAdapter = return $ LLMAdapter
   { llmChat = \msgs -> do
       let lastText = if null msgs then "" else LLM.messageContent (last msgs)
       return [ LLM.ChunkDelta ("[stub] " <> lastText), LLM.ChunkDone (LLM.Usage 1 1 2) ]
-  , llmChatTools = stubTools
+  , llmChatTools = \msgs specs _gp -> stubTools msgs specs
   , llmEmbed = \_ -> return []
   , llmModels = return [ LLM.ModelInfo "stub" "Stub Kernel" 4096 ]
   , llmChatToolsStream = stubStream

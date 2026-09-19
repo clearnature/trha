@@ -1863,7 +1863,7 @@ main = hspec $ do
              ChunkDelta t -> modifyIORef' ref (t :)
              _            -> return ()
       pieces <- reverse <$> readIORef ref
-      blocking <- llmChatTools adapter [ChatUser "hi"] []
+      blocking <- llmChatTools adapter [ChatUser "hi"] [] defaultGenParams
       -- one increment per sampled token (the engine's maxTokens)
       length pieces `shouldBe` 100
       -- and they concatenate to exactly what the blocking call returns
@@ -2007,7 +2007,7 @@ main = hspec $ do
   describe "LLM.DeepSeekTools" $ do
     it "builds a request carrying the tools array" $ do
       let spec = LLM.ToolSpec "read_file" "Read a file" (object ["type" .= ("string" :: T.Text)])
-          req  = BLC.unpack (encode (buildDeepSeekChatRequest "deepseek-chat" [LLM.ChatUser "hi"] [spec]))
+          req  = BLC.unpack (encode (buildDeepSeekChatRequest "deepseek-chat" [LLM.ChatUser "hi"] [spec] Nothing))
       req
         `shouldSatisfy` (\b -> "\"tools\"" `isInfixOf` b
                            && "read_file" `isInfixOf` b

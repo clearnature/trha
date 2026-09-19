@@ -168,7 +168,7 @@ providerStream entry key = case peKind entry of
     -- The blocking call, announced as one delta: a wire with no streaming
     -- path still gives the caller events it can forward.
     blockingStream a msgs specs onEvent = do
-      turn <- llmChatTools a msgs specs
+      turn <- llmChatTools a msgs specs defaultGenParams
       onEvent (ChunkDelta (ctContent turn))
       onEvent (ChunkDone (maybe (Usage 0 0 0) id (ctUsage turn)))
       pure turn
@@ -179,7 +179,7 @@ providerStream entry key = case peKind entry of
 openAICompatStream :: Text -> Text -> Text -> IO StreamCall
 openAICompatStream baseUrl apiKey model =
   pure $ \msgs specs onEvent -> do
-    let base = buildDeepSeekChatRequest model msgs specs
+    let base = buildDeepSeekChatRequest model msgs specs Nothing
         body = case base of
           Object o -> Object (KM.insert "stream" (Bool True) o)
           other    -> other
@@ -340,7 +340,7 @@ openAICompatAdapter baseUrl apiKey model = do
   manager <- newManager tlsManagerSettings
   let url = T.unpack (T.dropWhileEnd (== '/') (T.strip baseUrl)) ++ "/chat/completions"
       headers = ("Content-Type", "application/json") : bearer apiKey
-      call msgs specs = postJson manager url headers (buildDeepSeekChatRequest model msgs specs)
+      call msgs specs = postJson manager url headers (buildDeepSeekChatRequest model msgs specs Nothing)
   stream <- openAICompatStream baseUrl apiKey model
   pure LLMAdapter
     { llmChat = \msgs -> do
@@ -353,7 +353,7 @@ openAICompatAdapter baseUrl apiKey model = do
                    Left e  -> pure [ChunkError e]
                    Right t -> pure [ ChunkDelta (ctContent t)
                                    , ChunkDone (maybe (Usage 0 0 0) id (ctUsage t)) ]
-    , llmChatTools = \msgs specs -> do
+    , llmChatTools = \msgs specs _gp -> do
         (code, body, ok) <- call msgs specs
         if not ok
           then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code))))
@@ -397,7 +397,7 @@ anthropicAdapter baseUrl apiKey model = do
                    Left e  -> pure [ChunkError e]
                    Right t -> pure [ ChunkDelta (ctContent t)
                                    , ChunkDone (maybe (Usage 0 0 0) id (ctUsage t)) ]
-    , llmChatTools = \msgs specs -> do
+    , llmChatTools = \msgs specs _gp -> do
         (code, body, ok) <- call msgs specs
         if not ok
           then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code))))
@@ -517,7 +517,7 @@ responsesAdapter baseUrl apiKey model = do
                    Left e  -> pure [ChunkError e]
                    Right t -> pure [ ChunkDelta (ctContent t)
                                    , ChunkDone (maybe (Usage 0 0 0) id (ctUsage t)) ]
-    , llmChatTools = \msgs specs -> do
+    , llmChatTools = \msgs specs _gp -> do
         (code, body, ok) <- call msgs specs
         if not ok
           then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code))))

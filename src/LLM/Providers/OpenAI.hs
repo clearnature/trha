@@ -94,7 +94,7 @@ createOpenAIProvider apiKey = do
             Nothing -> return [ChunkError "Failed to parse OpenAI response"]
           else return [ChunkError $ "OpenAI API error: " <> T.pack (show (statusCode (responseStatus response)))]
 
-    , llmChatTools = unsupportedTools
+    , llmChatTools = \msgs specs _gp -> unsupportedTools msgs specs
     , llmChatToolsStream = openAIStream apiKey
     , llmEmbed = \text -> do
         let requestBody = object

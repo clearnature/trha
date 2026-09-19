@@ -77,13 +77,18 @@ instance FromJSON RespToolFunction where
   parseJSON = genericParseJSON defaultOptions { fieldLabelModifier = drop 2 }
 
 -- | Build the OpenAI-compatible chat request body (with @tools@).
-buildDeepSeekChatRequest :: Text -> [ChatMessage] -> [ToolSpec] -> Value
-buildDeepSeekChatRequest model msgs specs = object
-  [ "model" .= model
-  , "messages" .= msgs
-  , "tools" .= specs
-  , "stream" .= False
-  ]
+buildDeepSeekChatRequest :: Text -> [ChatMessage] -> [ToolSpec] -> Maybe GenParams -> Value
+buildDeepSeekChatRequest model msgs specs genParams = object
+  ( [ "model" .= model
+    , "messages" .= msgs
+    , "tools" .= specs
+    , "stream" .= False
+    ] ++ gpPairs )
+  where
+    gpPairs = case genParams of
+      Nothing -> []
+      Just gp -> [ "temperature" .= t | Just t <- [gpTemperature gp] ]
+               ++ [ "max_tokens"  .= n | Just n <- [gpMaxTokens gp] ]
 
 -- | Parse a chat completion response into a 'ChatTurn' (content + tool
 -- calls + usage).
@@ -151,7 +156,7 @@ createDeepSeekProvider apiKey = do
             Nothing -> return [ChunkError "Failed to parse DeepSeek response"]
           else return [ChunkError $ "DeepSeek API error: " <> T.pack (show (statusCode (responseStatus response)))]
 
-    , llmChatTools = deepSeekTools apiKey manager
+    , llmChatTools = \msgs specs gp -> deepSeekTools apiKey manager msgs specs gp
     , llmChatToolsStream = deepSeekStream apiKey
 
     , llmEmbed = \text -> do
@@ -190,9 +195,9 @@ createDeepSeekProvider apiKey = do
 
 -- | Tool-calling call for the DeepSeek chat endpoint.  Shared by the blocking
 -- and the streaming entry point so the two can never drift apart.
-deepSeekTools :: Text -> Manager -> [ChatMessage] -> [ToolSpec] -> IO ChatTurn
-deepSeekTools apiKey manager msgs specs = do
-  let requestBody = buildDeepSeekChatRequest "deepseek-chat" msgs specs
+deepSeekTools :: Text -> Manager -> [ChatMessage] -> [ToolSpec] -> GenParams -> IO ChatTurn
+deepSeekTools apiKey manager msgs specs gp = do
+  let requestBody = buildDeepSeekChatRequest "deepseek-chat" msgs specs (Just gp)
   initialRequest <- parseRequest ("https://api.deepseek.com/v1/chat/completions")
   let request = initialRequest
         { method = "POST"
@@ -219,7 +224,7 @@ deepSeekStream apiKey msgs specs onEvent =
   LStream.openAICompatStreamCall
     "https://api.deepseek.com/v1/chat/completions"
     apiKey
-    (withStreamFlag (buildDeepSeekChatRequest "deepseek-chat" msgs specs))
+    (withStreamFlag (buildDeepSeekChatRequest "deepseek-chat" msgs specs Nothing))
     onEvent
   where
     withStreamFlag v = case v of

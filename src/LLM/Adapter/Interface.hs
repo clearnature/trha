@@ -37,7 +37,7 @@ type StreamCall =
 -- (@blockingStream@).  Callers therefore never branch on "can this stream?".
 data LLMAdapter = LLMAdapter
   { llmChat            :: [Message] -> IO [StreamChunk]
-  , llmChatTools       :: [ChatMessage] -> [ToolSpec] -> IO ChatTurn
+  , llmChatTools       :: [ChatMessage] -> [ToolSpec] -> GenParams -> IO ChatTurn
   , llmEmbed           :: Text -> IO [Float]
   , llmModels          :: IO [ModelInfo]
   , llmChatToolsStream :: StreamCall
@@ -45,9 +45,9 @@ data LLMAdapter = LLMAdapter
 
 -- | The blocking call, announced as increments — the honest fallback for a
 -- backend that cannot stream.  Callers still receive events, in order.
-blockingStream :: ([ChatMessage] -> [ToolSpec] -> IO ChatTurn) -> StreamCall
+blockingStream :: ([ChatMessage] -> [ToolSpec] -> GenParams -> IO ChatTurn) -> StreamCall
 blockingStream tools msgs specs onEvent = do
-  turn <- tools msgs specs
+  turn <- tools msgs specs defaultGenParams
   onEvent (ChunkDelta (ctContent turn))
   mapM_ (\tc -> onEvent (ChunkToolCall (tcName tc) (tcArguments tc))) (ctToolCalls turn)
   case ctError turn of
@@ -66,10 +66,10 @@ mkAdapter
   -> LLMAdapter
 mkAdapter chat tools embed models mstream = LLMAdapter
   { llmChat = chat
-  , llmChatTools = tools
+  , llmChatTools = \msgs specs _gp -> tools msgs specs
   , llmEmbed = embed
   , llmModels = models
-  , llmChatToolsStream = fromMaybe (blockingStream tools) mstream
+  , llmChatToolsStream = fromMaybe (blockingStream (\msgs specs _gp -> tools msgs specs)) mstream
   }
 
 -- | The CPU engine's real stream: tokens reach the caller as they are
