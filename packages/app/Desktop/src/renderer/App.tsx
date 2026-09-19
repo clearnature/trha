@@ -9,6 +9,7 @@ import { PlanPrompt } from './ui/PlanPrompt';
 import { SessionProvider, useSessionStore } from './ui/SessionContext';
 import { PrefsProvider, usePrefs } from './ui/PrefsContext';
 import { SettingsPanel } from './ui/SettingsPanel';
+import { useShortcutBindings } from './ui/useShortcutBindings';
 import { initAPI } from './stores/appStore';
 
 function Workspace({ onSettingsClick }: { onSettingsClick: () => void }) {
@@ -48,6 +49,21 @@ function useApplyPrefs() {
 function Root() {
   const [showSettings, setShowSettings] = useState(false);
   useApplyPrefs();
+  const store = useSessionStore();
+
+  // 快捷键绑定（来自设置页的持久化配置）：新建会话 / 聚焦输入框 / 批准计划 / 打开设置
+  useShortcutBindings({
+    newSession: () => { void store.getState().create(); },
+    focusComposer: () => {
+      const el = document.querySelector<HTMLTextAreaElement>('.composer-input');
+      el?.focus();
+    },
+    approvePlan: () => {
+      const { pendingPlan, decide } = store.getState();
+      if (pendingPlan) void decide(true);
+    },
+    toggleSettings: () => setShowSettings(v => !v),
+  });
 
   return (
     <div className="app-root">
