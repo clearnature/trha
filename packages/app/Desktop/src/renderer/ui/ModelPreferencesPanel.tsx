@@ -40,9 +40,10 @@ export function ModelPreferencesPanel({ t }: ModelPreferencesPanelProps) {
   const store = useSessionStore();
   const modelNames = models.length > 0 ? models.map(m => m.name) : [t('settings.modelPrefs.noModels')];
 
-  // 默认模型 = 当前会话选中模型（双向同步：选这里 → setTarget 影响后续 step）
-  const [defaultModelUi, setDefaultModelUi] = useState(selectedModel ?? modelNames[0] ?? '');
-  const defaultModel = selectedModel ?? defaultModelUi;
+  // 默认模型：持久化 store 为唯一来源（重启保留），会话选中模型作初始化对齐
+  const defaultModelStored = useExtSettings(s => s.modelPrefs.defaultModel);
+  const setModelPrefsS = useExtSettings(s => s.setModelPrefs);
+  const defaultModel = defaultModelStored || selectedModel || modelNames[0] || '';
   const mp = useExtSettings(s => s.modelPrefs);
   const setModelPrefs = useExtSettings(s => s.setModelPrefs);
   const { planner, vision, webSearch, subagentModel, subagentEffort, thinkLang, compactMode, compactCustom } = mp;
@@ -70,7 +71,7 @@ export function ModelPreferencesPanel({ t }: ModelPreferencesPanelProps) {
         <p className="settings-page-desc">{t('settings.modelPrefs.usageDesc')}</p>
 
         <ChoiceSelect row={rows[0]} value={defaultModel}
-          onChange={v => { setDefaultModelUi(v); store.getState().setTarget(null, v); }} />
+          onChange={v => { setModelPrefsS({ defaultModel: v }); store.getState().setTarget(null, v); }} />
         <ChoiceSelect row={rows[1]} value={planner} onChange={v => setModelPrefs({ planner: v })} />
         <ChoiceSelect row={rows[2]} value={vision} onChange={v => setModelPrefs({ vision: v })} />
         <ChoiceSelect row={rows[3]} value={webSearch} onChange={v => setModelPrefs({ webSearch: v })} />
