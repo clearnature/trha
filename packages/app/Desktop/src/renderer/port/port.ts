@@ -55,10 +55,15 @@ export interface Port {
   // 沙箱额外可信写目录（SandboxPanel 同步）
   writeRoots(): Promise<string[]>;
   setWriteRoots(roots: string[]): Promise<string[]>;
+
+  // 用量统计（UsageStatsPanel；scheduler 聚合 sessions）
+  usageStats(): Promise<UsageRow[]>;
 }
 
 /** 内核权限规则（对齐 scheduler PermissionRule）。 */
 export type PermissionRuleEntry = { kind: 'deny' | 'ask' | 'allow'; pattern: string };
+/** 用量统计行（按 mode 聚合）。 */
+export type UsageRow = { model: string; requests: number; messages: number; tokens: number; cost: string };
 
 export type { PortEvent, PortSession, PortSessionMessage, PortToolSpec, StepResult };
 export type { Protocol, ProviderCheck, ProviderDraft, ProviderEdit, ProviderEntry, ProviderProbe } from './provider.js';

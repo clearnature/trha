@@ -217,6 +217,7 @@ export class MockPort implements Port {
     this.permRules = rules;
     return rules;
   }
+  async usageStats(): Promise<UsageRow[]> { return []; }
   async writeRoots(): Promise<string[]> { return this.extraRoots; }
   async setWriteRoots(roots: string[]): Promise<string[]> { this.extraRoots = roots; return roots; }
   async removeProvider(name: string): Promise<ProviderEntry[]> {

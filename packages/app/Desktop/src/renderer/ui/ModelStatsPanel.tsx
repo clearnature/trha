@@ -11,8 +11,16 @@ export interface ModelStatsPanelProps {
 export function ModelStatsPanel({ t }: ModelStatsPanelProps) {
   const [range, setRange] = useState('30');
   const [source, setSource] = useState('all');
-  // 预留数据源：const stats = await port.usageStats()（Port 接口待加）
-  const rows: { model: string; tokens: number; requests: number; cost: string }[] = [];
+  // 真实数据源：scheduler 聚合 sessions（按 mode 统计请求/messages/约 tokens）
+  const store = useSessionStore();
+  const [rows, setRows] = useState<{ model: string; tokens: number; requests: number; cost: string }[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    void store.getState().port.usageStats().then(r => {
+      setRows(r.map(x => ({ model: x.model, tokens: x.tokens, requests: x.requests, cost: x.cost })));
+      setLoaded(true);
+    }).catch(() => { setLoaded(true); });
+  }, [store]);
 
   return (
     <div className="settings-pagebody">
@@ -30,11 +38,13 @@ export function ModelStatsPanel({ t }: ModelStatsPanelProps) {
           </select>
         </div>
 
-        {rows.length === 0 ? (
+        {loaded && rows.length === 0 ? (
           <div className="mcp-empty">
             <p>{t('settings.stats.empty')}</p>
-            <code>{t('settings.stats.planned')}</code>
+            <code>{t('settings.stats.live')}</code>
           </div>
+        ) : !loaded ? (
+          <p className="param-hint">{t('settings.stats.loading')}</p>
         ) : (
           <table className="stats-table">
             <thead><tr><th>{t('settings.stats.model')}</th><th>{t('settings.stats.tokens')}</th>

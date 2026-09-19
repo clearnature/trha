@@ -530,6 +530,25 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   }
 
   // ── Permission rules（内核权限规则引擎）────────────
+  // ── 用量统计（UsageStatsPanel；scheduler 聚合 sessions）────────
+  app.get('/api/usage-stats', (_req, res) => {
+    const byModel = new Map<string, { requests: number; chars: number; messages: number }>();
+    for (const s of sessions.values()) {
+      const key = s.mode || 'default';
+      const cur = byModel.get(key) ?? { requests: 0, chars: 0, messages: 0 };
+      cur.messages += s.messages.length;
+      cur.chars += s.messages.reduce((a, m) => a + (String(m.content ?? '').length), 0);
+      cur.requests += s.messages.filter(m => m.role === 'assistant').length;
+      byModel.set(key, cur);
+    }
+    const rows = Array.from(byModel.entries()).map(([model, v]) => ({
+      model, requests: v.requests, messages: v.messages,
+      tokens: Math.round(v.chars / 4),   // 粗估 ~4 chars/token
+      cost: (v.requests * 0.0001).toFixed(4),  // 占位费率（真实计费由 provider 定价）
+    }));
+    res.json({ range: 'all', rows });
+  });
+
   // ── 沙箱额外可信写目录（SandboxPanel 同步）────────
   app.get('/api/sandbox/write-roots', (_req, res) => {
     res.json({ roots: extraWriteRoots });
