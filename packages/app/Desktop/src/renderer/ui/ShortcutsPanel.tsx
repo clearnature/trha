@@ -3,6 +3,7 @@
 // 接线状态：本地可编辑条目；绑定内核快捷键系统（预留 port.shortcuts()）。
 
 import { useState } from 'react';
+import { useExtSettings } from '../state/settingsStore.js';
 
 export interface ShortcutsPanelProps {
   t: (key: string) => string;
@@ -10,16 +11,13 @@ export interface ShortcutsPanelProps {
 
 interface Shortcut { actionKey: string; combo: string; }
 
-const DEFAULT_SHORTCUTS: Shortcut[] = [
-  { actionKey: 'settings.shortcuts.newSession', combo: 'Ctrl+N' },
-  { actionKey: 'settings.shortcuts.focusComposer', combo: 'Ctrl+L' },
-  { actionKey: 'settings.shortcuts.approve', combo: 'Ctrl+Enter' },
-  { actionKey: 'settings.shortcuts.deny', combo: 'Esc' },
-  { actionKey: 'settings.shortcuts.openSettings', combo: 'Ctrl+, ' },
-];
-
 export function ShortcutsPanel({ t }: ShortcutsPanelProps) {
-  const [items, setItems] = useState<Shortcut[]>(DEFAULT_SHORTCUTS);
+  // 快捷键持久化（localStorage；内核绑定仍预留 port.shortcuts()）
+  const items0 = useExtSettings(s => s.shortcuts);
+  const setShortcutS = useExtSettings(s => s.setShortcut);
+  const addShortcutS = useExtSettings(s => s.addShortcut);
+  const removeShortcutS = useExtSettings(s => s.removeShortcut);
+  const items = items0.map(s => ({ actionKey: s.action, combo: s.combo }));
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
   const [newAction, setNewAction] = useState('');
@@ -28,7 +26,7 @@ export function ShortcutsPanel({ t }: ShortcutsPanelProps) {
   const addShortcut = () => {
     const a = newAction.trim(); const c = newCombo.trim();
     if (!a || !c) return;
-    setItems([...items, { actionKey: a, combo: c }]);
+    addShortcutS(a, c);
     setNewAction(''); setNewCombo('');
   };
 
@@ -45,15 +43,15 @@ export function ShortcutsPanel({ t }: ShortcutsPanelProps) {
               {editing === i ? (
                 <input type="text" value={draft} autoFocus
                   onChange={e => setDraft(e.target.value)}
-                  onBlur={() => { if (draft.trim()) setItems(items.map((x, j) => j === i ? { ...x, combo: draft.trim() } : x)); setEditing(null); }}
-                  onKeyDown={e => { if (e.key === 'Enter') { if (draft.trim()) setItems(items.map((x, j) => j === i ? { ...x, combo: draft.trim() } : x)); setEditing(null); } }}
+                  onBlur={() => { if (draft.trim()) setShortcutS(i, draft.trim()); setEditing(null); }}
+                  onKeyDown={e => { if (e.key === 'Enter') { if (draft.trim()) setShortcutS(i, draft.trim()); setEditing(null); } }}
                   aria-label={t('settings.shortcuts.combo')} />
               ) : (
                 <button type="button" className="shortcut-combo" onClick={() => { setEditing(i); setDraft(s.combo); }}>
                   <kbd>{s.combo}</kbd>
                 </button>
               )}
-              <button type="button" className="btn btn--small" onClick={() => setItems(items.filter((_, j) => j !== i))}>✕</button>
+              <button type="button" className="btn btn--small" onClick={() => removeShortcutS(i)}>✕</button>
             </div>
           ))}
         </div>

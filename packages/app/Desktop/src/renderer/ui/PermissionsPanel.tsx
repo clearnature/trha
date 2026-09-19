@@ -6,6 +6,7 @@
 //          （port.permissions() save 待接）；真实执行优先级由内核权限沙箱判定。
 
 import { useState } from 'react';
+import { useExtSettings } from '../state/settingsStore.js';
 
 export interface PermissionsPanelProps {
   t: (key: string) => string;
@@ -16,21 +17,20 @@ type RuleKind = 'deny' | 'ask' | 'allow';
 export interface PermRule { kind: RuleKind; pattern: string; }
 
 export function PermissionsPanel({ t }: PermissionsPanelProps) {
-  // 预留数据源：const rules = await port.permissions()（Port 接口待加）
-  const [rules, setRules] = useState<PermRule[]>([
-    // 示例（Reasonix 语义）：allow 一条 Bash 命令
-    { kind: 'allow', pattern: "Bash(go version -m … | grep -iE 'dashscope|provider/(anthropic|openai|dashscope)' ; echo exit=$?)" },
-  ]);
+  // 规则持久化（localStorage，切换/重启不丢；内核持久化仍预留 port.permissions()）
+  const rules = useExtSettings(s => s.permRules);
+  const addRuleS = useExtSettings(s => s.addPermRule);
+  const removeRuleS = useExtSettings(s => s.removePermRule);
   const [inputs, setInputs] = useState<Record<RuleKind, string>>({ deny: '', ask: '', allow: '' });
 
   const addRule = (kind: RuleKind) => {
     const pattern = inputs[kind].trim();
     if (!pattern) return;
-    setRules([...rules, { kind, pattern }]);
+    addRuleS(kind, pattern);
     setInputs({ ...inputs, [kind]: '' });
   };
 
-  const removeRule = (idx: number) => setRules(rules.filter((_, i) => i !== idx));
+  const removeRule = (idx: number) => removeRuleS(idx);
 
   const sections: { kind: RuleKind; titleKey: string; descKey: string; addPh: string }[] = [
     { kind: 'deny', titleKey: 'settings.perms.deny', descKey: 'settings.perms.denyDesc', addPh: 'settings.perms.denyPh' },

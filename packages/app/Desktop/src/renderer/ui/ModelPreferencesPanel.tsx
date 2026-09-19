@@ -5,8 +5,8 @@
 // 接线状态：模型下拉用 store.models 真实列表（活数据）；选择为本地状态，
 //          持久化到内核 SettingsView 属预留（plannedInterface 标注）。
 
-import { useState } from 'react';
 import { useSession, useSessionStore } from './SessionContext.js';
+import { useExtSettings } from '../state/settingsStore.js';
 
 export interface ModelPreferencesPanelProps {
   t: (key: string) => string;
@@ -43,14 +43,9 @@ export function ModelPreferencesPanel({ t }: ModelPreferencesPanelProps) {
   // 默认模型 = 当前会话选中模型（双向同步：选这里 → setTarget 影响后续 step）
   const [defaultModelUi, setDefaultModelUi] = useState(selectedModel ?? modelNames[0] ?? '');
   const defaultModel = selectedModel ?? defaultModelUi;
-  const [planner, setPlanner] = useState('follow-session');
-  const [vision, setVision] = useState('auto');
-  const [webSearch, setWebSearch] = useState('auto');
-  const [subagentModel, setSubagentModel] = useState('follow-main');
-  const [subagentEffort, setSubagentEffort] = useState('auto');
-  const [thinkLang, setThinkLang] = useState('auto');
-  const [compactMode, setCompactMode] = useState('recommended');
-  const [compactCustom, setCompactCustom] = useState('80');
+  const mp = useExtSettings(s => s.modelPrefs);
+  const setModelPrefs = useExtSettings(s => s.setModelPrefs);
+  const { planner, vision, webSearch, subagentModel, subagentEffort, thinkLang, compactMode, compactCustom } = mp;
 
   const rows: ChoiceRow[] = [
     { labelKey: t('settings.modelPrefs.defaultModel'), hintKey: t('settings.modelPrefs.defaultModelHint'),
@@ -76,11 +71,11 @@ export function ModelPreferencesPanel({ t }: ModelPreferencesPanelProps) {
 
         <ChoiceSelect row={rows[0]} value={defaultModel}
           onChange={v => { setDefaultModelUi(v); store.getState().setTarget(null, v); }} />
-        <ChoiceSelect row={rows[1]} value={planner} onChange={setPlanner} />
-        <ChoiceSelect row={rows[2]} value={vision} onChange={setVision} />
-        <ChoiceSelect row={rows[3]} value={webSearch} onChange={setWebSearch} />
-        <ChoiceSelect row={rows[4]} value={subagentModel} onChange={setSubagentModel} />
-        <ChoiceSelect row={rows[5]} value={subagentEffort} onChange={setSubagentEffort} />
+        <ChoiceSelect row={rows[1]} value={planner} onChange={v => setModelPrefs({ planner: v })} />
+        <ChoiceSelect row={rows[2]} value={vision} onChange={v => setModelPrefs({ vision: v })} />
+        <ChoiceSelect row={rows[3]} value={webSearch} onChange={v => setModelPrefs({ webSearch: v })} />
+        <ChoiceSelect row={rows[4]} value={subagentModel} onChange={v => setModelPrefs({ subagentModel: v })} />
+        <ChoiceSelect row={rows[5]} value={subagentEffort} onChange={v => setModelPrefs({ subagentEffort: v })} />
       </section>
 
       {/* 区块二：高级运行设置 · 运行偏好 */}
@@ -89,7 +84,7 @@ export function ModelPreferencesPanel({ t }: ModelPreferencesPanelProps) {
 
         <div className="setting-group">
           <label>{t('settings.modelPrefs.thinkLang')}</label>
-          <select value={thinkLang} onChange={e => setThinkLang(e.target.value)}>
+          <select value={thinkLang} onChange={e => setModelPrefs({ thinkLang: e.target.value })}>
             <option value="auto">{t('settings.modelPrefs.thinkLangAuto')}</option>
             <option value="zh">中文</option>
             <option value="en">English</option>
@@ -101,24 +96,24 @@ export function ModelPreferencesPanel({ t }: ModelPreferencesPanelProps) {
           <label>{t('settings.modelPrefs.compactThreshold')}</label>
           <div className="compact-presets">
             <button type="button" className={`compact-preset ${compactMode === 'early' ? 'active' : ''}`}
-              onClick={() => { setCompactMode('early'); setCompactCustom('70'); }}>
+              onClick={() => setModelPrefs({ compactMode: 'early', compactCustom: '70' })}>
               <strong>{t('settings.modelPrefs.compactEarly')} · 70%</strong>
               <span>{t('settings.modelPrefs.compactEarlyHint')}</span>
             </button>
             <button type="button" className={`compact-preset ${compactMode === 'recommended' ? 'active' : ''}`}
-              onClick={() => { setCompactMode('recommended'); setCompactCustom('80'); }}>
+              onClick={() => setModelPrefs({ compactMode: 'recommended', compactCustom: '80' })}>
               <strong>{t('settings.modelPrefs.compactRecommended')} · 80%</strong>
               <span>{t('settings.modelPrefs.compactRecommendedHint')}</span>
             </button>
             <button type="button" className={`compact-preset ${compactMode === 'late' ? 'active' : ''}`}
-              onClick={() => { setCompactMode('late'); setCompactCustom('85'); }}>
+              onClick={() => setModelPrefs({ compactMode: 'late', compactCustom: '85' })}>
               <strong>{t('settings.modelPrefs.compactLate')} · 85%</strong>
               <span>{t('settings.modelPrefs.compactLateHint')}</span>
             </button>
             <div className="compact-custom">
               <span>{t('settings.modelPrefs.compactCustom')}</span>
               <input type="number" min={1} max={99} value={compactCustom} onChange={e => {
-                setCompactCustom(e.target.value); setCompactMode('custom');
+                setModelPrefs({ compactCustom: e.target.value, compactMode: 'custom' });
               }} />
               <span>%</span>
             </div>
