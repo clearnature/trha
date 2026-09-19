@@ -217,6 +217,7 @@ export class MockPort implements Port {
     this.permRules = rules;
     return rules;
   }
+  async plugins(): Promise<PluginEntry[]> { return []; }
   async hooksConfig(): Promise<{ config: string; path: string }> { return { config: '{\n  "hooks": {}\n}', path: '~/.trha/hooks.json' }; }
   async saveHooksConfig(config: string): Promise<{ config: string; path: string }> { return { config, path: '~/.trha/hooks.json' }; }
   async usageStats(): Promise<UsageRow[]> { return []; }

@@ -117,6 +117,9 @@ export class SchedulerPort implements Port {
       method: 'PUT', headers: this.headers(), body: JSON.stringify({ rules }),
     }).then(r => r.rules ?? []);
   }
+  plugins(): Promise<PluginEntry[]> {
+    return this.request<PluginEntry[]>('/api/plugins').then(r => Array.isArray(r) ? r : []);
+  }
   hooksConfig(): Promise<{ config: string; path: string }> {
     return this.request('/api/hooks');
   }

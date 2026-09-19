@@ -62,12 +62,17 @@ export interface Port {
   // Hooks 配置（HooksPanel 保存/加载，落盘 ~/.trha/hooks.json）
   hooksConfig(): Promise<{ config: string; path: string }>;
   saveHooksConfig(config: string): Promise<{ config: string; path: string }>;
+
+  // 插件列表（PluginsPanel；scheduler 插件注册系统）
+  plugins(): Promise<PluginEntry[]>;
 }
 
 /** 内核权限规则（对齐 scheduler PermissionRule）。 */
 export type PermissionRuleEntry = { kind: 'deny' | 'ask' | 'allow'; pattern: string };
 /** 用量统计行（按 mode 聚合）。 */
 export type UsageRow = { model: string; requests: number; messages: number; tokens: number; cost: string };
+/** 插件条目（scheduler listPlugins）。 */
+export type PluginEntry = { name: string; version: string; description: string };
 
 export type { PortEvent, PortSession, PortSessionMessage, PortToolSpec, StepResult };
 export type { Protocol, ProviderCheck, ProviderDraft, ProviderEdit, ProviderEntry, ProviderProbe } from './provider.js';

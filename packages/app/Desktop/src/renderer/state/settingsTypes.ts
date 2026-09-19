@@ -49,15 +49,14 @@ export const SETTINGS_GROUPS: SettingsGroupDef[] = [
       { id: 'model-preferences', labelKey: 'settings.tab.modelPreferences', status: 'scaffold',
         plannedInterface: '模型偏好（默认识别/生成参数）待接' },
       { id: 'providers', labelKey: 'settings.tab.providers', status: 'done' },
-      { id: 'model-stats', labelKey: 'settings.tab.modelStats', status: 'scaffold',
-        plannedInterface: '用量统计：port 未来提供 modelStats()' },
+      { id: 'model-stats', labelKey: 'settings.tab.modelStats', status: 'done' },
     ],
   },
   {
     id: 'connections',
     labelKey: 'settings.navGroup.connections',
     tabs: [
-      { id: 'bots', labelKey: 'settings.tab.bots', status: 'scaffold', plannedInterface: '机器人接入待接' },
+      { id: 'bots', labelKey: 'settings.tab.bots', status: 'scaffold', plannedInterface: '机器人接入待接（需内核 Bot 协议适配）' },
       { id: 'mcp', labelKey: 'settings.tab.mcp', status: 'scaffold', plannedInterface: 'MCP 与工具注册待接' },
       { id: 'remote', labelKey: 'settings.tab.remote', status: 'scaffold', plannedInterface: '远程 SSH 连接待接' },
     ],
@@ -68,7 +67,7 @@ export const SETTINGS_GROUPS: SettingsGroupDef[] = [
     tabs: [
       { id: 'skills', labelKey: 'settings.tab.skills', status: 'scaffold', plannedInterface: 'Agent Skills 待接' },
       { id: 'subagents', labelKey: 'settings.tab.subagents', status: 'scaffold', plannedInterface: '子智能体待接' },
-      { id: 'plugins', labelKey: 'settings.tab.plugins', status: 'scaffold', plannedInterface: '插件管理待接' },
+      { id: 'plugins', labelKey: 'settings.tab.plugins', status: 'done' },
     ],
   },
   {
@@ -80,16 +79,16 @@ export const SETTINGS_GROUPS: SettingsGroupDef[] = [
     id: 'automation',
     labelKey: 'settings.navGroup.automation',
     tabs: [
-      { id: 'hooks', labelKey: 'settings.tab.hooks', status: 'scaffold', plannedInterface: 'Hooks 配置待接' },
-      { id: 'diagnostics', labelKey: 'settings.tab.diagnostics', status: 'scaffold', plannedInterface: '诊断待接' },
+      { id: 'hooks', labelKey: 'settings.tab.hooks', status: 'done' },
+      { id: 'diagnostics', labelKey: 'settings.tab.diagnostics', status: 'done' },
     ],
   },
   {
     id: 'security',
     labelKey: 'settings.navGroup.security',
     tabs: [
-      { id: 'permissions', labelKey: 'settings.tab.permissions', status: 'scaffold', plannedInterface: '权限待接' },
-      { id: 'sandbox', labelKey: 'settings.tab.sandbox', status: 'scaffold', plannedInterface: '沙箱待接' },
+      { id: 'permissions', labelKey: 'settings.tab.permissions', status: 'done' },
+      { id: 'sandbox', labelKey: 'settings.tab.sandbox', status: 'done' },
       { id: 'network', labelKey: 'settings.tab.network', status: 'scaffold', plannedInterface: '网络待接' },
       { id: 'browser', labelKey: 'settings.tab.browser', status: 'scaffold', plannedInterface: '浏览器控制待接' },
     ],
@@ -99,7 +98,7 @@ export const SETTINGS_GROUPS: SettingsGroupDef[] = [
     labelKey: 'settings.navGroup.application',
     tabs: [
       { id: 'appearance', labelKey: 'settings.tab.appearance', status: 'done' },
-      { id: 'shortcuts', labelKey: 'settings.tab.shortcuts', status: 'scaffold', plannedInterface: '快捷键待接' },
+      { id: 'shortcuts', labelKey: 'settings.tab.shortcuts', status: 'done' },
       { id: 'storage', labelKey: 'settings.tab.storage', status: 'scaffold', plannedInterface: '存储与路径待接' },
       { id: 'about', labelKey: 'settings.tab.about', status: 'done' },
     ],

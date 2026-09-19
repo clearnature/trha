@@ -23,7 +23,19 @@ export interface PluginInfo {
 // 预留数据源：const installed = await port.plugins()（Port 接口待加）。
 // trha 无插件数据 ⇒ 空态（诚实）；示例结构见 PluginInfo。
 export function PluginsPanel({ t }: PluginsPanelProps) {
-  const plugins: PluginInfo[] = [];   // trha 尚无插件数据
+  const store = useSessionStore();
+  const [plugins, setPlugins] = useState<PluginInfo[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  // 真实数据：scheduler 插件注册系统（GET /api/plugins）
+  useEffect(() => {
+    void store.getState().port.plugins().then(list => {
+      setPlugins(list.map(p => ({
+        name: p.name, publisher: p.name, compatibility: 'full' as const,
+        version: p.version, skills: 0, agents: 0, commands: 0, hooks: 0, mcp: 0, enabled: true,
+      })));
+      setLoaded(true);
+    }).catch(() => { setLoaded(true); });
+  }, [store]);
   const enabled = plugins.filter(p => p.enabled).length;
   const erroring = 0;
 
@@ -48,7 +60,7 @@ export function PluginsPanel({ t }: PluginsPanelProps) {
       </div>
 
       {/* 列表 */}
-      {plugins.length === 0 ? (
+      {loaded && plugins.length === 0 ? (
         <div className="mcp-empty">
           <p>{t('settings.plugins.empty')}</p>
           <code>{t('settings.plugins.planned')}</code>
