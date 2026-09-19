@@ -8,6 +8,7 @@ import { HaskellBridge } from '../Bridge/Haskell.js';
 import type { BridgeToolSpec, ToolCallData } from '../Bridge/Haskell.js';
 import { findTool, toToolSpecs } from './toolCatalog.js';
 import { confineWritePath, limitOutput } from './toolGuard.js';
+import { decidePermission, setPermissionRules, compileRules, getPermissionRules } from '../Permission/permissionRules.js';
 import { EventEmitter } from '../Utils/EventEmitter.js';
 import { Plugin, PluginManager } from '../Plugins/Plugin.js';
 import { loadPluginsFrom } from '../Plugins/loader.js';
@@ -528,6 +529,23 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
   }
 
+  // ── Permission rules（内核权限规则引擎）────────────
+  app.get('/api/permissions', (_req, res) => {
+    res.json({ rules: getPermissionRules() });
+  });
+  app.put('/api/permissions', (req, res) => {
+    try {
+      const body = Array.isArray(req.body) ? req.body
+        : Array.isArray(req.body?.rules) ? req.body.rules : null;
+      if (!body) return res.status(400).json({ error: 'Expected {rules: [...]} or [...]' });
+      setPermissionRules(body);
+      compileRules();
+      res.json({ rules: getPermissionRules() });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  });
+
   app.get('/api/providers', (_req, res) => { void forwardToKernel(res, 'GET', '/providers'); });
   app.get('/api/providers/protocols', (_req, res) => { void forwardToKernel(res, 'GET', '/providers/protocols'); });
   app.post('/api/providers', (req, res) => { void forwardToKernel(res, 'POST', '/providers', req.body); });
@@ -640,6 +658,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     } catch {
       return `ERROR: malformed arguments for ${c.name}`;
     }
+    // 权限规则引擎：deny > ask > allow（显式规则覆盖，沙箱兜底文件边界）
+    const verdict = decidePermission(c.name, argsObj);
+    if (verdict.action === 'deny') return `ERROR: ${verdict.reason}`;
+    if (verdict.action === 'ask') return `REQUIRE_APPROVAL: ${verdict.reason}`;
     if (c.name === 'read_file') {
       const target = inWorkspace(argsObj.path) ?? (typeof argsObj.path === 'string' ? argsObj.path : null);
       if (!target) return 'ERROR: missing/invalid path argument';
