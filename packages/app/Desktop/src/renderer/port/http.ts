@@ -117,6 +117,12 @@ export class SchedulerPort implements Port {
       method: 'PUT', headers: this.headers(), body: JSON.stringify({ rules }),
     }).then(r => r.rules ?? []);
   }
+  memories(): Promise<{ items: MemoryEntry[]; stats: { background: number; archived: number; instructionFiles: number } }> {
+    return this.request('/api/memory');
+  }
+  saveMemories(items: MemoryEntry[]): Promise<{ items: MemoryEntry[]; stats: { background: number; archived: number; instructionFiles: number } }> {
+    return this.request('/api/memory', { method: 'PUT', headers: this.headers(), body: JSON.stringify({ items }) });
+  }
   plugins(): Promise<PluginEntry[]> {
     return this.request<PluginEntry[]>('/api/plugins').then(r => Array.isArray(r) ? r : []);
   }

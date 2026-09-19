@@ -4,7 +4,8 @@
 //   列表区：记忆类型标题 + 说明 + 搜索框 + 分类筛选（全部/反馈/项目背景/用户偏好）
 // 接线状态：trha 无记忆系统 —— 统计/列表/筛选均为预留（port.memories()）。
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSessionStore } from './SessionContext.js';
 
 export interface MemoryPanelProps {
   t: (key: string) => string;
@@ -25,9 +26,25 @@ export function MemoryPanel({ t }: MemoryPanelProps) {
   const [storage, setStorage] = useState<StorageTab>('background');
   const [category, setCategory] = useState<CategoryTab>('all');
   const [query, setQuery] = useState('');
-  // 预留数据源：const { stats, items } = await port.memories()（Port 接口待加）
-  const stats: MemoryStats = { background: 0, archived: 0, instructionFiles: 0 };
-  const items: MemoryItem[] = [];
+  const store = useSessionStore();
+  const [stats, setStats] = useState<MemoryStats>({ background: 0, archived: 0, instructionFiles: 0 });
+  const [items, setItems] = useState<MemoryItem[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  // 真实数据：scheduler 落盘 ~/.trha/memory.json（分类筛选）
+  useEffect(() => {
+    void store.getState().port.memories().then(r => {
+      setItems(r.items.map(m => ({ title: m.title, slug: m.slug, category: m.category, excerpt: m.excerpt })));
+      setStats({ background: r.stats.background, archived: r.stats.archived, instructionFiles: r.stats.instructionFiles });
+      setLoaded(true);
+    }).catch(() => { setLoaded(true); });
+  }, [store]);
+
+  // 筛选：分类 + 搜索（本地）
+  const filtered = items.filter(m => {
+    if (category !== 'all' && m.category !== category) return false;
+    if (query.trim() && !(m.title + m.slug + m.excerpt).toLowerCase().includes(query.toLowerCase())) return false;
+    return true;
+  });
 
   const categoryLabels: { id: CategoryTab; key: string }[] = [
     { id: 'all', key: 'settings.memory.catAll' },
@@ -95,14 +112,14 @@ export function MemoryPanel({ t }: MemoryPanelProps) {
             ))}
           </div>
 
-          {items.length === 0 ? (
+          {loaded && filtered.length === 0 ? (
             <div className="mcp-empty">
               <p>{t('settings.memory.empty')}</p>
               <code>{t('settings.memory.planned')}</code>
             </div>
           ) : (
             <div className="memory-list">
-              {items.map(m => (
+              {filtered.map(m => (
                 <div key={m.slug} className="memory-item">
                   <strong>{m.title}</strong>
                   <code>{m.slug}</code>

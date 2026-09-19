@@ -573,6 +573,35 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
   });
 
+  // ── 记忆（MemoryPanel；背景/归档/指令文件，分类筛选）────────
+  const MEMORY_FILE = process.env.TRHA_MEMORY_FILE
+    ?? (process.env.HOME ? `${process.env.HOME}/.trha/memory.json` : '/tmp/trha-memory.json');
+  interface MemoryItem { id: string; title: string; slug: string; category: 'feedback' | 'project' | 'preferences'; excerpt: string; }
+  let memoryItems: MemoryItem[] = [];
+  void (async () => {
+    try { memoryItems = JSON.parse(await readFile(MEMORY_FILE, 'utf8')); } catch { /* 首次无 */ }
+  })();
+  app.get('/api/memory', (_req, res) => {
+    const archived = memoryItems.filter((m: MemoryItem) => (m as { archived?: boolean }).archived).length;
+    res.json({ items: memoryItems, stats: {
+      background: memoryItems.length, archived, instructionFiles: 0,
+    } });
+  });
+  app.put('/api/memory', async (req, res) => {
+    try {
+      const items = Array.isArray(req.body?.items) ? req.body.items : [];
+      if (!items.every((m: unknown) => m && typeof (m as MemoryItem).title === 'string'))
+        return res.status(400).json({ error: 'items must have title' });
+      memoryItems = items as MemoryItem[];
+      await mkdir(path.dirname(MEMORY_FILE), { recursive: true });
+      await writeFile(MEMORY_FILE, JSON.stringify(memoryItems, null, 2), 'utf8');
+      const archived = memoryItems.filter((m: MemoryItem) => (m as { archived?: boolean }).archived).length;
+      res.json({ items: memoryItems, stats: { background: memoryItems.length, archived, instructionFiles: 0 } });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  });
+
   // ── 沙箱额外可信写目录（SandboxPanel 同步）────────
   app.get('/api/sandbox/write-roots', (_req, res) => {
     res.json({ roots: extraWriteRoots });

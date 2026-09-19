@@ -65,6 +65,10 @@ export interface Port {
 
   // 插件列表（PluginsPanel；scheduler 插件注册系统）
   plugins(): Promise<PluginEntry[]>;
+
+  // 记忆（MemoryPanel；scheduler 落盘 + 分类）
+  memories(): Promise<{ items: MemoryEntry[]; stats: { background: number; archived: number; instructionFiles: number } }>;
+  saveMemories(items: MemoryEntry[]): Promise<{ items: MemoryEntry[]; stats: { background: number; archived: number; instructionFiles: number } }>;
 }
 
 /** 内核权限规则（对齐 scheduler PermissionRule）。 */
@@ -73,6 +77,11 @@ export type PermissionRuleEntry = { kind: 'deny' | 'ask' | 'allow'; pattern: str
 export type UsageRow = { model: string; requests: number; messages: number; tokens: number; cost: string };
 /** 插件条目（scheduler listPlugins）。 */
 export type PluginEntry = { name: string; version: string; description: string };
+/** 记忆条目。 */
+export type MemoryEntry = {
+  id: string; title: string; slug: string; category: 'feedback' | 'project' | 'preferences';
+  excerpt: string; archived?: boolean;
+};
 
 export type { PortEvent, PortSession, PortSessionMessage, PortToolSpec, StepResult };
 export type { Protocol, ProviderCheck, ProviderDraft, ProviderEdit, ProviderEntry, ProviderProbe } from './provider.js';
