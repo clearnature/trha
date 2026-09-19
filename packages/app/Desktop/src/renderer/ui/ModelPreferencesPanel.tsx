@@ -6,7 +6,7 @@
 //          持久化到内核 SettingsView 属预留（plannedInterface 标注）。
 
 import { useState } from 'react';
-import { useSession } from './SessionContext.js';
+import { useSession, useSessionStore } from './SessionContext.js';
 
 export interface ModelPreferencesPanelProps {
   t: (key: string) => string;
@@ -36,9 +36,13 @@ function ChoiceSelect({ row, value, onChange }: {
 
 export function ModelPreferencesPanel({ t }: ModelPreferencesPanelProps) {
   const models = useSession(s => s.models);
+  const selectedModel = useSession(s => s.selectedModel);
+  const store = useSessionStore();
   const modelNames = models.length > 0 ? models.map(m => m.name) : [t('settings.modelPrefs.noModels')];
 
-  const [defaultModel, setDefaultModel] = useState(modelNames[0] ?? '');
+  // 默认模型 = 当前会话选中模型（双向同步：选这里 → setTarget 影响后续 step）
+  const [defaultModelUi, setDefaultModelUi] = useState(selectedModel ?? modelNames[0] ?? '');
+  const defaultModel = selectedModel ?? defaultModelUi;
   const [planner, setPlanner] = useState('follow-session');
   const [vision, setVision] = useState('auto');
   const [webSearch, setWebSearch] = useState('auto');
@@ -70,7 +74,8 @@ export function ModelPreferencesPanel({ t }: ModelPreferencesPanelProps) {
         <h4 className="settings-block-title">{t('settings.modelPrefs.usageTitle')}</h4>
         <p className="settings-page-desc">{t('settings.modelPrefs.usageDesc')}</p>
 
-        <ChoiceSelect row={rows[0]} value={defaultModel} onChange={setDefaultModel} />
+        <ChoiceSelect row={rows[0]} value={defaultModel}
+          onChange={v => { setDefaultModelUi(v); store.getState().setTarget(null, v); }} />
         <ChoiceSelect row={rows[1]} value={planner} onChange={setPlanner} />
         <ChoiceSelect row={rows[2]} value={vision} onChange={setVision} />
         <ChoiceSelect row={rows[3]} value={webSearch} onChange={setWebSearch} />
