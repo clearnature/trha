@@ -7,6 +7,7 @@
 
 import { useState } from 'react';
 import { useExtSettings } from '../state/settingsStore.js';
+import { useSessionStore } from './SessionContext.js';
 
 export interface PermissionsPanelProps {
   t: (key: string) => string;
@@ -17,20 +18,32 @@ type RuleKind = 'deny' | 'ask' | 'allow';
 export interface PermRule { kind: RuleKind; pattern: string; }
 
 export function PermissionsPanel({ t }: PermissionsPanelProps) {
-  // 规则持久化（localStorage，切换/重启不丢；内核持久化仍预留 port.permissions()）
+  // 规则持久化（localStorage 切换/重启不丢）→ 同步内核 executeTool（deny/ask/allow 真实执行）
   const rules = useExtSettings(s => s.permRules);
   const addRuleS = useExtSettings(s => s.addPermRule);
   const removeRuleS = useExtSettings(s => s.removePermRule);
+  const store = useSessionStore();
   const [inputs, setInputs] = useState<Record<RuleKind, string>>({ deny: '', ask: '', allow: '' });
+
+  // 变更后同步到内核权限规则引擎（scheduler /api/permissions）
+  const syncToKernel = (next: typeof rules) => {
+    try { void store.getState().port.setPermissions(next.map(r => ({ kind: r.kind, pattern: r.pattern }))); } catch { /* best-effort */ }
+  };
 
   const addRule = (kind: RuleKind) => {
     const pattern = inputs[kind].trim();
     if (!pattern) return;
+    const next = [...rules, { kind, pattern }];
     addRuleS(kind, pattern);
+    syncToKernel(next);
     setInputs({ ...inputs, [kind]: '' });
   };
 
-  const removeRule = (idx: number) => removeRuleS(idx);
+  const removeRule = (idx: number) => {
+    const next = rules.filter((_, i) => i !== idx);
+    removeRuleS(idx);
+    syncToKernel(next);
+  };
 
   const sections: { kind: RuleKind; titleKey: string; descKey: string; addPh: string }[] = [
     { kind: 'deny', titleKey: 'settings.perms.deny', descKey: 'settings.perms.denyDesc', addPh: 'settings.perms.denyPh' },

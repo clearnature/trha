@@ -47,7 +47,14 @@ export interface Port {
   setThinking(name: string, on: boolean): Promise<ProviderEntry[]>;
   checkProvider(name: string): Promise<ProviderCheck>;
   removeProvider(name: string): Promise<ProviderEntry[]>;
+
+  // 权限规则引擎（deny>ask>allow，同步到内核 executor 前置判定）
+  permissionRules(): Promise<PermissionRuleEntry[]>;
+  setPermissions(rules: PermissionRuleEntry[]): Promise<PermissionRuleEntry[]>;
 }
+
+/** 内核权限规则（对齐 scheduler PermissionRule）。 */
+export type PermissionRuleEntry = { kind: 'deny' | 'ask' | 'allow'; pattern: string };
 
 export type { PortEvent, PortSession, PortSessionMessage, PortToolSpec, StepResult };
 export type { Protocol, ProviderCheck, ProviderDraft, ProviderEdit, ProviderEntry, ProviderProbe } from './provider.js';

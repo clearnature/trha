@@ -2,7 +2,7 @@
 // and tests without a scheduler.  Also the consumer proof that the Port
 // interface types (T1a) are implementable.
 
-import type { Port, StepTarget } from './port.js';
+import type { Port, PermissionRuleEntry, StepTarget } from './port.js';
 import type {
   DecisionResult,
   PlanAwaiting,
@@ -58,6 +58,7 @@ export function keyEnvFor(name: string): string {
 }
 
 export class MockPort implements Port {
+  private permRules: PermissionRuleEntry[] = [];
   private sessions: Map<string, PortSession> = new Map();
   private listeners: Map<string, Set<(e: PortEvent) => void>> = new Map();
   private providers: ProviderEntry[] = [];
@@ -207,6 +208,13 @@ export class MockPort implements Port {
     const entry = this.providers.find(p => p.name === name);
     if (!entry) return { ok: false, error: `no provider named ${name}`, code: 'provider.not_found' };
     return { ok: true, kind: entry.kind, models: entry.models, ambiguous: false, noProxy: false };
+  }
+  async permissionRules(): Promise<PermissionRuleEntry[]> {
+    return this.permRules;
+  }
+  async setPermissions(rules: PermissionRuleEntry[]): Promise<PermissionRuleEntry[]> {
+    this.permRules = rules;
+    return rules;
   }
   async removeProvider(name: string): Promise<ProviderEntry[]> {
     this.providers = this.providers.filter(p => p.name !== name);

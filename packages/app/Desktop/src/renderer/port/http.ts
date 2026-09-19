@@ -108,6 +108,15 @@ export class SchedulerPort implements Port {
       body: JSON.stringify({ baseUrl, apiKey }),
     });
   }
+  permissionRules(): Promise<PermissionRuleEntry[]> {
+    return this.request<{ rules: PermissionRuleEntry[] }>('/api/permissions')
+      .then(r => r.rules ?? []);
+  }
+  setPermissions(rules: PermissionRuleEntry[]): Promise<PermissionRuleEntry[]> {
+    return this.request<{ rules: PermissionRuleEntry[] }>('/api/permissions', {
+      method: 'PUT', headers: this.headers(), body: JSON.stringify({ rules }),
+    }).then(r => r.rules ?? []);
+  }
   saveProvider(draft: ProviderDraft): Promise<ProviderEntry[]> {
     return this.request<{ providers: ProviderEntry[] }>('/api/providers', {
       method: 'POST', headers: this.headers(), body: JSON.stringify(draft),
