@@ -14,9 +14,23 @@ export const MAX_TOOL_OUTPUT = 64 * 1024; // 64 KiB
  * directory lives under `root`.  Creates the parent when missing and
  * returns the canonical target path, or `null` when the path escapes.
  */
-export async function confineWritePath(root: string, target: string): Promise<string | null> {
+export async function confineWritePath(root: string, target: string, extraRoots: string[] = []): Promise<string | null> {
   const absRoot = path.resolve(root) + path.sep;
   const resolved = path.resolve(target);
+  // 额外可信写目录（沙箱设置页配置）：目标落在任一目录内即为合法
+  for (const er of extraRoots) {
+    const abs = path.resolve(er) + path.sep;
+    if ((resolved + '').startsWith(abs) || (resolved + '') === path.resolve(er)) {
+      const eParent = path.dirname(resolved);
+      await mkdir(eParent, { recursive: true }).catch(() => {});
+      try {
+        const realExtra = await realpath(eParent);
+        if ((realExtra + path.sep).startsWith(abs) || (realExtra + '') === path.resolve(er)) {
+          return path.join(realExtra, path.basename(resolved));
+        }
+      } catch { return resolved; }
+    }
+  }
   if (!(resolved + '').startsWith(absRoot)) {
     return null;
   }

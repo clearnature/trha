@@ -59,6 +59,7 @@ export function keyEnvFor(name: string): string {
 
 export class MockPort implements Port {
   private permRules: PermissionRuleEntry[] = [];
+  private extraRoots: string[] = [];
   private sessions: Map<string, PortSession> = new Map();
   private listeners: Map<string, Set<(e: PortEvent) => void>> = new Map();
   private providers: ProviderEntry[] = [];
@@ -216,6 +217,8 @@ export class MockPort implements Port {
     this.permRules = rules;
     return rules;
   }
+  async writeRoots(): Promise<string[]> { return this.extraRoots; }
+  async setWriteRoots(roots: string[]): Promise<string[]> { this.extraRoots = roots; return roots; }
   async removeProvider(name: string): Promise<ProviderEntry[]> {
     this.providers = this.providers.filter(p => p.name !== name);
     return [...this.providers];

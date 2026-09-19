@@ -117,6 +117,14 @@ export class SchedulerPort implements Port {
       method: 'PUT', headers: this.headers(), body: JSON.stringify({ rules }),
     }).then(r => r.rules ?? []);
   }
+  writeRoots(): Promise<string[]> {
+    return this.request<{ roots: string[] }>('/api/sandbox/write-roots').then(r => r.roots ?? []);
+  }
+  setWriteRoots(roots: string[]): Promise<string[]> {
+    return this.request<{ roots: string[] }>('/api/sandbox/write-roots', {
+      method: 'PUT', headers: this.headers(), body: JSON.stringify({ roots }),
+    }).then(r => r.roots ?? []);
+  }
   saveProvider(draft: ProviderDraft): Promise<ProviderEntry[]> {
     return this.request<{ providers: ProviderEntry[] }>('/api/providers', {
       method: 'POST', headers: this.headers(), body: JSON.stringify(draft),

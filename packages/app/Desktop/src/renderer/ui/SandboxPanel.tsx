@@ -6,6 +6,7 @@
 // 接线状态：本地可编辑；持久化与沙箱后端（seatbelt/bubblewrap/Windows token）预留。
 
 import { useState } from 'react';
+import { useSessionStore } from './SessionContext.js';
 
 export interface SandboxPanelProps {
   t: (key: string) => string;
@@ -27,6 +28,13 @@ export function SandboxPanel({ t }: SandboxPanelProps) {
   const [network, setNetwork] = useState(false);
   const [workspaceRoot, setWorkspaceRoot] = useState('');
   const [writePaths, setWritePaths] = useState('');
+  const store = useSessionStore();
+
+  // 允许写入路径 → 内核额外可信写目录（写文件校验放宽；空 = 仅工作区）
+  const syncWriteRoots = (value: string) => {
+    const roots = value.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+    try { void store.getState().port.setWriteRoots(roots); } catch { /* best-effort */ }
+  };
 
   return (
     <div className="settings-pagebody">
@@ -103,7 +111,7 @@ export function SandboxPanel({ t }: SandboxPanelProps) {
         <div className="setting-group">
           <label>{t('settings.sandbox.writePaths')}</label>
           <input type="text" className="hooks-editor" value={writePaths}
-            onChange={e => setWritePaths(e.target.value)}
+            onChange={e => { setWritePaths(e.target.value); syncWriteRoots(e.target.value); }}
             placeholder={t('settings.sandbox.writePathsNone')} />
         </div>
         <span className="param-hint"><code>port.sandbox()</code>（持久化/后端预留，未接线）</span>

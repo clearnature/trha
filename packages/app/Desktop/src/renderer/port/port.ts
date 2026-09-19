@@ -51,6 +51,10 @@ export interface Port {
   // 权限规则引擎（deny>ask>allow，同步到内核 executor 前置判定）
   permissionRules(): Promise<PermissionRuleEntry[]>;
   setPermissions(rules: PermissionRuleEntry[]): Promise<PermissionRuleEntry[]>;
+
+  // 沙箱额外可信写目录（SandboxPanel 同步）
+  writeRoots(): Promise<string[]>;
+  setWriteRoots(roots: string[]): Promise<string[]>;
 }
 
 /** 内核权限规则（对齐 scheduler PermissionRule）。 */

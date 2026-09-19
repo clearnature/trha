@@ -530,6 +530,16 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   }
 
   // ── Permission rules（内核权限规则引擎）────────────
+  // ── 沙箱额外可信写目录（SandboxPanel 同步）────────
+  app.get('/api/sandbox/write-roots', (_req, res) => {
+    res.json({ roots: extraWriteRoots });
+  });
+  app.put('/api/sandbox/write-roots', (req, res) => {
+    const roots = Array.isArray(req.body?.roots) ? req.body.roots.filter((x: unknown) => typeof x === 'string') : [];
+    extraWriteRoots = roots;
+    res.json({ roots: extraWriteRoots });
+  });
+
   app.get('/api/permissions', (_req, res) => {
     res.json({ rules: getPermissionRules() });
   });
@@ -618,6 +628,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // Host-side tools live under the orchestration workspace so file
   // mutations cannot escape /tmp/trha-workspace.
   const WORKSPACE = '/tmp/trha-workspace';
+  // 沙箱「允许写入路径」（设置页配置的额外可信写目录；限制放宽，默认仅工作区）
+  let extraWriteRoots: string[] = [];
   const AGENT_TOOLS: BridgeToolSpec[] = toToolSpecs();
   const MAX_TOOL_ROUNDS = 5;
 
@@ -674,7 +686,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     if (c.name === 'write_file' || c.name === 'append_file') {
       if (typeof argsObj.path !== 'string') return 'ERROR: path must be a string';
       // canonical, symlink-free target confined to the workspace
-      const target = await confineWritePath(WORKSPACE, argsObj.path);
+      const target = await confineWritePath(WORKSPACE, argsObj.path, extraWriteRoots);
       if (!target) return 'ERROR: path escapes the workspace';
       // Small local models sometimes double-encode or nest the content
       // value; tolerate any JSON value by stringifying non-strings.
