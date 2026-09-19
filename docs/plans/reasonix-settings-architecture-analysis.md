@@ -97,8 +97,17 @@ mcp / remote / skills / plugins / memory / hooks / diagnostics / shortcuts / sto
 | 界面语言 auto/zh/en | GeneralSettingsPanel → prefs.lang（持久化 + i18n resolveLang 跟随系统） | aa14149 |
 | 明暗模式/字号 | AppearancePanel → prefs.theme/fontSize | bcbf2c4 |
 
-### 预留（UI 完整 + plannedInterface；内核无对应能力，诚实标注）
-bots / mcp / remote / subagents / plugins / memory / hooks / diagnostics / permissions / sandbox / network(proxy) / browser / shortcuts / usageStats / updates —— 接口名已标注在各面板（port.xxx()）。
+### 预留升级为真实（2026-09-19 后逐项接线）
+| 原预留项 | 现状态 | 证据 commit |
+|---|---|---|
+| permissions（权限） | ✅ 内核规则引擎 deny/ask/allow 端到端 + ask 确认交互（executeTool 前置 + PlanCard 权限卡片） | c85cbc4 / 7515c6b / 93544eb / ea078b5 |
+| sandbox（允许写入路径） | ✅ confineWritePath extraRoots + API（真实放宽写校验） | a75d0a4 |
+| usageStats（用量统计） | ✅ scheduler 聚合 sessions 实时数据 | a80ec9e |
+| diagnostics（前端交互记录） | ✅ useInteractionLog 记录时间/事件/几何 + 导出 JSON（隐私安全） | 447a9da |
+| hooks（JSON 保存） | ✅ GET/PUT /api/hooks 落盘 ~/.trha/hooks.json 重启加载 | 342d8d4 |
+
+### 预留（仍 UI 完整 + plannedInterface；需内核新增服务端能力）
+bots / mcp / remote / subagents / plugins / memory / network(proxy) / browser / updates / 凭据真实检查（无凭据文件约定）——接口名已标注在各面板（port.xxx()）。
 
 ### 无法接线（内核能力缺失，UI 呈现）
 - 代理配置（ProxyProbe 仅内部探测逻辑，无配置面）
