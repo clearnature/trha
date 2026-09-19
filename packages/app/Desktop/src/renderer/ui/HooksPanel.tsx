@@ -4,7 +4,8 @@
 //   JSON 配置：textarea 编辑 + 复制 JSON / 粘贴 JSON / 格式化 JSON + 未保存状态
 // 接线状态：JSON 编辑/格式化本地可用；保存/加载到配置文件属预留（port.hooksConfig()）。
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSessionStore } from './SessionContext.js';
 
 export interface HooksPanelProps {
   t: (key: string) => string;
@@ -19,6 +20,25 @@ export function HooksPanel({ t }: HooksPanelProps) {
   const [json, setJson] = useState(DEFAULT_HOOKS_JSON);
   const [dirty, setDirty] = useState(false);
   const [copied, setCopied] = useState<'' | 'path' | 'json'>('');
+  const [saved, setSaved] = useState(false);
+  const store = useSessionStore();
+
+  // 加载现有 hooks 配置（重启加载语义；scheduler 落盘 ~/.trha/hooks.json）
+  useEffect(() => {
+    void store.getState().port.hooksConfig().then(r => {
+      if (r.config) setJson(r.config);
+    }).catch(() => { /* 无文件用默认 */ });
+  }, [store]);
+
+  // 保存 hooks 配置（校验 + 落盘）
+  const save = async () => {
+    try {
+      JSON.parse(json);   // 校验
+      const r = await store.getState().port.saveHooksConfig(json);
+      setJson(r.config); setDirty(false); setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch { /* 非法 JSON，不保存 */ }
+  };
 
   const formatJson = () => {
     try {
@@ -83,6 +103,10 @@ export function HooksPanel({ t }: HooksPanelProps) {
           <button type="button" className="btn btn--small" onClick={formatJson}>
             {t('settings.hooks.formatJson')}
           </button>
+          <button type="button" className="btn btn--primary btn--small" onClick={() => void save()}
+            disabled={!dirty} title={t('settings.hooks.save')}>
+            {t('settings.hooks.save')}{saved ? ' ✓' : ''}
+          </button>
         </div>
         <textarea
           className="hooks-editor"
@@ -95,7 +119,7 @@ export function HooksPanel({ t }: HooksPanelProps) {
         <div className={`hooks-dirty ${dirty ? 'hooks-dirty--true' : ''}`}>
           {dirty ? '● ' + t('settings.hooks.unsaved') : t('settings.hooks.noChanges')}
         </div>
-        <span className="param-hint"><code>port.hooksConfig()</code>（保存/加载预留，未接线）</span>
+        <span className="param-hint">{t('settings.hooks.saveHint')}</span>
       </div>
     </div>
   );

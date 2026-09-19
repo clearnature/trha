@@ -58,6 +58,10 @@ export interface Port {
 
   // 用量统计（UsageStatsPanel；scheduler 聚合 sessions）
   usageStats(): Promise<UsageRow[]>;
+
+  // Hooks 配置（HooksPanel 保存/加载，落盘 ~/.trha/hooks.json）
+  hooksConfig(): Promise<{ config: string; path: string }>;
+  saveHooksConfig(config: string): Promise<{ config: string; path: string }>;
 }
 
 /** 内核权限规则（对齐 scheduler PermissionRule）。 */

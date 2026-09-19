@@ -549,6 +549,30 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     res.json({ range: 'all', rows });
   });
 
+  // ── Hooks 配置（HooksPanel 保存；落盘 ~/.trha/hooks.json）────────
+  const HOOKS_FILE = process.env.TRHA_HOOKS_FILE
+    ?? (process.env.HOME ? `${process.env.HOME}/.trha/hooks.json` : '/tmp/trha-hooks.json');
+  let hooksConfig: string = '{\n  "hooks": {}\n}';
+  void (async () => {
+    try { hooksConfig = await readFile(HOOKS_FILE, 'utf8'); } catch { /* 首次无文件 */ }
+  })();
+  app.get('/api/hooks', (_req, res) => {
+    res.json({ config: hooksConfig, path: HOOKS_FILE });
+  });
+  app.put('/api/hooks', async (req, res) => {
+    try {
+      const raw = req.body?.config ?? req.body;
+      if (typeof raw !== 'string') return res.status(400).json({ error: 'config must be a JSON string' });
+      JSON.parse(raw);   // 校验 JSON 合法性
+      hooksConfig = raw;
+      await mkdir(path.dirname(HOOKS_FILE), { recursive: true });
+      await writeFile(HOOKS_FILE, raw, 'utf8');
+      res.json({ config: hooksConfig, path: HOOKS_FILE });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  });
+
   // ── 沙箱额外可信写目录（SandboxPanel 同步）────────
   app.get('/api/sandbox/write-roots', (_req, res) => {
     res.json({ roots: extraWriteRoots });

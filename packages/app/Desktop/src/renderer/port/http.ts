@@ -117,6 +117,12 @@ export class SchedulerPort implements Port {
       method: 'PUT', headers: this.headers(), body: JSON.stringify({ rules }),
     }).then(r => r.rules ?? []);
   }
+  hooksConfig(): Promise<{ config: string; path: string }> {
+    return this.request('/api/hooks');
+  }
+  saveHooksConfig(config: string): Promise<{ config: string; path: string }> {
+    return this.request('/api/hooks', { method: 'PUT', headers: this.headers(), body: JSON.stringify({ config }) });
+  }
   usageStats(): Promise<UsageRow[]> {
     return this.request<{ rows: UsageRow[] }>('/api/usage-stats').then(r => r.rows ?? []);
   }
