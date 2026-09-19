@@ -805,6 +805,14 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         const started = Date.now();
         await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'running');
         const output = await executeTool(call);
+        // ask 权限规则：暂停执行并发起确认（批准后重放该工具）
+        if (output.startsWith('REQUIRE_APPROVAL:')) {
+          await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'failed', started, output);
+          session.pendingApproval = { message: output };
+          (session as { pendingToolCall?: ToolCallData }).pendingToolCall = call;
+          events.emit('agent:plan', { sessionId: session.id, status: 'awaiting_approval', message: output });
+          return `awaiting_approval: ${output}`;
+        }
         const failed = output.startsWith('ERROR');
         await emitToolLifecycle(session.id, call.name, parseToolArgs(call),
           failed ? 'failed' : 'succeeded', started, failed ? output : undefined);
@@ -859,6 +867,15 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     events.emit('agent:decision', { sessionId: session.id, approve });
     if (!approve) {
       return res.json({ status: 'denied', mode: session.mode });
+    }
+    // ask 工具确认后批准 → 重放该工具结果（权限规则 ask 分支）
+    const pendingCall = (session as { pendingToolCall?: ToolCallData }).pendingToolCall;
+    if (pendingCall) {
+      const output = await executeTool(pendingCall);
+      (session as { pendingToolCall?: ToolCallData }).pendingToolCall = undefined;
+      session.messages.push({ role: 'tool', tool_call_id: pendingCall.id, content: output });
+      const reply = await runStep(session, pending.message);
+      return res.json({ status: 'approved', tool: pendingCall.name, output, reply, messages: session.messages, mode: session.mode });
     }
     const reply = await runStep(session, pending.message);
     res.json({ status: 'approved', reply, messages: session.messages, mode: session.mode });
