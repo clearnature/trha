@@ -12,10 +12,12 @@ export interface PlanCardProps {
 
 export function PlanCard({ message, onDecide, disabled }: PlanCardProps) {
   const t = useT();
+  // 权限 ask 请求（来自权限规则引擎 REQUIRE_APPROVAL）→ 权限确认文案；否则计划
+  const isPermission = message.includes('REQUIRE_APPROVAL');
   return (
-    <div className="plan-card" data-card="plan">
-      <div className="plan-header">{t('plan.title')}</div>
-      <pre className="plan-body">{message}</pre>
+    <div className="plan-card" data-card={isPermission ? 'permission' : 'plan'}>
+      <div className="plan-header">{isPermission ? t('perm.title') : t('plan.title')}</div>
+      <pre className="plan-body">{isPermission ? message.replace(/^.*REQUIRE_APPROVAL:\s*/, '') : message}</pre>
       <div className="plan-actions">
         <button
           type="button"
@@ -23,7 +25,7 @@ export function PlanCard({ message, onDecide, disabled }: PlanCardProps) {
           disabled={disabled}
           onClick={() => onDecide(true)}
         >
-          {t('plan.approve')}
+          {isPermission ? t('perm.allow') : t('plan.approve')}
         </button>
         <button
           type="button"
@@ -31,7 +33,7 @@ export function PlanCard({ message, onDecide, disabled }: PlanCardProps) {
           disabled={disabled}
           onClick={() => onDecide(false)}
         >
-          {t('plan.deny')}
+          {isPermission ? t('perm.deny') : t('plan.deny')}
         </button>
       </div>
     </div>
