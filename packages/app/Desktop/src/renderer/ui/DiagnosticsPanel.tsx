@@ -8,6 +8,7 @@
 // 接线状态：检查状态为静态预置样例（trha 无凭据诊断实现）；数据源预留。
 
 import { useState } from 'react';
+import { useInteractionLog } from './useInteractionLog.js';
 
 export interface DiagnosticsPanelProps {
   t: (key: string) => string;
@@ -36,9 +37,23 @@ const CREDENTIAL_CHECKS: CredentialCheck[] = [
 
 export function DiagnosticsPanel({ t }: DiagnosticsPanelProps) {
   const [interactionLog, setInteractionLog] = useState(false);
+  const { events } = useInteractionLog(interactionLog);
   // 预留数据源：const diag = await port.diagnostics()（Port 接口待加）
-  const frontendCounts = { errors: 0, warnings: 0, infos: 0 };
+  const frontendCounts = { errors: 0, warnings: events.length, infos: 0 };
   const issueCount = 0;
+
+  // 导出交互记录：仅时间/事件/几何（隐私安全），下载 JSON。
+  const exportLog = () => {
+    try {
+      const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), events }, null, 2)],
+        { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `trha-interaction-log-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { /* noop */ }
+  };
 
   return (
     <div className="settings-pagebody">
@@ -81,7 +96,8 @@ export function DiagnosticsPanel({ t }: DiagnosticsPanelProps) {
           />
         </div>
         <div className="hooks-actions">
-          <button type="button" className="btn" disabled title={t('settings.diag.exportPlanned')}>{t('settings.diag.export')}</button>
+          <button type="button" className="btn" onClick={exportLog} disabled={events.length === 0}
+            title={t('settings.diag.export')}>{t('settings.diag.export')} ({events.length})</button>
         </div>
       </section>
 
