@@ -51,6 +51,7 @@ library trha-llm
     Infrastructure.CPU.GF3Ops
     Infrastructure.CPU.Christoffel
     Infrastructure.CPU.SovereignModel
+    Infrastructure.CPU.B1Window
     Infrastructure.CPU.GF27SIMD
     Infrastructure.CPU.HoloPi
     Infrastructure.CPU.HolographicSpace
@@ -163,6 +164,7 @@ library trha-api
     Infrastructure.CPU.BLAS
     Infrastructure.CPU.Inference
     Infrastructure.CPU.SovereignFull
+    Infrastructure.CPU.B1Window
     Infrastructure.CPU.GF27SIMD
     Infrastructure.CPU.Ops
     Infrastructure.CPU.SOV3

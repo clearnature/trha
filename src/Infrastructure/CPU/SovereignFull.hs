@@ -28,6 +28,8 @@ module Infrastructure.CPU.SovereignFull
   , forwardStreamingDir
   , forwardStreamingFull
   , runStreamingFull
+  , runStreamingFullWithB1
+  , forwardStreamingFullB1
   , brainStepToken
   , loadWuxingFromSov
   , loadWeightsFromSov
@@ -56,6 +58,7 @@ import Data.List (foldl')
 import qualified Data.ByteString as BS
 import Data.Int (Int32)
 import Infrastructure.CPU.GF3Intrinsic (gf27Mul)
+import Infrastructure.CPU.B1Window (b1ApplyWindow)
 import Infrastructure.CPU.SovereignWuxingLayer
   ( T6State
   , WuxingConfig
@@ -480,7 +483,21 @@ runStreamingFull
   -> WuxingLayerW
   -> [Int]
   -> IO (Either String [[GF27]])
-runStreamingFull fetch cfg wcfg wl tokenIds = do
+runStreamingFull fetch cfg wcfg wl tokenIds =
+  runStreamingFullWithB1 False fetch cfg wcfg wl tokenIds
+
+-- | B1 窗口层开关版本（stream-trajectory-b1 #1）：True = 60 层 hidden 后先过
+--   'b1ApplyWindow'（因果窗口 Y 槽更新）再 wuxing → bypass → norm → lm_head；
+--   False = 与 'runStreamingFull' 逐位一致（对拍保证）。
+runStreamingFullWithB1
+  :: Bool
+  -> (Int -> IO BS.ByteString)
+  -> SovereignConfig
+  -> WuxingConfig
+  -> WuxingLayerW
+  -> [Int]
+  -> IO (Either String [[GF27]])
+runStreamingFullWithB1 enableB1 fetch cfg wcfg wl tokenIds = do
   bypassBs <- fetch 22
   headBs   <- fetch 323
   let dim    = scDim cfg
@@ -492,7 +509,8 @@ runStreamingFull fetch cfg wcfg wl tokenIds = do
       bypassT = map (map mkTrit) (chunk dim (take (vocab * dim) (unpackTritsInt bypassBs (vocab * dim))))
       headT   = map (map mkTrit) (chunk dim (take (vocab * dim) (unpackTritsInt headBs (vocab * dim))))
       tableRow table tok = take dim (table !! (tok `mod` length table) ++ repeat (mkTrit 0))
-      post hidden = do
+      post hidden0 = do
+        let hidden = if enableB1 then b1ApplyWindow dim hidden0 else hidden0
         let gamma = replicate dim ST.gf27One
             wxed  = [ firstOf4 (wuxingForward wcfg wl h) | h <- hidden ]
             bypassed = [ zipWith ST.plusGF27 h (map ST.embedGF3 (tableRow bypassT t))
@@ -514,10 +532,22 @@ forwardStreamingFull
   -> WuxingLayerW
   -> [Int]
   -> IO (Either String [[GF27]])
-forwardStreamingFull sovPath cfg wcfg wl tokenIds = do
+forwardStreamingFull sovPath cfg wcfg wl tokenIds =
+  forwardStreamingFullB1 False sovPath cfg wcfg wl tokenIds
+
+-- | 'forwardStreamingFull' 的 B1 窗口层开关版本（stream-trajectory-b1 #1）。
+forwardStreamingFullB1
+  :: Bool               -- ^ 是否启用 B1 因果窗口层
+  -> FilePath
+  -> SovereignConfig
+  -> WuxingConfig
+  -> WuxingLayerW
+  -> [Int]
+  -> IO (Either String [[GF27]])
+forwardStreamingFullB1 enableB1 sovPath cfg wcfg wl tokenIds = do
   img <- BS.readFile sovPath
   let idx = indexZip img
-  runStreamingFull
+  runStreamingFullWithB1 enableB1
     (\i -> case sovLookup idx ("/data/" ++ show i) of
              Just e  -> pure (sovSlice img e)
              Nothing -> pure BS.empty)

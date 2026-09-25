@@ -21,6 +21,7 @@ import Infrastructure.CPU.SovereignPhase12
 import Infrastructure.CPU.SovereignWuXing
 import Infrastructure.CPU.SovereignWuxingLayer
 import Infrastructure.CPU.SovereignFull
+import Infrastructure.CPU.B1Window (b1ApplyWindow)
 import Infrastructure.CPU.Inference (Brain(..), createInferenceEngine, withBrain, withWeightsC)
 import qualified Infrastructure.CPU.Inference as Inf
 import Infrastructure.CPU.Types (CPUBackend(..), CPUFeatures(..), CPUArchitecture(X86_64), defaultCPUConfig)
@@ -587,6 +588,34 @@ main = hspec $ do
         `shouldBe` map (map ST.gf27ToInt) (maybe [] (: []) lastLogitsWant)
       -- 采样：argMaxIdx（最大元素首个下标，平局取最小）
       fmap argMaxIdx lastLogitsGot `shouldBe` fmap argMaxIdx lastLogitsWant
+
+    -- stream-trajectory-b1 #1：B1 窗口层开关三断言——
+    -- ① B1 关（runStreamingFullWithB1 False）≡ 旧路径逐位一致（不破坏既有对拍）
+    -- ② B1 开 ≠ B1 关（开关真实生效，logits 有区分）
+    -- ③ B1 层本身有传播力（b1ApplyWindow 输出与输入不同）
+    it "B1 窗口层开关：关=整包路径逐位一致，开≠关 (B1w)" $ do
+      -- ① 跨实现真对拍：B1 关 的流式路径 ≡ 整包 sovereignForwardFull
+      --   （不是同一函数自比——整包路径不经过 runStreamingFullWithB1 的 post 分支）
+      resOff <- runStreamingFullWithB1 False fetchReact layerCfg wcfg wl [1, 3, 5]
+      resOn  <- runStreamingFullWithB1 True  fetchReact layerCfg wcfg wl [1, 3, 5]
+      let want = sovereignForwardFull layerCfg ww wcfg wl [1, 3, 5]
+      case (resOff, resOn) of
+        (Right off, Right on) -> do
+          -- ① 关 = 整包路径（跨实现，B1 不破坏既有对拍语义）
+          map (map ST.gf27ToInt) off `shouldBe` map (map ST.gf27ToInt) want
+          -- ② 开 ≠ 关（开关真实生效，logits 有区分）
+          (map (map ST.gf27ToInt) on == map (map ST.gf27ToInt) off) `shouldBe` False
+        _ -> expectationFailure "B1 开关链路失败（Left）"
+
+    it "B1ApplyWindow：输出同形且有传播力 (B1w-layer)" $ do
+      let dim = 32
+          hs  = [ [ ST.mkGF27 (fromIntegral ((i * 7 + d) `mod` 27)) | d <- [0 .. dim - 1] ]
+                | i <- [0 .. 5 :: Int] ]
+          out = b1ApplyWindow dim hs
+      length out `shouldBe` length hs
+      and [ length o == dim | o <- out ] `shouldBe` True
+      -- 传播力：残差 ⊕ prop 至少改变一个位置（因果层真的在动 hidden）
+      (out == hs) `shouldBe` False
 
   describe "Infrastructure.CPU.SovereignFull — 真实 .sov 端到端产 token (B3c)" $ do
     -- 这是「CPU 草稿模型接入路线」的端到端验证：真实 .sov + 真实 wuxing 权重
