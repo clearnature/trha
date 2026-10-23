@@ -68,7 +68,9 @@ describe('agent tool loop (Phase 3 K5)', () => {
 
     const step = await fetch(`${base}/api/agent/step`, { method: 'POST', headers: auth, body: JSON.stringify({ sessionId, message: 'read the file' }) });
     const stepJson = (await step.json()) as { reply?: string; messages?: Array<{ role: string }> };
-    expect(stepJson.reply).toContain('file says: hello-from-file');
+    // reads are numbered now (1\thello-from-file), which is what makes an
+    // edit target identifiable; assert on the content, not the prefix.
+    expect(stepJson.reply).toContain('hello-from-file');
     expect(sawToolResult).toBe(true);
 
     const roles = (stepJson.messages ?? []).map(m => m.role);

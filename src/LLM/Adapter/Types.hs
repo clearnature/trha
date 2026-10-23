@@ -18,6 +18,7 @@ module LLM.Adapter.Types
   ) where
 
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Aeson
 import Data.Aeson.Types (Parser, (.:), (.:?), (.!=), withObject)
 
@@ -55,6 +56,7 @@ instance FromJSON Message where
 -- | Stream chunks from the LLM
 data StreamChunk
   = ChunkDelta Text           -- ^ Partial text content
+  | ChunkReasoning Text       -- ^ Partial thinking-mode content
   | ChunkToolCall Text Text   -- ^ Tool call (name, arguments JSON)
   | ChunkDone Usage           -- ^ Stream complete with usage stats
   | ChunkError Text           -- ^ Error during streaming
@@ -101,6 +103,15 @@ usageCacheHitRatio u =
   let denom = usageCacheHitTokens u + usageCacheMissTokens u
   in if denom <= 0 then 0 else fromIntegral (usageCacheHitTokens u) / fromIntegral denom
 
+instance FromJSON Usage where
+  parseJSON = withObject "Usage" $ \o -> do
+    p <- o .:? "prompt_tokens" .!= 0
+    c <- o .:? "completion_tokens" .!= 0
+    t <- o .:? "total_tokens" .!= (p + c)
+    hit <- o .:? "prompt_cache_hit_tokens" .!= 0
+    miss <- o .:? "prompt_cache_miss_tokens" .!= max 0 (p - hit)
+    pure (Usage p c t hit miss)
+
 instance ToJSON Usage where
   toJSON u = object
     [ "prompt_tokens"            .= usagePromptTokens u
@@ -130,6 +141,7 @@ data ChatTurn = ChatTurn
   , ctToolCalls :: [ToolCall]
   , ctUsage     :: Maybe Usage
   , ctError     :: Maybe Text
+  , ctReasoning :: Maybe Text  -- ^ thinking-mode chain, echoed back on tool turns
   } deriving (Show, Eq)
 
 -- | A tool invocation emitted by the model (assistant @tool_calls@).
@@ -144,6 +156,9 @@ data ChatMessage
   = ChatSystem Text
   | ChatUser Text
   | ChatAssistant Text [ToolCall] -- ^ content may be empty when tools are called
+  | ChatAssistantThought Text [ToolCall] Text
+      -- ^ assistant turn that carries the provider's @reasoning_content@
+      -- (thinking mode requires it back on the next request)
   | ChatTool Text Text             -- ^ tool_call_id, result content
   deriving (Show, Eq)
 
@@ -194,12 +209,17 @@ instance ToJSON ChatMessage where
   toJSON (ChatAssistant content calls) = object $
     [ "role" .= ("assistant" :: Text), "content" .= content ]
       ++ [ "tool_calls" .= calls | not (null calls) ]
-      -- Thinking-mode providers require the field back on an assistant turn
-      -- that carries tool calls; omitting it is a 400 ("reasoning_content must
-      -- be passed back"). We do not retain the reasoning text itself yet, so
-      -- the field goes back empty — enough for the wire, and documented as a
-      -- quality trade-off rather than a silent lie.
+      -- Thinking mode requires the field back on an assistant turn that
+      -- carries tool calls; omitting it is a 400. When the reasoning text was
+      -- retained the thought variant is used instead; this branch only fires
+      -- for turns whose reasoning was never captured.
       ++ [ "reasoning_content" .= ("" :: Text) | not (null calls) ]
+  toJSON (ChatAssistantThought content calls reasoning) = object $
+    [ "role" .= ("assistant" :: Text)
+    , "content" .= content
+    , "reasoning_content" .= reasoning
+    ]
+      ++ [ "tool_calls" .= calls | not (null calls) ]
   toJSON (ChatTool callId content) = object
     [ "role" .= ("tool" :: Text)
     , "tool_call_id" .= callId
@@ -212,6 +232,15 @@ instance FromJSON ChatMessage where
     case role of
       "system"    -> ChatSystem <$> v .: "content"
       "user"      -> ChatUser <$> v .: "content"
-      "assistant" -> ChatAssistant <$> v .: "content" <*> v .:? "tool_calls" .!= []
+      "assistant" -> do
+        content <- v .: "content"
+        calls <- v .:? "tool_calls" .!= []
+        reasoning <- v .:? "reasoning_content"
+        -- An empty string means "no chain was captured" (older callers, or a
+        -- model without thinking): keep it as a plain assistant turn so a
+        -- decode/encode round-trip does not change the constructor.
+        pure $ case reasoning of
+          Just r | not (T.null r) -> ChatAssistantThought content calls r
+          _                       -> ChatAssistant content calls
       "tool"      -> ChatTool <$> v .: "tool_call_id" <*> v .: "content"
       _           -> fail "Invalid chat role"

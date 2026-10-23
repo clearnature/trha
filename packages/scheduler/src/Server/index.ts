@@ -6,7 +6,7 @@ import express from 'express';
 import cors from 'cors';
 import { HaskellBridge } from '../Bridge/Haskell.js';
 import type { BridgeToolSpec, ToolCallData } from '../Bridge/Haskell.js';
-import { toToolSpecs } from './toolCatalog.js';
+import { canonicalToolName, toToolSpecs } from './toolCatalog.js';
 import { confineWritePath, limitOutput } from './toolGuard.js';
 import { decidePermission, setPermissionRules, compileRules, getPermissionRules } from '../Permission/permissionRules.js';
 import { EventEmitter } from '../Utils/EventEmitter.js';
@@ -18,7 +18,7 @@ import { randomBytes } from 'node:crypto';
 import { loadPin, loadSessions, removeSessionFile, savePin, saveSession } from './stateStore.js';
 import { govern, DEFAULT_GOVERNANCE, type GovernanceConfig } from './contextGovernor.js';
 import { startPluginWatcher } from '../Plugins/watcher.js';
-import { mkdir, readFile, writeFile, appendFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile, appendFile } from 'node:fs/promises';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
@@ -773,9 +773,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // Host-side tool executions: read-only file access for now.  The kernel
   // emits assistant tool_calls; we execute them and feed results back as
   // tool messages until the model answers without tool calls.
-  // Host-side tools live under the orchestration workspace so file
-  // mutations cannot escape /tmp/trha-workspace.
-  const WORKSPACE = '/tmp/trha-workspace';
+  // Host-side tools live under the orchestration workspace so file mutations
+  // cannot escape it. Overridable so a test (or the desktop app pointing at a
+  // real project) can choose the root without patching code.
+  const WORKSPACE = process.env.TRHA_WORKSPACE ?? '/tmp/trha-workspace';
   const runShell = promisify(exec);
   // bash runs with the workspace as cwd, so a missing directory would fail the
   // very first command; create it once at startup.
@@ -783,12 +784,16 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // 沙箱「允许写入路径」（设置页配置的额外可信写目录；限制放宽，默认仅工作区）
   let extraWriteRoots: string[] = [];
   const AGENT_TOOLS: BridgeToolSpec[] = toToolSpecs();
-  // Enough rounds for a real fix loop (probe → compile → read error → fix);
-  // 8 ran out mid-proof even when the model was making progress. Override for
-  // long tasks without a rebuild.
-  const MAX_TOOL_ROUNDS = Number(process.env.TRHA_MAX_TOOL_ROUNDS ?? '') > 0
-    ? Number(process.env.TRHA_MAX_TOOL_ROUNDS)
-    : 16;
+  // No round cap by default: a real fix loop (probe → compile → read error →
+  // fix) legitimately takes dozens of rounds, and a hard limit abandons work
+  // that was converging. The loop ends when the model stops calling tools; a
+  // repeated identical call is what actually signals a stuck agent, so that is
+  // what is guarded. Set TRHA_MAX_TOOL_ROUNDS to cap it anyway.
+  const maxToolRounds = (() => {
+    const n = Number(process.env.TRHA_MAX_TOOL_ROUNDS ?? '');
+    return Number.isFinite(n) && n > 0 ? n : Number.POSITIVE_INFINITY;
+  })();
+  const STUCK_REPEATS = 3;
 
   const emitToolLifecycle = async (
     sessionId: string, name: string, args: string[],
@@ -814,11 +819,62 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
   };
 
-  const inWorkspace = (raw: unknown): string | null => {
-    if (typeof raw !== 'string') return null;
-    const resolved = path.resolve(raw);
-    return resolved.startsWith(path.resolve(WORKSPACE) + '/') ? resolved : null;
+  // Reads may leave the workspace: `bash` already can, so confining only the
+  // read tool would buy no safety while breaking absolute paths that callers
+  // legitimately use. Writes stay confined.
+  const resolveReadPath = (raw: unknown): string | null => {
+    if (typeof raw !== 'string' || !raw.trim()) return null;
+    return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(WORKSPACE, raw);
   };
+
+  /** Recursive file walk with a depth/file cap and the usual noise skipped. */
+  const walkFiles = async (dir: string, cap: number): Promise<string[]> => {
+    const out: string[] = [];
+    const skip = new Set(['node_modules', '.git', 'dist', 'dist-newstyle', '.lake', 'target']);
+    const walk = async (d: string, depth: number): Promise<void> => {
+      if (out.length >= cap || depth > 12) return;
+      let entries;
+      try { entries = await readdir(d, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (out.length >= cap) return;
+        if (e.name.startsWith('.') && e.isDirectory()) continue;
+        const full = path.join(d, e.name);
+        if (e.isDirectory()) {
+          if (skip.has(e.name)) continue;
+          await walk(full, depth + 1);
+        } else if (e.isFile()) {
+          out.push(full);
+        }
+      }
+    };
+    await walk(dir, 0);
+    return out;
+  };
+
+  /** Minimal glob: `**` spans directories, `*`/`?` stay within a segment. */
+  const globToRegExp = (pattern: string): RegExp => {
+    let re = '';
+    for (let i = 0; i < pattern.length; i++) {
+      const ch = pattern[i];
+      if (ch === '*') {
+        if (pattern[i + 1] === '*') {
+          re += '.*';
+          i += 1;
+          if (pattern[i + 1] === '/') i += 1;
+        } else {
+          re += '[^/]*';
+        }
+      } else if (ch === '?') {
+        re += '[^/]';
+      } else {
+        re += ch !== undefined && '.+^${}()|[]\\'.includes(ch) ? `\\${ch}` : ch;
+      }
+    }
+    return new RegExp(`^${re}$`);
+  };
+
+  const workspaceRelative = (raw: string): string =>
+    path.isAbsolute(raw) ? raw : path.join(WORKSPACE, raw);
 
   const executeTool = async (c: ToolCallData): Promise<string> => {
     let argsObj: Record<string, unknown> = {};
@@ -845,38 +901,128 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           + (err.stdout || err.stderr ? '' : `\n${err.message}`));
       }
     }
-    if (c.name === 'read_file') {
-      const target = inWorkspace(argsObj.path) ?? (typeof argsObj.path === 'string' ? argsObj.path : null);
+    // Canonical names first, then the legacy aliases: one implementation per
+    // capability, so the schema and the executor cannot drift apart.
+    const name = canonicalToolName(c.name);
+    if (name === 'read') {
+      const target = resolveReadPath(argsObj.path);
       if (!target) return 'ERROR: missing/invalid path argument';
       try {
-        return limitOutput(await readFile(target, 'utf8'));
+        const text = await readFile(target, 'utf8');
+        const lines = text.split('\n');
+        const offset = Number(argsObj.offset);
+        const limit = Number(argsObj.limit);
+        const start = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) - 1 : 0;
+        const count = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : lines.length;
+        const slice = lines.slice(start, start + count);
+        return limitOutput(slice.map((l, i) => `${start + i + 1}\t${l}`).join('\n'));
       } catch (e) {
         return `ERROR: ${(e as Error).message}`;
       }
     }
-    if (c.name === 'write_file' || c.name === 'append_file') {
+    if (name === 'write' || name === 'append_file') {
       if (typeof argsObj.path !== 'string') return 'ERROR: path must be a string';
-      // canonical, symlink-free target confined to the workspace
-      const target = await confineWritePath(WORKSPACE, argsObj.path, extraWriteRoots);
+      // Relative paths are relative to the *workspace*, not to whatever cwd the
+      // scheduler happens to have — the model has no way to know the latter,
+      // and "path escapes the workspace" for "hello.txt" is a dead end.
+      const target = await confineWritePath(WORKSPACE, workspaceRelative(argsObj.path), extraWriteRoots);
       if (!target) return 'ERROR: path escapes the workspace';
-      // Small local models sometimes double-encode or nest the content
-      // value; tolerate any JSON value by stringifying non-strings.
       const rawContent = argsObj.content;
       if (rawContent === undefined || rawContent === null) return 'ERROR: missing content';
       const content = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
       try {
-        if (c.name === 'write_file') {
+        if (name === 'write') {
+          await mkdir(path.dirname(target), { recursive: true });
           await writeFile(target, content, 'utf8');
         } else {
           await appendFile(target, content, 'utf8');
         }
-        return `OK: ${c.name} -> ${target} (${content.length} chars)`;
+        return `OK: ${name} -> ${target} (${content.length} chars)`;
+      } catch (e) {
+        return `ERROR: ${(e as Error).message}`;
+      }
+    }
+    if (name === 'edit') {
+      if (typeof argsObj.path !== 'string') return 'ERROR: path must be a string';
+      const oldString = argsObj.old_string;
+      const newString = argsObj.new_string;
+      if (typeof oldString !== 'string' || oldString === '') return 'ERROR: old_string is required';
+      if (typeof newString !== 'string') return 'ERROR: new_string is required';
+      const target = await confineWritePath(WORKSPACE, workspaceRelative(argsObj.path), extraWriteRoots);
+      if (!target) return 'ERROR: path escapes the workspace';
+      try {
+        const before = await readFile(target, 'utf8');
+        const parts = before.split(oldString);
+        const hits = parts.length - 1;
+        if (hits === 0) return `ERROR: old_string not found in ${target}`;
+        if (hits > 1 && argsObj.replace_all !== true) {
+          return `ERROR: old_string matches ${hits} times in ${target}; pass replace_all or make it unique`;
+        }
+        const after = argsObj.replace_all === true
+          ? parts.join(newString)
+          : [parts[0], ...parts.slice(1)].join(newString);
+        await writeFile(target, after, 'utf8');
+        return `OK: edit -> ${target} (${hits} replacement${hits === 1 ? '' : 's'})`;
+      } catch (e) {
+        return `ERROR: ${(e as Error).message}`;
+      }
+    }
+    if (name === 'glob') {
+      if (typeof argsObj.pattern !== 'string' || !argsObj.pattern.trim()) {
+        return 'ERROR: pattern is required';
+      }
+      const root = typeof argsObj.path === 'string' ? argsObj.path : '.';
+      const dir = resolveReadPath(root);
+      if (!dir) return 'ERROR: path escapes the workspace';
+      try {
+        const found = await walkFiles(dir, 4000);
+        const re = globToRegExp(argsObj.pattern);
+        const hits = found
+          .filter(f => re.test(path.relative(dir, f)))
+          .slice(0, 200)
+          .map(f => path.relative(dir, f));
+        return hits.length ? hits.join('\n') : '(no matches)';
+      } catch (e) {
+        return `ERROR: ${(e as Error).message}`;
+      }
+    }
+    if (name === 'grep') {
+      if (typeof argsObj.pattern !== 'string' || !argsObj.pattern) return 'ERROR: pattern is required';
+      let re: RegExp;
+      try {
+        re = new RegExp(argsObj.pattern, 'm');
+      } catch (e) {
+        return `ERROR: invalid pattern: ${(e as Error).message}`;
+      }
+      const dir = resolveReadPath(typeof argsObj.path === 'string' ? argsObj.path : '.');
+      if (!dir) return 'ERROR: path escapes the workspace';
+      const only = typeof argsObj.glob === 'string' ? globToRegExp(argsObj.glob) : null;
+      try {
+        const files = await walkFiles(dir, 4000);
+        const out: string[] = [];
+        for (const f of files) {
+          const rel = path.relative(dir, f);
+          if (only && !only.test(rel)) continue;
+          let text: string;
+          try { text = await readFile(f, 'utf8'); } catch { continue; }
+          if (text.includes('\u0000')) continue;      // binary
+          const lines = text.split('\n');
+          for (let i = 0; i < lines.length; i++) {
+            if (re.test(lines[i] ?? '')) {
+              out.push(`${rel}:${i + 1}:${(lines[i] ?? '').slice(0, 300)}`);
+              if (out.length >= 200) break;
+            }
+          }
+          if (out.length >= 200) break;
+        }
+        return out.length ? out.join('\n') : '(no matches)';
       } catch (e) {
         return `ERROR: ${(e as Error).message}`;
       }
     }
     return `ERROR: unknown tool: ${c.name}`;
   };
+
 
   // Tool service: single source of truth exposed on ctx.tools (list/execute)
   // so plugins can read the tool set by key instead of importing internals.
@@ -923,7 +1069,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     events.emit('agent:message', { sessionId: session.id, role: 'user', content: message });
     emitSafe(plugins.emitMessageSend(session.id, { role: 'user', content: message }));
 
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    let lastCallKey = '';
+    let sameCallRepeats = 0;
+    for (let round = 0; round < maxToolRounds; round++) {
       let response;
       // "Model-visible means logged": every model request is observable
       // before it is sent, so a transcript/plugin can reconstruct what the
@@ -1010,11 +1158,24 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       };
       session.messages.push({
         role: 'assistant', content: response.reply,
+        // Thinking mode requires the chain back on the next request; without it
+        // the provider answers 400 and the whole loop dies mid-task.
+        ...(response.reasoningContent ? { reasoning_content: response.reasoningContent } : {}),
         tool_calls: calls.map(c => ({
           id: c.id, type: 'function',
           function: { name: c.name, arguments: normaliseArgs(c.arguments) },
         })),
       });
+      const callKey = calls.map(c => `${c.name}:${c.arguments}`).join('|');
+      sameCallRepeats = callKey === lastCallKey ? sameCallRepeats + 1 : 1;
+      lastCallKey = callKey;
+      if (sameCallRepeats >= STUCK_REPEATS) {
+        const stuck = `(stopped: the same tool call repeated ${sameCallRepeats} times)`;
+        session.messages.push({ role: 'assistant', content: stuck });
+        events.emit('agent:message', { sessionId: session.id, role: 'assistant', content: stuck });
+        persistSession(session);
+        return stuck;
+      }
       for (const call of calls) {
         const started = Date.now();
         await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'running');
@@ -1034,7 +1195,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       }
     }
 
-    const exhausted = `(tool loop exhausted after ${MAX_TOOL_ROUNDS} rounds)`;
+    const exhausted = Number.isFinite(maxToolRounds)
+      ? `(tool loop stopped at the configured ${maxToolRounds}-round cap)`
+      : '(tool loop ended without a final answer)';
     session.messages.push({ role: 'assistant', content: exhausted });
     events.emit('agent:message', { sessionId: session.id, role: 'assistant', content: exhausted });
     persistSession(session);

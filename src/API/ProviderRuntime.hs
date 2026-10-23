@@ -163,7 +163,7 @@ providerStream entry key = case peKind entry of
       Right a   -> blockingStream a
       Left why  -> \_ _ onEvent -> do
         onEvent (ChunkError why)
-        pure (ChatTurn "" [] Nothing (Just why))
+        pure (ChatTurn "" [] Nothing (Just why) Nothing)
   where
     -- The blocking call, announced as one delta: a wire with no streaming
     -- path still gives the caller events it can forward.
@@ -224,8 +224,8 @@ anthropicStream baseUrl apiKey model = do
       done <- anthropicToolStep pending v
       mapM_ (\(nm, args) -> onEvent (ChunkToolCall nm args)) done
     case result of
-      Left e   -> do onEvent (ChunkError e); pure (ChatTurn "" [] Nothing (Just e))
-      Right () -> pure (ChatTurn "" [] Nothing Nothing)
+      Left e   -> do onEvent (ChunkError e); pure (ChatTurn "" [] Nothing (Just e) Nothing)
+      Right () -> pure (ChatTurn "" [] Nothing Nothing Nothing)
 
 -- | @content_block_delta.delta.text@ is a text increment; @message_delta@
 -- closes the run and carries its usage.
@@ -257,8 +257,8 @@ responsesStream baseUrl apiKey model = do
       done <- responsesToolStep pending v
       mapM_ (\(nm, args) -> onEvent (ChunkToolCall nm args)) done
     case result of
-      Left e   -> do onEvent (ChunkError e); pure (ChatTurn "" [] Nothing (Just e))
-      Right () -> pure (ChatTurn "" [] Nothing Nothing)
+      Left e   -> do onEvent (ChunkError e); pure (ChatTurn "" [] Nothing (Just e) Nothing)
+      Right () -> pure (ChatTurn "" [] Nothing Nothing Nothing)
 
 -- | @response.output_text.delta.delta@ from a streaming frame.
 responsesDelta :: Value -> Maybe Text
@@ -356,10 +356,10 @@ openAICompatAdapter baseUrl apiKey model = do
     , llmChatTools = \msgs specs _gp -> do
         (code, body, ok) <- call msgs specs
         if not ok
-          then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code))))
+          then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code))) Nothing)
           else case decode body of
-                 Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response"))
-                 Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e)) id (parseDeepSeekChatTurn v))
+                 Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response") Nothing)
+                 Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e) Nothing) id (parseDeepSeekChatTurn v))
     , llmEmbed = \_ -> pure []
     , llmModels = pure [ModelInfo model "endpoint model" 32768]
     , llmChatToolsStream = stream
@@ -400,10 +400,10 @@ anthropicAdapter baseUrl apiKey model = do
     , llmChatTools = \msgs specs _gp -> do
         (code, body, ok) <- call msgs specs
         if not ok
-          then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code))))
+          then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code))) Nothing)
           else case decode body of
-                 Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response"))
-                 Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e)) id (parseAnthropicTurn v))
+                 Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response") Nothing)
+                 Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e) Nothing) id (parseAnthropicTurn v))
     , llmEmbed = \_ -> pure []
     , llmModels = pure [ModelInfo model "endpoint model" 32768]
     , llmChatToolsStream = stream
@@ -482,7 +482,7 @@ parseAnthropicTurn v = case v of
         stop = case field "stop_reason" o of
           Just (String s) -> Just s
           _               -> Nothing
-    Right (ChatTurn (T.concat texts) calls (Just (usageOf mi mo)) stop)
+    Right (ChatTurn (T.concat texts) calls (Just (usageOf mi mo)) stop Nothing)
   _ -> Left "malformed Anthropic response"
   where
     str k o = case field k o of
@@ -520,10 +520,10 @@ responsesAdapter baseUrl apiKey model = do
     , llmChatTools = \msgs specs _gp -> do
         (code, body, ok) <- call msgs specs
         if not ok
-          then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code))))
+          then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code))) Nothing)
           else case decode body of
-                 Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response"))
-                 Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e)) id (parseResponsesTurn v))
+                 Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response") Nothing)
+                 Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e) Nothing) id (parseResponsesTurn v))
     , llmEmbed = \_ -> pure []
     , llmModels = pure [ModelInfo model "endpoint model" 32768]
     , llmChatToolsStream = stream
@@ -580,7 +580,7 @@ parseResponsesTurn v = case v of
         (mi, mo) = case field "usage" o of
           Just (Object u) -> (int "input_tokens" u, int "output_tokens" u)
           _               -> (Nothing, Nothing)
-    Right (ChatTurn (T.concat texts) calls (Just (usageOf mi mo)) Nothing)
+    Right (ChatTurn (T.concat texts) calls (Just (usageOf mi mo)) Nothing Nothing)
   _ -> Left "malformed Responses response"
   where
     str k o = case field k o of

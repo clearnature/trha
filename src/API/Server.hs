@@ -1086,7 +1086,8 @@ providerEvents (entry, key) msgs specs onEvent = do
   _ <- call msgs specs $ \chunk -> case chunk of
     ChunkDelta t    -> onEvent (Stream.SEVDelta t)
     ChunkToolCall n a -> onEvent (Stream.SEVToolCall n a)
-    ChunkDone u     -> onEvent (Stream.SEVUsage (usagePromptTokens u) (usageCompletionTokens u) (usageTotalTokens u))
+    ChunkReasoning t -> onEvent (Stream.SEVReasoning t)
+    ChunkDone u     -> onEvent (Stream.SEVUsageFull u)
     ChunkError e    -> onEvent (Stream.SEVError e)
   pure ()
 
@@ -1151,10 +1152,12 @@ openaiStreamHandler adapter body =
       -- 五行四步链；判定**总是**随响应返回（用户裁定①：标注而非拒绝，不降级）。
       let verdict = verdictOf (T.unpack content)
       let toolCalls = streamedToolCalls (reverse events)
-      let usage = case [(pt, ct, tt) | Stream.SEVUsage pt ct tt <- events] of
-            ((pt, ct, tt):_) -> object
-              ["prompt_tokens" .= pt, "completion_tokens" .= ct, "total_tokens" .= tt]
-            _ -> object ["prompt_tokens" .= (0 :: Int), "completion_tokens" .= (0 :: Int), "total_tokens" .= (0 :: Int)]
+      let usage = case [u | Stream.SEVUsageFull u <- events] of
+            (u:_) -> toJSON u
+            [] -> case [(pt, ct, tt) | Stream.SEVUsage pt ct tt <- events] of
+              ((pt, ct, tt):_) -> object
+                ["prompt_tokens" .= pt, "completion_tokens" .= ct, "total_tokens" .= tt]
+              _ -> object ["prompt_tokens" .= (0 :: Int), "completion_tokens" .= (0 :: Int), "total_tokens" .= (0 :: Int)]
       return $ object
         [ "id"      .= ("chatcmpl-stream-" <> model :: Text)
         , "object"  .= ("chat.completion" :: Text)
@@ -1368,7 +1371,9 @@ sse write eventName pairs = write $ mconcat $
 fromKernelEvent :: Stream.StreamEvent -> StreamChunk
 fromKernelEvent (Stream.SEVDelta t)      = ChunkDelta t
 fromKernelEvent (Stream.SEVToolCall n a) = ChunkToolCall n a
+fromKernelEvent (Stream.SEVReasoning t)   = ChunkReasoning t
 fromKernelEvent (Stream.SEVUsage p c t)  = ChunkDone (mkUsage p c t)
+fromKernelEvent (Stream.SEVUsageFull u)  = ChunkDone u
 fromKernelEvent Stream.SEVDone           = ChunkDone (mkUsage 0 0 0)
 fromKernelEvent (Stream.SEVError e)      = ChunkError e
 
@@ -1377,19 +1382,30 @@ emitOpenAI :: (Builder.Builder -> IO ()) -> StreamChunk -> IO ()
 emitOpenAI write chunk = case chunk of
   ChunkDelta t -> sse write Nothing
     [ "choices" .= [object ["index" .= (0 :: Int), "delta" .= object ["content" .= t]]] ]
+  -- thinking-mode deltas: the client must echo them back on tool turns, so they
+  -- cannot be dropped at the kernel boundary.
+  ChunkReasoning t -> sse write Nothing
+    [ "choices" .= [object ["index" .= (0 :: Int), "delta" .= object ["reasoning_content" .= t]]] ]
   ChunkToolCall n a -> sse write Nothing
     [ "choices" .= [object [ "index" .= (0 :: Int)
                            , "delta" .= object [ "tool_calls" .= [ object
                                [ "index" .= (0 :: Int)
                                , "function" .= object ["name" .= n, "arguments" .= a] ] ] ] ]] ]
-  ChunkDone _ -> sse write Nothing
-    [ "choices" .= [object [ "index" .= (0 :: Int), "delta" .= object []
-                           , "finish_reason" .= ("stop" :: Text) ]] ]
+  ChunkDone u -> do
+    sse write Nothing
+      [ "choices" .= [object [ "index" .= (0 :: Int), "delta" .= object []
+                             , "finish_reason" .= ("stop" :: Text) ]] ]
+    -- A usage frame the client can bill from, cache split included.
+    sse write Nothing [ "usage" .= u ]
   ChunkError e -> sse write Nothing [ "error" .= object ["message" .= e] ]
 
 -- | Anthropic frames (@content_block_delta@ / @content_block_start@).
 emitAnthropic :: (Builder.Builder -> IO ()) -> StreamChunk -> IO ()
 emitAnthropic write chunk = case chunk of
+  ChunkReasoning t -> sse write (Just "content_block_delta")
+    [ "type" .= ("content_block_delta" :: Text)
+    , "index" .= (0 :: Int)
+    , "delta" .= object [ "type" .= ("thinking_delta" :: Text), "thinking" .= t ] ]
   ChunkDelta t -> sse write (Just "content_block_delta")
     [ "type" .= ("content_block_delta" :: Text)
     , "index" .= (0 :: Int)
@@ -1530,9 +1546,9 @@ stubTools msgs _specs = do
   if null toolResults
     then return $ LLM.ChatTurn ""
              [ LLM.ToolCall "call-stub" "read_file" "{\"path\":\"/etc/hostname\"}" ]
-             (Just (LLM.mkUsage 1 1 2)) Nothing
+             (Just (LLM.mkUsage 1 1 2)) Nothing Nothing
     else return $ LLM.ChatTurn ("[stub] tool said: " <> last toolResults)
-             [] (Just (LLM.mkUsage 1 1 2)) Nothing
+             [] (Just (LLM.mkUsage 1 1 2)) Nothing Nothing
 
 -- | Start the stub kernel on the given port.
 startStubKernel :: Int -> Maybe FilePath -> IO ()

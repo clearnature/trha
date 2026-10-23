@@ -44,6 +44,8 @@ export interface ToolCallData {
 
 export interface QueryResponse {
   reply: string;
+  /** Thinking-mode chain, echoed back on the next tool turn. */
+  reasoningContent?: string;
   toolCalls?: ToolCallData[];
   usage?: {
     promptTokens?: number | undefined;
@@ -228,6 +230,8 @@ export class HaskellBridge {
     const decoder = new TextDecoder();
     let buf = '';
     let reply = '';
+    let reasoning = '';
+    let usage: QueryResponse['usage'];
     let constraint: Record<string, unknown> | undefined;
     const calls = new Map<number, ToolCallData>();
     for (;;) {
@@ -253,12 +257,26 @@ export class HaskellBridge {
           if (typeof parsed.trha_constraint === 'object' && parsed.trha_constraint !== null) {
             constraint = parsed.trha_constraint as Record<string, unknown>;
           }
+          // The kernel emits a usage frame at the end; it carries the cache
+          // split, which is the only way a streamed call can be billed.
+          if (parsed.usage) {
+            const u = parsed.usage as Record<string, number>;
+            usage = {
+              promptTokens: u.prompt_tokens,
+              completionTokens: u.completion_tokens,
+              totalTokens: u.total_tokens,
+              cacheHitTokens: u.prompt_cache_hit_tokens,
+              cacheMissTokens: u.prompt_cache_miss_tokens,
+            };
+          }
           const delta = (parsed.choices as { delta?: {
             content?: string;
+            reasoning_content?: string;
             tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
           } }[] | undefined)?.[0]?.delta;
           if (!delta) continue;
           if (delta.content) { reply += delta.content; onDelta(delta.content); }
+          if (delta.reasoning_content) reasoning += delta.reasoning_content;
           for (const tc of delta.tool_calls ?? []) {
             const idx = tc.index ?? 0;
             const cur = calls.get(idx) ?? { id: '', name: '', arguments: '' };
@@ -272,7 +290,12 @@ export class HaskellBridge {
       }
     }
     const toolCalls = [...calls.values()].filter(c => c.name !== '');
-    const base: QueryResponse = toolCalls.length > 0 ? { reply, toolCalls } : { reply };
+    const base: QueryResponse = {
+      reply,
+      ...(reasoning ? { reasoningContent: reasoning } : {}),
+      ...(usage ? { usage } : {}),
+      ...(toolCalls.length > 0 ? { toolCalls } : {}),
+    };
     return constraint ? { ...base, constraint } : base;
   }
 

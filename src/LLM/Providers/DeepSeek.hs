@@ -120,7 +120,7 @@ parseDeepSeekChatTurn v =
     go = withObject "ChatResponse" $ \resp -> do
       choices <- resp .: "choices"
       case choices of
-        [] -> return (ChatTurn "" [] Nothing (Just "no choices"))
+        [] -> return (ChatTurn "" [] Nothing (Just "no choices") Nothing)
         (c : _) -> do
           msg <- c .: "message"
           content <- msg .:? "content" .!= ""
@@ -128,7 +128,8 @@ parseDeepSeekChatTurn v =
           calls <- mapM parseCall rawCalls
           usageV <- resp .:? "usage"
           usage <- traverse parseUsage usageV
-          return $ ChatTurn content calls usage Nothing
+          reasoning <- msg .:? "reasoning_content"
+          return $ ChatTurn content calls usage Nothing reasoning
     parseCall = withObject "ToolCall" $ \o -> do
       fn <- o .: "function"
       args <- fn .: "arguments" >>= argsText
@@ -154,6 +155,13 @@ parseDeepSeekChatTurn v =
 -- deepseek-flash defaults to @high@, which spends reasoning tokens on every
 -- call; the operator decides the cost/depth trade-off instead of the code
 -- baking a level in.
+-- | Ask for the final usage frame. Without it a streamed call reports nothing,
+-- so cache hits and cost stay invisible on the streaming path.
+withUsageFlag :: Value -> Value
+withUsageFlag v = case v of
+  Object o -> Object (KM.insert "stream_options" (object ["include_usage" .= True]) o)
+  _        -> v
+
 applyEffortEnv :: Value -> IO Value
 applyEffortEnv v = do
   eff <- lookupEnv "TRHA_REASONING_EFFORT"
@@ -268,11 +276,11 @@ deepSeekTools apiKey model manager msgs specs gp = do
     then case decode (responseBody response) :: Maybe Value of
       Just v -> case parseDeepSeekChatTurn v of
         Right turn -> return turn
-        Left err -> return (ChatTurn "" [] Nothing (Just err))
-      Nothing -> return (ChatTurn "" [] Nothing (Just "Failed to parse DeepSeek response"))
+        Left err -> return (ChatTurn "" [] Nothing (Just err) Nothing)
+      Nothing -> return (ChatTurn "" [] Nothing (Just "Failed to parse DeepSeek response") Nothing)
     else return (ChatTurn "" [] Nothing (Just
       ("DeepSeek API error " <> T.pack (show (statusCode (responseStatus response)))
-        <> ": " <> T.take 500 (TE.decodeUtf8 (BSL.toStrict (responseBody response))))))
+        <> ": " <> T.take 500 (TE.decodeUtf8 (BSL.toStrict (responseBody response))))) Nothing)
 
 -- | Streaming tool-calling call: the very body the blocking path builds, fed
 -- through the shared SSE engine, so increments reach the caller as produced
@@ -283,7 +291,7 @@ deepSeekStream apiKey model msgs specs onEvent = do
   LStream.openAICompatStreamCall
     "https://api.deepseek.com/v1/chat/completions"
     apiKey
-    (withStreamFlag body)
+    (withUsageFlag (withStreamFlag body))
     onEvent
   where
     withStreamFlag v = case v of

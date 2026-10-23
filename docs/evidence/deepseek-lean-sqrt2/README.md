@@ -56,12 +56,19 @@ theorem no_nat_solution : ∀ q : Nat, ¬ ∃ p : Nat, q ≠ 0 ∧ p * p = 2 * (
    两层都容错（对象则 `JSON.stringify`）。
 6. **工具轮数写死 5→8**，真做题时中途耗尽 → `TRHA_MAX_TOOL_ROUNDS`（默认 16）。
 
-## 已知不足（下一步）
+## 后续修复（同日）
 
-- **`reasoning_content` 回传的是空串**。协议合规，但模型丢了自己的思考链；正确做法是把
-  流式 `delta.reasoning_content` 累积、随助手轮次存回历史。这需要 `ChatTurn` 加字段 +
-  流式帧透传，属于独立改动。
-- **流式路径的 usage 目前记不到**：`stream_options.include_usage` 没要，`SEVUsage` 恒为
-  0，所以 `/api/usage-stats` 在纯流式会话里显示 0。阻塞路径与缓存探针的计量是准确的。
-- 模型第 4 步声称「最终目录里只留下两个目标文件」，实际上是我们清理了探针文件；
-  它没有删（工作区里确实只剩两个）。措辞略有夸大，但不是伪造输出。
+上面三条不足已处理，并复测：
+
+1. **真实思维链回传**：`ChatTurn.ctReasoning` + `ChatAssistantThought`，流式
+   `delta.reasoning_content` 累积后随助手轮次存回历史。复测的工具会话不再 400。
+2. **流式用量**：请求带 `stream_options.include_usage`，内核 SSE 末帧透传 `usage`
+   （含 cache hit/miss），scheduler 记进会话。复测 `/api/usage-stats`：
+   `prompt 5454 / completion 620 / cacheHit 3968 (72.75%)`。
+3. **工具轮数不再设上限**：默认无限轮，改为「同一个工具调用连续重复 3 次」才停，
+   避免把正在收敛的修错循环砍掉。
+4. **从 dsh 移植工具**：`read / write / edit / glob / grep`（`*_file` 旧名保留为别名），
+   写路径相对 workspace 解析（模型用 `hello.txt` 不再撞 "escapes the workspace"）。
+
+模型第 4 步声称「最终目录里只留下两个目标文件」，实际上是它自己没删探针文件、
+我们清理的；措辞略有夸大，但不是伪造输出。

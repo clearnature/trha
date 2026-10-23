@@ -276,8 +276,21 @@ type EventHandler = Dynamic -> IO ()
 
 配置：`TRHA_LLM_MODEL`（默认 `deepseek-flash`）、`TRHA_REASONING_EFFORT`
 （low/high/max；默认交给 API，实测 high 会把输出预算的大半烧在 reasoning 上）、
-`TRHA_CONTEXT_WINDOW`（覆盖窗口，测试用）、`TRHA_PRICE_INPUT/CACHED/OUTPUT`
+`TRHA_CONTEXT_WINDOW`（覆盖窗口，测试用）、`TRHA_MAX_OUTPUT_TOKENS`（输出上限，
+默认 128k）、`TRHA_WORKSPACE`（工具工作区）、`TRHA_PRICE_INPUT/CACHED/OUTPUT`
 （每百万 token 价格；不配 `/api/usage-stats` 显示 `—`，不编数字）。
+
+**思考模式（thinking）**：带 `tool_calls` 的 assistant 轮次必须把
+`reasoning_content` 回传，否则 provider 直接 400。`ChatTurn.ctReasoning` 承接它，
+流式 `delta.reasoning_content` 累积后写入 `ChatAssistantThought`，scheduler 存回历史。
+这是多轮工具调用能继续的前提，不是可选的「优化」。
+
+**流式用量**：请求带 `stream_options.include_usage`，内核把末帧 `usage`（含
+cache hit/miss）透传给 scheduler，所以流式会话也能记账。
+
+**工具**：模型可见目录与执行器同源于 `Server/toolCatalog.ts`，名字对齐
+deepseek-harness（`bash/read/write/edit/glob/grep/append_file`，旧的 `*_file` 为别名）。
+工具轮数默认**不设上限**，只对「同一调用连续重复」判停。
 
 ### 3.7 LLM Adapter (`LLM.Adapter`)
 

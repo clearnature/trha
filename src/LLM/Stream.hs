@@ -24,6 +24,7 @@ import Data.Aeson.Key (fromText)
 import qualified Data.Aeson.KeyMap as KM
 import Data.Aeson.Types (parseMaybe)
 import Data.List (sortOn)
+import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.IORef
@@ -41,8 +42,10 @@ import LLM.Adapter.Types (Message(..), Role(..), ChatMessage, ChatTurn(..), Stre
 
 data StreamEvent
   = SEVDelta Text
+  | SEVReasoning Text        -- ^ thinking-mode delta (echoed back on tool turns)
   | SEVToolCall Text Text
   | SEVUsage Int Int Int
+  | SEVUsageFull Usage       -- ^ same numbers, with cache accounting
   | SEVDone
   | SEVError Text
   deriving (Show, Eq)
@@ -349,22 +352,45 @@ openAICompatStreamCall
   -> (StreamChunk -> IO ()) -> IO ChatTurn
 openAICompatStreamCall url apiKey body onEvent = do
   acc <- newIORef []
+  textRef <- newIORef []
+  reasonRef <- newIORef []
+  usageRef <- newIORef Nothing
   result <- streamPostSse url authHeaders body $ \v -> do
     case openAICompatDelta v of
-      Just txt | not (T.null txt) -> onEvent (ChunkDelta txt)
-      _                           -> pure ()
+      Just txt | not (T.null txt) -> do
+        modifyIORef' textRef (txt :)
+        onEvent (ChunkDelta txt)
+      _ -> pure ()
+    case openAICompatReasoning v of
+      Just r | not (T.null r) -> do
+        modifyIORef' reasonRef (r :)
+        onEvent (ChunkReasoning r)
+      _ -> pure ()
+    case openAICompatUsage v of
+      Just u  -> writeIORef usageRef (Just u)
+      Nothing -> pure ()
     calls <- readIORef acc
     writeIORef acc (foldl mergeCall calls (openAICompatToolDeltas v))
   done <- readIORef acc
   mapM_ (\(_, nm, args) -> onEvent (ChunkToolCall nm args))
         (sortOn (\(i, _, _) -> i) (reverse done))
+  txt <- T.concat . reverse <$> readIORef textRef
+  reason <- readIORef reasonRef
+  usage <- readIORef usageRef
+  let reasoning = case T.concat (reverse reason) of
+        "" -> Nothing
+        r  -> Just r
+      turn = ChatTurn txt
+               [ ToolCall ("call-" <> T.pack (show i)) nm args
+               | (i, nm, args) <- sortOn (\(i, _, _) -> i) (reverse done) ]
+               usage Nothing reasoning
   case result of
-    Left e   -> do
+    Left e -> do
       onEvent (ChunkError e)
-      pure (ChatTurn "" [] Nothing (Just e))
+      pure (ChatTurn "" [] Nothing (Just e) Nothing)
     Right () -> do
-      onEvent (ChunkDone (mkUsage 0 0 0))
-      pure (ChatTurn "" [] Nothing Nothing)
+      onEvent (ChunkDone (fromMaybe (mkUsage 0 0 0) usage))
+      pure turn
   where
     authHeaders =
       [ ("Authorization", "Bearer " <> TE.encodeUtf8 apiKey) | not (T.null (T.strip apiKey)) ]
@@ -376,6 +402,29 @@ mergeCall :: [(Int, Text, Text)] -> (Int, Text, Text) -> [(Int, Text, Text)]
 mergeCall acc (i, nm, ag) = case break (\(j, _, _) -> j == i) acc of
   (before, (_, nm0, ag0) : after) -> before ++ [(i, nm0 <> nm, ag0 <> ag)] ++ after
   _                               -> acc ++ [(i, nm, ag)]
+
+-- | @choices[0].delta.reasoning_content@ from a streaming frame.
+openAICompatReasoning :: Value -> Maybe Text
+openAICompatReasoning v = case v of
+  Object o -> case fieldOf "choices" o of
+    Just (Array a) -> case V.toList a of
+      (Object c : _) -> case fieldOf "delta" c of
+        Just (Object d) -> case fieldOf "reasoning_content" d of
+          Just (String t) -> Just t
+          _               -> Nothing
+        _ -> Nothing
+      _ -> Nothing
+    _ -> Nothing
+  _ -> Nothing
+
+-- | The usage frame: OpenAI-compatible streams send it last when asked with
+-- @stream_options.include_usage@; DeepSeek adds the cache split.
+openAICompatUsage :: Value -> Maybe Usage
+openAICompatUsage v = case v of
+  Object o -> case fieldOf "usage" o of
+    Just u  -> parseMaybe parseJSON u
+    Nothing -> Nothing
+  _ -> Nothing
 
 -- | @choices[0].delta.content@ from a streaming frame.
 openAICompatDelta :: Value -> Maybe Text
