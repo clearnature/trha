@@ -174,6 +174,8 @@ library trha-api
     LLM.Adapter.Types
     LLM.Providers.DeepSeek
     LLM.Stream
+    -- 会话快照落盘（API.Server 直接调用；与 Core.*/LLM.* 同理需在本库重编一份）
+    Infrastructure.Storage.SessionStore
     -- ⚠️ trha-gpu-infer 依赖链把 WebGPU 模块带进共享 src 编译面：
     -- 与 trha-llm 的 27 项同理，必须列入否则链接期失败
     Infrastructure.WebGPU.Raw.Types
@@ -217,6 +219,7 @@ library trha-api
 library trha-infra
   exposed-modules:  
     Infrastructure.Storage.JSON
+    Infrastructure.Storage.SessionStore
     Infrastructure.Storage.SQLite
     Infrastructure.Network.HTTP
     Infrastructure.Sandbox.Process
@@ -227,6 +230,7 @@ library trha-infra
                   , text
                   , aeson
                   , directory
+                  , filepath
                   , process
                   , bytestring
                   , containers
@@ -602,10 +606,11 @@ executable trha
 test-suite trha-test
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
-  other-modules:    PluginSpec, CoreContractSpec
+  other-modules:    PluginSpec, CoreContractSpec, SessionPersistSpec
   hs-source-dirs:   test
   build-depends:    base ^>=4.22
                   , directory
+                  , filepath
                   , trha:trha-core
                   , trha:trha-llm
                   , trha:trha-infra

@@ -39,7 +39,8 @@ import qualified Data.Text.Encoding as TE
 import Data.Aeson.Types (Pair, parseMaybe)
 import Data.Aeson.Key (fromText)
 import qualified Data.Aeson.KeyMap as KM
-import Control.Monad (join)
+import Control.Exception (SomeException, catch)
+import Control.Monad (forM_, join)
 import GHC.Generics
 import qualified Data.Map as Map
 import Control.Concurrent.STM
@@ -52,6 +53,7 @@ import Core.Session.Types
 import Core.Session.Manager
 import Core.Agent.Modes
 import Core.Provider.Types (ProviderEntry, findProvider)
+import qualified Infrastructure.Storage.SessionStore as SS
 
 -- Provider registry handlers (P1: list/protocols, P2: probe, P3: save/…)
 import qualified API.Providers as P
@@ -133,11 +135,11 @@ instance FromJSON StepReq where
 -- 2. Server implementation
 --------------------------------------------------------------------------------
 
-server :: LLMAdapter -> TVar (Map.Map Text Session) -> Server API
-server adapter sessions =
+server :: LLMAdapter -> TVar (Map.Map Text Session) -> Maybe FilePath -> Server API
+server adapter sessions stateDir =
        healthHandler
-  :<|> startSessionHandler sessions
-  :<|> agentStepHandler adapter sessions
+  :<|> startSessionHandler sessions stateDir
+  :<|> agentStepHandler adapter sessions stateDir
   :<|> P.providersHandler
   :<|> P.protocolsHandler
   :<|> PP.probeHandler
@@ -148,7 +150,7 @@ server adapter sessions =
   :<|> P.setWebSearchHandler
   :<|> P.setThinkingHandler
   :<|> openaiModelsHandler adapter
-  :<|> openaiChatHandler adapter sessions
+  :<|> openaiChatHandler adapter sessions stateDir
   :<|> anthropicMessagesHandler adapter
   :<|> responsesHandler adapter
   :<|> openaiStreamApp adapter
@@ -164,20 +166,37 @@ healthHandler = return $ object
   ]
 
 -- Start session
-startSessionHandler :: TVar (Map.Map Text Session) -> StartReq -> Handler Value
-startSessionHandler sessionsVar req = do
+--
+-- Idempotent on purpose: the host re-registers a session id after its own
+-- restart (packages/scheduler/src/Server/index.ts calls /session/start on
+-- restore), and by then the kernel may already have loaded that session from
+-- its state directory. Creating a fresh one here would reset the FSM it just
+-- restored and overwrite the snapshot with 'Idle' — so an existing session
+-- always wins.
+startSessionHandler :: TVar (Map.Map Text Session) -> Maybe FilePath -> StartReq -> Handler Value
+startSessionHandler sessionsVar stateDir req = do
   let mode = maybe "standard" id (srMode req)
       -- Use the host's session id when supplied; the scheduler keys its own
       -- map by that id, so projections and FSM state land on the same session.
       sid = maybe ("session-" <> T.unpack mode) T.unpack (srHostSessionId req)
-  session <- liftIO $ createSession sid
-  let key = T.pack (sessionId session)
-  liftIO $ atomically $ modifyTVar sessionsVar (Map.insert key session)
-  return $ object ["sessionId" .= key, "mode" .= mode]
+      key = T.pack sid
+  existing <- Map.lookup key <$> liftIO (readTVarIO sessionsVar)
+  case existing of
+    Just session -> do
+      st <- liftIO $ getAgentState session
+      return $ object
+        [ "sessionId" .= key, "mode" .= mode, "resumed" .= True, "agentState" .= st ]
+    Nothing -> do
+      session <- liftIO $ createSession sid
+      liftIO $ atomically $ modifyTVar sessionsVar (Map.insert key session)
+      liftIO $ persistSnapshot stateDir session
+      st <- liftIO $ getAgentState session
+      return $ object
+        [ "sessionId" .= key, "mode" .= mode, "resumed" .= False, "agentState" .= st ]
 
 -- Agent step
-agentStepHandler :: LLMAdapter -> TVar (Map.Map Text Session) -> StepReq -> Handler Value
-agentStepHandler adapter sessionsVar req = do
+agentStepHandler :: LLMAdapter -> TVar (Map.Map Text Session) -> Maybe FilePath -> StepReq -> Handler Value
+agentStepHandler adapter sessionsVar stateDir req = do
   sessions <- liftIO $ readTVarIO sessionsVar
   case Map.lookup (srSessionId req) sessions of
     Nothing -> throwError err404 { errBody = "Session not found" }
@@ -205,6 +224,7 @@ agentStepHandler adapter sessionsVar req = do
       -- D-3：推进内核 FSM（Core.Agent.StateMachine 的 transition 为唯一语义来源）
       stBefore <- liftIO $ getAgentState session
       stAfter  <- liftIO $ advanceAgent session (StartCommand (T.unpack (srSessionId req)))
+      liftIO $ persistSnapshot stateDir session
       return $ object
         [ "reply" .= reply
         , "usage" .= toJSON usage
@@ -246,8 +266,8 @@ openaiModelsHandler adapter = do
       , "context_size" .= LLM.modelContextSize m
       ]
 
-openaiChatHandler :: LLMAdapter -> TVar (Map.Map Text Session) -> Value -> Handler Value
-openaiChatHandler defaultAdapter sessionsVar body = do
+openaiChatHandler :: LLMAdapter -> TVar (Map.Map Text Session) -> Maybe FilePath -> Value -> Handler Value
+openaiChatHandler defaultAdapter sessionsVar stateDir body = do
   adapter <- dispatchAdapter defaultAdapter body
   case parseOpenAIRequest body of
     Nothing -> throwError err400 { errBody = "Invalid request" }
@@ -259,7 +279,7 @@ openaiChatHandler defaultAdapter sessionsVar body = do
                        , Just (r, c) <- [parseLegacyMessage m] ]
           chunks <- liftIO $ llmChat adapter hsMsgs
           let replyText = T.concat [t | LLM.ChunkDelta t <- chunks]
-          liftIO $ touchKernelSession sessionsVar body replyText
+          liftIO $ touchKernelSession sessionsVar stateDir body replyText
           return $ openaiCompletion (oaiModel req) chunks (oaiGenParams req)
       | otherwise -> do
           -- function-calling path: full ChatMessage semantics (incl. tool
@@ -273,7 +293,7 @@ openaiChatHandler defaultAdapter sessionsVar body = do
           turn <- liftIO $ llmChatTools adapter msgs specs LLM.defaultGenParams
           -- Tool rounds carry no plain text; still advance the kernel FSM so
           -- the session's step counter stays truthful.
-          liftIO $ touchKernelSession sessionsVar body ""
+          liftIO $ touchKernelSession sessionsVar stateDir body ""
           return $ openaiToolCompletion (oaiModel req) turn (oaiGenParams req)
   where
     parseChatMsg :: Value -> Maybe LLM.ChatMessage
@@ -302,8 +322,8 @@ requestedSessionId body =
   join (parseMaybe (withObject "req" (\o -> o .:? "sessionId")) body)
 
 -- | Mirror the D-3 projections onto the kernel session named by the request.
-touchKernelSession :: TVar (Map.Map Text Session) -> Value -> Text -> IO ()
-touchKernelSession sessionsVar body replyText =
+touchKernelSession :: TVar (Map.Map Text Session) -> Maybe FilePath -> Value -> Text -> IO ()
+touchKernelSession sessionsVar stateDir body replyText =
   case requestedSessionId body of
     Nothing -> pure ()
     Just sid -> do
@@ -315,7 +335,17 @@ touchKernelSession sessionsVar body replyText =
           setProjection session "t6state" (toDyn t6st)
           setProjection session "constraint" (toDyn verdict)
           _ <- advanceAgent session (StartCommand (T.unpack sid))
-          pure ()
+          persistSnapshot stateDir session
+
+
+-- | Write the persistable slice after it changed. Best effort: a failed
+-- write must not fail the request (the conversation is still served).
+persistSnapshot :: Maybe FilePath -> Session -> IO ()
+persistSnapshot Nothing _ = pure ()
+persistSnapshot (Just dir) session = do
+  snap <- snapshotSession session
+  SS.saveSessionSnapshot dir (sessionId session) snap
+    `catch` \(_ :: SomeException) -> pure ()
 
 -- | A refusal the UI can act on: HTTP status plus a machine-readable code.
 codedRefusal :: Int -> Text -> Text -> ServerError
@@ -1009,22 +1039,29 @@ toRole _           = LLM.User
 -- @testWithApplication@ without binding a fixed port.  Everything that decides
 -- which backend answers HTTP flows through this one argument: swap the
 -- 'LLMAdapter' and every endpoint follows.
-mkApp :: LLMAdapter -> IO Application
-mkApp adapter = do
+mkApp :: LLMAdapter -> Maybe FilePath -> IO Application
+mkApp adapter stateDir = do
   sessionsVar <- newTVarIO Map.empty
-  pure (serve (Proxy :: Proxy API) (server adapter sessionsVar))
+  case stateDir of
+    Nothing -> pure ()
+    Just dir -> do
+      snaps <- SS.listSessionSnapshots dir
+      forM_ snaps $ \snap -> do
+        session <- restoreSession snap
+        atomically $ modifyTVar sessionsVar (Map.insert (T.pack (sessionId session)) session)
+  pure (serve (Proxy :: Proxy API) (server adapter sessionsVar stateDir))
 
-startServer :: LLMAdapter -> Int -> IO ()
-startServer adapter port = do
-  app <- mkApp adapter
+startServer :: LLMAdapter -> Int -> Maybe FilePath -> IO ()
+startServer adapter port stateDir = do
+  app <- mkApp adapter stateDir
   putStrLn $ "Starting server on port " ++ show port
   putStrLn "Protocols: OpenAI (/v1/chat/completions), Anthropic (/v1/messages), Responses (/v1/responses)"
   run port app
 
 -- | The stub-backed app (K6): deterministic two-round tool loop, no provider
 -- key and no model file.  Same wiring the production @startStubKernel@ uses.
-mkStubApp :: IO Application
-mkStubApp = stubAdapter >>= mkApp
+mkStubApp :: Maybe FilePath -> IO Application
+mkStubApp stateDir = stubAdapter >>= \a -> mkApp a stateDir
 
 -- | The **local CPU engine**-backed app: the real inference stack answers every
 -- endpoint, SSE included.
@@ -1037,8 +1074,8 @@ mkStubApp = stubAdapter >>= mkApp
 -- be handed to 'mkApp'.  Building it inside the package keeps the types aligned.
 -- Creating the engine here is also exactly where the wiring gap lives: nothing
 -- outside this module can currently inject a CPU backend.
-mkCPUApp :: FilePath -> IO Application
-mkCPUApp modelPath = createCPUAdapter modelPath >>= mkApp . snd
+mkCPUApp :: FilePath -> Maybe FilePath -> IO Application
+mkCPUApp modelPath stateDir = createCPUAdapter modelPath >>= \p -> mkApp (snd p) stateDir
 
 --------------------------------------------------------------------------------
 -- Stub kernel (K6): two-round tool loop without a real provider.
@@ -1088,7 +1125,7 @@ stubTools msgs _specs = do
              [] (Just (LLM.Usage 1 1 2)) Nothing
 
 -- | Start the stub kernel on the given port.
-startStubKernel :: Int -> IO ()
-startStubKernel port = do
+startStubKernel :: Int -> Maybe FilePath -> IO ()
+startStubKernel port stateDir = do
   adapter <- stubAdapter
-  startServer adapter port
+  startServer adapter port stateDir

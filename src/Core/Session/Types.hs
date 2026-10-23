@@ -4,11 +4,13 @@ module Core.Session.Types
   ( Session(..)
   , SessionEvent(..)
   , SessionId
+  , SessionSnapshot(..)
   ) where
 
 import Data.IORef
 import qualified Data.Map as Map
 import Data.Dynamic
+import Data.Aeson (FromJSON (..), ToJSON (..), object, withObject, (.:), (.=))
 import Data.Text (Text)
 import Core.Agent.Types (AgentState)
 
@@ -36,3 +38,30 @@ data Session = Session
   , projections :: IORef (Map.Map String Dynamic)
   , agentState  :: IORef AgentState
   }
+
+-- | The persistable slice of a session: identity + FSM state.
+--
+-- 'projections' and 'eventLog' are deliberately excluded:
+--
+--   * projections are @Dynamic@ (opaque to Core by design — Core must not
+--     depend on the CPU layer's concrete types);
+--   * events contain @Dynamic@ payloads for the same reason.
+--
+-- Both are derived state under event sourcing: they are recomputed from the
+-- next step, so persisting them is not required for a restart to continue.
+-- The FSM state is what tells the host "how far this conversation got".
+data SessionSnapshot = SessionSnapshot
+  { snapshotId         :: SessionId
+  , snapshotAgentState :: AgentState
+  } deriving (Show, Eq)
+
+instance ToJSON SessionSnapshot where
+  toJSON s = object
+    [ "v"          .= (1 :: Int)
+    , "sessionId"  .= snapshotId s
+    , "agentState" .= snapshotAgentState s
+    ]
+
+instance FromJSON SessionSnapshot where
+  parseJSON = withObject "SessionSnapshot" $ \o ->
+    SessionSnapshot <$> o .: "sessionId" <*> o .: "agentState"

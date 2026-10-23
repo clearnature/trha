@@ -76,9 +76,12 @@ export class HaskellBridge {
   }
 
   /**
-   * Ensure the kernel has a session record for this id. Idempotent from the
-   * scheduler's point of view: the kernel overwrites the same key. Called on
-   * create and again on restore, because a kernel restart empties its map.
+   * Ensure the kernel has a session record for this id. Called on create and
+   * again on restore, because a kernel restart may empty its in-memory map —
+   * though with a state directory the kernel usually reloads the session from
+   * disk first. The endpoint is idempotent: an id the kernel already knows
+   * (live or restored) keeps its FSM state, and the reply says
+   * `resumed: true` instead of resetting it to Idle.
    */
   async startKernelSession(sessionId: string, mode: string): Promise<void> {
     await this.httpClient.post<Record<string, unknown>>('/session/start', { sessionId, mode });

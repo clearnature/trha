@@ -17,4 +17,4 @@ main = do
       [(n, "")] -> return n
       _         -> die "usage: trha-kernel-stub PORT"
     [] -> return 8080
-  startStubKernel port
+  startStubKernel port Nothing

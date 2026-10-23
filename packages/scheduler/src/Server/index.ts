@@ -302,8 +302,11 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           pendingApproval: r.pendingApproval,
           createdAt: new Date(r.createdAt),
         });
-        // A restarted kernel has an empty session map; re-register so the
+        // A restarted kernel may have an empty session map; re-register so the
         // restored conversation keeps its projections and FSM state going.
+        // `startKernelSession` is idempotent, so a kernel that already loaded
+        // this session from its state dir answers `resumed: true` and keeps
+        // the FSM it restored.
         void bridge.startKernelSession(r.sessionId, r.mode).catch(e =>
           console.error(`kernel session restore ${r.sessionId}:`, e));
       }

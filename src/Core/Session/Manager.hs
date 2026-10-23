@@ -8,6 +8,8 @@ module Core.Session.Manager
   , getAgentState
   , setAgentState
   , advanceAgent
+  , snapshotSession
+  , restoreSession
   ) where
 
 import Core.Session.Types
@@ -83,3 +85,15 @@ advanceAgent session cmd = do
   let nxt = transition cur cmd
   setAgentState session nxt
   pure nxt
+
+-- | Capture the persistable slice (id + FSM state) of a session.
+snapshotSession :: Session -> IO SessionSnapshot
+snapshotSession session = SessionSnapshot (sessionId session) <$> getAgentState session
+
+-- | Rebuild a session from a snapshot.  Projections start empty by design:
+-- they are derived state and are recomputed on the next step.
+restoreSession :: SessionSnapshot -> IO Session
+restoreSession snap = do
+  session <- createSession (snapshotId snap)
+  setAgentState session (snapshotAgentState snap)
+  pure session

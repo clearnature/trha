@@ -38,7 +38,7 @@ data GlobalOpts = GlobalOpts
 data SubCommand
   = CmdTUI
   | CmdCLI
-  | CmdServe Int
+  | CmdServe Int (Maybe FilePath)
   | CmdSettingsSchema
   deriving (Show)
 
@@ -88,13 +88,19 @@ cliParser = pure CmdCLI
 -- how the CLI/TUI reaches the *scheduler* (3456), while this is where the
 -- kernel's OpenAI-compatible API listens. 3333 keeps the two from colliding.
 serveParser :: Parser SubCommand
-serveParser = CmdServe <$> option auto
-  ( long "kernel-port"
-  <> metavar "PORT"
-  <> value 3333
-  <> showDefault
-  <> help "Kernel API port (default: 3333; the scheduler talks to this)"
-  )
+serveParser = CmdServe
+  <$> option auto
+        ( long "kernel-port"
+        <> metavar "PORT"
+        <> value 3333
+        <> showDefault
+        <> help "Kernel API port (default: 3333; the scheduler talks to this)"
+        )
+  <*> optional (strOption
+        ( long "state-dir"
+        <> metavar "DIR"
+        <> help "Persist kernel sessions to DIR (default: in-memory only)"
+        ))
 
 -- | Command parser with subcommands
 commandParser :: Parser (GlobalOpts, SubCommand)
@@ -162,10 +168,10 @@ runCLIMode config = do
 -- 127.0.0.1:3333 by default.  The stub adapter supplies a deterministic
 -- two-round tool loop, which makes the whole chain work without an LLM key;
 -- swap it for a real provider adapter once credentials are configured.
-runServeMode :: Int -> CLIConfig -> IO ()
-runServeMode kernelPort config = do
+runServeMode :: Int -> Maybe FilePath -> CLIConfig -> IO ()
+runServeMode kernelPort stateDir config = do
   putStrLn $ "Starting API server on " ++ T.unpack (configHost config) ++ ":" ++ show kernelPort
-  API.Server.startStubKernel kernelPort
+  API.Server.startStubKernel kernelPort stateDir
 
 -- | All slash commands for tab completion (derived from the shared
 -- registry so REPL completion, TUI picker and parser stay in sync).
@@ -231,7 +237,7 @@ main = do
   case cmd of
     CmdTUI   -> runTUIMode config
     CmdCLI   -> runCLIMode config
-    CmdServe kernelPort -> runServeMode kernelPort config
+    CmdServe kernelPort stateDir -> runServeMode kernelPort stateDir config
     CmdSettingsSchema -> putStrLn (T.unpack settingsSchemaJson)
   where
     opts' = info (commandParser <**> helper)

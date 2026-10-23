@@ -80,6 +80,7 @@ import qualified Data.Map as Map
 import Control.Monad.Free (liftF)
 import PluginSpec (pluginSpec)
 import CoreContractSpec (coreContractSpec)
+import SessionPersistSpec (sessionPersistSpec)
 
 subsetOf :: (Eq a) => [a] -> [a] -> Bool
 subsetOf xs ys = all (`elem` ys) xs
@@ -103,6 +104,7 @@ main :: IO ()
 main = hspec $ do
   pluginSpec
   coreContractSpec
+  sessionPersistSpec
   describe "Infrastructure.CPU.GGUF (A6/M1)" $ do
     it "reads a real GGUF: version, alignment, metadata and tensor directory" $ do
       let path = "/home/yanli/work/9060xt/llama.cpp/models/ggml-vocab-baichuan.gguf"
@@ -2303,20 +2305,20 @@ main = hspec $ do
           ]
 
     it "stub 装配：/v1/models 报的是 stub 自己的模型（K6 现状）" $ do
-      app <- mkStubApp
+      app <- mkStubApp Nothing
       (code, body) <- withApp app $ \mgr base -> httpGet mgr (base ++ "/v1/models")
       code `shouldBe` 200
       ("Stub Kernel" `isInfixOf` body) `shouldBe` True
 
     it "CPU 装配：同一个端点换成 cpu-model（backend 由装配决定，不是硬编码）" $ do
-      app <- mkCPUApp "/dev/null"
+      app <- mkCPUApp "/dev/null" Nothing
       (code, body) <- withApp app $ \mgr base -> httpGet mgr (base ++ "/v1/models")
       code `shouldBe` 200
       ("cpu-model" `isInfixOf` body)     `shouldBe` True
       ("Stub Kernel" `isInfixOf` body)   `shouldBe` False
 
     it "CPU adapter 经 HTTP 完成一次非流式 chat（/v1/chat/completions）" $ do
-      app <- mkCPUApp "/dev/null"
+      app <- mkCPUApp "/dev/null" Nothing
       (code, body) <- withApp app $ \mgr base ->
         httpPost mgr (base ++ "/v1/chat/completions") (chatReq False)
       code `shouldBe` 200
@@ -2327,20 +2329,20 @@ main = hspec $ do
     -- 三要素由用户 2026-09-13 裁定：作用点 = 响应侧采纳判定；失败行为 = 标注（不拒绝、
     -- 不降级）；草稿模型与约束是同一机制的两面（草稿输出必须先过约束）。
     it "★ C5(D-1)：响应**总是**携带约束判定 trha_constraint（作用点在响应侧）" $ do
-      app <- mkCPUApp "/dev/null"
+      app <- mkCPUApp "/dev/null" Nothing
       (code, body) <- withApp app $ \mgr base ->
         httpPost mgr (base ++ "/v1/chat/completions") (chatReq False)
       code `shouldBe` 200
       ("trha_constraint" `isInfixOf` body) `shouldBe` True
 
     it "★ C5(D-1)：判定状态只有 pass / warn —— 类型里没有「拒绝」（裁定①）" $ do
-      app <- mkCPUApp "/dev/null"
+      app <- mkCPUApp "/dev/null" Nothing
       (_, body) <- withApp app $ \mgr base ->
         httpPost mgr (base ++ "/v1/chat/completions") (chatReq False)
       ( ("\"pass\"" `isInfixOf` body) || ("\"warn\"" `isInfixOf` body) ) `shouldBe` True
 
     it "★ C5(D-1)：判定是标注而非拒绝 —— status=warn 时内容仍然返回（裁定①）" $ do
-      app <- mkCPUApp "/dev/null"
+      app <- mkCPUApp "/dev/null" Nothing
       (code, body) <- withApp app $ \mgr base ->
         httpPost mgr (base ++ "/v1/chat/completions") (chatReq False)
       code `shouldBe` 200
@@ -2348,7 +2350,7 @@ main = hspec $ do
       ("chat.completion" `isInfixOf` body) `shouldBe` True
 
     it "★ C5(D-1)：判定分量齐全 t6 / reach / edges / reason（约束确实跑了三原语）" $ do
-      app <- mkCPUApp "/dev/null"
+      app <- mkCPUApp "/dev/null" Nothing
       (_, body) <- withApp app $ \mgr base ->
         httpPost mgr (base ++ "/v1/chat/completions") (chatReq False)
       and [ k `isInfixOf` body
@@ -2359,7 +2361,7 @@ main = hspec $ do
     -- 推理内核（T⁶ / 因果图 / 五行链）的状态此前只活在 CPU 层；这里验它经
     -- Core.Session.projections 上浮到内核会话，且在内核 API 响应中可观测。
     it "★ D-3：/agent/step 把推理状态上浮为会话投影，并在响应回显" $ do
-      app <- mkCPUApp "/dev/null"
+      app <- mkCPUApp "/dev/null" Nothing
       -- 必须在**同一个** withApp 内两次 POST（每次 withApp 会新起 server，session 会丢）
       (cStart, cStep, body) <- withApp app $ \mgr base -> do
         (cs, _bs) <- httpPost mgr (base ++ "/session/start")
@@ -2385,7 +2387,7 @@ main = hspec $ do
     -- 本条**能验证的是链路闭合**：请求 → 生成层产出 → 推理内核判定 → 状态上浮为投影 → 响应。
     -- **真实** CPU 推理（真实 .sov + Brain + argMaxIdx 采样）见 B4（generate 产出真实 token id）。
     it "★ D-3：/agent/step 推进内核 FSM 并在响应回显 agent_state" $ do
-      app <- mkCPUApp "/dev/null"
+      app <- mkCPUApp "/dev/null" Nothing
       (cStart, cStep, body) <- withApp app $ \mgr base -> do
         (cs, _) <- httpPost mgr (base ++ "/session/start")
                      (object [ "mode" .= ("standard" :: T.Text) ])
@@ -2403,7 +2405,7 @@ main = hspec $ do
       -- 占位引擎 + 链路闭合；真实 CPU 推理（Brain + argMaxIdx 采样）见 B4。
       -- 真 .sov 走 HTTP 会因 60 层/token 太慢而超时（每 token 约 5 分钟），
       -- 故本条刻意用 /dev/null（占位）保链路测试快与稳。
-      app <- mkCPUApp "/dev/null"
+      app <- mkCPUApp "/dev/null" Nothing
       (cStart, cStep, body) <- withApp app $ \mgr base -> do
         (cs, _) <- httpPost mgr (base ++ "/session/start")
                      (object [ "mode" .= ("standard" :: T.Text) ])
@@ -2428,7 +2430,7 @@ main = hspec $ do
     -- 此前只断言投影名出现；这里解析 JSON，核对 T⁶ 三分量的值域与判定分量，
     -- 才算真的验证了"推理状态被正确地上浮"，而不是"某处出现了字符串"。
     it "★ D-3 深度验证：t6_state 三分量合法（polar<144、toroidal<46）+ 判定分量 + 投影恰两个" $ do
-      app <- mkCPUApp "/dev/null"
+      app <- mkCPUApp "/dev/null" Nothing
       (cStep, body) <- withApp app $ \mgr base -> do
         _ <- httpPost mgr (base ++ "/session/start")
                (object [ "mode" .= ("standard" :: T.Text) ])
@@ -2465,7 +2467,7 @@ main = hspec $ do
           fmap List.sort mnames `shouldBe` Just ["constraint", "t6state"]
 
     it "★ D-3：投影是覆盖写 —— 多步后仍只有两个键（不累积）" $ do
-      app <- mkCPUApp "/dev/null"
+      app <- mkCPUApp "/dev/null" Nothing
       n2 <- withApp app $ \mgr base -> do
         _ <- httpPost mgr (base ++ "/session/start")
                (object [ "mode" .= ("standard" :: T.Text) ])
@@ -2479,7 +2481,7 @@ main = hspec $ do
       and [ k `isInfixOf` n2 | k <- [ "t6state", "constraint" ] ] `shouldBe` True
 
     it "CPU adapter 经 HTTP 走 SSE 流式（/v1/chat/completions/stream）" $ do
-      app <- mkCPUApp "/dev/null"
+      app <- mkCPUApp "/dev/null" Nothing
       (code, body) <- withApp app $ \mgr base ->
         httpPost mgr (base ++ "/v1/chat/completions/stream") (chatReq True)
       code `shouldBe` 200
@@ -2502,7 +2504,7 @@ main = hspec $ do
       case r of
         Left why -> expectationFailure ("cpu adapter 构造失败: " ++ T.unpack why)
         Right defAdapter -> do
-          app <- mkApp defAdapter
+          app <- mkApp defAdapter Nothing
           (code, body) <- withApp app $ \mgr base ->
             httpPost mgr (base ++ "/v1/chat/completions")
               (object [ "provider" .= ("local-cpu" :: T.Text)
