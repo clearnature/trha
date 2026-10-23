@@ -138,7 +138,7 @@ bearer k
   | otherwise = [("Authorization", "Bearer " <> TE.encodeUtf8 k)]
 
 usageOf :: Maybe Int -> Maybe Int -> Usage
-usageOf mi mo = Usage (fromMaybe 0 mi) (fromMaybe 0 mo) (fromMaybe 0 mi + fromMaybe 0 mo)
+usageOf mi mo = mkUsage (fromMaybe 0 mi) (fromMaybe 0 mo) (fromMaybe 0 mi + fromMaybe 0 mo)
 
 --------------------------------------------------------------------------------
 -- Streaming (A2): the wire decides, not the adapter
@@ -170,7 +170,7 @@ providerStream entry key = case peKind entry of
     blockingStream a msgs specs onEvent = do
       turn <- llmChatTools a msgs specs defaultGenParams
       onEvent (ChunkDelta (ctContent turn))
-      onEvent (ChunkDone (maybe (Usage 0 0 0) id (ctUsage turn)))
+      onEvent (ChunkDone (maybe (mkUsage 0 0 0) id (ctUsage turn)))
       pure turn
 
 -- | An OpenAI-compatible streaming caller.  The SSE transport and the
@@ -352,7 +352,7 @@ openAICompatAdapter baseUrl apiKey model = do
                  Just v  -> case parseDeepSeekChatTurn v of
                    Left e  -> pure [ChunkError e]
                    Right t -> pure [ ChunkDelta (ctContent t)
-                                   , ChunkDone (maybe (Usage 0 0 0) id (ctUsage t)) ]
+                                   , ChunkDone (maybe (mkUsage 0 0 0) id (ctUsage t)) ]
     , llmChatTools = \msgs specs _gp -> do
         (code, body, ok) <- call msgs specs
         if not ok
@@ -396,7 +396,7 @@ anthropicAdapter baseUrl apiKey model = do
                  Just v  -> case parseAnthropicTurn v of
                    Left e  -> pure [ChunkError e]
                    Right t -> pure [ ChunkDelta (ctContent t)
-                                   , ChunkDone (maybe (Usage 0 0 0) id (ctUsage t)) ]
+                                   , ChunkDone (maybe (mkUsage 0 0 0) id (ctUsage t)) ]
     , llmChatTools = \msgs specs _gp -> do
         (code, body, ok) <- call msgs specs
         if not ok
@@ -516,7 +516,7 @@ responsesAdapter baseUrl apiKey model = do
                  Just v  -> case parseResponsesTurn v of
                    Left e  -> pure [ChunkError e]
                    Right t -> pure [ ChunkDelta (ctContent t)
-                                   , ChunkDone (maybe (Usage 0 0 0) id (ctUsage t)) ]
+                                   , ChunkDone (maybe (mkUsage 0 0 0) id (ctUsage t)) ]
     , llmChatTools = \msgs specs _gp -> do
         (code, body, ok) <- call msgs specs
         if not ok

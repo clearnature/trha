@@ -37,7 +37,7 @@ import Network.HTTP.Types (HeaderName)
 import Network.HTTP.Types.Status (statusCode)
 import Data.Text.Encoding.Error (lenientDecode)
 
-import LLM.Adapter.Types (Message(..), Role(..), ChatMessage, ChatTurn(..), StreamChunk(..), ToolCall(..), ToolSpec, Usage(..))
+import LLM.Adapter.Types (Message(..), Role(..), ChatMessage, ChatTurn(..), StreamChunk(..), ToolCall(..), ToolSpec, Usage(..), mkUsage)
 
 data StreamEvent
   = SEVDelta Text
@@ -363,7 +363,7 @@ openAICompatStreamCall url apiKey body onEvent = do
       onEvent (ChunkError e)
       pure (ChatTurn "" [] Nothing (Just e))
     Right () -> do
-      onEvent (ChunkDone (Usage 0 0 0))
+      onEvent (ChunkDone (mkUsage 0 0 0))
       pure (ChatTurn "" [] Nothing Nothing)
   where
     authHeaders =

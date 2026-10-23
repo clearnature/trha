@@ -244,6 +244,41 @@ type EventHandler = Dynamic -> IO ()
 - **类型安全**：`Dynamic` 实现运行时类型检查
 - **动态订阅**：支持运行时订阅/取消订阅
 
+### 3.7 缓存计量与上下文治理
+
+两件事决定真实账单，且必须分开看。
+
+**前缀缓存（provider 侧）**。DeepSeek 按前缀缓存计费，命中量在
+`usage.prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`。`Usage` 带这两个字段
+（`mkUsage` 给不报告的 provider 留零），所以每一步、每个 SSE `usage` 帧、
+`/api/usage-stats` 都能看到真实命中，而不是按字符数估。实测（`test/DeepSeekCacheSpec.hs`，
+真实 API）：稳定 25k token 前缀 + 短增量，稳态命中 **99.54%**（req2–4: 99.57/99.54/99.51）。
+条件只有三条：**追加式历史**（每轮只加，不改）、**稳定 system/tools 顺序**、
+**不把时间戳之类易变内容塞进前缀**。
+
+**上下文治理（scheduler 侧，`Server/contextGovernor.ts`）**。阈值抄 Reasonix：
+窗口 60% snip / 80% fold / 90% force，尾部 16% 逐字保留；区域小于 400 token 不做折叠
+（省下的还不够付一次调用）。压力量用 provider 上一轮的真实 `prompt_tokens`，没有才估算。
+折叠出的标记是固定文本（无时间戳/随机数），所以**压缩后前缀重新稳定**，只在压缩那一步
+付一次 cache miss；`prefixResets` 把这个代价显式计出来。折叠保留 **system 块 + 首条
+用户消息**（任务陈述），实测这是性价比最高的一个开关。
+
+实测（`docs/evidence/deepseek-context-pareto.md`，window 压到 1000 以触发治理）：
+
+| arm | prompt | hit% | billed | recall |
+|---|---|---|---|---|
+| 无治理 | 15078 | 83.19% | 3844 | yes |
+| fold（折掉任务陈述） | 6348 | 56.46% | 3213 | **NO** |
+| fold+keephead | 6588 | 54.40% | **3380** | yes |
+
+结论：**看命中率会做出错误决策** —— 不治理的命中率最高但账单最贵（缓存不是免费）；
+而 `fold+keephead` 比最便宜的 `fold` 只贵 5%，却保住 100% 召回，是前沿上的实用点。
+
+配置：`TRHA_LLM_MODEL`（默认 `deepseek-flash`）、`TRHA_REASONING_EFFORT`
+（low/high/max；默认交给 API，实测 high 会把输出预算的大半烧在 reasoning 上）、
+`TRHA_CONTEXT_WINDOW`（覆盖窗口，测试用）、`TRHA_PRICE_INPUT/CACHED/OUTPUT`
+（每百万 token 价格；不配 `/api/usage-stats` 显示 `—`，不编数字）。
+
 ### 3.7 LLM Adapter (`LLM.Adapter`)
 
 ```haskell

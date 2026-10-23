@@ -52,7 +52,7 @@ blockingStream tools msgs specs onEvent = do
   mapM_ (\tc -> onEvent (ChunkToolCall (tcName tc) (tcArguments tc))) (ctToolCalls turn)
   case ctError turn of
     Just e  -> onEvent (ChunkError e)
-    Nothing -> onEvent (ChunkDone (maybe (Usage 0 0 0) id (ctUsage turn)))
+    Nothing -> onEvent (ChunkDone (maybe (mkUsage 0 0 0) id (ctUsage turn)))
   pure turn
 
 -- | Build an adapter.  Pass @Just stream@ when the backend has a real
@@ -84,8 +84,8 @@ cpuStream engine msgs _specs onEvent = do
       onEvent (ChunkError (T.pack err))
       pure (ChatTurn "" [] Nothing (Just (T.pack err)))
     Right text -> do
-      onEvent (ChunkDone (Usage 100 200 300))
-      pure (ChatTurn text [] (Just (Usage 100 200 300)) Nothing)
+      onEvent (ChunkDone (mkUsage 100 200 300))
+      pure (ChatTurn text [] (Just (mkUsage 100 200 300)) Nothing)
 
 -- | 每轮生成的最大 token 数。占位引擎（无 Brain）保持历史值 100；
 -- 真实 CPU 大脑（每 token 跑 60 层，约几分钟）用小值做「接线演示」。
@@ -102,7 +102,7 @@ cpuTools engine msgs _specs = do
   result <- generate engine (T.unwords (map chatText msgs)) (engineMaxTokens engine)
   pure $ case result of
     Left err   -> ChatTurn "" [] Nothing (Just (T.pack err))
-    Right text -> ChatTurn text [] (Just (Usage 100 200 300)) Nothing
+    Right text -> ChatTurn text [] (Just (mkUsage 100 200 300)) Nothing
 
 -- | One chat turn as plain text (the engine works on text, not roles).
 chatText :: ChatMessage -> Text
@@ -121,7 +121,7 @@ createAdapter :: Text -> IO LLMAdapter
 createAdapter _ = return $ mkAdapter
   (\messages -> do
       let lastMsg = if null messages then "" else messageContent (last messages)
-      return [ChunkDelta $ "Echo: " <> lastMsg, ChunkDone (Usage 10 20 30)])
+      return [ChunkDelta $ "Echo: " <> lastMsg, ChunkDone (mkUsage 10 20 30)])
   unsupportedTools
   (\_ -> return [0.1, 0.2, 0.3])
   (return [ModelInfo "default" "Default Model" 4096])
@@ -139,8 +139,8 @@ echoStream msgs _specs onEvent = do
         []                       -> ""
       txt = "Echo: " <> lastMsg
   onEvent (ChunkDelta txt)
-  onEvent (ChunkDone (Usage 10 20 30))
-  pure (ChatTurn txt [] (Just (Usage 10 20 30)) Nothing)
+  onEvent (ChunkDone (mkUsage 10 20 30))
+  pure (ChatTurn txt [] (Just (mkUsage 10 20 30)) Nothing)
 
 -- | Create a CPU adapter (local inference)。返回 (engine, adapter)，
 -- 上层可用 'setEngineGPU' 注入 WebGPU 前端后重建 adapter。
@@ -195,7 +195,7 @@ cpuAdapterWithEngine engine modelPath =
         result <- generate engine prompt 100
         case result of
           Left err -> return [ChunkError $ T.pack err]
-          Right text -> return [ChunkDelta text, ChunkDone (Usage 100 200 300)])
+          Right text -> return [ChunkDelta text, ChunkDone (mkUsage 100 200 300)])
     (cpuTools engine)
     (\text -> do
         let tokens = tokenize engine text

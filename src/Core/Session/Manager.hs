@@ -166,8 +166,15 @@ submitPlan session plan = do
   -- The phase check is explicit: 'transition' maps Planning→Planning for a new
   -- plan too (illegal commands are inert), so matching the result alone would
   -- let a second plan overwrite the first.
-  case (st, transition st (SubmitPlanCommand (planMode plan))) of
-    (Idle, Planning) -> do
+  case (st, planMode plan, transition st (SubmitPlanCommand (planMode plan))) of
+    -- Auto: there is nothing to decide, so the session never enters the
+    -- decision phase — the first step is released as the plan is accepted.
+    (Idle, Auto, _) | Just first <- pendingStep plan -> do
+      let plan' = markApproved plan
+      writeIORef (sessionPlan session) (Just plan')
+      setAgentState session (ExecutingStep (planStepId first))
+      pure (Just plan')
+    (Idle, Stepwise, Planning) -> do
       writeIORef (sessionPlan session) (Just plan)
       setAgentState session Planning
       pure (Just plan)
@@ -206,7 +213,14 @@ planMove session move = do
         Nothing -> pure Nothing
         Just _  -> commitHalt st (markRejected plan) RejectStepCommand
     (ExecutingStep sid, Just plan, MoveReport rid ok)
-      | rid == sid -> commit st (markReported rid ok plan) (ReportStepCommand rid ok)
+      | rid == sid ->
+          let plan' = markReported rid ok plan
+          in case (planMode plan, pendingStep plan') of
+               -- Auto keeps going by itself: reporting a step releases the
+               -- next one. A failed step still advances (the failure is
+               -- recorded); stopping early is what MoveAbandon is for.
+               (Auto, Just next) -> commitRelease st rid ok plan' next
+               _                 -> commit st plan' (ReportStepCommand rid ok)
     (_, Just plan, MoveAbandon)
       | st == Planning || isExecuting st -> commitHalt st plan AbandonPlanCommand
     _ -> pure Nothing
@@ -214,6 +228,16 @@ planMove session move = do
     isExecuting s = case s of
       ExecutingStep _ -> True
       _               -> False
+
+    -- Auto: mark the next step approved and walk the FSM through
+    -- report → approve, so the phase rules stay in one place.
+    commitRelease st rid ok plan' next = do
+      let plan'' = markApproved plan'
+          st' = transition (transition st (ReportStepCommand rid ok))
+                           (ApproveStepCommand (planStepId next))
+      writeIORef (sessionPlan session) (Just plan'')
+      writeIORef (agentState session) st'
+      pure $ Just (plan'', st')
 
     -- 改计划 + 推 FSM；计划已无待决步时收尾（FinishPlanCommand）。
     commit st plan' cmd = do

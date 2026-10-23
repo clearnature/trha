@@ -88,8 +88,8 @@ createOpenAIProvider apiKey = do
                     (c:_) -> rmContent (chMessage c)
                     []    -> "No response"
               let usage = case crUsage cr of
-                    Just u  -> Usage (ruPromptTokens u) (ruCompletionTokens u) (ruTotalTokens u)
-                    Nothing -> Usage 0 0 0
+                    Just u  -> mkUsage (ruPromptTokens u) (ruCompletionTokens u) (ruTotalTokens u)
+                    Nothing -> mkUsage 0 0 0
               return [ChunkDelta content, ChunkDone usage]
             Nothing -> return [ChunkError "Failed to parse OpenAI response"]
           else return [ChunkError $ "OpenAI API error: " <> T.pack (show (statusCode (responseStatus response)))]

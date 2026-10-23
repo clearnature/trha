@@ -43,9 +43,12 @@ withScratch act = bracket acquire release act
     release dir = removePathForcibly dir
 
 mkPlan :: [String] -> Plan
-mkPlan titles = Plan
+mkPlan = mkPlanWith Stepwise
+
+mkPlanWith :: PlanMode -> [String] -> Plan
+mkPlanWith mode titles = Plan
   { planId = "p#plan"
-  , planMode = Stepwise
+  , planMode = mode
   , planSteps = [ PlanStep ("p#" ++ show i) (T.pack t) Null StepPending
                 | (i, t) <- zip [1 :: Int ..] titles ]
   }
@@ -171,6 +174,60 @@ planSpec = do
           s' <- restoreSession snap' []
           getPlan s' `shouldReturn` snapshotPlan snap'
 
+  describe "Auto 模式 — 一次放行，按回报推进" $ do
+    it "submitting an auto plan releases the first step immediately" $ do
+      s <- createSession "s"
+      Just plan <- submitPlan s (mkPlanWith Auto ["a", "b"])
+      statuses plan `shouldBe` [StepApproved, StepPending]
+      getAgentState s `shouldReturn` ExecutingStep "p#1"
+      -- the next step exists but waits for step 1's report, not for a decision
+      fmap planStepId (pendingStep plan) `shouldBe` Just "p#2"
+
+    it "reporting a step releases the next one; the last report finishes" $ do
+      s <- createSession "s"
+      _ <- submitPlan s (mkPlanWith Auto ["a", "b"])
+      Just (p1, st1) <- planMove s (MoveReport "p#1" True)
+      statuses p1 `shouldBe` [StepDone, StepApproved]
+      st1 `shouldBe` ExecutingStep "p#2"
+      Just (p2, st2) <- planMove s (MoveReport "p#2" True)
+      statuses p2 `shouldBe` [StepDone, StepDone]
+      st2 `shouldBe` Idle
+
+    it "a failed step still advances — stopping early is what abandon is for" $ do
+      s <- createSession "s"
+      _ <- submitPlan s (mkPlanWith Auto ["a", "b"])
+      Just (p1, st1) <- planMove s (MoveReport "p#1" False)
+      statuses p1 `shouldBe` [StepFailed, StepApproved]
+      st1 `shouldBe` ExecutingStep "p#2"
+      Just (_, st2) <- planMove s MoveAbandon
+      st2 `shouldBe` Idle
+
+    it "per-step decisions do not apply in auto mode" $ do
+      s <- createSession "s"
+      _ <- submitPlan s (mkPlanWith Auto ["a", "b"])
+      -- no decision phase, so approve/skip/reject have nothing to act on
+      planMove s MoveApprove `shouldReturn` Nothing
+      planMove s MoveSkip `shouldReturn` Nothing
+      planMove s MoveReject `shouldReturn` Nothing
+      getAgentState s `shouldReturn` ExecutingStep "p#1"
+
+    it "an auto plan survives the checkpoint mid-flight" $ withScratch $ \dir -> do
+      s <- createSession "auto#1"
+      _ <- submitPlan s (mkPlanWith Auto ["a", "b"])
+      _ <- planMove s (MoveReport "p#1" True)
+      snap <- snapshotSession s
+      SS.saveSessionSnapshot dir "auto#1" snap
+      loaded <- SS.loadSessionSnapshot dir "auto#1"
+      case loaded of
+        Nothing -> expectationFailure "auto plan did not round-trip"
+        Just snap' -> do
+          snapshotAgentState snap' `shouldBe` ExecutingStep "p#2"
+          s' <- restoreSession snap' []
+          -- still auto-advancing after the restart
+          Just (p', st') <- planMove s' (MoveReport "p#2" True)
+          statuses p' `shouldBe` [StepDone, StepDone]
+          st' `shouldBe` Idle
+
   describe "API — 计划的线上契约（真实 warp）" $ do
     let withApp :: IO Application -> (Manager -> String -> IO a) -> IO a
         withApp app act = testWithApplication app $ \port -> do
@@ -271,6 +328,39 @@ planSpec = do
           (object ["sessionId" .= ("plan-1" :: T.Text), "message" .= ("after" :: T.Text)])
         c2 `shouldBe` 200
 
+    it "auto mode: submit releases step 1, and the host walks the list" $
+      withScratch $ \dir -> withApp (mkStubApp (Just dir)) $ \mgr base -> do
+        (_, _) <- call mgr "POST" (base ++ "/session/start") start
+        (c0, body0) <- call mgr "POST" (base ++ "/session/plan-1/plan")
+          (object [ "mode" .= ("auto" :: T.Text)
+                  , "steps" .=
+                      [ object ["id" .= ("a1" :: T.Text), "title" .= ("one" :: T.Text)]
+                      , object ["id" .= ("a2" :: T.Text), "title" .= ("two" :: T.Text)]
+                      ]
+                  ])
+        c0 `shouldBe` 200
+        -- no decision phase at all: step 1 is already out with the host
+        body0 `shouldSatisfy` ("\"status\":\"executing_step\"" `isInfixOf`)
+        body0 `shouldSatisfy` ("\"pending\":null" `isInfixOf`)
+
+        (cBad, _) <- call mgr "POST" (base ++ "/session/plan-1/decision") (action "approve")
+        cBad `shouldBe` 409                      -- nothing is awaiting a decision
+
+        -- the approved step is the host's to run, so a step is allowed now
+        (cRun, _) <- call mgr "POST" (base ++ "/agent/step")
+          (object ["sessionId" .= ("plan-1" :: T.Text), "message" .= ("one" :: T.Text)])
+        cRun `shouldBe` 200
+
+        (c1, body1) <- call mgr "POST" (base ++ "/session/plan-1/step-result") (report "a1" True)
+        c1 `shouldBe` 200
+        -- step 2 released automatically
+        body1 `shouldSatisfy` ("\"status\":\"step_done\"" `isInfixOf`)
+        body1 `shouldSatisfy` ("\"state\":\"executing_step\"" `isInfixOf`)
+
+        (c2, body2) <- call mgr "POST" (base ++ "/session/plan-1/step-result") (report "a2" True)
+        c2 `shouldBe` 200
+        body2 `shouldSatisfy` ("\"state\":\"idle\"" `isInfixOf`)
+
     it "a second plan while one is active is refused" $ withScratch $ \dir ->
       withApp (mkStubApp (Just dir)) $ \mgr base -> do
         (_, _) <- call mgr "POST" (base ++ "/session/start") start
@@ -280,16 +370,12 @@ planSpec = do
         c2 `shouldBe` 409
         body2 `shouldSatisfy` ("plan.active" `isInfixOf`)
 
-    it "rejects an empty plan, and auto mode is explicitly unsupported" $ withScratch $ \dir ->
+    it "rejects an empty plan" $ withScratch $ \dir ->
       withApp (mkStubApp (Just dir)) $ \mgr base -> do
         (_, _) <- call mgr "POST" (base ++ "/session/start") start
         (c1, body1) <- call mgr "POST" (base ++ "/session/plan-1/plan") (object ["steps" .= ([] :: [Value])])
         c1 `shouldBe` 400
         body1 `shouldSatisfy` ("plan.empty" `isInfixOf`)
-        (c2, body2) <- call mgr "POST" (base ++ "/session/plan-1/plan")
-          (object ["mode" .= ("auto" :: T.Text), "steps" .= [object ["id" .= ("x" :: T.Text)]]])
-        c2 `shouldBe` 400
-        body2 `shouldSatisfy` ("plan.mode_unsupported" `isInfixOf`)
 
     it "an approved step survives a restart and can still be reported" $ withScratch $ \dir -> do
       withApp (mkStubApp (Just dir)) $ \mgr base -> do

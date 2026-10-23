@@ -45,7 +45,13 @@ export interface ToolCallData {
 export interface QueryResponse {
   reply: string;
   toolCalls?: ToolCallData[];
-  usage?: { promptTokens?: number | undefined; completionTokens?: number | undefined; totalTokens?: number | undefined };
+  usage?: {
+    promptTokens?: number | undefined;
+    completionTokens?: number | undefined;
+    totalTokens?: number | undefined;
+    cacheHitTokens?: number | undefined;
+    cacheMissTokens?: number | undefined;
+  };
   /** Kernel's causal-constraint verdict (`trha_constraint`), verbatim object,
    *  when the kernel attaches it to the completion response (D-1). */
   constraint?: Record<string, unknown>;
@@ -309,14 +315,21 @@ function parseCompletion(raw: Record<string, unknown>): QueryResponse {
         return {
           id: String(o.id ?? ''),
           name: String(o.function?.name ?? ''),
-          arguments: String(o.function?.arguments ?? ''),
+          // Accept both shapes: the OpenAI wire says string, but an object
+          // comes back from some providers and must not become "[object Object]".
+          arguments: typeof o.function?.arguments === 'string'
+            ? o.function.arguments
+            : JSON.stringify(o.function?.arguments ?? {}),
         };
       })
       .filter(tc => tc.name !== '');
     if (toolCalls.length === 0) toolCalls = undefined;
   }
 
-  const usageRaw = raw.usage as { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown } | undefined;
+  const usageRaw = raw.usage as {
+    prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown;
+    prompt_cache_hit_tokens?: unknown; prompt_cache_miss_tokens?: unknown;
+  } | undefined;
   const constraint = typeof raw.trha_constraint === 'object' && raw.trha_constraint !== null
     ? (raw.trha_constraint as Record<string, unknown>)
     : undefined;
@@ -327,6 +340,11 @@ function parseCompletion(raw: Record<string, unknown>): QueryResponse {
       promptTokens: typeof usageRaw?.prompt_tokens === 'number' ? usageRaw.prompt_tokens : undefined,
       completionTokens: typeof usageRaw?.completion_tokens === 'number' ? usageRaw.completion_tokens : undefined,
       totalTokens: typeof usageRaw?.total_tokens === 'number' ? usageRaw.total_tokens : undefined,
+      // Cache accounting: without these the bill's biggest lever is invisible.
+      cacheHitTokens: typeof usageRaw?.prompt_cache_hit_tokens === 'number'
+        ? usageRaw.prompt_cache_hit_tokens : undefined,
+      cacheMissTokens: typeof usageRaw?.prompt_cache_miss_tokens === 'number'
+        ? usageRaw.prompt_cache_miss_tokens : undefined,
     },
     ...(constraint ? { constraint } : {}),
   };

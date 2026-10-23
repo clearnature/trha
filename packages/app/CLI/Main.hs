@@ -63,7 +63,7 @@ globalOptsParser = GlobalOpts
         ( long "model"
         <> short 'm'
         <> metavar "MODEL"
-        <> help "Model name (default: deepseek-chat)"
+        <> help "Model name (default: deepseek-flash)"
         ))
   <*> optional (strOption
         ( long "theme"

@@ -55,7 +55,7 @@ import Core.Agent.Types
 import Core.Session.Types
 import Core.Session.Manager
 import Core.Agent.Modes
-import Core.Provider.Types (ProviderEntry, findProvider)
+import Core.Provider.Types (ProviderEntry (..), ProviderStore (..), findProvider)
 import qualified Infrastructure.Storage.SessionStore as SS
 
 -- Provider registry handlers (P1: list/protocols, P2: probe, P3: save/…)
@@ -66,7 +66,7 @@ import qualified API.ProviderRuntime as PR
 -- LLM modules
 import qualified LLM.Adapter.Types as LLM
 import LLM.Adapter.Interface (LLMAdapter(..), createCPUAdapter)
-import LLM.Adapter.Types (ChatMessage(..), ChatTurn(..), StreamChunk(..), ToolCall(..), ToolSpec, Usage(..))
+import LLM.Adapter.Types (ChatMessage(..), ChatTurn(..), StreamChunk(..), ToolCall(..), ToolSpec, Usage(..), mkUsage)
 import qualified LLM.Stream as Stream
 import Infrastructure.CPU.ConstraintVerdict
   ( ConstraintVerdict (..), T6State (..), VerdictStatus (..)
@@ -422,9 +422,6 @@ submitPlanHandler sessionsVar stateDir sid body = do
         Right p  -> pure p
       when (null (planSteps plan)) $
         throwError $ codedRefusal 400 "plan.empty" "A plan needs at least one step"
-      when (planMode plan /= Stepwise) $
-        throwError $ codedRefusal 400 "plan.mode_unsupported"
-          "Only stepwise plans are implemented"
       submitted <- liftIO $ submitPlan session plan
       case submitted of
         Nothing -> throwError $ codedRefusal 409 "plan.active"
@@ -434,7 +431,7 @@ submitPlanHandler sessionsVar stateDir sid body = do
           let events = [ PlanChanged p, AgentStateChanged st ]
           liftIO $ mapM_ (appendEvent session) events
           liftIO $ persistStep stateDir session events
-          return $ planResponse sid "planning" p st
+          return $ planResponse sid (phaseStatus st) p st
 
 -- | The host reports how an approved step went.
 --
@@ -468,7 +465,7 @@ planResponse sid status plan st = object
   [ "sessionId" .= sid
   , "status"    .= status
   , "plan"      .= plan
-  , "pending"   .= fmap pendingJson (pendingStep plan)
+  , "pending"   .= pendingField
   , "agentState" .= st
   ]
   where
@@ -476,12 +473,24 @@ planResponse sid status plan st = object
       [ "id"    .= planStepId step
       , "title" .= planStepTitle step
       ]
+    -- "pending" means "waiting for a decision". In auto mode nothing waits for
+    -- one — the unreleased steps wait for the previous step's report — so the
+    -- field stays null and the phase carries that information instead.
+    pendingField = case st of
+      Planning -> fmap pendingJson (pendingStep plan)
+      _        -> Nothing
 
 -- | Phases in which the plan endpoints own the session.
 planPhase :: AgentState -> Bool
 planPhase Planning            = True
 planPhase (ExecutingStep _)   = True
 planPhase _                   = False
+
+-- | The phase, spelled the way the plan endpoints report it.
+phaseStatus :: AgentState -> Text
+phaseStatus Planning          = "planning"
+phaseStatus (ExecutingStep _) = "executing_step"
+phaseStatus _                 = "idle"
 
 moveStatus :: PlanMove -> Text
 moveStatus MoveApprove     = "step_approved"
@@ -555,7 +564,7 @@ agentStepHandler adapter sessionsVar stateDir req = do
       let reply = T.concat [t | LLM.ChunkDelta t <- chunks]
       let usage = case [u | LLM.ChunkDone u <- chunks] of
             (u:_) -> u
-            []    -> LLM.Usage 0 0 0
+            []    -> LLM.mkUsage 0 0 0
       ----------------------------------------------------------------------
       -- D-3：推理状态上浮为**会话投影**。
       --
@@ -756,7 +765,7 @@ parseOpenAIRequest :: Value -> Maybe OpenAIRequest
 parseOpenAIRequest val = parseMaybe parser val
   where
     parser = withObject "OpenAI" $ \v -> OpenAIRequest
-      <$> (v .:? "model" .!= "deepseek-chat")
+      <$> (v .:? "model" .!= "deepseek-flash")
       <*> (v .:? "messages" .!= ([] :: [Value]))
       <*> (v .:? "stream" .!= False)
       <*> (v .:? "tools" .!= ([] :: [Value]))
@@ -801,7 +810,7 @@ openaiCompletion model chunks genParams = object
     content = T.concat [t | LLM.ChunkDelta t <- chunks]
     usage = case [u | LLM.ChunkDone u <- chunks] of
       (u : _) -> u
-      []      -> LLM.Usage 0 0 0
+      []      -> LLM.mkUsage 0 0 0
 
 -- | Tool-calling completion response (Phase 3 K3).
 openaiToolCompletion :: Text -> LLM.ChatTurn -> Maybe Value -> Value
@@ -812,11 +821,18 @@ openaiToolCompletion model turn genParams = object
     , "choices" .= [object
       [ "index"         .= (0 :: Int)
       , "message"       .= object
-          ( [ "role" .= ("assistant" :: Text), "content" .= LLM.ctContent turn ]
+          ( [ "role" .= ("assistant" :: Text)
+            -- A provider failure must reach the caller: an empty content with
+            -- no tool call looks like "the model said nothing", which turns a
+            -- 4xx into a silent dead end.
+            , "content" .= case LLM.ctError turn of
+                Just e  -> "[provider error] " <> e
+                Nothing -> LLM.ctContent turn
+            ]
               ++ [ "tool_calls" .= LLM.ctToolCalls turn | not (null (LLM.ctToolCalls turn)) ] )
       , "finish_reason" .= (if null (LLM.ctToolCalls turn) then ("stop" :: Text) else "tool_calls")
       ]]
-  , "usage" .= maybe (toJSON (LLM.Usage 0 0 0)) toJSON (LLM.ctUsage turn)
+  , "usage" .= maybe (toJSON (LLM.mkUsage 0 0 0)) toJSON (LLM.ctUsage turn)
   , constraintField (LLM.ctContent turn)
   ] ++ genParamsEcho genParams )
 
@@ -846,7 +862,7 @@ anthropicMessagesHandler adapter body =
       let verdict = verdictOf (T.unpack content)
       let usage = case [u | LLM.ChunkDone u <- chunks] of
             (u:_) -> u
-            []    -> LLM.Usage 0 0 0
+            []    -> LLM.mkUsage 0 0 0
       return $ object
         [ "id"          .= ("msg-" <> model :: Text)
         , "type"        .= ("message" :: Text)
@@ -865,7 +881,7 @@ parseAnthropic :: Value -> Maybe (Text, Maybe Text, [(Text, Text)])
 parseAnthropic val = parseMaybe parser val
   where
     parser = withObject "Anthropic" $ \v -> do
-      model  <- v .:? "model" .!= "deepseek-chat"
+      model  <- v .:? "model" .!= "deepseek-flash"
       sys    <- v .:? "system"
       msgs   <- v .:? "messages" .!= ([] :: [Value])
       parsed <- mapM parseMsg msgs
@@ -894,7 +910,7 @@ responsesHandler adapter body =
       let verdict = verdictOf (T.unpack content)
       let usage = case [u | LLM.ChunkDone u <- chunks] of
             (u:_) -> u
-            []    -> LLM.Usage 0 0 0
+            []    -> LLM.mkUsage 0 0 0
       return $ object
         [ "id"         .= ("resp-" <> model :: Text)
         , "object"     .= ("response" :: Text)
@@ -919,7 +935,7 @@ parseResponses :: Value -> Maybe (Text, Maybe Text, [(Text, Text)])
 parseResponses val = parseMaybe parser val
   where
     parser = withObject "Responses" $ \v -> do
-      model <- v .:? "model" .!= "deepseek-chat"
+      model <- v .:? "model" .!= "deepseek-flash"
       instr <- v .:? "instructions"
       input <- v .: "input"
       msgs  <- case input of
@@ -936,15 +952,16 @@ parseResponses val = parseMaybe parser val
 
 -- | Where a streaming request should go: the provider it names, if any.
 streamingTarget :: Value -> IO (Maybe (ProviderEntry, Text))
-streamingTarget body = case requestedProvider body of
-  Nothing   -> pure Nothing
-  Just name -> do
-    store <- P.loadProviderStore
-    case findProvider name store of
-      Nothing    -> pure Nothing
-      Just entry -> do
-        mkey <- P.resolveKey name =<< P.loadKeys
-        pure (Just (entry, maybe "" id mkey))
+streamingTarget body = do
+  store <- P.loadProviderStore
+  case requestedProvider body <|> inUseProviderName store of
+    Nothing   -> pure Nothing
+    Just name ->
+      case findProvider name store of
+        Nothing    -> pure Nothing
+        Just entry -> do
+          mkey <- P.resolveKey name =<< P.loadKeys
+          pure (Just (entry, maybe "" id mkey))
 
 -- | Why a request's provider could not be used.
 data AdapterError
@@ -956,17 +973,28 @@ data AdapterError
 -- One implementation, shared by the blocking (Handler) and the streaming
 -- (Application) path -- the two can never disagree about provider lookup.
 resolveAdapterIO :: LLMAdapter -> Value -> IO (Either AdapterError LLMAdapter)
-resolveAdapterIO defaultAdapter body =
-  case requestedProvider body of
+resolveAdapterIO defaultAdapter body = do
+  store <- P.loadProviderStore
+  case requestedProvider body <|> inUseProviderName store of
     Nothing   -> pure (Right defaultAdapter)
-    Just name -> do
-      store <- P.loadProviderStore
+    Just name ->
       case findProvider name store of
         Nothing    -> pure (Left (UnknownProvider name))
         Just entry -> do
           mkey <- P.resolveKey name =<< P.loadKeys
           built <- PR.adapterFor entry (maybe "" id mkey)
           pure (either (Left . UnavailableProvider) Right built)
+
+-- | The provider the user marked as in-use, if any.
+--
+-- Saving a provider and marking it in use *is* the statement "this is my
+-- default"; making callers repeat its name on every request would mean the
+-- kernel ignores the setting the UI wrote.
+inUseProviderName :: ProviderStore -> Maybe Text
+inUseProviderName (ProviderStore ps) =
+  case [ peName p | p <- ps, peInUse p ] of
+    (n:_) -> Just n
+    []    -> Nothing
 
 -- | The resolution as a coded HTTP refusal (Handler path).
 adapterRefusal :: AdapterError -> ServerError
@@ -1177,7 +1205,7 @@ anthropicStreamApp adapter = Tagged $ \req respond -> do
             Right a  -> do
               _ <- llmChatToolsStream a convo [] (\chunk -> emitAnthropic write chunk >> flush)
               pure ()
-          emitAnthropic write (ChunkDone (Usage 0 0 0)) >> flush
+          emitAnthropic write (ChunkDone (mkUsage 0 0 0)) >> flush
 
 -- | Anthropic streaming: POST /v1/messages/stream
 anthropicStreamHandler :: LLMAdapter -> Value -> Handler Value
@@ -1246,7 +1274,7 @@ responsesStreamApp adapter = Tagged $ \req respond -> do
             Right a  -> do
               _ <- llmChatToolsStream a convo [] (\chunk -> emitResponses write chunk >> flush)
               pure ()
-          emitResponses write (ChunkDone (Usage 0 0 0)) >> flush
+          emitResponses write (ChunkDone (mkUsage 0 0 0)) >> flush
 
 
 -- Helpers
@@ -1340,8 +1368,8 @@ sse write eventName pairs = write $ mconcat $
 fromKernelEvent :: Stream.StreamEvent -> StreamChunk
 fromKernelEvent (Stream.SEVDelta t)      = ChunkDelta t
 fromKernelEvent (Stream.SEVToolCall n a) = ChunkToolCall n a
-fromKernelEvent (Stream.SEVUsage p c t)  = ChunkDone (Usage p c t)
-fromKernelEvent Stream.SEVDone           = ChunkDone (Usage 0 0 0)
+fromKernelEvent (Stream.SEVUsage p c t)  = ChunkDone (mkUsage p c t)
+fromKernelEvent Stream.SEVDone           = ChunkDone (mkUsage 0 0 0)
 fromKernelEvent (Stream.SEVError e)      = ChunkError e
 
 -- | OpenAI-compatible frames (@choices[0].delta@).
@@ -1470,7 +1498,7 @@ stubAdapter :: IO LLMAdapter
 stubAdapter = return $ LLMAdapter
   { llmChat = \msgs -> do
       let lastText = if null msgs then "" else LLM.messageContent (last msgs)
-      return [ LLM.ChunkDelta ("[stub] " <> lastText), LLM.ChunkDone (LLM.Usage 1 1 2) ]
+      return [ LLM.ChunkDelta ("[stub] " <> lastText), LLM.ChunkDone (LLM.mkUsage 1 1 2) ]
   , llmChatTools = \msgs specs _gp -> stubTools msgs specs
   , llmEmbed = \_ -> return []
   , llmModels = return [ LLM.ModelInfo "stub" "Stub Kernel" 4096 ]
@@ -1492,7 +1520,7 @@ stubStream msgs specs onEvent = do
       onEvent (LLM.ChunkDelta headBit)
       threadDelay 30000          -- 30ms: a real gap no buffering can hide
       onEvent (LLM.ChunkDelta restBits)
-      onEvent (LLM.ChunkDone (maybe (LLM.Usage 0 0 0) id (LLM.ctUsage turn)))
+      onEvent (LLM.ChunkDone (maybe (LLM.mkUsage 0 0 0) id (LLM.ctUsage turn)))
   pure turn
 
 -- | The stub's tool-calling answer, shared by both call paths.
@@ -1502,9 +1530,9 @@ stubTools msgs _specs = do
   if null toolResults
     then return $ LLM.ChatTurn ""
              [ LLM.ToolCall "call-stub" "read_file" "{\"path\":\"/etc/hostname\"}" ]
-             (Just (LLM.Usage 1 1 2)) Nothing
+             (Just (LLM.mkUsage 1 1 2)) Nothing
     else return $ LLM.ChatTurn ("[stub] tool said: " <> last toolResults)
-             [] (Just (LLM.Usage 1 1 2)) Nothing
+             [] (Just (LLM.mkUsage 1 1 2)) Nothing
 
 -- | Start the stub kernel on the given port.
 startStubKernel :: Int -> Maybe FilePath -> IO ()

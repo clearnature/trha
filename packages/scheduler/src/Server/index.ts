@@ -16,8 +16,11 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync, rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { loadPin, loadSessions, removeSessionFile, savePin, saveSession } from './stateStore.js';
+import { govern, DEFAULT_GOVERNANCE, type GovernanceConfig } from './contextGovernor.js';
 import { startPluginWatcher } from '../Plugins/watcher.js';
 import { mkdir, readFile, writeFile, appendFile } from 'node:fs/promises';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import path from 'node:path';
 
 export interface ServerConfig {
@@ -178,6 +181,24 @@ interface SchedulerSession {
   messages: SessionMessage[];
   pendingApproval: { message: string } | null;
   createdAt: Date;
+  /** Provider-reported prompt tokens of the previous request (ground truth). */
+  lastPromptTokens?: number;
+  cacheHitTokens?: number;
+  cacheMissTokens?: number;
+  completionTokens?: number;
+  /** How many times context maintenance rewrote the prefix (each one is a cache miss). */
+  prefixResets?: number;
+  lastMaintenance?: { trigger: string; savedTokens: number } | null;
+}
+
+// ── Context governance (window / thresholds) ──────────────────────────────
+// The override exists so tests can force pressure without a 1M-token session.
+function governanceConfig(): GovernanceConfig {
+  const window = Number(process.env.TRHA_CONTEXT_WINDOW ?? '');
+  return {
+    ...DEFAULT_GOVERNANCE,
+    ...(Number.isFinite(window) && window > 0 ? { window } : {}),
+  };
 }
 
 // ── Mode definitions (ported from deepseek-harness presets) ───────────────
@@ -484,11 +505,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 
   // ── Models ────────────────────────────────────────────────────────────
 
+  // What api.deepseek.com actually serves (verified 2026-10); the window is
+  // what context governance sizes its thresholds against.
+  // Working limits, not the model ceiling: 500k context / 128k output. Raising
+  // them again is a config change, not a code change.
   const models = [
-    { name: 'mimo-v2.5-pro', description: 'MIMO v2.5 Pro', contextSize: 131072 },
-    { name: 'deepseek-chat', description: 'DeepSeek Chat', contextSize: 65536 },
-    { name: 'deepseek-reasoner', description: 'DeepSeek Reasoner', contextSize: 65536 },
-    { name: 'qwen3.8-27b', description: 'Qwen 3.8 27B (local)', contextSize: 32768 },
+    { name: 'deepseek-flash', description: 'DeepSeek-V4.1-Flash', contextSize: 524288, maxOutputTokens: 131072 },
+    { name: 'deepseek-v4-pro', description: 'DeepSeek-V4-Pro', contextSize: 524288, maxOutputTokens: 131072 },
   ];
 
   app.get('/api/models', (_req, res) => {
@@ -538,21 +561,59 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 
   // ── Permission rules（内核权限规则引擎）────────────
   // ── 用量统计（UsageStatsPanel；scheduler 聚合 sessions）────────
+  // Usage accounting comes from the provider's own numbers, never from a
+  // character estimate: cached prompt tokens bill at a different rate, so a
+  // fake average would hide the one lever that moves the bill.
   app.get('/api/usage-stats', (_req, res) => {
-    const byModel = new Map<string, { requests: number; chars: number; messages: number }>();
+    type Agg = {
+      requests: number; messages: number; prompt: number; completion: number;
+      cacheHit: number; cacheMiss: number; resets: number;
+    };
+    const byModel = new Map<string, Agg>();
     for (const s of sessions.values()) {
       const key = s.mode || 'default';
-      const cur = byModel.get(key) ?? { requests: 0, chars: 0, messages: 0 };
+      const cur = byModel.get(key) ?? {
+        requests: 0, messages: 0, prompt: 0, completion: 0,
+        cacheHit: 0, cacheMiss: 0, resets: 0,
+      };
       cur.messages += s.messages.length;
-      cur.chars += s.messages.reduce((a, m) => a + (String(m.content ?? '').length), 0);
       cur.requests += s.messages.filter(m => m.role === 'assistant').length;
+      cur.prompt += s.lastPromptTokens ?? 0;
+      cur.completion += s.completionTokens ?? 0;
+      cur.cacheHit += s.cacheHitTokens ?? 0;
+      cur.cacheMiss += s.cacheMissTokens ?? 0;
+      cur.resets += s.prefixResets ?? 0;
       byModel.set(key, cur);
     }
-    const rows = Array.from(byModel.entries()).map(([model, v]) => ({
-      model, requests: v.requests, messages: v.messages,
-      tokens: Math.round(v.chars / 4),   // 粗估 ~4 chars/token
-      cost: (v.requests * 0.0001).toFixed(4),  // 占位费率（真实计费由 provider 定价）
-    }));
+    const price = {
+      input: Number(process.env.TRHA_PRICE_INPUT ?? ''),
+      cached: Number(process.env.TRHA_PRICE_CACHED ?? ''),
+      output: Number(process.env.TRHA_PRICE_OUTPUT ?? ''),
+    };
+    const priced = Number.isFinite(price.input) && price.input > 0
+                && Number.isFinite(price.cached) && price.cached > 0
+                && Number.isFinite(price.output) && price.output > 0;
+    const rows = Array.from(byModel.entries()).map(([model, v]) => {
+      const denom = v.cacheHit + v.cacheMiss;
+      // Without prices configured, say so instead of inventing a number.
+      const cost = priced
+        ? ((v.cacheMiss * price.input + v.cacheHit * price.cached + v.completion * price.output) / 1e6)
+            .toFixed(4)
+        : '—';
+      return {
+        model,
+        requests: v.requests,
+        messages: v.messages,
+        tokens: denom,
+        promptTokens: denom,
+        completionTokens: v.completion,
+        cacheHitTokens: v.cacheHit,
+        cacheMissTokens: v.cacheMiss,
+        cacheHitRatio: denom > 0 ? Number((v.cacheHit / denom).toFixed(4)) : 0,
+        contextResets: v.resets,
+        cost,
+      };
+    });
     res.json({ range: 'all', rows });
   });
 
@@ -715,10 +776,19 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // Host-side tools live under the orchestration workspace so file
   // mutations cannot escape /tmp/trha-workspace.
   const WORKSPACE = '/tmp/trha-workspace';
+  const runShell = promisify(exec);
+  // bash runs with the workspace as cwd, so a missing directory would fail the
+  // very first command; create it once at startup.
+  void mkdir(WORKSPACE, { recursive: true }).catch(() => {});
   // 沙箱「允许写入路径」（设置页配置的额外可信写目录；限制放宽，默认仅工作区）
   let extraWriteRoots: string[] = [];
   const AGENT_TOOLS: BridgeToolSpec[] = toToolSpecs();
-  const MAX_TOOL_ROUNDS = 5;
+  // Enough rounds for a real fix loop (probe → compile → read error → fix);
+  // 8 ran out mid-proof even when the model was making progress. Override for
+  // long tasks without a rebuild.
+  const MAX_TOOL_ROUNDS = Number(process.env.TRHA_MAX_TOOL_ROUNDS ?? '') > 0
+    ? Number(process.env.TRHA_MAX_TOOL_ROUNDS)
+    : 16;
 
   const emitToolLifecycle = async (
     sessionId: string, name: string, args: string[],
@@ -761,6 +831,20 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     const verdict = decidePermission(c.name, argsObj);
     if (verdict.action === 'deny') return `ERROR: ${verdict.reason}`;
     if (verdict.action === 'ask') return `REQUIRE_APPROVAL: ${verdict.reason}`;
+    if (c.name === 'bash') {
+      const cmd = typeof argsObj.command === 'string' ? argsObj.command : '';
+      if (!cmd.trim()) return 'ERROR: missing command';
+      try {
+        const { stdout, stderr } = await runShell(cmd, {
+          cwd: WORKSPACE, timeout: 120_000, maxBuffer: 4 * 1024 * 1024,
+        });
+        return limitOutput(`exit 0\n${stdout}${stderr ? `\n[stderr]\n${stderr}` : ''}`);
+      } catch (e) {
+        const err = e as { code?: number; stdout?: string; stderr?: string; message: string };
+        return limitOutput(`exit ${err.code ?? 1}\n${err.stdout ?? ''}${err.stderr ? `\n[stderr]\n${err.stderr}` : ''}`
+          + (err.stdout || err.stderr ? '' : `\n${err.message}`));
+      }
+    }
     if (c.name === 'read_file') {
       const target = inWorkspace(argsObj.path) ?? (typeof argsObj.path === 'string' ? argsObj.path : null);
       if (!target) return 'ERROR: missing/invalid path argument';
@@ -851,6 +935,19 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         toolCount: toolsCfg.length,
       });
       try {
+        // Context governance runs immediately before the request, so the
+        // provider sees exactly what was measured.
+        const governed = govern(session.messages, session.lastPromptTokens ?? 0, governanceConfig());
+        if (governed.prefixChanged) {
+          session.messages = governed.messages;
+          session.prefixResets = (session.prefixResets ?? 0) + 1;
+          session.lastMaintenance = { trigger: governed.trigger, savedTokens: governed.savedTokens };
+          events.emit('agent:context', {
+            sessionId: session.id, trigger: governed.trigger,
+            savedTokens: governed.savedTokens, prefixChanged: true,
+          });
+          persistSession(session);
+        }
         const request = {
           messages: session.messages, tools: toolsCfg,
           model: target.model, provider: target.provider,
@@ -867,6 +964,12 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
               .catch(() => bridge.queryModel(request))
           : await bridge.queryModel(request);
         if (response.constraint) stepConstraint = response.constraint;
+        if (response.usage?.promptTokens !== undefined) {
+          session.lastPromptTokens = response.usage.promptTokens;
+          session.cacheHitTokens = (session.cacheHitTokens ?? 0) + (response.usage.cacheHitTokens ?? 0);
+          session.cacheMissTokens = (session.cacheMissTokens ?? 0) + (response.usage.cacheMissTokens ?? 0);
+          session.completionTokens = (session.completionTokens ?? 0) + (response.usage.completionTokens ?? 0);
+        }
       } catch {
         // Kernel unreachable: demo tool lifecycle + mode-context echo
         // (kept for Phase 2 S2 tool-event tests and offline development).
@@ -899,9 +1002,18 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 
       // Record the assistant's tool_calls, execute each tool, feed results
       // back as tool messages, then let the model continue.
+      // The assistant turn goes back into the history next round, and a
+      // provider validates those arguments as JSON — so store a normalised
+      // form rather than whatever the model emitted.
+      const normaliseArgs = (raw: string): string => {
+        try { return JSON.stringify(JSON.parse(raw)); } catch { return '{}'; }
+      };
       session.messages.push({
         role: 'assistant', content: response.reply,
-        tool_calls: calls.map(c => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments } })),
+        tool_calls: calls.map(c => ({
+          id: c.id, type: 'function',
+          function: { name: c.name, arguments: normaliseArgs(c.arguments) },
+        })),
       });
       for (const call of calls) {
         const started = Date.now();

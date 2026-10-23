@@ -198,3 +198,6 @@ cabal.project.local
 # Python 字节码缓存
 __pycache__/
 *.pyc
+
+# Local end-to-end scratch (state dirs, step captures, logs)
+.e2e-*/

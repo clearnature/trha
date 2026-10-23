@@ -5,6 +5,8 @@ module LLM.Adapter.Types
   , StreamChunk(..)
   , ModelInfo(..)
   , Usage(..)
+  , mkUsage
+  , usageCacheHitRatio
   , Role(..)
     -- * Function calling (Phase 3 K1)
   , ToolSpec(..)
@@ -75,18 +77,37 @@ instance ToJSON ModelInfo where
     , "context_size" .= modelContextSize m
     ]
 
--- | Usage statistics
+-- | Usage statistics.
+--
+-- The two cache fields are what make prefix caching measurable: DeepSeek bills
+-- cached prompt tokens at a fraction of the miss rate, so a hit ratio that is
+-- not observable is a cost that is not controllable. Providers that do not
+-- report them leave both at zero ('mkUsage').
 data Usage = Usage
   { usagePromptTokens     :: Int
   , usageCompletionTokens :: Int
   , usageTotalTokens      :: Int
+  , usageCacheHitTokens   :: Int   -- ^ prompt tokens served from the prefix cache
+  , usageCacheMissTokens  :: Int   -- ^ prompt tokens that had to be processed
   } deriving (Show, Eq)
+
+-- | Usage without cache accounting.
+mkUsage :: Int -> Int -> Int -> Usage
+mkUsage p c t = Usage p c t 0 0
+
+-- | Share of prompt tokens served from cache (0 when nothing was reported).
+usageCacheHitRatio :: Usage -> Double
+usageCacheHitRatio u =
+  let denom = usageCacheHitTokens u + usageCacheMissTokens u
+  in if denom <= 0 then 0 else fromIntegral (usageCacheHitTokens u) / fromIntegral denom
 
 instance ToJSON Usage where
   toJSON u = object
-    [ "prompt_tokens"     .= usagePromptTokens u
-    , "completion_tokens" .= usageCompletionTokens u
-    , "total_tokens"      .= usageTotalTokens u
+    [ "prompt_tokens"            .= usagePromptTokens u
+    , "completion_tokens"        .= usageCompletionTokens u
+    , "total_tokens"             .= usageTotalTokens u
+    , "prompt_cache_hit_tokens"  .= usageCacheHitTokens u
+    , "prompt_cache_miss_tokens" .= usageCacheMissTokens u
     ]
 
 --------------------------------------------------------------------------------
@@ -173,6 +194,12 @@ instance ToJSON ChatMessage where
   toJSON (ChatAssistant content calls) = object $
     [ "role" .= ("assistant" :: Text), "content" .= content ]
       ++ [ "tool_calls" .= calls | not (null calls) ]
+      -- Thinking-mode providers require the field back on an assistant turn
+      -- that carries tool calls; omitting it is a 400 ("reasoning_content must
+      -- be passed back"). We do not retain the reasoning text itself yet, so
+      -- the field goes back empty — enough for the wire, and documented as a
+      -- quality trade-off rather than a silent lie.
+      ++ [ "reasoning_content" .= ("" :: Text) | not (null calls) ]
   toJSON (ChatTool callId content) = object
     [ "role" .= ("tool" :: Text)
     , "tool_call_id" .= callId

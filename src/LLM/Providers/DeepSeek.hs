@@ -1,11 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE LambdaCase #-}
 
 -- | DeepSeek API provider — real HTTP calls to DeepSeek's OpenAI-compatible API
 module LLM.Providers.DeepSeek
   ( createDeepSeekProvider
   , buildDeepSeekChatRequest
   , parseDeepSeekChatTurn
+  , applyEffortEnv
+  , modelFromEnv
   ) where
 
 import LLM.Adapter.Types
@@ -25,6 +28,8 @@ import LLM.Adapter.Interface (LLMAdapter(..))
 import qualified LLM.Stream as LStream
 import qualified Data.Aeson.KeyMap as KM
 import Data.Aeson.Types (parseEither, parseMaybe, withObject, (.:), (.:?), (.!=))
+import System.Environment (lookupEnv)
+import Text.Read (readMaybe)
 
 -- | DeepSeek API response types
 data ChatResponse = ChatResponse
@@ -61,6 +66,8 @@ data RespUsage = RespUsage
   { ruPromptTokens     :: Int
   , ruCompletionTokens :: Int
   , ruTotalTokens      :: Int
+  , ruCacheHitTokens   :: Int
+  , ruCacheMissTokens  :: Int
   } deriving (Show, Generic)
 
 instance FromJSON ChatResponse where
@@ -69,8 +76,20 @@ instance FromJSON Choice where
   parseJSON = genericParseJSON defaultOptions { fieldLabelModifier = drop 2 }
 instance FromJSON RespMessage where
   parseJSON = genericParseJSON defaultOptions { fieldLabelModifier = drop 2 }
+-- Explicit on purpose: the cache fields are optional and live in two places
+-- (flat @prompt_cache_*@ / nested @prompt_tokens_details.cached_tokens@), and
+-- a generic instance would demand them all.
 instance FromJSON RespUsage where
-  parseJSON = genericParseJSON defaultOptions { fieldLabelModifier = drop 2 }
+  parseJSON = withObject "usage" $ \o -> do
+    p <- o .:? "prompt_tokens" .!= 0
+    c <- o .:? "completion_tokens" .!= 0
+    t <- o .:? "total_tokens" .!= (p + c)
+    nested <- o .:? "prompt_tokens_details" >>= \case
+      Just d  -> d .:? "cached_tokens" .!= 0
+      Nothing -> pure 0
+    hit <- o .:? "prompt_cache_hit_tokens" .!= nested
+    miss <- o .:? "prompt_cache_miss_tokens" .!= max 0 (p - hit)
+    pure $ RespUsage p c t hit miss
 instance FromJSON RespToolCall where
   parseJSON = genericParseJSON defaultOptions { fieldLabelModifier = drop 2 }
 instance FromJSON RespToolFunction where
@@ -112,22 +131,58 @@ parseDeepSeekChatTurn v =
           return $ ChatTurn content calls usage Nothing
     parseCall = withObject "ToolCall" $ \o -> do
       fn <- o .: "function"
-      ToolCall <$> o .: "id" <*> fn .: "name" <*> fn .: "arguments"
-    parseUsage = withObject "usage" $ \o -> Usage
-      <$> o .:? "prompt_tokens" .!= 0
-      <*> o .:? "completion_tokens" .!= 0
-      <*> o .:? "total_tokens" .!= 0
+      args <- fn .: "arguments" >>= argsText
+      ToolCall <$> o .: "id" <*> fn .: "name" <*> pure args
+    -- OpenAI says @arguments@ is a JSON *string*, but some wires send the
+    -- object itself; encode it back rather than failing the whole turn.
+    argsText v = case v of
+      String s -> pure s
+      other    -> pure (TE.decodeUtf8 (BSL.toStrict (encode other)))
+    parseUsage = withObject "usage" $ \o -> do
+      p <- o .:? "prompt_tokens" .!= 0
+      c <- o .:? "completion_tokens" .!= 0
+      t <- o .:? "total_tokens" .!= (p + c)
+      nested <- o .:? "prompt_tokens_details" >>= \case
+        Just d  -> d .:? "cached_tokens" .!= 0
+        Nothing -> pure 0
+      hit <- o .:? "prompt_cache_hit_tokens" .!= nested
+      miss <- o .:? "prompt_cache_miss_tokens" .!= max 0 (p - hit)
+      pure $ Usage p c t hit miss
+
+-- | Insert @reasoning_effort@ from the environment, when set.
+--
+-- deepseek-flash defaults to @high@, which spends reasoning tokens on every
+-- call; the operator decides the cost/depth trade-off instead of the code
+-- baking a level in.
+applyEffortEnv :: Value -> IO Value
+applyEffortEnv v = do
+  eff <- lookupEnv "TRHA_REASONING_EFFORT"
+  cap <- lookupEnv "TRHA_MAX_OUTPUT_TOKENS"
+  pure $ case v of
+    Object o ->
+      let o1 = maybe o (\e -> KM.insert "reasoning_effort" (String (T.pack e)) o) eff
+          o2 = case (cap >>= readMaybe) :: Maybe Int of
+                 Just n | n > 0, not (KM.member "max_tokens" o1) ->
+                   KM.insert "max_tokens" (Number (fromIntegral n)) o1
+                 _ -> o1
+      in Object o2
+    _ -> v
+
+-- | The model id, overridable per deployment.
+modelFromEnv :: IO Text
+modelFromEnv = maybe "deepseek-flash" T.pack <$> lookupEnv "TRHA_LLM_MODEL"
 
 -- | Create a DeepSeek provider with real API calls
 createDeepSeekProvider :: Text -> IO LLMAdapter
 createDeepSeekProvider apiKey = do
   manager <- newManager tlsManagerSettings
+  model <- modelFromEnv
   let baseUrl = "https://api.deepseek.com"
 
   return $ LLMAdapter
     { llmChat = \messages -> do
-        let requestBody = object
-              [ "model"    .= ("deepseek-chat" :: Text)
+        requestBody <- applyEffortEnv $ object
+              [ "model"    .= model
               , "messages" .= map toJSON messages
               , "stream"   .= False
               ]
@@ -151,13 +206,14 @@ createDeepSeekProvider apiKey = do
                     []    -> "No response"
               let usage = case crUsage cr of
                     Just u  -> Usage (ruPromptTokens u) (ruCompletionTokens u) (ruTotalTokens u)
-                    Nothing -> Usage 0 0 0
+                                     (ruCacheHitTokens u) (ruCacheMissTokens u)
+                    Nothing -> mkUsage 0 0 0
               return [ChunkDelta content, ChunkDone usage]
             Nothing -> return [ChunkError "Failed to parse DeepSeek response"]
           else return [ChunkError $ "DeepSeek API error: " <> T.pack (show (statusCode (responseStatus response)))]
 
-    , llmChatTools = \msgs specs gp -> deepSeekTools apiKey manager msgs specs gp
-    , llmChatToolsStream = deepSeekStream apiKey
+    , llmChatTools = \msgs specs gp -> deepSeekTools apiKey model manager msgs specs gp
+    , llmChatToolsStream = deepSeekStream apiKey model
 
     , llmEmbed = \text -> do
         -- DeepSeek embedding endpoint
@@ -188,16 +244,16 @@ createDeepSeekProvider apiKey = do
           else return []
 
     , llmModels = return
-        [ ModelInfo "deepseek-chat"     "DeepSeek Chat Model"     65536
-        , ModelInfo "deepseek-reasoner" "DeepSeek Reasoner Model" 65536
+        [ ModelInfo "deepseek-flash"  "DeepSeek-V4.1-Flash"  524288
+        , ModelInfo "deepseek-v4-pro" "DeepSeek-V4-Pro"      524288
         ]
     }
 
 -- | Tool-calling call for the DeepSeek chat endpoint.  Shared by the blocking
 -- and the streaming entry point so the two can never drift apart.
-deepSeekTools :: Text -> Manager -> [ChatMessage] -> [ToolSpec] -> GenParams -> IO ChatTurn
-deepSeekTools apiKey manager msgs specs gp = do
-  let requestBody = buildDeepSeekChatRequest "deepseek-chat" msgs specs (Just gp)
+deepSeekTools :: Text -> Text -> Manager -> [ChatMessage] -> [ToolSpec] -> GenParams -> IO ChatTurn
+deepSeekTools apiKey model manager msgs specs gp = do
+  requestBody <- applyEffortEnv (buildDeepSeekChatRequest model msgs specs (Just gp))
   initialRequest <- parseRequest ("https://api.deepseek.com/v1/chat/completions")
   let request = initialRequest
         { method = "POST"
@@ -214,17 +270,20 @@ deepSeekTools apiKey manager msgs specs gp = do
         Right turn -> return turn
         Left err -> return (ChatTurn "" [] Nothing (Just err))
       Nothing -> return (ChatTurn "" [] Nothing (Just "Failed to parse DeepSeek response"))
-    else return (ChatTurn "" [] Nothing (Just ("DeepSeek API error: " <> T.pack (show (statusCode (responseStatus response))))))
+    else return (ChatTurn "" [] Nothing (Just
+      ("DeepSeek API error " <> T.pack (show (statusCode (responseStatus response)))
+        <> ": " <> T.take 500 (TE.decodeUtf8 (BSL.toStrict (responseBody response))))))
 
 -- | Streaming tool-calling call: the very body the blocking path builds, fed
 -- through the shared SSE engine, so increments reach the caller as produced
 -- (tools included — no capability is lost by streaming).
-deepSeekStream :: Text -> [ChatMessage] -> [ToolSpec] -> (StreamChunk -> IO ()) -> IO ChatTurn
-deepSeekStream apiKey msgs specs onEvent =
+deepSeekStream :: Text -> Text -> [ChatMessage] -> [ToolSpec] -> (StreamChunk -> IO ()) -> IO ChatTurn
+deepSeekStream apiKey model msgs specs onEvent = do
+  body <- applyEffortEnv (buildDeepSeekChatRequest model msgs specs Nothing)
   LStream.openAICompatStreamCall
     "https://api.deepseek.com/v1/chat/completions"
     apiKey
-    (withStreamFlag (buildDeepSeekChatRequest "deepseek-chat" msgs specs Nothing))
+    (withStreamFlag body)
     onEvent
   where
     withStreamFlag v = case v of

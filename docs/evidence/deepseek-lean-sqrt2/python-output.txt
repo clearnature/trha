@@ -1,0 +1,28 @@
+======================================================================
+Proof: sqrt(2) is irrational  (contradiction + parity, exact ints)
+======================================================================
+
+[1] Suppose sqrt(2) = p/q with p,q integers, q != 0, gcd(p,q) = 1.
+    Squaring:  p^2 = 2*q^2.
+
+[2] Parity step: p^2 even => p even.
+    - integer solutions (p,q) of p^2 = 2q^2 with 1 <= q <= 400: None
+    - parity lemma A verified: n even <=> n*n even  for 0 <= n <= 2000
+    - p*p = 2 has no integer solution for 0 <= p <= 9
+    - hence p^2 = 2 has no integer solution at all
+
+[3] Write p = 2k => 4k^2 = 2q^2 => q^2 = 2k^2 => q even.
+    - descent identity verified: (2k)^2 = 2(2m)^2  <=>  k^2 = 2m^2
+    - if q solved it, q/2 < q would also solve it -> no minimal q
+
+[4] p, q both even contradicts gcd(p, q) = 1.
+    (Equivalently: infinite descent with q/2, q/4, ... all integers.)
+
+[5] Brute-force rational search p/q, 1<=q<=60, 1<=p<100: hits = []
+
+[6] gcd check on a would-be reduced form: any solution in lowest
+    terms has gcd(num, den) = 1 but both even => 2 | gcd => gcd >= 2,
+    contradiction.
+
+Conclusion: no rational q satisfies q^2 = 2, i.e. sqrt(2) is irrational.
+(No floating point used anywhere; no math.sqrt call.)

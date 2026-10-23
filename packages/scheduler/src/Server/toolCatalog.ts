@@ -16,6 +16,15 @@ export interface ToolDefinition {
 /** Canonical tool directory, in the order offered to the model. */
 export const toolCatalog: ToolDefinition[] = [
   {
+    name: 'bash',
+    description: 'Execute a shell command in the workspace (stdout+stderr, exit code included)',
+    parameters: {
+      type: 'object',
+      properties: { command: { type: 'string' } },
+      required: ['command'],
+    },
+  },
+  {
     name: 'read_file',
     description: 'Read a file from the local filesystem',
     parameters: {

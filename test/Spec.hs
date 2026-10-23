@@ -83,6 +83,7 @@ import CoreContractSpec (coreContractSpec)
 import SessionPersistSpec (sessionPersistSpec)
 import ApprovalSpec (approvalSpec)
 import PlanSpec (planSpec)
+import DeepSeekCacheSpec (deepSeekCacheSpec)
 
 subsetOf :: (Eq a) => [a] -> [a] -> Bool
 subsetOf xs ys = all (`elem` ys) xs
@@ -109,6 +110,7 @@ main = hspec $ do
   sessionPersistSpec
   approvalSpec
   planSpec
+  deepSeekCacheSpec
   describe "Infrastructure.CPU.GGUF (A6/M1)" $ do
     it "reads a real GGUF: version, alignment, metadata and tensor directory" $ do
       let path = "/home/yanli/work/9060xt/llama.cpp/models/ggml-vocab-baichuan.gguf"
@@ -2013,7 +2015,7 @@ main = hspec $ do
       adapter <- createDeepSeekProvider "test-key"
       models <- llmModels adapter
       length models `shouldSatisfy` (>= 1)
-      modelName (head models) `shouldBe` "deepseek-chat"
+      modelName (head models) `shouldBe` "deepseek-flash"
 
   -- Phase 3 K1: function-calling message model (OpenAI-aligned JSON)
   describe "LLM.FunctionCalling" $ do
@@ -2036,7 +2038,7 @@ main = hspec $ do
 
     it "serializes an assistant tool call in OpenAI shape" $ do
       encode (LLM.ChatAssistant "" [LLM.ToolCall "c1" "bash" "{}"]) `shouldBe`
-        "{\"content\":\"\",\"role\":\"assistant\",\"tool_calls\":[{\"function\":{\"arguments\":\"{}\",\"name\":\"bash\"},\"id\":\"c1\",\"type\":\"function\"}]}"
+        "{\"content\":\"\",\"reasoning_content\":\"\",\"role\":\"assistant\",\"tool_calls\":[{\"function\":{\"arguments\":\"{}\",\"name\":\"bash\"},\"id\":\"c1\",\"type\":\"function\"}]}"
 
     it "omits tool_calls when the assistant has none" $ do
       encode (LLM.ChatAssistant "plain" []) `shouldBe`
@@ -2075,7 +2077,7 @@ main = hspec $ do
             ]
       parseDeepSeekChatTurn resp `shouldBe`
         Right (LLM.ChatTurn "" [LLM.ToolCall "call_1" "bash" "{\"command\":\"ls\"}"]
-                  (Just (LLM.Usage 0 0 7)) Nothing)
+                  (Just (LLM.mkUsage 0 0 7)) Nothing)
 
     it "parses a plain (tool-less) response" $ do
       let resp = object
