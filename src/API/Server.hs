@@ -108,7 +108,12 @@ type API =
 --     packages/scheduler/test/*.ts              JSON.stringify({ mode / sessionId / message })
 -- 于是 POST /session/start 与 POST /agent/step 一直返回 400（此前无测试覆盖这两个端点，
 -- 所以未暴露）。现改为手写 FromJSON，**同时接受**两种写法（含 sr 前缀的旧名）以保向后兼容。
-data StartReq = StartReq { srMode :: Maybe Text }
+data StartReq = StartReq
+  { srMode          :: Maybe Text
+  , srHostSessionId :: Maybe Text   -- host-supplied id, so the scheduler's
+                                    -- session and the kernel's TVar entry are
+                                    -- the same key
+  }
   deriving (Generic)
 
 data StepReq = StepReq { srSessionId :: Text, srMessage :: Text }
@@ -117,6 +122,7 @@ data StepReq = StepReq { srSessionId :: Text, srMessage :: Text }
 instance FromJSON StartReq where
   parseJSON = withObject "StartReq" $ \o ->
     StartReq <$> (o .:? "mode" <|> o .:? "srMode")
+             <*> (o .:? "sessionId" <|> o .:? "srSessionId")
 
 instance FromJSON StepReq where
   parseJSON = withObject "StepReq" $ \o ->
@@ -142,7 +148,7 @@ server adapter sessions =
   :<|> P.setWebSearchHandler
   :<|> P.setThinkingHandler
   :<|> openaiModelsHandler adapter
-  :<|> openaiChatHandler adapter
+  :<|> openaiChatHandler adapter sessions
   :<|> anthropicMessagesHandler adapter
   :<|> responsesHandler adapter
   :<|> openaiStreamApp adapter
@@ -161,10 +167,13 @@ healthHandler = return $ object
 startSessionHandler :: TVar (Map.Map Text Session) -> StartReq -> Handler Value
 startSessionHandler sessionsVar req = do
   let mode = maybe "standard" id (srMode req)
-  session <- liftIO $ createSession ("session-" <> T.unpack mode)
-  let sid = T.pack (sessionId session)
-  liftIO $ atomically $ modifyTVar sessionsVar (Map.insert sid session)
-  return $ object ["sessionId" .= sid, "mode" .= mode]
+      -- Use the host's session id when supplied; the scheduler keys its own
+      -- map by that id, so projections and FSM state land on the same session.
+      sid = maybe ("session-" <> T.unpack mode) T.unpack (srHostSessionId req)
+  session <- liftIO $ createSession sid
+  let key = T.pack (sessionId session)
+  liftIO $ atomically $ modifyTVar sessionsVar (Map.insert key session)
+  return $ object ["sessionId" .= key, "mode" .= mode]
 
 -- Agent step
 agentStepHandler :: LLMAdapter -> TVar (Map.Map Text Session) -> StepReq -> Handler Value
@@ -237,8 +246,8 @@ openaiModelsHandler adapter = do
       , "context_size" .= LLM.modelContextSize m
       ]
 
-openaiChatHandler :: LLMAdapter -> Value -> Handler Value
-openaiChatHandler defaultAdapter body = do
+openaiChatHandler :: LLMAdapter -> TVar (Map.Map Text Session) -> Value -> Handler Value
+openaiChatHandler defaultAdapter sessionsVar body = do
   adapter <- dispatchAdapter defaultAdapter body
   case parseOpenAIRequest body of
     Nothing -> throwError err400 { errBody = "Invalid request" }
@@ -249,6 +258,8 @@ openaiChatHandler defaultAdapter body = do
                        | m <- oaiMsgs req
                        , Just (r, c) <- [parseLegacyMessage m] ]
           chunks <- liftIO $ llmChat adapter hsMsgs
+          let replyText = T.concat [t | LLM.ChunkDelta t <- chunks]
+          liftIO $ touchKernelSession sessionsVar body replyText
           return $ openaiCompletion (oaiModel req) chunks (oaiGenParams req)
       | otherwise -> do
           -- function-calling path: full ChatMessage semantics (incl. tool
@@ -260,6 +271,9 @@ openaiChatHandler defaultAdapter body = do
             Nothing -> throwError err400 { errBody = "Invalid tools" }
             Just ts -> return ts
           turn <- liftIO $ llmChatTools adapter msgs specs LLM.defaultGenParams
+          -- Tool rounds carry no plain text; still advance the kernel FSM so
+          -- the session's step counter stays truthful.
+          liftIO $ touchKernelSession sessionsVar body ""
           return $ openaiToolCompletion (oaiModel req) turn (oaiGenParams req)
   where
     parseChatMsg :: Value -> Maybe LLM.ChatMessage
@@ -277,6 +291,31 @@ dispatchAdapter defaultAdapter body = do
 
 requestedProvider :: Value -> Maybe Text
 requestedProvider body = join (parseMaybe (withObject "req" (\o -> o .:? "provider")) body)
+
+-- | Optional kernel-session key on an OpenAI-compatible request.  The desktop
+-- scheduler creates the kernel session first and then sends this on every
+-- chat/tool round, so projections and FSM state land on the session the host
+-- knows about. Absent => the request is served statelessly (plain OpenAI
+-- compatibility), and an unknown id is ignored rather than failing the call.
+requestedSessionId :: Value -> Maybe Text
+requestedSessionId body =
+  join (parseMaybe (withObject "req" (\o -> o .:? "sessionId")) body)
+
+-- | Mirror the D-3 projections onto the kernel session named by the request.
+touchKernelSession :: TVar (Map.Map Text Session) -> Value -> Text -> IO ()
+touchKernelSession sessionsVar body replyText =
+  case requestedSessionId body of
+    Nothing -> pure ()
+    Just sid -> do
+      known <- readTVarIO sessionsVar
+      case Map.lookup sid known of
+        Nothing -> pure ()
+        Just session -> do
+          let (verdict, t6st) = verdictOfWithState (T.unpack replyText)
+          setProjection session "t6state" (toDyn t6st)
+          setProjection session "constraint" (toDyn verdict)
+          _ <- advanceAgent session (StartCommand (T.unpack sid))
+          pure ()
 
 -- | A refusal the UI can act on: HTTP status plus a machine-readable code.
 codedRefusal :: Int -> Text -> Text -> ServerError

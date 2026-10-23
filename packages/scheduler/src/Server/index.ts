@@ -302,6 +302,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           pendingApproval: r.pendingApproval,
           createdAt: new Date(r.createdAt),
         });
+        // A restarted kernel has an empty session map; re-register so the
+        // restored conversation keeps its projections and FSM state going.
+        void bridge.startKernelSession(r.sessionId, r.mode).catch(e =>
+          console.error(`kernel session restore ${r.sessionId}:`, e));
       }
     }).catch(e => console.error('session restore failed:', e));
   }
@@ -655,6 +659,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     const created = { id: sessionId, mode, messages: [] as SessionMessage[], pendingApproval: null, createdAt: new Date() };
     sessions.set(sessionId, created);
     persistSession(created);
+    // Register the same id kernel-side so projections (t6state/constraint) and
+    // the FSM have somewhere to live; failure is logged, not fatal.
+    void bridge.startKernelSession(sessionId, mode).catch(e =>
+      console.error(`kernel session create ${sessionId}:`, e));
     events.emit('session:created', { sessionId, mode });
     emitSafe(plugins.emitSessionCreate(sessionId));
     res.json({ sessionId, mode });
@@ -840,6 +848,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           messages: session.messages, tools: toolsCfg,
           model: target.model, provider: target.provider,
           genParams: target.genParams,
+          // Same key the kernel session was registered under, so this round
+          // updates projections/FSM instead of running statelessly.
+          sessionId: session.id,
         };
         // A kernel without the streaming endpoint — or a wire that cannot
         // stream — still answers: fall back to the blocking call instead of

@@ -33,9 +33,8 @@ case "$changed" in
   *package.json*) need_ci=1 ;;
 esac
 need_docs=0
-case "$changed" in
-  *.md) need_docs=1 ;;
-esac
+md_changed=$(printf '%s\n' "$changed" | grep -E '\.md$' || true)
+if [ -n "$md_changed" ]; then need_docs=1; fi
 
 # Shared config affects every TypeScript project.
 case "$changed" in
@@ -47,7 +46,8 @@ esac
 case "$changed" in *packages/scheduler/*) need_scheduler=1 ;; esac
 case "$changed" in *packages/app/Web/*) need_web=1 ;; esac
 case "$changed" in *packages/app/Desktop/*) need_desktop=1 ;; esac
-case "$changed" in *.hs|*.lhs|*.cabal|cabal.project) need_haskell=1 ;; esac
+haskell_changed=$(printf '%s\n' "$changed" | grep -E '\.(hs|lhs|cabal)$|^cabal\.project$' || true)
+if [ -n "$haskell_changed" ]; then need_haskell=1; fi
 
 check_ts() {
   dir=$1

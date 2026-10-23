@@ -28,6 +28,12 @@ export interface QueryRequest {
   provider?: string | undefined;
   /** Model generation params (LLM settings; absent = kernel defaults). */
   genParams?: { temperature?: number | undefined; topP?: number | undefined; maxTokens?: number | undefined } | undefined;
+  /**
+   * Kernel session key. When set, the kernel mirrors its D-3 projections
+   * (t6state/constraint) and advances its FSM on that session. Absent means
+   * the call is served statelessly (plain OpenAI compatibility).
+   */
+  sessionId?: string | undefined;
 }
 
 export interface ToolCallData {
@@ -69,6 +75,15 @@ export class HaskellBridge {
     return `http://${this.config.host}:${this.config.port}`;
   }
 
+  /**
+   * Ensure the kernel has a session record for this id. Idempotent from the
+   * scheduler's point of view: the kernel overwrites the same key. Called on
+   * create and again on restore, because a kernel restart empties its map.
+   */
+  async startKernelSession(sessionId: string, mode: string): Promise<void> {
+    await this.httpClient.post<Record<string, unknown>>('/session/start', { sessionId, mode });
+  }
+
   /** Call the kernel chat completions endpoint (non-streaming). */
   async queryModel(request: QueryRequest): Promise<QueryResponse> {
     const body: Record<string, unknown> = {
@@ -89,6 +104,7 @@ export class HaskellBridge {
       if (request.genParams.topP !== undefined) body.topP = request.genParams.topP;
       if (request.genParams.maxTokens !== undefined) body.max_tokens = request.genParams.maxTokens;
     }
+    if (request.sessionId) body.sessionId = request.sessionId;
 
     const raw = await this.httpClient.post<Record<string, unknown>>('/v1/chat/completions', body);
     return parseCompletion(raw);
@@ -105,6 +121,7 @@ export class HaskellBridge {
       messages: request.messages.map(normalizeMessage),
       stream: true,
     };
+    if (request.sessionId) body.sessionId = request.sessionId;
     if (request.tools && request.tools.length > 0) {
       body.tools = request.tools.map(t => ({
         type: 'function',
