@@ -7,11 +7,12 @@
 //   问题栏：警告清单（预留）
 // 接线状态：检查状态为静态预置样例（trha 无凭据诊断实现）；数据源预留。
 
+import type { Translate } from './i18n.js';
 import { useState } from 'react';
 import { useInteractionLog } from './useInteractionLog.js';
 
 export interface DiagnosticsPanelProps {
-  t: (key: string) => string;
+  t: Translate;
 }
 
 type Status = 'passed' | 'unknown' | 'not_checked' | 'failed';

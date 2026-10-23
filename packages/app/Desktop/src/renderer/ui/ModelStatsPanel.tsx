@@ -2,7 +2,8 @@
 //   时间范围预设（7/14/30/90 天或自定义）+ 来源 + 统计展示。
 // 接线状态：范围选择本地可用；统计来自内核 App.UsageStats（预留 port.usageStats()）。
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSessionStore } from './SessionContext.js';
 
 export interface ModelStatsPanelProps {
   t: (key: string) => string;

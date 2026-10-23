@@ -10,9 +10,9 @@
     "test:report": "vitest run --reporter=json --outputFile=results/test-results.json"
   },
   "devDependencies": {
-    "vitest": "^1.0.0",
     "@vitest/coverage-v8": "^1.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^7.0.2",
+    "vitest": "^1.0.0"
   },
   "dependencies": {
     "@trha/scheduler": "file:../packages/scheduler"

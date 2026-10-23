@@ -2,7 +2,7 @@
 // and tests without a scheduler.  Also the consumer proof that the Port
 // interface types (T1a) are implementable.
 
-import type { Port, PermissionRuleEntry, StepTarget } from './port.js';
+import type { MemoryEntry, PermissionRuleEntry, PluginEntry, Port, StepTarget, UsageRow } from './port.js';
 import type {
   DecisionResult,
   PlanAwaiting,

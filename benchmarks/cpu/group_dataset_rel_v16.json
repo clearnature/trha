@@ -1,0 +1,5210 @@
+[
+ {
+  "name": "trit-add",
+  "order": 3,
+  "abelian": true,
+  "family": "GF",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen_red",
+    2,
+    3
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 3
+ },
+ {
+  "name": "trit-add",
+  "order": 3,
+  "abelian": true,
+  "family": "GF",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen_red",
+    2,
+    3
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 3
+ },
+ {
+  "name": "trit-add",
+  "order": 3,
+  "abelian": true,
+  "family": "GF",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen_red",
+    2,
+    3
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 3
+ },
+ {
+  "name": "gf9-add",
+  "order": 9,
+  "abelian": true,
+  "family": "GF",
+  "relations": [
+   [
+    "R_gen",
+    9,
+    9
+   ],
+   [
+    "R_gen_red",
+    2,
+    9
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 9
+ },
+ {
+  "name": "gf9-add",
+  "order": 9,
+  "abelian": true,
+  "family": "GF",
+  "relations": [
+   [
+    "R_gen",
+    9,
+    9
+   ],
+   [
+    "R_gen_red",
+    2,
+    9
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 9
+ },
+ {
+  "name": "gf9-add",
+  "order": 9,
+  "abelian": true,
+  "family": "GF",
+  "relations": [
+   [
+    "R_gen",
+    9,
+    9
+   ],
+   [
+    "R_gen_red",
+    2,
+    9
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 9
+ },
+ {
+  "name": "duodec-add",
+  "order": 12,
+  "abelian": true,
+  "family": "Duodec",
+  "relations": [
+   [
+    "R_gen",
+    12,
+    12
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "duodec-add",
+  "order": 12,
+  "abelian": true,
+  "family": "Duodec",
+  "relations": [
+   [
+    "R_gen",
+    12,
+    12
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "duodec-add",
+  "order": 12,
+  "abelian": true,
+  "family": "Duodec",
+  "relations": [
+   [
+    "R_gen",
+    12,
+    12
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "DC",
+  "order": 12,
+  "abelian": true,
+  "family": "DC",
+  "relations": [
+   [
+    "R_gen",
+    12,
+    12
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "DC",
+  "order": 12,
+  "abelian": true,
+  "family": "DC",
+  "relations": [
+   [
+    "R_gen",
+    12,
+    12
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "DC",
+  "order": 12,
+  "abelian": true,
+  "family": "DC",
+  "relations": [
+   [
+    "R_gen",
+    12,
+    12
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "alpha-sub",
+  "order": 4,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen_red",
+    3,
+    4
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 4
+ },
+ {
+  "name": "alpha-sub",
+  "order": 4,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen_red",
+    3,
+    4
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 4
+ },
+ {
+  "name": "alpha-sub",
+  "order": 4,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen_red",
+    3,
+    4
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 4
+ },
+ {
+  "name": "gf27-mult",
+  "order": 26,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    26,
+    26
+   ],
+   [
+    "R_gen_red",
+    3,
+    26
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 26
+ },
+ {
+  "name": "gf27-mult",
+  "order": 26,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    26,
+    26
+   ],
+   [
+    "R_gen_red",
+    3,
+    26
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 26
+ },
+ {
+  "name": "gf27-mult",
+  "order": 26,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    26,
+    26
+   ],
+   [
+    "R_gen_red",
+    3,
+    26
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 26
+ },
+ {
+  "name": "sg_A4",
+  "order": 12,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "sg_A4",
+  "order": 12,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "sg_A4",
+  "order": 12,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "sg_A4",
+  "order": 12,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "sg_O",
+  "order": 24,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    24
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 24
+ },
+ {
+  "name": "sg_O",
+  "order": 24,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    24
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 24
+ },
+ {
+  "name": "sg_O",
+  "order": 24,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    24
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 24
+ },
+ {
+  "name": "sg_O",
+  "order": 24,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    24
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 24
+ },
+ {
+  "name": "sg_Oh",
+  "order": 48,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    48
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 48
+ },
+ {
+  "name": "sg_Oh",
+  "order": 48,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    48
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 48
+ },
+ {
+  "name": "sg_Oh",
+  "order": 48,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    48
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 48
+ },
+ {
+  "name": "sg_Oh",
+  "order": 48,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    48
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 48
+ },
+ {
+  "name": "sg_I",
+  "order": 60,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    60
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 60
+ },
+ {
+  "name": "sg_I",
+  "order": 60,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    60
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 60
+ },
+ {
+  "name": "sg_I",
+  "order": 60,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    60
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 60
+ },
+ {
+  "name": "sg_I",
+  "order": 60,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    60
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 60
+ },
+ {
+  "name": "sg_Ih",
+  "order": 120,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    120
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 120
+ },
+ {
+  "name": "sg_Ih",
+  "order": 120,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    120
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 120
+ },
+ {
+  "name": "sg_Ih",
+  "order": 120,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    120
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 120
+ },
+ {
+  "name": "sg_Ih",
+  "order": 120,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    120
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 120
+ },
+ {
+  "name": "D3",
+  "order": 6,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    6
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 6
+ },
+ {
+  "name": "D3",
+  "order": 6,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    6
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 6
+ },
+ {
+  "name": "D3",
+  "order": 6,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    6
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 6
+ },
+ {
+  "name": "D3",
+  "order": 6,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    6
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "D3",
+  "order": 6,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    6
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 6
+ },
+ {
+  "name": "D4",
+  "order": 8,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    8
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 8
+ },
+ {
+  "name": "D4",
+  "order": 8,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    8
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 8
+ },
+ {
+  "name": "D4",
+  "order": 8,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    8
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 8
+ },
+ {
+  "name": "D4",
+  "order": 8,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    8
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "D4",
+  "order": 8,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    8
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 8
+ },
+ {
+  "name": "D5",
+  "order": 10,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    10
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 10
+ },
+ {
+  "name": "D5",
+  "order": 10,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    10
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 10
+ },
+ {
+  "name": "D5",
+  "order": 10,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    10
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 10
+ },
+ {
+  "name": "D5",
+  "order": 10,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    10
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "D5",
+  "order": 10,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    10
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 10
+ },
+ {
+  "name": "D6",
+  "order": 12,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    6,
+    6
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "D6",
+  "order": 12,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    6,
+    6
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "D6",
+  "order": 12,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    6,
+    6
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "D6",
+  "order": 12,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    6,
+    6
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "D6",
+  "order": 12,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    6,
+    6
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "D8",
+  "order": 16,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    8,
+    8
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    16
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 16
+ },
+ {
+  "name": "D8",
+  "order": 16,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    8,
+    8
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    16
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 16
+ },
+ {
+  "name": "D8",
+  "order": 16,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    8,
+    8
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    16
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 16
+ },
+ {
+  "name": "D8",
+  "order": 16,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    8,
+    8
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    16
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "D8",
+  "order": 16,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    8,
+    8
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    16
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 16
+ },
+ {
+  "name": "sg_A4-nocomm",
+  "order": 12,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "sg_O-nocomm",
+  "order": 24,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    24
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "sg_Oh-nocomm",
+  "order": 48,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    48
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "sg_I-nocomm",
+  "order": 60,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    60
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "sg_Ih-nocomm",
+  "order": 120,
+  "abelian": false,
+  "family": "Platonic",
+  "relations": [
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    120
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "D18",
+  "order": 18,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    9,
+    9
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    18
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 18
+ },
+ {
+  "name": "D18",
+  "order": 18,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    9,
+    9
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    18
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 18
+ },
+ {
+  "name": "D18",
+  "order": 18,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    9,
+    9
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    18
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 18
+ },
+ {
+  "name": "D18",
+  "order": 18,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    9,
+    9
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    18
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "D18",
+  "order": 18,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    9,
+    9
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    18
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 18
+ },
+ {
+  "name": "D22",
+  "order": 22,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    11,
+    11
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    22
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 22
+ },
+ {
+  "name": "D22",
+  "order": 22,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    11,
+    11
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    22
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 22
+ },
+ {
+  "name": "D22",
+  "order": 22,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    11,
+    11
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    22
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 22
+ },
+ {
+  "name": "D22",
+  "order": 22,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    11,
+    11
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    22
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "D22",
+  "order": 22,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    11,
+    11
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    22
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 22
+ },
+ {
+  "name": "D26",
+  "order": 26,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    13,
+    13
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    26
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 26
+ },
+ {
+  "name": "D26",
+  "order": 26,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    13,
+    13
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    26
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 26
+ },
+ {
+  "name": "D26",
+  "order": 26,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    13,
+    13
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    26
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 26
+ },
+ {
+  "name": "D26",
+  "order": 26,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    13,
+    13
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    26
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "D26",
+  "order": 26,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    13,
+    13
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    26
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 26
+ },
+ {
+  "name": "D30",
+  "order": 30,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    15,
+    15
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    30
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 30
+ },
+ {
+  "name": "D30",
+  "order": 30,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    15,
+    15
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    30
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 30
+ },
+ {
+  "name": "D30",
+  "order": 30,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    15,
+    15
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    30
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 30
+ },
+ {
+  "name": "D30",
+  "order": 30,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    15,
+    15
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    30
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "D30",
+  "order": 30,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    15,
+    15
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    7,
+    30
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 30
+ },
+ {
+  "name": "D34",
+  "order": 34,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    17,
+    17
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    34
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 34
+ },
+ {
+  "name": "D34",
+  "order": 34,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    17,
+    17
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    34
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 34
+ },
+ {
+  "name": "D34",
+  "order": 34,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    17,
+    17
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    34
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 34
+ },
+ {
+  "name": "D34",
+  "order": 34,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    17,
+    17
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    34
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 1
+ },
+ {
+  "name": "D34",
+  "order": 34,
+  "abelian": false,
+  "family": "Dihedral",
+  "relations": [
+   [
+    "R_gen",
+    17,
+    17
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_comm",
+    0,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    34
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 34
+ },
+ {
+  "name": "C14",
+  "order": 14,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    14,
+    14
+   ],
+   [
+    "R_gen_red",
+    3,
+    14
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 14
+ },
+ {
+  "name": "C14",
+  "order": 14,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    14,
+    14
+   ],
+   [
+    "R_gen_red",
+    3,
+    14
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 14
+ },
+ {
+  "name": "C14",
+  "order": 14,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    14,
+    14
+   ],
+   [
+    "R_gen_red",
+    3,
+    14
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-red",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 14
+ },
+ {
+  "name": "C15",
+  "order": 15,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    15,
+    15
+   ],
+   [
+    "R_gen_red",
+    2,
+    15
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 15
+ },
+ {
+  "name": "C15",
+  "order": 15,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    15,
+    15
+   ],
+   [
+    "R_gen_red",
+    2,
+    15
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 15
+ },
+ {
+  "name": "C15",
+  "order": 15,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    15,
+    15
+   ],
+   [
+    "R_gen_red",
+    2,
+    15
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-red",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 15
+ },
+ {
+  "name": "C17",
+  "order": 17,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    17,
+    17
+   ],
+   [
+    "R_gen_red",
+    2,
+    17
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 17
+ },
+ {
+  "name": "C17",
+  "order": 17,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    17,
+    17
+   ],
+   [
+    "R_gen_red",
+    2,
+    17
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 17
+ },
+ {
+  "name": "C17",
+  "order": 17,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    17,
+    17
+   ],
+   [
+    "R_gen_red",
+    2,
+    17
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-red",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 17
+ },
+ {
+  "name": "C19",
+  "order": 19,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    19,
+    19
+   ],
+   [
+    "R_gen_red",
+    2,
+    19
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 19
+ },
+ {
+  "name": "C19",
+  "order": 19,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    19,
+    19
+   ],
+   [
+    "R_gen_red",
+    2,
+    19
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 19
+ },
+ {
+  "name": "C19",
+  "order": 19,
+  "abelian": true,
+  "family": "Cyclic",
+  "relations": [
+   [
+    "R_gen",
+    19,
+    19
+   ],
+   [
+    "R_gen_red",
+    2,
+    19
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-red",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 19
+ },
+ {
+  "name": "D2",
+  "order": 4,
+  "abelian": true,
+  "family": "Gf2x",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    4
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 4
+ },
+ {
+  "name": "D2",
+  "order": 4,
+  "abelian": true,
+  "family": "Gf2x",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    4
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 1,
+  "new_gen_order": 4
+ },
+ {
+  "name": "D2",
+  "order": 4,
+  "abelian": true,
+  "family": "Gf2x",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    4
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 1,
+  "new_gen_order": 1
+ },
+ {
+  "name": "D2",
+  "order": 4,
+  "abelian": true,
+  "family": "Gf2x",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    4
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 4
+ },
+ {
+  "name": "Z2xZ2",
+  "order": 4,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    4
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 4
+ },
+ {
+  "name": "Z2xZ2",
+  "order": 4,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    4
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 4
+ },
+ {
+  "name": "Z2xZ2",
+  "order": 4,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    4
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 4
+ },
+ {
+  "name": "Z2xZ2",
+  "order": 4,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    4
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 1,
+  "new_gen_order": 1
+ },
+ {
+  "name": "Z2xZ2",
+  "order": 4,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    4
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 4
+ },
+ {
+  "name": "Z2xZ3",
+  "order": 6,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    6
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 6
+ },
+ {
+  "name": "Z2xZ3",
+  "order": 6,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    6
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 6
+ },
+ {
+  "name": "Z2xZ3",
+  "order": 6,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    6
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 6
+ },
+ {
+  "name": "Z2xZ3",
+  "order": 6,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    6
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 1,
+  "new_gen_order": 1
+ },
+ {
+  "name": "Z2xZ3",
+  "order": 6,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    6
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 6
+ },
+ {
+  "name": "Z3xZ3",
+  "order": 9,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    2,
+    9
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 9
+ },
+ {
+  "name": "Z3xZ3",
+  "order": 9,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    2,
+    9
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 9
+ },
+ {
+  "name": "Z3xZ3",
+  "order": 9,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    2,
+    9
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 9
+ },
+ {
+  "name": "Z3xZ3",
+  "order": 9,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    2,
+    9
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 1,
+  "new_gen_order": 1
+ },
+ {
+  "name": "Z3xZ3",
+  "order": 9,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    2,
+    9
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 9
+ },
+ {
+  "name": "Z2xZ4",
+  "order": 8,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    8
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 8
+ },
+ {
+  "name": "Z2xZ4",
+  "order": 8,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    8
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 8
+ },
+ {
+  "name": "Z2xZ4",
+  "order": 8,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    8
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 8
+ },
+ {
+  "name": "Z2xZ4",
+  "order": 8,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    8
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 1,
+  "new_gen_order": 1
+ },
+ {
+  "name": "Z2xZ4",
+  "order": 8,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    8
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 8
+ },
+ {
+  "name": "Z2xZ5",
+  "order": 10,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    10
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 10
+ },
+ {
+  "name": "Z2xZ5",
+  "order": 10,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    10
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 10
+ },
+ {
+  "name": "Z2xZ5",
+  "order": 10,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    10
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 10
+ },
+ {
+  "name": "Z2xZ5",
+  "order": 10,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    10
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 1,
+  "new_gen_order": 1
+ },
+ {
+  "name": "Z2xZ5",
+  "order": 10,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    10
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 10
+ },
+ {
+  "name": "Z3xZ4",
+  "order": 12,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "Z3xZ4",
+  "order": 12,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "Z3xZ4",
+  "order": 12,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "Z3xZ4",
+  "order": 12,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 1,
+  "new_gen_order": 1
+ },
+ {
+  "name": "Z3xZ4",
+  "order": 12,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    5,
+    12
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 12
+ },
+ {
+  "name": "Z4xZ4",
+  "order": 16,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    16
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 16
+ },
+ {
+  "name": "Z4xZ4",
+  "order": 16,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    16
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 16
+ },
+ {
+  "name": "Z4xZ4",
+  "order": 16,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    16
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 16
+ },
+ {
+  "name": "Z4xZ4",
+  "order": 16,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    16
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 1,
+  "new_gen_order": 1
+ },
+ {
+  "name": "Z4xZ4",
+  "order": 16,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    16
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 16
+ },
+ {
+  "name": "Z3xZ5",
+  "order": 15,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    2,
+    15
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 15
+ },
+ {
+  "name": "Z3xZ5",
+  "order": 15,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    2,
+    15
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 15
+ },
+ {
+  "name": "Z3xZ5",
+  "order": 15,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    2,
+    15
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 15
+ },
+ {
+  "name": "Z3xZ5",
+  "order": 15,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    2,
+    15
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 1,
+  "new_gen_order": 1
+ },
+ {
+  "name": "Z3xZ5",
+  "order": 15,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    3,
+    3
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    2,
+    15
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 15
+ },
+ {
+  "name": "Z2xZ7",
+  "order": 14,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    7,
+    7
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    14
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 14
+ },
+ {
+  "name": "Z2xZ7",
+  "order": 14,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    7,
+    7
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    14
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 14
+ },
+ {
+  "name": "Z2xZ7",
+  "order": 14,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    7,
+    7
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    14
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 14
+ },
+ {
+  "name": "Z2xZ7",
+  "order": 14,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    7,
+    7
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    14
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 1,
+  "new_gen_order": 1
+ },
+ {
+  "name": "Z2xZ7",
+  "order": 14,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    2,
+    2
+   ],
+   [
+    "R_gen",
+    7,
+    7
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    14
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 14
+ },
+ {
+  "name": "Z4xZ5",
+  "order": 20,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    20
+   ]
+  ],
+  "relations_masked": [],
+  "variant": "orig",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 20
+ },
+ {
+  "name": "Z4xZ5",
+  "order": 20,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    20
+   ]
+  ],
+  "relations_masked": [
+   0
+  ],
+  "variant": "del-gen0",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 20
+ },
+ {
+  "name": "Z4xZ5",
+  "order": 20,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    20
+   ]
+  ],
+  "relations_masked": [
+   1
+  ],
+  "variant": "del-gen1",
+  "y_order": 1,
+  "y_abelian": 0,
+  "new_gen_order": 20
+ },
+ {
+  "name": "Z4xZ5",
+  "order": 20,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    20
+   ]
+  ],
+  "relations_masked": [
+   2
+  ],
+  "variant": "del-comm1",
+  "y_order": 1,
+  "y_abelian": 1,
+  "new_gen_order": 1
+ },
+ {
+  "name": "Z4xZ5",
+  "order": 20,
+  "abelian": true,
+  "family": "Zprod",
+  "relations": [
+   [
+    "R_gen",
+    4,
+    4
+   ],
+   [
+    "R_gen",
+    5,
+    5
+   ],
+   [
+    "R_commX",
+    1,
+    0
+   ],
+   [
+    "R_gen_red",
+    3,
+    20
+   ]
+  ],
+  "relations_masked": [
+   3
+  ],
+  "variant": "del-redundant",
+  "y_order": 0,
+  "y_abelian": 0,
+  "new_gen_order": 20
+ }
+]

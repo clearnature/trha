@@ -23,9 +23,6 @@ export const messages = {
     'perm.title': '权限确认',
     'perm.allow': '允许一次',
     'perm.deny': '拒绝',
-    'perm.title': 'Permission required',
-    'perm.allow': 'Allow once',
-    'perm.deny': 'Deny',
     'plan.deny': '拒绝',
     'ask.note': '暂不支持回答。',
     'tool.aria': '工具 {name}',
@@ -1044,6 +1041,10 @@ function resolveLang(lang: Lang): 'zh' | 'en' {
   // zh / en 直接返回；未知 locale（遗留调用）兜底 zh
   return messages[lang] ? lang : 'zh';
 }
+
+/** UI-facing translate signature: keys are checked at the table, callers may pass
+ *  dynamic keys (e.g. `settings.scaffold.${tab}.desc`), so this stays `string`. */
+export type Translate = (key: string, vars?: Record<string, string | number>) => string;
 
 export function t(lang: Lang, key: MessageKey, vars?: Record<string, string | number>): string {
   const table = messages[resolveLang(lang)];

@@ -1,6 +1,6 @@
 # docs/ 导览
 
-> 本目录共 **44 份文档**（2026-09-17 复核），按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
+> 本目录共 **47 份文档**（2026-09-21 复核；计数规则 = `reference/` 下按**条目**计，其余按 `.md` 文件计），按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
 >
 > **结构权威**是 `../QWEN.md`（§Architecture Layers / §Development Conventions / §Documentation）与 `architecture/architecture.md`。本文件只是**浏览用导览**，如有冲突，一律以 `QWEN.md` 为准。
 
@@ -58,7 +58,7 @@
 - `file-completion-tracking.md` — 逐**文件**的完成状态 + 验证方式 + 证据（按计划项核对见 `plan-reconciliation.md`）
 - `webgpu-wiring-plan.md` — WebGPU 后端接线：数据流程、W1–W7 / T1–T4 原子分解（均已跑通）、12 条「照文档写会踩」的坑；**未接生产推理路径**
 
-### `reference/` — 参考、研究、运维（11）
+### `reference/` — 参考、研究、运维（14）
 
 - `source-code-analysis.md` — 四个来源项目（DeepSeek-Harness / Pi / Reasonix / trha）的结构与融合映射
 - `reasonix-architecture-analysis.md` — Reasonix Studio v2.11.0 架构剖析（内核-外壳分离、通信、发布线、安全模型）
@@ -67,6 +67,9 @@
 - `dsh-docs-alignment-plan.md` — deepseek-harness 十份概念文档的对齐计划与落地状态
 - `electron-desktop-plan.md` — Electron 壳对齐（E2 原子）+ 打包线（P1–P5 linux）
 - `layer-integration-report.md` — Phase 1 分层集成报告。⚠️ 第 3 行含未渲染的模板变量 `$(date)`
+- `trha-architecture-review.md` — **外部独立复核**（2026-09-21）：构建拓扑实测（41 处同名不同类型、~13.6k 行构建外代码、Go 桥无人引用、Presentation 死代码、36 探针缺聚合）、逐项技术栈评价、建议优先级。⚠️ 判据是**工程可维护性**，与项目 C1–C5（数学正确性）不同，勿混用
+- `cangjie-replacement-feasibility.md` — **"用仓颉替代 Haskell"可行性**（2026-09-21）：仓颉生态与类型系统实测、内核实际依赖 GHC 的面（`class` 仅 2 处、`type family` 0 处、GADT 语法命中全是注释里的 Agda）、最小可行实验路径。含对两处初判错误的更正
+- `cangjie-typing-probes/` — 上文的**可复现探针**（9 个 `.cj` + `run.sh`，`bash run.sh` → 9/9 断言）
 - `github-secrets-setup.md` — CI 密钥配置
 - `security-cleanup-guide.md` — Git 历史敏感信息清理
 - `262974980.jpeg`、`Electron 外壳.txt` — 素材（后者：Reasonix v2.11.0 pre-release 说明，Wails→Electron 迁移背景）

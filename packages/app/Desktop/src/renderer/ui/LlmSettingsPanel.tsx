@@ -3,10 +3,11 @@
 // 接线到 sessionStore.setGenParams → step 请求 genParams（http.ts）。
 // 模型选择（selectedModel / selectedProvider）复用现有 ModelPicker 语义。
 
+import type { Translate } from './i18n.js';
 import { useSession, useSessionStore } from './SessionContext.js';
 
 export interface LlmSettingsPanelProps {
-  t: (key: string) => string;
+  t: Translate;
 }
 
 const PARAM_RANGES = {

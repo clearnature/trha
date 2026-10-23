@@ -1,0 +1,46 @@
+[
+ {
+  "theorem": "embed-hom",
+  "kind": "group-hom-emb",
+  "needs": [
+   "Z3-is-group",
+   "Z12-is-group"
+  ],
+  "strategy": "case-split(9): x,y∈Z3 逐格验证 embed(x⊕y)=embed x⊕12 embed y",
+  "alternative": "pair-popping: 交换结合和式重排（若可归一为 ⊕ 结构）"
+ },
+ {
+  "theorem": "embed-inj",
+  "kind": "injectivity",
+  "needs": [
+   "embed-hom"
+  ],
+  "strategy": "3 refl + 6 absurd：像集 {0,4,8} 分三点互异"
+ },
+ {
+  "theorem": "crt-roundtrip",
+  "kind": "crt-roundtrip",
+  "needs": [
+   "gcd-3-4-1"
+  ],
+  "strategy": "12 case refl（或 CRT 理论引用）"
+ },
+ {
+  "theorem": "Δ12-linear",
+  "kind": "linearity",
+  "needs": [
+   "Δ12-def",
+   "fn-space-additive"
+  ],
+  "strategy": "逐点展开 Δ₁₂(f+g)(x) 与 Δ₁₂f(x)+Δ₁₂g(x)"
+ },
+ {
+  "theorem": "Δ12³",
+  "kind": "char-3-cancel",
+  "needs": [
+   "Δ12-linear",
+   "shift-op-S"
+  ],
+  "strategy": "Δ₁₂³f(x)=f(x+3)⊕negate f(x)：三步差分 char3 消去"
+ }
+]

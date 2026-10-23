@@ -5,13 +5,13 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react';
 import { DEFAULT_PREFS, loadPrefs, savePrefs, type Prefs } from '../state/prefs.js';
 import type { PrefsBackend } from '../state/prefs.js';
-import { t as translate, type MessageKey } from './i18n.js';
+import { t as translate, type MessageKey, type Translate } from './i18n.js';
 
 export interface PrefsContextValue {
   prefs: Prefs;
   ready: boolean;
   setPrefs: (patch: Partial<Prefs>) => void;
-  t: (key: MessageKey, vars?: Record<string, string | number>) => string;
+  t: Translate;
 }
 
 const PrefsContext = createContext<PrefsContextValue | null>(null);
@@ -49,7 +49,7 @@ export function PrefsProvider({ children, backend, initial }: PrefsProviderProps
     prefs,
     ready,
     setPrefs,
-    t: (key, vars) => translate(prefs.lang, key, vars),
+    t: (key, vars) => translate(prefs.lang, key as MessageKey, vars),
   }), [prefs, ready, setPrefs]);
 
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>;
@@ -64,8 +64,8 @@ export function usePrefs(): PrefsContextValue {
 /** Translation helper bound to the current language.  Falls back to the
  *  default locale when rendered outside a PrefsProvider (e.g. unit tests of
  *  a single card), so presentational components stay standalone-usable. */
-export function useT(): (key: MessageKey, vars?: Record<string, string | number>) => string {
+export function useT(): Translate {
   const ctx = useContext(PrefsContext);
   const lang = ctx?.prefs.lang ?? DEFAULT_PREFS.lang;
-  return useCallback((key, vars) => translate(lang, key, vars), [lang]);
+  return useCallback((key: string, vars) => translate(lang, key as MessageKey, vars), [lang]);
 }

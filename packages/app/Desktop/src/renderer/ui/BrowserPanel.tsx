@@ -4,10 +4,11 @@
 //   浏览器数据：清除内置浏览器缓存 / 清除全部浏览器数据（危险操作提示）
 // 接线状态：开关本地可用；Cookie 导入/缓存清除经内核浏览器后端（预留）。
 
+import type { Translate } from './i18n.js';
 import { useState } from 'react';
 
 export interface BrowserPanelProps {
-  t: (key: string) => string;
+  t: Translate;
 }
 
 export function BrowserPanel({ t }: BrowserPanelProps) {

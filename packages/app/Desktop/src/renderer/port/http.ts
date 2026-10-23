@@ -2,7 +2,7 @@
 // trha scheduler over its REST + SSE endpoints.  Composed with the pure SSE
 // helpers so subscribe() and the CRUD/step calls share one config/token.
 
-import type { Port, StepTarget } from './port.js';
+import type { MemoryEntry, PermissionRuleEntry, PluginEntry, Port, StepTarget, UsageRow } from './port.js';
 import type { ApiConfig } from '../stores/apiConfig.js';
 import type {
   DecisionResult,

@@ -3,8 +3,12 @@
 //   插件卡片：名称/发行方/兼容性徽标/版本 + 能力标签（skills/agents/commands/hooks/MCP）
 // 接线状态：trha 无插件系统 —— 列表为预留（port.plugins()），操作按钮预留标注。
 
+import type { Translate } from './i18n.js';
+import { useEffect, useState } from 'react';
+import { useSessionStore } from './SessionContext.js';
+
 export interface PluginsPanelProps {
-  t: (key: string) => string;
+  t: Translate;
 }
 
 export interface PluginInfo {

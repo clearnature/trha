@@ -10,6 +10,18 @@ files:
 extraResources:
   - from: resources/scheduler-dist
     to: scheduler
+    filter: ['**/*', '!node_modules/**/*']
+  # ⚠️ scheduler 的生产依赖必须**单独一条**复制，不能靠上面那条的 `**/*`。
+  # 原因（electron-builder ≥25 的硬编码规则，见 app-builder-lib/out/util/filter.js:42-45）：
+  # extraResources 拷贝时，若某目录相对 `from` 根的位置**恰好等于 `node_modules`**，
+  # 就在任何用户 filter 之前直接返回 false —— 写多少 filter 都救不回来。
+  # 把 `from` 直接指到 node_modules 目录本身后，相对根变成 `express/...`，规则不再命中，
+  # 落点仍是 `resources/scheduler/node_modules`（Node 从 resources/scheduler/Server/*.js
+  # 向上查找刚好看得到）。
+  # 症状对照：修前随包 scheduler 起不来 —— `ERR_MODULE_NOT_FOUND: Cannot find package 'express'`
+  # → `[scheduler] refusing to start: scheduler handshake timeout (5s)`。
+  - from: resources/scheduler-dist/node_modules
+    to: scheduler/node_modules
     filter: ['**/*']
   # bundled node runtime so the spawned scheduler does not depend on a
   # system node (win/mac/linux set NODE_BIN at build time)
@@ -23,7 +35,13 @@ asar: true
 win:
   target:
     - nsis
-  signingHashAlgorithms: [sha256]
+  # electron-builder 25+ 把 `signingHashAlgorithms` 从 `win` 移到了 `win.signtoolOptions`；
+  # 留在 `win` 下会被 schema 直接判为非法配置（26.15.3 实测：`configuration.win should be
+  # one of these: null`，整个打包中止）。
+  # ⚠️ 不能只删掉这一行 —— v26 的**默认值是 `[sha1, sha256]`**，删掉等于把 sha1 加回来，
+  # 与本项目「只对最外层容器用 sha256」的原意相反。故显式声明。
+  signtoolOptions:
+    signingHashAlgorithms: [sha256]
 nsis:
   perMachine: false
   oneClick: false

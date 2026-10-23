@@ -148,6 +148,8 @@ Three GitHub Actions workflows in `.github/workflows/`:
 
 **Reference — `docs/reference/`**
 - `docs/reference/source-code-analysis.md`, `reasonix-architecture-analysis.md`, `reasonix-cli-tui-architecture-analysis.md`, `cordis-plugin-notes.md`, `dsh-docs-alignment-plan.md`, `electron-desktop-plan.md`, `layer-integration-report.md`
+- `docs/reference/trha-architecture-review.md` — **external independent review** (2026-09-21): measured build topology (41 modules compiled twice ⇒ 41 same-name-different-type pairs; ~13.6k lines of Haskell outside the root build; `go-haskell-bridge` referenced 0 times; `Presentation/` dead code; 36 executables with no aggregated exit code) + per-subsystem tech-stack assessment + prioritised recommendations. ⚠️ Its criterion is **engineering maintainability**, *not* the project's C1–C5 (mathematical correctness) — do not conflate.
+- `docs/reference/cangjie-replacement-feasibility.md` + `docs/reference/cangjie-typing-probes/` — feasibility of replacing Haskell with Cangjie (2026-09-21). Includes the compiler-verified Cangjie type-system capability table (phantom-type category isolation ✅; HKT / associated types / GADTs / type-level params ❌; no STM) and the measured GHC-dependency surface of the kernel (`class` used twice, both in the FFI layer; `type family` zero times; the only HKT dependency is the Free-monad plugin DSL, for which Cangjie's native effect handlers are the direct analogue). Probes are runnable: `bash docs/reference/cangjie-typing-probes/run.sh`.
 - `docs/reference/github-secrets-setup.md`, `security-cleanup-guide.md` — CI / secrets operations
 
 **Archive — `docs/archive/`** (completed or superseded plans)

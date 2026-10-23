@@ -37,6 +37,32 @@ describe('StatusBar', () => {
     expect(screen.getByText(/❌ boom/)).toBeTruthy();
   });
 
+  // P3: the kernel's causal-constraint verdict must be visible in the UI.
+  it('shows the constraint pass badge when the kernel says pass', async () => {
+    mount();
+    await act(async () => {
+      store.setState({ constraint: { status: 'pass', reason: 'ok' } as Record<string, unknown> });
+    });
+    const badge = screen.getByText(/pass/);
+    expect(badge.getAttribute('data-constraint')).toBe('pass');
+  });
+
+  it('shows a warn badge (and the reason) when the kernel says warn', async () => {
+    mount();
+    await act(async () => {
+      store.setState({ constraint: { status: 'warn', reason: 'berry drift' } as Record<string, unknown> });
+    });
+    const badge = screen.getByText(/warn/);
+    expect(badge.getAttribute('data-constraint')).toBe('warn');
+    expect(badge.getAttribute('title')).toBe('berry drift');
+  });
+
+  it('shows no badge before any constrained step (does not fabricate a verdict)', () => {
+    mount();
+    expect(screen.queryByText(/pass/)).toBeNull();
+    expect(screen.queryByText(/warn/)).toBeNull();
+  });
+
   it('renders the short session id and the studio version once loaded', async () => {
     mount();
     await act(async () => {

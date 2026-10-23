@@ -1,0 +1,95 @@
+{
+ "name": "Chain-Z3toZ12",
+ "source": "Sovereign/Algebra/ChainZ3toZ12.agda",
+ "objects": [
+  {
+   "id": "Z3",
+   "kind": "additive-group",
+   "order": 3,
+   "cyclic": true,
+   "prime": true
+  },
+  {
+   "id": "Z12",
+   "kind": "additive-group",
+   "order": 12,
+   "cyclic": true,
+   "factor": "Z3xZ4"
+  },
+  {
+   "id": "Z3xZ4",
+   "kind": "product",
+   "order": 12,
+   "through": "CRT"
+  },
+  {
+   "id": "Duodec",
+   "kind": "TDT-display",
+   "order": 12,
+   "joint": "3*4"
+  }
+ ],
+ "morphisms": [
+  {
+   "from": "Z3",
+   "to": "Z12",
+   "name": "embed",
+   "def": "x↦4x mod 12",
+   "kind": "group-hom",
+   "image": "{0,4,8}",
+   "injective": true
+  },
+  {
+   "from": "Z12",
+   "to": "Z3xZ4",
+   "name": "crt12",
+   "def": "roundtrip",
+   "kind": "isomorphism"
+  },
+  {
+   "from": "Z12",
+   "to": "Trit-fn",
+   "name": "Δ12",
+   "def": "差分算子",
+   "kind": "linear-operator",
+   "key": "Δ¹²³=S³-I (char3)"
+  },
+  {
+   "from": "Z3",
+   "to": "Z12",
+   "name": "freq-chain",
+   "def": "3→6→12 倍频",
+   "kind": "chain-embed"
+  }
+ ],
+ "theorems": [
+  {
+   "stage": 1,
+   "name": "embed-hom",
+   "stmt": "embed(x⊕y) ≡ embed x +12 embed y",
+   "proof": "9 case"
+  },
+  {
+   "stage": 1,
+   "name": "embed-inj",
+   "stmt": "embed x ≡ embed y → x ≡ y",
+   "proof": "3 refl + 6 absurd"
+  },
+  {
+   "stage": 2,
+   "name": "crt-roundtrip",
+   "stmt": "crt12 (π3 x) (π4 x) ≡ x",
+   "proof": "12 case"
+  },
+  {
+   "stage": 3,
+   "name": "Δ12-linear",
+   "stmt": "Δ₁₂(f+g) ≡ Δ₁₂f + Δ₁₂g"
+  },
+  {
+   "stage": 4,
+   "name": "Δ12³",
+   "stmt": "Δ₁₂³f(x) = f(x+3) ⊕ negate(f(x))"
+  }
+ ]
+}

@@ -2,10 +2,11 @@
 //   接入目标：QQ / 飞书 / Lark / 微信 / 钉钉；每个目标状态 + 配置。
 // 接线状态：目标选择本地；连接诊断/配置经内核预留（port.bots()）。
 
+import type { Translate } from './i18n.js';
 import { useState } from 'react';
 
 export interface BotsPanelProps {
-  t: (key: string) => string;
+  t: Translate;
 }
 
 const BOT_TARGETS = ['qq', 'feishu', 'lark', 'weixin', 'dingtalk'] as const;

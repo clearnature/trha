@@ -68,6 +68,8 @@ export interface StepResult {
   reply: string;
   messages: PortSessionMessage[];
   mode: string;
+  /** Kernel causal-constraint verdict (D-1 / P3 wiring): pass | warn + t6/reach/edges/reason. */
+  constraint?: Record<string, unknown>;
 }
 
 export interface PlanAwaiting {

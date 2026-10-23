@@ -88,5 +88,5 @@ export const useExtSettings = create<ExtSettings & {
     reset: () => set({ ...DEFAULT_EXT }),
   }),
   { name: 'trha.extSettings', storage: createJSONStorage(() => localStorage), merge: (persisted, current) =>
-      normalizeExt(persisted) },
+      ({ ...current, ...normalizeExt(persisted) }) },
 ));
