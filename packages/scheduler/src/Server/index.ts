@@ -976,6 +976,20 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   app.post('/api/session/:id/decision', async (req, res) => {
     const session = sessions.get(req.params.id);
     if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    // A plan decision: the kernel owns plans, so this is a pure forward. Doing
+    // it before the local gate keeps the two machines from both answering.
+    const planAction = req.body?.action;
+    if (typeof planAction === 'string') {
+      try {
+        const answer = await bridge.decidePlan(session.id, planAction);
+        events.emit('agent:decision', { sessionId: session.id, action: planAction });
+        return res.json({ ...answer, mode: session.mode });
+      } catch (e) {
+        return res.status(502).json({ error: `kernel plan decision failed: ${String(e)}` });
+      }
+    }
+
     const pending = session.pendingApproval;
     if (!pending) return res.status(400).json({ error: 'No pending approval' });
     const approve = req.body?.approve === true;
@@ -999,6 +1013,56 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
     const reply = await runStep(session, pending.message);
     res.json({ status: 'approved', reply, messages: session.messages, mode: session.mode });
+  });
+
+  // ── Multi-step plans (kernel-owned) ───────────────────────────────────
+  //
+  // The scheduler keeps no copy of the plan: the kernel holds the steps, the
+  // phase and the barrier, and persists all of it. These three routes are thin
+  // forwards so the shell has one door.
+
+  app.post('/api/session/:id/plan', async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    try {
+      const answer = await bridge.submitPlan(session.id, req.body as Record<string, unknown>);
+      events.emit('agent:plan', { sessionId: session.id, ...answer });
+      return res.json({ ...answer, mode: session.mode });
+    } catch (e) {
+      return res.status(502).json({ error: `kernel plan submit failed: ${String(e)}` });
+    }
+  });
+
+  app.get('/api/session/:id/plan', async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    try {
+      const answer = await bridge.getPlan(session.id);
+      return res.json({ ...answer, mode: session.mode });
+    } catch (e) {
+      return res.status(502).json({ error: `kernel plan read failed: ${String(e)}` });
+    }
+  });
+
+  app.post('/api/session/:id/step-result', async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    const { stepId, ok, output } = req.body as { stepId?: string; ok?: boolean; output?: unknown };
+    if (typeof stepId !== 'string' || typeof ok !== 'boolean') {
+      return res.status(400).json({ error: 'Expected stepId and ok' });
+    }
+    try {
+      const answer = await bridge.reportStep(session.id, stepId, ok, output);
+      // The host reported a step it ran: keep its own transcript in step.
+      session.messages.push({
+        role: 'assistant',
+        content: `[plan] ${stepId} ${ok ? 'done' : 'failed'}`,
+      });
+      persistSession(session);
+      return res.json({ ...answer, mode: session.mode });
+    } catch (e) {
+      return res.status(502).json({ error: `kernel step report failed: ${String(e)}` });
+    }
   });
 
   // ── SSE event stream ──────────────────────────────────────────────────

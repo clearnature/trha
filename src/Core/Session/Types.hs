@@ -14,7 +14,7 @@ import Data.Aeson
   ( FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.:?), (.!=), (.=) )
 import Data.Aeson.Types (Parser)
 import Data.Text (Text)
-import Core.Agent.Types (AgentState, ApprovalRequest)
+import Core.Agent.Types (AgentState, ApprovalRequest, Plan)
 
 -- | Unique identifier for a session
 type SessionId = String
@@ -36,6 +36,7 @@ data SessionEvent
   | AgentStateChanged AgentState
   | ApprovalRequested ApprovalRequest
   | ApprovalDecided Bool
+  | PlanChanged Plan
   deriving (Show, Eq)
 
 instance ToJSON SessionEvent where
@@ -47,6 +48,7 @@ instance ToJSON SessionEvent where
   toJSON (AgentStateChanged st) = object ["kind" .= ("agent_state" :: Text), "agentState" .= st]
   toJSON (ApprovalRequested req) = object ["kind" .= ("approval_requested" :: Text), "request" .= req]
   toJSON (ApprovalDecided ok) = object ["kind" .= ("approval_decided" :: Text), "approve" .= ok]
+  toJSON (PlanChanged p) = object ["kind" .= ("plan_changed" :: Text), "plan" .= p]
 
 instance FromJSON SessionEvent where
   parseJSON = withObject "SessionEvent" $ \o -> do
@@ -60,6 +62,7 @@ instance FromJSON SessionEvent where
       "agent_state"       -> AgentStateChanged <$> o .: "agentState"
       "approval_requested" -> ApprovalRequested <$> o .: "request"
       "approval_decided"   -> ApprovalDecided <$> o .: "approve"
+      "plan_changed"       -> PlanChanged <$> o .: "plan"
       other               -> fail ("unknown session event kind: " <> show other)
 
 -- | A session contains an event log and projections
@@ -73,6 +76,7 @@ data Session = Session
   , eventLog    :: IORef [SessionEvent]
   , projections :: IORef (Map.Map String Dynamic)
   , agentState  :: IORef AgentState
+  , sessionPlan :: IORef (Maybe Plan)   -- ^ 多步计划：数据在会话里，权限在 FSM
   }
 
 -- | The checkpoint of a session: identity, FSM state, and how many events that
@@ -92,22 +96,25 @@ data Session = Session
 data SessionSnapshot = SessionSnapshot
   { snapshotId         :: SessionId
   , snapshotAgentState :: AgentState
+  , snapshotPlan       :: Maybe Plan
   , snapshotEventCount :: Int
   } deriving (Show, Eq)
 
 instance ToJSON SessionSnapshot where
   toJSON s = object
-    [ "v"          .= (2 :: Int)
+    [ "v"          .= (3 :: Int)
     , "sessionId"  .= snapshotId s
     , "agentState" .= snapshotAgentState s
+    , "plan"       .= snapshotPlan s
     , "eventCount" .= snapshotEventCount s
     ]
 
 instance FromJSON SessionSnapshot where
   parseJSON = withObject "SessionSnapshot" $ \o ->
-    -- @eventCount@ is optional so a v1 checkpoint (written before the event
-    -- log was persisted) still loads: it then counts as "no events replayed".
+    -- @eventCount@ and @plan@ are optional so v1/v2 checkpoints (written before
+    -- the log and the plan were persisted) still load.
     SessionSnapshot
       <$> o .: "sessionId"
       <*> o .: "agentState"
+      <*> o .:? "plan"
       <*> o .:? "eventCount" .!= 0

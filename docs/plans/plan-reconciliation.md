@@ -31,7 +31,7 @@
 | 项 | 状态 | 证据 / 说明 |
 |---|---|---|
 | S0 协议闭环 | ✅（方案转移）| 内核 OpenAI `/v1/chat/completions`(tools) + TS 桥 + CLI 三链端到端（K6）；protocol-shell-kernel.md 总账 |
-| S1 plan/approval | ✅（闸门在内核，交互在编排层）| 统一 `/api/agent/step`（`requireApproval: true` → awaiting_approval）+ `/api/session/:id/decision`；CLI `/plan` + TUI plan card（agent:plan/decision 事件）。**内核闸门已实现**：`AgentState = AwaitingApproval ApprovalRequest` + `/session/:id/approval`、`/session/:id/decision` 两个端点（FSM 屏障、落盘跨重启、`approval_requested/decided` 进事件日志）；编排层两个处理器委托内核，内核不可达时降级为本地 `pendingApproval`。仍未做：Plan 的**多步计划展示/逐步批准**（当前闸门粒度是整条命令） |
+| S1 plan/approval | ✅（闸门在内核，交互在编排层）| 统一 `/api/agent/step`（`requireApproval: true` → awaiting_approval）+ `/api/session/:id/decision`；CLI `/plan` + TUI plan card（agent:plan/decision 事件）。**内核闸门已实现**：`AgentState = AwaitingApproval ApprovalRequest` + `/session/:id/approval`、`/session/:id/decision` 两个端点（FSM 屏障、落盘跨重启、`approval_requested/decided` 进事件日志）；编排层两个处理器委托内核，内核不可达时降级为本地 `pendingApproval`。多步计划：内核 `Planning`/`ExecutingStep` 相位 + 每步 `approve/skip/reject` + `step-result` 回报，计划随 checkpoint 落盘（`PlanChanged` 事件可重放）；编排层三个路由薄转发。仍未做：`mode:auto` 一次放行、内核侧 planner（步骤仍由宿主给出）、TUI/Desktop 的多步计划卡片 |
 | S2 tool 事件详情 | ✅（下游实现）| ToolEvent running/succeeded/failed+durationMs；tool:update SSE；transcript tool；ToolCard 状态色 |
 | S3 session 恢复 | ✅（G2 后）| CLI/TUI resume ✅ + 服务端持久化（`stateDir` 原子 JSON + 启动载入 + 删除清理，E2E 重启续步）|
 

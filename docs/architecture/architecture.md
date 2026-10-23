@@ -142,6 +142,45 @@ data AgentCommand
 - **分工**：编排层 `/api/agent/step {requireApproval}` 与 `/api/session/:id/decision`
   委托这两个端点（内核不可达时降级回本地 `pendingApproval`），外壳协议形状不变。
 
+#### 多步计划（逐步批准）
+
+计划在**宿主**手里产生、由**宿主**执行；内核只回答两件事：「这一步现在可以跑吗」
+「跑到哪了」。于是步骤内容不需要内核懂，闸门与进度却只有一个事实源。
+
+```haskell
+data Plan = Plan { planId, planMode :: PlanMode, planSteps :: [PlanStep] }
+data PlanStep = PlanStep { planStepId, planStepTitle, planStepAction :: Value
+                         , planStepStatus :: StepStatus }
+data StepStatus = Pending | Approved | Skipped | Rejected | Done | Failed
+```
+
+- **相位**：`Idle --提交计划--> Planning --批准某步--> ExecutingStep sid --回报--> Planning
+  | (无剩余) Idle`。`Planning` 与 `ExecutingStep` 都是屏障：`/agent/step` 返回
+  409 `plan.active`，对话步与计划步不交错；两次提交计划得 409（先放弃再重提）。
+- **批准 ≠ 执行**：`Approved` 只表示可以跑；宿主跑完必须回报（`Done`/`Failed`），
+  内核不会替它猜——进度才不会是谎言。这样 `StepApproved` 也是「还在宿主手里」的
+  标记，`planFinished` 因此要求「无 pending 且无 approved」。
+- **拒绝与跳过都支持**：`action: "reject"` 把该步记为 `Rejected` 并停住计划
+  （后续保留 `Pending` 作记录，会话回 `Idle`）；`action: "skip"` 记为 `Skipped`
+  并继续下一条。
+- **落盘**：计划存在会话里（`sessionPlan`），随 checkpoint 一起写（`v:3` 起有
+  `plan` 字段）；每次变动都追加 `PlanChanged plan` 事件（整份计划快照，无需额外
+  reducer），重启时 checkpoint + 日志尾部重放共同还原。
+- **端点**：
+
+| 方法/路径 | 请求 | 响应 |
+|---|---|---|
+| GET `/session/<id>/plan` | – | `{plan, agentState}` |
+| POST `/session/<id>/plan` | `{mode?, steps:[{id?, title, action?}]}` | `{status:"planning", plan, pending}`；已在进行 → 409 `plan.active`；空计划 → 400 `plan.empty` |
+| POST `/session/<id>/step-result` | `{stepId, ok, output?}` | `{status:"step_done"\|"step_failed", plan, pending, agentState}`；该步未放行 → 409 `plan.no_step` |
+
+  `decision` 端点同时服务两种粒度：`{approve:bool}`（单命令闸门）与
+  `{action:"approve"|"skip"|"reject"|"abandon"}`（计划步骤）。
+- **编排层**：`/api/session/:id/{plan,step-result}` 与带 `action` 的 `decision`
+  都是薄转发，scheduler 不保留计划副本，避免进度两份漂移。
+- **未实现**：`mode:"auto"`（一次放行全部）会被拒绝为 `plan.mode_unsupported`；
+  计划本身仍要宿主给出（内核不做 planner）。
+
 ### 3.4 Agent Loop (`Core.Agent`)
 
 ```haskell

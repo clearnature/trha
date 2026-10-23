@@ -11,13 +11,20 @@ module Core.Session.Manager
   , pendingApproval
   , requestApproval
   , decideApproval
+  , getPlan
+  , submitPlan
+  , planMove
+  , PlanMove(..)
   , snapshotSession
   , restoreSession
   ) where
 
 import Core.Session.Types
-import Core.Agent.Types (AgentState (..), ApprovalRequest (..))
-import Core.Agent.StateMachine (AgentCommand (..), transition)
+import Core.Agent.Types
+  ( AgentState (..), ApprovalRequest (..), Plan (..), PlanMode (..), PlanStep (..) )
+import Core.Agent.StateMachine
+  ( AgentCommand (..), markApproved, markRejected, markReported, markSkipped
+  , pendingStep, planFinished, transition )
 import Data.IORef
 import Data.Dynamic (Dynamic)
 import Data.List (foldl')
@@ -29,7 +36,8 @@ createSession sid = do
   logRef <- newIORef []
   projRef <- newIORef Map.empty
   stRef <- newIORef Idle          -- D-3：新会话的内核 FSM 从 Idle 开始
-  return $ Session sid logRef projRef stRef
+  planRef <- newIORef Nothing
+  return $ Session sid logRef projRef stRef planRef
 
 -- | Append an event to the session log.
 --
@@ -136,13 +144,100 @@ decideApproval session approve = atomicModifyIORef' (agentState session) $ \cur 
       in (nxt, Just nxt)
     _ -> (cur, Nothing)
 
+--------------------------------------------------------------------------------
+-- 多步计划
+--
+-- 计划是数据，权限是 FSM：'planMove' 在同一个地方校验相位、改计划、推进 FSM，
+-- 使「第几条步骤现在可以跑」只有一个答案。
+--------------------------------------------------------------------------------
+
+-- | The plan currently attached to the session, if any.
+getPlan :: Session -> IO (Maybe Plan)
+getPlan = readIORef . sessionPlan
+
+-- | Attach a freshly submitted plan and enter the planning phase.
+--
+-- Refused unless the session is idle: a plan is a conversation-wide
+-- commitment, so a second one while the first is live would make "which step is
+-- pending" ambiguous.
+submitPlan :: Session -> Plan -> IO (Maybe Plan)
+submitPlan session plan = do
+  st <- getAgentState session
+  -- The phase check is explicit: 'transition' maps Planning→Planning for a new
+  -- plan too (illegal commands are inert), so matching the result alone would
+  -- let a second plan overwrite the first.
+  case (st, transition st (SubmitPlanCommand (planMode plan))) of
+    (Idle, Planning) -> do
+      writeIORef (sessionPlan session) (Just plan)
+      setAgentState session Planning
+      pure (Just plan)
+    _ -> pure Nothing
+
+-- | One move of the plan.
+data PlanMove
+  = MoveApprove                -- ^ 放行当前待决步 → ExecutingStep
+  | MoveSkip                   -- ^ 跳过当前待决步
+  | MoveReject                 -- ^ 拒绝当前待决步 → 计划停住
+  | MoveReport String Bool     -- ^ 宿主回报某步结果（ok?）
+  | MoveAbandon                -- ^ 放弃整个计划
+  deriving (Show, Eq)
+
+-- | Apply a plan move.
+--
+-- Returns the resulting plan and FSM state, or 'Nothing' when the move is
+-- illegal in the current phase (nothing planned, nothing pending, a different
+-- step is out with the host, …). The phase check is what makes the gate real:
+-- approving twice, or reporting an unreleased step, changes nothing.
+planMove :: Session -> PlanMove -> IO (Maybe (Plan, AgentState))
+planMove session move = do
+  st <- getAgentState session
+  mplan <- getPlan session
+  case (st, mplan, move) of
+    (Planning, Just plan, MoveApprove) ->
+      case pendingStep plan of
+        Nothing   -> pure Nothing
+        Just step -> commit st (markApproved plan) (ApproveStepCommand (planStepId step))
+    (Planning, Just plan, MoveSkip) ->
+      case pendingStep plan of
+        Nothing -> pure Nothing
+        Just _  -> commit st (markSkipped plan) SkipStepCommand
+    (Planning, Just plan, MoveReject) ->
+      case pendingStep plan of
+        Nothing -> pure Nothing
+        Just _  -> commitHalt st (markRejected plan) RejectStepCommand
+    (ExecutingStep sid, Just plan, MoveReport rid ok)
+      | rid == sid -> commit st (markReported rid ok plan) (ReportStepCommand rid ok)
+    (_, Just plan, MoveAbandon)
+      | st == Planning || isExecuting st -> commitHalt st plan AbandonPlanCommand
+    _ -> pure Nothing
+  where
+    isExecuting s = case s of
+      ExecutingStep _ -> True
+      _               -> False
+
+    -- 改计划 + 推 FSM；计划已无待决步时收尾（FinishPlanCommand）。
+    commit st plan' cmd = do
+      let st' = transition st cmd
+          st'' = if planFinished plan' then transition st' FinishPlanCommand else st'
+      writeIORef (sessionPlan session) (Just plan')
+      writeIORef (agentState session) st''
+      pure $ Just (plan', st'')
+
+    -- 拒绝/放弃：计划停住，剩余的 pending 步骤原样保留作记录。
+    commitHalt st plan' cmd = do
+      let st' = transition st cmd
+      writeIORef (sessionPlan session) (Just plan')
+      writeIORef (agentState session) st'
+      pure $ Just (plan', st')
+
 -- | Capture the persistable slice: identity, FSM state, and how many events
 -- that state already accounts for.
 snapshotSession :: Session -> IO SessionSnapshot
 snapshotSession session = do
   st <- getAgentState session
   evs <- getEvents session
-  pure $ SessionSnapshot (sessionId session) st (length evs)
+  plan <- getPlan session
+  pure $ SessionSnapshot (sessionId session) st plan (length evs)
 
 -- | Rebuild a session from its checkpoint plus the persisted event log.
 --
@@ -159,10 +254,15 @@ snapshotSession session = do
 restoreSession :: SessionSnapshot -> [SessionEvent] -> IO Session
 restoreSession snap events = do
   session <- createSession (snapshotId snap)
-  let replayed = foldl' apply (snapshotAgentState snap) (drop (snapshotEventCount snap) events)
-  setAgentState session replayed
+  let tailEvents = drop (snapshotEventCount snap) events
+      st'  = foldl' applyState (snapshotAgentState snap) tailEvents
+      plan = foldl' applyPlan (snapshotPlan snap) tailEvents
+  setAgentState session st'
+  writeIORef (sessionPlan session) plan
   writeIORef (eventLog session) events
   pure session
   where
-    apply _ (AgentStateChanged st) = st
-    apply st _                     = st
+    applyState _ (AgentStateChanged st) = st
+    applyState st _                     = st
+    applyPlan _ (PlanChanged p) = Just p
+    applyPlan p _               = p

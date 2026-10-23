@@ -85,7 +85,7 @@ sessionPersistSpec = do
     it "encodes a versioned object, so a future format change is detectable" $ do
       snap <- snapshotSession =<< createSession "sess-3"
       let bytes = encode snap
-      ("\"v\":2" `isInfixOf` BLC.unpack bytes) -- sanity: decoder below is the real check
+      ("\"v\":3" `isInfixOf` BLC.unpack bytes) -- sanity: decoder below is the real check
         `shouldBe` True
       (decode bytes :: Maybe SessionSnapshot) `shouldBe` Just snap
 
@@ -208,7 +208,7 @@ sessionPersistSpec = do
 
     it "replays past a state the checkpoint has not seen yet" $ withScratch $ \dir -> do
       -- Crash between writes: log has the terminal event, checkpoint is older.
-      let snap = SessionSnapshot "s" (Processing "step-1") 3
+      let snap = SessionSnapshot "s" (Processing "step-1") Nothing 3
           logEvents = [ UserMessage "hi"
                       , AssistantMessage "done"
                       , AgentStateChanged (Processing "step-1")
@@ -221,7 +221,7 @@ sessionPersistSpec = do
     it "trusts the checkpoint when the log is shorter than it claims" $ withScratch $ \_ -> do
       -- Log truncated/restored from an older copy: nothing to replay, so the
       -- checkpoint's state stands (better than falling back to Idle).
-      let snap = SessionSnapshot "s" (Completed (Result "done" 7)) 9
+      let snap = SessionSnapshot "s" (Completed (Result "done" 7)) Nothing 9
       session <- restoreSession snap [UserMessage "hi"]
       getAgentState session >>= (`shouldBe` Completed (Result "done" 7))
       getEvents session >>= (`shouldBe` [UserMessage "hi"])

@@ -40,7 +40,7 @@ import Data.Aeson.Types (Pair, parseMaybe)
 import Data.Aeson.Key (fromText)
 import qualified Data.Aeson.KeyMap as KM
 import Control.Exception (SomeException, catch)
-import Control.Monad (forM_, join)
+import Control.Monad (forM_, join, when)
 import GHC.Generics
 import qualified Data.Map as Map
 import Control.Concurrent.STM
@@ -48,8 +48,10 @@ import Data.IORef
 import Data.Dynamic (toDyn)
 
 -- Core modules
-import Core.Agent.StateMachine (AgentCommand (..))
-import Core.Agent.Types (AgentState (..), ApprovalRequest (..))
+import Core.Agent.StateMachine (AgentCommand (..), pendingStep)
+import Core.Agent.Types
+  ( AgentState (..), ApprovalRequest (..), Plan (..), PlanMode (..)
+  , PlanStep (..), StepStatus (..) )
 import Core.Session.Types
 import Core.Session.Manager
 import Core.Agent.Modes
@@ -82,6 +84,9 @@ type API =
   :<|> "session" :> Capture "sid" Text :> "events" :> Get '[JSON] Value
   :<|> "session" :> Capture "sid" Text :> "approval" :> ReqBody '[JSON] ApprovalReq :> Post '[JSON] Value
   :<|> "session" :> Capture "sid" Text :> "decision" :> ReqBody '[JSON] DecisionReq :> Post '[JSON] Value
+  :<|> "session" :> Capture "sid" Text :> "plan" :> Get '[JSON] Value
+  :<|> "session" :> Capture "sid" Text :> "plan" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  :<|> "session" :> Capture "sid" Text :> "step-result" :> ReqBody '[JSON] StepResultReq :> Post '[JSON] Value
   :<|> "agent" :> "step" :> ReqBody '[JSON] StepReq :> Post '[JSON] Value
   -- Provider registry (P1: list + protocols; P2: probe; P3: save/remove/check)
   :<|> "providers" :> Get '[JSON] Value
@@ -135,8 +140,26 @@ data ApprovalReq = ApprovalReq
   , aqAction  :: Maybe Text
   }
 
--- | Resolve the parked command: @{"approve": true|false}@.
-newtype DecisionReq = DecisionReq { dqApprove :: Bool }
+-- | Resolve a parked decision.
+--
+-- Two shapes share this endpoint because they answer the same question — "may
+-- this go ahead?" — at two granularities:
+--
+--   * @{"approve": true|false}@ — the single-command gate;
+--   * @{"action": "approve"|"skip"|"reject"|"abandon"}@ — a plan step.
+--
+-- @approve@ stays optional so the existing shell keeps working unchanged.
+data DecisionReq = DecisionReq
+  { dqApprove :: Maybe Bool
+  , dqAction  :: Maybe Text
+  }
+
+-- | Host report for a plan step it was allowed to run.
+data StepResultReq = StepResultReq
+  { srrStepId :: Text
+  , srrOk     :: Bool
+  , srrOutput :: Maybe Value   -- ^ kept by the host's transcript; not interpreted here
+  }
 
 instance FromJSON ApprovalReq where
   parseJSON = withObject "ApprovalReq" $ \o ->
@@ -144,7 +167,11 @@ instance FromJSON ApprovalReq where
 
 instance FromJSON DecisionReq where
   parseJSON = withObject "DecisionReq" $ \o ->
-    DecisionReq <$> o .: "approve"
+    DecisionReq <$> o .:? "approve" <*> o .:? "action"
+
+instance FromJSON StepResultReq where
+  parseJSON = withObject "StepResultReq" $ \o ->
+    StepResultReq <$> o .: "stepId" <*> o .: "ok" <*> o .:? "output"
 
 instance FromJSON StartReq where
   parseJSON = withObject "StartReq" $ \o ->
@@ -168,6 +195,9 @@ server adapter sessions stateDir =
   :<|> sessionEventsHandler sessions
   :<|> requestApprovalHandler sessions stateDir
   :<|> decisionHandler sessions stateDir
+  :<|> getPlanHandler sessions
+  :<|> submitPlanHandler sessions stateDir
+  :<|> stepResultHandler sessions stateDir
   :<|> agentStepHandler adapter sessions stateDir
   :<|> P.providersHandler
   :<|> P.protocolsHandler
@@ -304,38 +334,205 @@ requestApprovalHandler sessionsVar stateDir sid req = do
             , "agentState" .= st
             ]
 
--- | Resolve the parked command.
+-- | Resolve a parked decision: either the single-command gate or one plan step.
 --
--- Approve and reject both release the session to 'Idle': the decision is the
--- kernel's output, execution is the host's. A second decision finds nothing
--- parked and gets 400, which is what makes a double click harmless.
+-- The phase decides which machine is answering:
+--
+--   * 'AwaitingApproval' — the command gate; approve/reject both release to
+--     'Idle'. Approve and reject are the only legal actions here.
+--   * 'Planning' — a plan is active; approve releases the pending step
+--     ('ExecutingStep'), skip/rereject abandon it, abandon drops the whole plan.
+--   * 'ExecutingStep' — a step is out with the host; only abandon applies
+--     (reporting the result is a different endpoint).
+--
+-- Anything else gets 400, which is what makes a double click harmless: the
+-- second decision finds no phase to act in.
 decisionHandler :: TVar (Map.Map Text Session) -> Maybe FilePath -> Text -> DecisionReq -> Handler Value
 decisionHandler sessionsVar stateDir sid req = do
   sessions <- liftIO $ readTVarIO sessionsVar
   case Map.lookup sid sessions of
     Nothing -> throwError err404 { errBody = "Session not found" }
     Just session -> do
-      parked <- liftIO $ pendingApproval session
-      case parked of
-        Nothing -> throwError $ codedRefusal 400 "approval.none"
-          "No pending approval"
-        Just r -> do
-          decided <- liftIO $ decideApproval session (dqApprove req)
+      st <- liftIO $ getAgentState session
+      case (st, decisionMove (dqAction req) (dqApprove req)) of
+        -- single-command gate
+        (AwaitingApproval _, Just move) | move `elem` [MoveApprove, MoveReject] -> do
+          let approve = move == MoveApprove
+          -- read the request id first: deciding clears it
+          parked <- liftIO $ pendingApproval session
+          decided <- liftIO $ decideApproval session approve
           case decided of
             Nothing -> throwError $ codedRefusal 409 "approval.resolved"
               "The pending approval was resolved by another decision"
-            Just st -> do
-              let events = [ ApprovalDecided (dqApprove req)
-                           , AgentStateChanged st
-                           ]
+            Just st' -> do
+              let requestId = maybe "" approvalId parked
+                  events = [ ApprovalDecided approve, AgentStateChanged st' ]
               liftIO $ mapM_ (appendEvent session) events
               liftIO $ persistStep stateDir session events
               return $ object
                 [ "sessionId" .= sid
-                , "status"    .= (if dqApprove req then ("approved" :: Text) else "denied")
-                , "requestId" .= approvalId r
-                , "agentState" .= st
+                , "status"    .= (if approve then ("approved" :: Text) else "denied")
+                , "requestId" .= requestId
+                , "agentState" .= st'
                 ]
+
+        -- plan step
+        (_, Just move) | planPhase st -> do
+          applied <- liftIO $ planMove session move
+          case applied of
+            Nothing -> throwError $ codedRefusal 409 "plan.no_move"
+              "That move does not apply to the current plan phase"
+            Just (plan, st') -> do
+              liftIO $ commitPlanMove stateDir session (plan, st')
+              return $ planResponse sid (moveStatus move) plan st'
+
+        (_, Nothing) -> throwError $ codedRefusal 400 "approval.invalid"
+          "Expected approve: true|false, or action: approve|skip|reject|abandon"
+        _ -> throwError $ codedRefusal 400 "approval.none"
+          "Nothing is waiting for a decision in this phase"
+
+-- | The plan endpoints, in one place: submit, report a step's result, read it.
+getPlanHandler :: TVar (Map.Map Text Session) -> Text -> Handler Value
+getPlanHandler sessionsVar sid = do
+  sessions <- liftIO $ readTVarIO sessionsVar
+  case Map.lookup sid sessions of
+    Nothing -> throwError err404 { errBody = "Session not found" }
+    Just session -> do
+      plan <- liftIO $ getPlan session
+      st <- liftIO $ getAgentState session
+      return $ object
+        [ "sessionId" .= sid
+        , "plan"      .= plan
+        , "agentState" .= st
+        ]
+
+-- | Accept a plan from the host.
+--
+-- The kernel does not invent steps: whoever knows the work supplies them, and
+-- the kernel only decides when each may run. Steps come with ids when the host
+-- wants stable ones; otherwise they are numbered.
+submitPlanHandler :: TVar (Map.Map Text Session) -> Maybe FilePath -> Text -> Value -> Handler Value
+submitPlanHandler sessionsVar stateDir sid body = do
+  sessions <- liftIO $ readTVarIO sessionsVar
+  case Map.lookup sid sessions of
+    Nothing -> throwError err404 { errBody = "Session not found" }
+    Just session -> do
+      plan <- case parsePlan (T.unpack sid) body of
+        Left err -> throwError $ codedRefusal 400 "plan.invalid" err
+        Right p  -> pure p
+      when (null (planSteps plan)) $
+        throwError $ codedRefusal 400 "plan.empty" "A plan needs at least one step"
+      when (planMode plan /= Stepwise) $
+        throwError $ codedRefusal 400 "plan.mode_unsupported"
+          "Only stepwise plans are implemented"
+      submitted <- liftIO $ submitPlan session plan
+      case submitted of
+        Nothing -> throwError $ codedRefusal 409 "plan.active"
+          "This session is already running a plan (or is busy)"
+        Just p -> do
+          st <- liftIO $ getAgentState session
+          let events = [ PlanChanged p, AgentStateChanged st ]
+          liftIO $ mapM_ (appendEvent session) events
+          liftIO $ persistStep stateDir session events
+          return $ planResponse sid "planning" p st
+
+-- | The host reports how an approved step went.
+--
+-- Until this arrives the kernel keeps the step 'StepApproved' and the session
+-- in 'ExecutingStep' — it has no way to observe the host's execution, and
+-- guessing would make the plan's progress a lie.
+stepResultHandler :: TVar (Map.Map Text Session) -> Maybe FilePath -> Text -> StepResultReq -> Handler Value
+stepResultHandler sessionsVar stateDir sid req = do
+  sessions <- liftIO $ readTVarIO sessionsVar
+  case Map.lookup sid sessions of
+    Nothing -> throwError err404 { errBody = "Session not found" }
+    Just session -> do
+      applied <- liftIO $ planMove session (MoveReport (T.unpack (srrStepId req)) (srrOk req))
+      case applied of
+        Nothing -> throwError $ codedRefusal 409 "plan.no_step"
+          "No such step is out with the host"
+        Just (plan, st) -> do
+          liftIO $ commitPlanMove stateDir session (plan, st)
+          return $ planResponse sid (if srrOk req then "step_done" else "step_failed") plan st
+
+-- | Persist a plan move: the plan event carries the whole plan, so a restart
+-- replays it without a separate reducer.
+commitPlanMove :: Maybe FilePath -> Session -> (Plan, AgentState) -> IO ()
+commitPlanMove stateDir session (plan, st) = do
+  let events = [ PlanChanged plan, AgentStateChanged st ]
+  mapM_ (appendEvent session) events
+  persistStep stateDir session events
+
+planResponse :: Text -> Text -> Plan -> AgentState -> Value
+planResponse sid status plan st = object
+  [ "sessionId" .= sid
+  , "status"    .= status
+  , "plan"      .= plan
+  , "pending"   .= fmap pendingJson (pendingStep plan)
+  , "agentState" .= st
+  ]
+  where
+    pendingJson step = object
+      [ "id"    .= planStepId step
+      , "title" .= planStepTitle step
+      ]
+
+-- | Phases in which the plan endpoints own the session.
+planPhase :: AgentState -> Bool
+planPhase Planning            = True
+planPhase (ExecutingStep _)   = True
+planPhase _                   = False
+
+moveStatus :: PlanMove -> Text
+moveStatus MoveApprove     = "step_approved"
+moveStatus MoveSkip        = "step_skipped"
+moveStatus MoveReject      = "rejected"
+moveStatus MoveAbandon     = "abandoned"
+moveStatus (MoveReport _ ok) = if ok then "step_done" else "step_failed"
+
+-- | Map the wire body onto a plan move. @approve@ is the older shape.
+decisionMove :: Maybe Text -> Maybe Bool -> Maybe PlanMove
+decisionMove action approve = case action of
+  Just "approve"  -> Just MoveApprove
+  Just "skip"     -> Just MoveSkip
+  Just "reject"   -> Just MoveReject
+  Just "abandon"  -> Just MoveAbandon
+  Just _          -> Nothing
+  Nothing         -> case approve of
+    Just True  -> Just MoveApprove
+    Just False -> Just MoveReject
+    Nothing    -> Nothing
+
+-- | Parse a submitted plan. Step ids are taken from the host when given.
+parsePlan :: String -> Value -> Either Text Plan
+parsePlan sid body = case body of
+  Object o -> do
+    let mode = case KM.lookup "mode" o of
+          Just (String m) -> if m == "auto" then Auto else Stepwise
+          _               -> Stepwise
+        rawSteps = case KM.lookup "steps" o of
+          Just (Array xs) -> V.toList xs
+          _               -> []
+        mkStep (Object so) i =
+          let stepId = case KM.lookup "id" so of
+                Just (String s) -> T.unpack s
+                _               -> sid ++ "#" ++ show (i :: Int)
+              title = case KM.lookup "title" so of
+                Just (String t) -> t
+                _               -> ""
+              action = maybe Null id (KM.lookup "action" so)
+          in PlanStep stepId title action StepPending
+        mkStep _ i = PlanStep (sid ++ "#" ++ show (i :: Int)) "" Null StepPending
+    Right $ Plan
+      { planId    = maybe (sid ++ "#plan") T.unpack (strAt o "id")
+      , planMode  = mode
+      , planSteps = zipWith mkStep rawSteps [1 ..]
+      }
+  _ -> Left "Expected a plan object"
+  where
+    strAt o k = case KM.lookup k o of
+      Just (String s) -> Just s
+      _               -> Nothing
 
 -- Agent step
 agentStepHandler :: LLMAdapter -> TVar (Map.Map Text Session) -> Maybe FilePath -> StepReq -> Handler Value
@@ -348,6 +545,10 @@ agentStepHandler adapter sessionsVar stateDir req = do
       blocked <- liftIO $ pendingApproval session
       maybe (pure ()) (\p -> throwError $ codedRefusal 409 "approval.pending"
         ("A decision is pending for " <> T.pack (approvalId p))) blocked
+      -- 计划进行中同理：对话步与计划步不交错
+      planSt <- liftIO $ getAgentState session
+      when (planPhase planSt) $ throwError $ codedRefusal 409 "plan.active"
+        "A plan is in progress; finish or abandon it first"
       let userMsg = LLM.Message LLM.User (srMessage req)
       chunks <- liftIO $ llmChat adapter [userMsg]
       let reply = T.concat [t | LLM.ChunkDelta t <- chunks]
@@ -486,8 +687,10 @@ touchKernelSession sessionsVar stateDir body replyText =
         Nothing -> pure ()
         Just session -> do
           blocked <- pendingApproval session
+          here <- getAgentState session
           case blocked of
             Just _ -> pure ()   -- 待决中：不推进 FSM，也不假装这一步发生过
+            Nothing | planPhase here -> pure ()
             Nothing -> do
               let (verdict, t6st) = verdictOfWithState (T.unpack replyText)
               setProjection session "t6state" (toDyn t6st)

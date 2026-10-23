@@ -29,6 +29,11 @@
 | GET /api/events/:sessionId | –(SSE) | data 帧（见 §3） | vitest tool-events |
 | GET /v1/models · /v1/chat/completions(±stream) · /v1/messages(±stream) · /v1/responses(±stream) | OpenAI/Anthropic/Responses | 标准协议 | vitest protocols |
 
+> **多步计划的端点**（同为转发）：`POST/GET /api/session/:id/plan`、
+> `POST /api/session/:id/step-result`，以及 `POST /api/session/:id/decision`
+> 带 `{action: "approve"|"skip"|"reject"|"abandon"}` 时走计划分支（不带 `action`
+> 仍是原单命令闸门的 `{approve:bool}`）。响应体在内核返回之上补 `mode`。
+>
 > **审批闸门的事实源在内核**：`requireApproval` 与 `decision` 两个路由会把请求
 > 转给内核 `/session/:id/approval` 与 `/session/:id/decision`（内核持有
 > `awaiting_approval` 状态、做屏障、并落盘跨重启）。内核不可达时编排层降级为本地

@@ -82,6 +82,7 @@ import PluginSpec (pluginSpec)
 import CoreContractSpec (coreContractSpec)
 import SessionPersistSpec (sessionPersistSpec)
 import ApprovalSpec (approvalSpec)
+import PlanSpec (planSpec)
 
 subsetOf :: (Eq a) => [a] -> [a] -> Bool
 subsetOf xs ys = all (`elem` ys) xs
@@ -107,6 +108,7 @@ main = hspec $ do
   coreContractSpec
   sessionPersistSpec
   approvalSpec
+  planSpec
   describe "Infrastructure.CPU.GGUF (A6/M1)" $ do
     it "reads a real GGUF: version, alignment, metadata and tensor directory" $ do
       let path = "/home/yanli/work/9060xt/llama.cpp/models/ggml-vocab-baichuan.gguf"

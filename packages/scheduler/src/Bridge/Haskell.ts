@@ -124,6 +124,40 @@ export class HaskellBridge {
     );
   }
 
+  /**
+   * Multi-step plans live in the kernel: it holds the phase, the per-step
+   * statuses and the barrier, and it persists them. The scheduler only
+   * forwards, so there is no second copy of "which step is pending" to drift.
+   */
+  async submitPlan(sessionId: string, plan: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.httpClient.post<Record<string, unknown>>(
+      `/session/${encodeURIComponent(sessionId)}/plan`,
+      plan,
+    );
+  }
+
+  async getPlan(sessionId: string): Promise<Record<string, unknown>> {
+    return this.httpClient.get<Record<string, unknown>>(
+      `/session/${encodeURIComponent(sessionId)}/plan`,
+    );
+  }
+
+  async decidePlan(sessionId: string, action: string): Promise<Record<string, unknown>> {
+    return this.httpClient.post<Record<string, unknown>>(
+      `/session/${encodeURIComponent(sessionId)}/decision`,
+      { action },
+    );
+  }
+
+  async reportStep(
+    sessionId: string, stepId: string, ok: boolean, output?: unknown,
+  ): Promise<Record<string, unknown>> {
+    return this.httpClient.post<Record<string, unknown>>(
+      `/session/${encodeURIComponent(sessionId)}/step-result`,
+      output === undefined ? { stepId, ok } : { stepId, ok, output },
+    );
+  }
+
   /** Call the kernel chat completions endpoint (non-streaming). */
   async queryModel(request: QueryRequest): Promise<QueryResponse> {
     const body: Record<string, unknown> = {

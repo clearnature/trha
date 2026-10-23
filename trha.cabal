@@ -606,7 +606,7 @@ executable trha
 test-suite trha-test
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
-  other-modules:    PluginSpec, CoreContractSpec, SessionPersistSpec, ApprovalSpec
+  other-modules:    PluginSpec, CoreContractSpec, SessionPersistSpec, ApprovalSpec, PlanSpec
   hs-source-dirs:   test
   build-depends:    base ^>=4.22
                   , directory
