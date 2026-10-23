@@ -5,7 +5,9 @@
 import type { MemoryEntry, PermissionRuleEntry, PluginEntry, Port, StepTarget, UsageRow } from './port.js';
 import type {
   DecisionResult,
+  PlanAnswer,
   PlanAwaiting,
+  PlanDecision,
   PortEvent,
   PortModeConfig,
   PortModel,
@@ -126,6 +128,77 @@ export class MockPort implements Port {
     session.messages.push({ role: 'assistant', content: reply });
     this.emit(sessionId, { type: 'message', role: 'assistant', content: reply });
     return { reply, messages: session.messages, mode: session.mode };
+  }
+
+  // Multi-step plans: an in-memory step machine, enough for UI tests.
+  private plans = new Map<string, PlanAnswer>();
+
+  async submitPlan(sessionId: string, steps: string[]): Promise<PlanAnswer> {
+    const plan = {
+      id: `${sessionId}#plan`,
+      mode: 'stepwise',
+      steps: steps.map((title, i) => ({
+        id: `${sessionId}#${i + 1}`,
+        title,
+        status: 'pending' as const,
+      })),
+    };
+    const answer: PlanAnswer = {
+      status: 'planning',
+      plan,
+      pending: plan.steps[0] ? { id: plan.steps[0].id, title: plan.steps[0].title } : null,
+      agentState: { state: 'planning' },
+    };
+    this.plans.set(sessionId, answer);
+    return answer;
+  }
+
+  async getPlan(sessionId: string): Promise<PlanAnswer> {
+    return this.plans.get(sessionId) ?? { status: 'idle' };
+  }
+
+  async decideStep(sessionId: string, action: PlanDecision): Promise<PlanAnswer> {
+    const current = this.plans.get(sessionId);
+    if (!current?.plan) throw new Error('no plan');
+    const steps = current.plan.steps.map(s => ({ ...s }));
+    const pending = steps.find(s => s.status === 'pending');
+    if (!pending) throw new Error('nothing pending');
+    if (action === 'approve') {
+      pending.status = 'approved';
+    } else if (action === 'skip') {
+      pending.status = 'skipped';
+    } else if (action === 'reject') {
+      pending.status = 'rejected';
+    } else {
+      current.plan.steps.forEach(s => {
+        if (s.status === 'pending') s.status = 'skipped';
+      });
+    }
+    const next = steps.find(s => s.status === 'pending') ?? null;
+    const phase = action === 'reject' || action === 'abandon' || !next ? 'idle' : 'planning';
+    const answer: PlanAnswer = {
+      status: `step_${action}ed`,
+      plan: { ...current.plan, steps },
+      pending: next ? { id: next.id, title: next.title } : null,
+      agentState: { state: action === 'approve' ? 'executing_step' : phase },
+    };
+    this.plans.set(sessionId, answer);
+    return answer;
+  }
+
+  async reportStep(sessionId: string, stepId: string, ok: boolean): Promise<PlanAnswer> {
+    const current = this.plans.get(sessionId);
+    if (!current?.plan) throw new Error('no plan');
+    const steps = current.plan.steps.map(s => (s.id === stepId ? { ...s, status: ok ? 'done' as const : 'failed' as const } : s));
+    const next = steps.find(s => s.status === 'pending') ?? null;
+    const answer: PlanAnswer = {
+      status: ok ? 'step_done' : 'step_failed',
+      plan: { ...current.plan, steps },
+      pending: next ? { id: next.id, title: next.title } : null,
+      agentState: { state: next ? 'planning' : 'idle' },
+    };
+    this.plans.set(sessionId, answer);
+    return answer;
   }
 
   async decision(sessionId: string, approve: boolean): Promise<DecisionResult> {

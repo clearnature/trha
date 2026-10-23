@@ -1,5 +1,8 @@
 // Composer: the message input + send button.  Enter sends, Shift+Enter adds
 // a newline; disabled while the session is busy or the input is empty.
+//
+// `/plan a; b; c` submits a multi-step plan (semicolons or newlines separate
+// steps). Everything else is a normal message.
 
 import { useState } from 'react';
 import { useSession, useSessionStore } from './SessionContext.js';
@@ -19,6 +22,12 @@ export function Composer() {
     if (!sid) sid = await store.getState().create();
     if (!sid) return;
     setInput('');
+    // `/plan` with 2+ steps becomes a kernel-owned plan; a single line falls
+    // back to the single-command gate inside the store.
+    if (text === '/plan' || text.startsWith('/plan ')) {
+      await store.getState().startPlan(text.slice('/plan'.length).trim());
+      return;
+    }
     await store.getState().send(text);
   };
 

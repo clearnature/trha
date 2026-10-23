@@ -15,6 +15,12 @@ module Core.Types
   , StreamChunk(..)
   , PlanSubmit(..)
   , PlanVerdict(..)
+  , PlanStepView(..)
+  , PlanView(..)
+  , planStepOut
+  , splitPlanSteps
+  , parsePlanView
+  , renderPlanBrief
   , ToolRunStatus(..)
   , ToolEvent(..)
   , PluginInfo(..)
@@ -28,8 +34,13 @@ module Core.Types
   ) where
 
 import Data.Aeson
+import Data.Aeson.Key (fromText)
+import qualified Data.Aeson.KeyMap as KM
 import Data.Aeson.Types (Parser, (.:), (.:?), (.!=), withObject)
+import Data.Foldable (toList)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text)
+import qualified Data.Text as T
 import GHC.Generics (Generic)
 
 -- | Unique identifier for a session
@@ -133,11 +144,73 @@ data PlanSubmit
   = PlanAwaiting Text -- ^ pending plan request (held by the host)
   deriving (Show, Eq)
 
--- | Outcome of an approval decision.
+-- | Outcome of an approval decision on the single-command gate.
 data PlanVerdict
-  = PlanApproved Text -- ^ plan executed; reply text
+  = PlanApproved Text -- ^ command released; reply text
   | PlanDenied
   deriving (Show, Eq)
+
+-- | One step of a multi-step plan, as the kernel reports it.
+data PlanStepView = PlanStepView
+  { psvId     :: Text
+  , psvTitle  :: Text
+  , psvStatus :: Text   -- ^ pending | approved | skipped | rejected | done | failed
+  } deriving (Show, Eq)
+
+-- | Kernel-side plan state: the kernel owns it, the shell renders and drives it.
+data PlanView = PlanView
+  { pvId      :: Text
+  , pvSteps   :: [PlanStepView]
+  , pvPending :: Maybe Text  -- ^ step id awaiting a decision
+  , pvPhase   :: Text        -- ^ planning | executing_step | idle
+  } deriving (Show, Eq)
+
+-- | The step currently out with the host, if any.
+planStepOut :: PlanView -> Maybe PlanStepView
+planStepOut pv
+  | pvPhase pv /= "executing_step" = Nothing
+  | otherwise = case [ s | s <- pvSteps pv, psvStatus s == "approved" ] of
+      (s:_) -> Just s
+      []    -> Nothing
+
+-- | Split a typed plan into steps: one per line, or separated by @;@.
+splitPlanSteps :: Text -> [Text]
+splitPlanSteps raw =
+  filter (not . T.null) . map T.strip $
+    concatMap (T.splitOn ";") (T.lines raw)
+
+-- | Parse the kernel's @{plan, pending, agentState}@ answer.
+parsePlanView :: Value -> Maybe PlanView
+parsePlanView (Object o) = do
+  Object po <- field "plan" o
+  Array steps <- field "steps" po
+  let one (Object so) = do
+        sid <- field "id" so >>= asText
+        title <- field "title" so >>= asText
+        status <- field "status" so >>= asText
+        pure (PlanStepView sid title status)
+      one _ = Nothing
+      pending = case field "pending" o of
+        Just (Object po') -> field "id" po' >>= asText
+        _                 -> Nothing
+      phase = case field "agentState" o of
+        Just (Object so) -> fromMaybe "" (field "state" so >>= asText)
+        _                -> ""
+  pure PlanView
+    { pvId = fromMaybe "" (field "id" po >>= asText)
+    , pvSteps = mapMaybe one (toList steps)
+    , pvPending = pending
+    , pvPhase = phase
+    }
+parsePlanView _ = Nothing
+
+-- | Field lookup by 'Text' (the aeson key type is not 'Text').
+field :: Text -> Object -> Maybe Value
+field k o = KM.lookup (fromText k) o
+
+asText :: Value -> Maybe Text
+asText (String t) = Just t
+asText _          = Nothing
 
 -- | Lifecycle status of a tool execution reported by the orchestration
 -- layer over SSE (Phase 2 S2).
@@ -269,3 +342,19 @@ data CLIError
 
 instance ToJSON CLIError
 instance FromJSON CLIError
+
+-- | Compact plan rendering for the plain REPL (the TUI draws a card instead).
+renderPlanBrief :: PlanView -> Text
+renderPlanBrief pv = T.unlines $
+  [ "Plan " <> pvId pv <> " (" <> pvPhase pv <> ")" ]
+    ++ [ "  " <> T.pack (show n) <> ". [" <> mark (psvStatus st) <> "] "
+           <> psvTitle st
+           <> (if pvPending pv == Just (psvId st) then "  <- pending" else "")
+       | (n, st) <- zip [1 :: Int ..] (pvSteps pv) ]
+  where
+    mark "done"     = "x"
+    mark "failed"   = "!"
+    mark "skipped"  = "-"
+    mark "approved" = "+"
+    mark "rejected" = "r"
+    mark _          = "."

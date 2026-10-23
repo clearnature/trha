@@ -155,8 +155,9 @@ data StepStatus = Pending | Approved | Skipped | Rejected | Done | Failed
 ```
 
 - **相位**：`Idle --提交计划--> Planning --批准某步--> ExecutingStep sid --回报--> Planning
-  | (无剩余) Idle`。`Planning` 与 `ExecutingStep` 都是屏障：`/agent/step` 返回
-  409 `plan.active`，对话步与计划步不交错；两次提交计划得 409（先放弃再重提）。
+  | (无剩余) Idle`。`Planning` 是屏障（`/agent/step` → 409 `plan.active`）；
+  `ExecutingStep` 则是执行窗口 —— 宿主正是要在这个相位跑那一步，所以放行，
+  否则它就是「被批准但无路可走」。两次提交计划得 409（先放弃再重提）。
 - **批准 ≠ 执行**：`Approved` 只表示可以跑；宿主跑完必须回报（`Done`/`Failed`），
   内核不会替它猜——进度才不会是谎言。这样 `StepApproved` 也是「还在宿主手里」的
   标记，`planFinished` 因此要求「无 pending 且无 approved」。
@@ -178,6 +179,12 @@ data StepStatus = Pending | Approved | Skipped | Rejected | Done | Failed
   `{action:"approve"|"skip"|"reject"|"abandon"}`（计划步骤）。
 - **编排层**：`/api/session/:id/{plan,step-result}` 与带 `action` 的 `decision`
   都是薄转发，scheduler 不保留计划副本，避免进度两份漂移。
+- **外壳怎么驱动**：CLI `/plan a; b; c`（`;` 或换行分隔）提交多步计划；TUI 的计划卡片
+  与 Desktop 的 `PlanStepsCard` 都只渲染内核状态（步骤+状态+待决标记），四个动作分别
+  对应 `approve/skip/reject/abandon`。**批准只放行**，随后由外壳把该步当成一次普通
+  agent step 跑掉，再用 `step-result` 回报 —— 三个外壳同一套形状，内核因此不需要
+  猜执行结果。互斥由相位保证：`Planning` 时 `/agent/step` 409，`ExecutingStep`
+  时放行（那正是执行窗口）。
 - **未实现**：`mode:"auto"`（一次放行全部）会被拒绝为 `plan.mode_unsupported`；
   计划本身仍要宿主给出（内核不做 planner）。
 

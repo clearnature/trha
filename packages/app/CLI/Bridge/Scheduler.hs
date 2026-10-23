@@ -37,6 +37,12 @@ module Bridge.Scheduler
   , approvePlan
   , denyPlan
 
+    -- * Multi-step plans (kernel-owned)
+  , submitPlan
+  , fetchPlan
+  , decideStep
+  , reportStep
+
     -- * Agent Operations
   , getAgentState
   , updateAgentState
@@ -226,6 +232,53 @@ planStep bridge sessionId message = do
         Nothing -> Left $ ValidationError "Missing status"
     Right _ -> Left $ ValidationError "Invalid plan response"
     Left err -> Left err
+
+--------------------------------------------------------------------------------
+-- Multi-step plans (kernel-owned)
+--
+-- The kernel holds the steps, the phase and the barrier; these calls only
+-- relay. Every response carries the whole plan back, so the shell can render
+-- the card from the answer instead of keeping its own copy in sync.
+--------------------------------------------------------------------------------
+
+-- | Submit a stepwise plan. Steps are titles; the kernel numbers them.
+submitPlan :: SchedulerBridge -> SessionId -> [Text] -> IO (Either CLIError PlanView)
+submitPlan bridge sessionId stepTitles = do
+  let body = object
+        [ "mode"  .= ("stepwise" :: Text)
+        , "steps" .= [ object [ "title" .= t ] | t <- stepTitles ]
+        ]
+  result <- httpPost (bridgeHTTP bridge)
+    ("/api/session/" ++ sessionId ++ "/plan") body :: IO (Either CLIError Value)
+  pure (result >>= planViewOr)
+
+-- | Read the current plan (also works after a restart: the kernel persists it).
+fetchPlan :: SchedulerBridge -> SessionId -> IO (Either CLIError PlanView)
+fetchPlan bridge sessionId = do
+  result <- httpGet (bridgeHTTP bridge) ("/api/session/" ++ sessionId ++ "/plan")
+  pure (result >>= planViewOr)
+
+-- | One decision on the pending step: approve, skip, reject or abandon.
+decideStep :: SchedulerBridge -> SessionId -> Text -> IO (Either CLIError PlanView)
+decideStep bridge sessionId action = do
+  result <- httpPost (bridgeHTTP bridge)
+    ("/api/session/" ++ sessionId ++ "/decision") (object ["action" .= action])
+    :: IO (Either CLIError Value)
+  pure (result >>= planViewOr)
+
+-- | Report how an approved step went. The kernel will not guess: until this
+-- arrives the step stays "approved" and the plan stays in its executing phase.
+reportStep :: SchedulerBridge -> SessionId -> Text -> Bool -> IO (Either CLIError PlanView)
+reportStep bridge sessionId stepId ok = do
+  result <- httpPost (bridgeHTTP bridge)
+    ("/api/session/" ++ sessionId ++ "/step-result")
+    (object ["stepId" .= stepId, "ok" .= ok]) :: IO (Either CLIError Value)
+  pure (result >>= planViewOr)
+
+planViewOr :: Value -> Either CLIError PlanView
+planViewOr v = case parsePlanView v of
+  Just pv -> Right pv
+  Nothing -> Left $ ValidationError "Invalid plan response"
 
 -- | Approve the pending plan; returns the agent reply.
 approvePlan :: SchedulerBridge -> SessionId -> IO (Either CLIError PlanVerdict)

@@ -74,8 +74,9 @@ planSpec = do
       transition Planning AbandonPlanCommand `shouldBe` Idle
       transition (ExecutingStep "p#1") AbandonPlanCommand `shouldBe` Idle
 
-    it "a conversation step cannot run during a plan (the barrier)" $ do
+    it "a conversation step cannot run while a step awaits a decision (the barrier)" $ do
       transition Planning (StartCommand "s") `shouldBe` Planning
+      -- but once a step is out, the host runs it — the phase names the permission
       transition (ExecutingStep "p#1") (StartCommand "s") `shouldBe` ExecutingStep "p#1"
 
     it "only the pending step can be approved, and only once" $ do
@@ -204,7 +205,7 @@ planSpec = do
         body0 `shouldSatisfy` ("\"status\":\"planning\"" `isInfixOf`)
         body0 `shouldSatisfy` ("\"pending\":{\"id\":\"s1\"" `isInfixOf`)
 
-        -- a conversation step may not interleave with a plan
+        -- while a step awaits a decision, nothing may step past it
         (cs, bodyS) <- call mgr "POST" (base ++ "/agent/step")
           (object ["sessionId" .= ("plan-1" :: T.Text), "message" .= ("hi" :: T.Text)])
         cs `shouldBe` 409
@@ -214,6 +215,11 @@ planSpec = do
         c1 `shouldBe` 200
         body1 `shouldSatisfy` ("\"status\":\"step_approved\"" `isInfixOf`)
         body1 `shouldSatisfy` ("\"state\":\"executing_step\"" `isInfixOf`)
+
+        -- the approved step is the host's to run, so a step is allowed now
+        (cRun, _) <- call mgr "POST" (base ++ "/agent/step")
+          (object ["sessionId" .= ("plan-1" :: T.Text), "message" .= ("create branch" :: T.Text)])
+        cRun `shouldBe` 200
 
         -- reporting a step that is not out is refused
         (cBad, _) <- call mgr "POST" (base ++ "/session/plan-1/step-result") (report "s3" True)
@@ -294,10 +300,10 @@ planSpec = do
 
       -- fresh instance: no /session/start, no re-submitted plan
       withApp (mkStubApp (Just dir)) $ \mgr base -> do
-        (cS, bodyS) <- call mgr "POST" (base ++ "/agent/step")
-          (object ["sessionId" .= ("plan-1" :: T.Text), "message" .= ("hi" :: T.Text)])
-        cS `shouldBe` 409
-        bodyS `shouldSatisfy` ("plan.active" `isInfixOf`)
+        -- still executing the same step after the restart: the host may run it
+        (cS, _) <- call mgr "POST" (base ++ "/agent/step")
+          (object ["sessionId" .= ("plan-1" :: T.Text), "message" .= ("create branch" :: T.Text)])
+        cS `shouldBe` 200
         -- the step that was out is still out, with its id
         (c1, body1) <- call mgr "POST" (base ++ "/session/plan-1/step-result") (report "s1" True)
         c1 `shouldBe` 200

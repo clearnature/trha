@@ -545,10 +545,11 @@ agentStepHandler adapter sessionsVar stateDir req = do
       blocked <- liftIO $ pendingApproval session
       maybe (pure ()) (\p -> throwError $ codedRefusal 409 "approval.pending"
         ("A decision is pending for " <> T.pack (approvalId p))) blocked
-      -- 计划进行中同理：对话步与计划步不交错
+      -- 计划屏障：等待决策时（Planning）不许步进；某步已放行（ExecutingStep）
+      -- 时恰恰是宿主执行它的窗口，所以放行 —— 否则宿主没有任何合法途径跑这一步。
       planSt <- liftIO $ getAgentState session
-      when (planPhase planSt) $ throwError $ codedRefusal 409 "plan.active"
-        "A plan is in progress; finish or abandon it first"
+      when (planSt == Planning) $ throwError $ codedRefusal 409 "plan.active"
+        "A plan step is awaiting a decision; decide it first"
       let userMsg = LLM.Message LLM.User (srMessage req)
       chunks <- liftIO $ llmChat adapter [userMsg]
       let reply = T.concat [t | LLM.ChunkDelta t <- chunks]
@@ -690,7 +691,7 @@ touchKernelSession sessionsVar stateDir body replyText =
           here <- getAgentState session
           case blocked of
             Just _ -> pure ()   -- 待决中：不推进 FSM，也不假装这一步发生过
-            Nothing | planPhase here -> pure ()
+            Nothing | here == Planning -> pure ()
             Nothing -> do
               let (verdict, t6st) = verdictOfWithState (T.unpack replyText)
               setProjection session "t6state" (toDyn t6st)

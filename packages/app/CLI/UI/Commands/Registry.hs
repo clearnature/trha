@@ -55,6 +55,9 @@ data Command
   | Plan Text
   | Approve
   | Deny
+  | SkipStep
+  | RejectStep
+  | AbandonPlan
   | Plugins
   | ResumeList
   | ResumeSelect String
@@ -90,6 +93,9 @@ slashRegistry =
   , SlashCommand "/resume"   False True  "List or resume local sessions (usage: /resume [n])"
   , SlashCommand "/approve"  False True  "Approve the pending plan"
   , SlashCommand "/deny"     False True  "Deny the pending plan"
+  , SlashCommand "/skip"     False True  "Skip the pending plan step"
+  , SlashCommand "/reject"   False True  "Reject the pending plan step (halts the plan)"
+  , SlashCommand "/abandon"  False True  "Abandon the running plan"
   , SlashCommand "/quit"     False True  "Exit the application"
   , SlashCommand "/exit"     False True  "Exit the application (alias)"
   ]
@@ -116,6 +122,9 @@ parseCommand input = case T.words (T.strip input) of
   ("/resume" : arg : _) -> ResumeSelect (T.unpack arg)
   ("/approve" : _) -> Approve
   ("/deny" : _)   -> Deny
+  ("/skip" : _)    -> SkipStep
+  ("/reject" : _)  -> RejectStep
+  ("/abandon" : _) -> AbandonPlan
   ("/settings" : []) -> ShowSettings
   ("/settings" : key : rest) -> SetSetting key (T.unwords rest)
   ("/settings" : _) -> SetSetting "" ""

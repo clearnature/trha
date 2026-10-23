@@ -604,6 +604,26 @@ body {
 .plan-deny { background-color: transparent; color: var(--text-color); }
 .plan-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* Multi-step plan: one row per step, status carried by data-status so the
+   colours stay in CSS and the card stays a pure renderer. */
+.plan-step-list { margin: 4px 0 0; padding-left: 0; list-style: none; }
+.plan-step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 13px;
+}
+.plan-step-mark { font-family: var(--mono-font, monospace); width: 1em; }
+.plan-step-title { flex: 1; word-break: break-word; }
+.plan-step-pending { font-size: 11px; color: var(--secondary-color); }
+.plan-step[data-status='done'] .plan-step-title { color: var(--secondary-color); }
+.plan-step[data-status='failed'] .plan-step-title { color: var(--danger-color, #d14343); }
+.plan-step[data-status='skipped'] .plan-step-title,
+.plan-step[data-status='rejected'] .plan-step-title { text-decoration: line-through; opacity: 0.7; }
+.plan-step[data-status='approved'] { font-weight: 600; }
+.plan-skip, .plan-abandon { background-color: transparent; color: var(--text-color); }
+
 /* ── Ask card (placeholder) ─────────────────────────────────────────── */
 .ask-card {
   border: 1px dashed var(--border-color);

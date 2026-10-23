@@ -71,6 +71,9 @@ zhDict = M.fromList
   , ("List or resume local sessions (usage: /resume [n])", "列出或恢复本地会话（用法：/resume [n]）")
   , ("Approve the pending plan", "批准待审批的计划")
   , ("Deny the pending plan", "拒绝待审批的计划")
+  , ("Skip the pending plan step", "跳过待审批的计划步骤")
+  , ("Reject the pending plan step (halts the plan)", "拒绝待审批的计划步骤（计划随之停住）")
+  , ("Abandon the running plan", "放弃正在执行的计划")
   , ("Exit the application", "退出程序")
   , ("Exit the application (alias)", "退出程序（别名）")
 

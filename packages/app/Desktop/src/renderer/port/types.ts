@@ -78,6 +78,35 @@ export interface PlanAwaiting {
   mode: string;
 }
 
+/** One step of a kernel-owned multi-step plan. */
+export interface PlanStep {
+  id: string;
+  title: string;
+  status: 'pending' | 'approved' | 'skipped' | 'rejected' | 'done' | 'failed';
+  action?: unknown;
+}
+
+/** Kernel-side plan state. The kernel owns it; the UI renders and drives it. */
+export interface PlanState {
+  id: string;
+  mode: 'stepwise' | 'auto';
+  steps: PlanStep[];
+  /** Phase reported by the kernel: planning | executing_step | idle */
+  phase: string;
+  pending: string | null;
+}
+
+export type PlanDecision = 'approve' | 'skip' | 'reject' | 'abandon';
+
+/** Answer shared by submit / decision / step-report. */
+export interface PlanAnswer {
+  status: string;
+  plan?: { id: string; mode: string; steps: PlanStep[] };
+  pending?: { id: string; title?: string } | null;
+  agentState?: { state?: string; step?: string };
+  mode?: string;
+}
+
 export type DecisionResult =
   | { status: 'approved'; reply: string; messages: PortSessionMessage[]; mode: string }
   | { status: 'denied'; mode: string };

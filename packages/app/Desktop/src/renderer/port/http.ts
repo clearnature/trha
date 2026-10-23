@@ -6,7 +6,9 @@ import type { MemoryEntry, PermissionRuleEntry, PluginEntry, Port, StepTarget, U
 import type { ApiConfig } from '../stores/apiConfig.js';
 import type {
   DecisionResult,
+  PlanAnswer,
   PlanAwaiting,
+  PlanDecision,
   PortModeConfig,
   PortModel,
   PortSession,
@@ -89,6 +91,32 @@ export class SchedulerPort implements Port {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({ approve }),
+    });
+  }
+  submitPlan(sessionId: string, steps: string[]): Promise<PlanAnswer> {
+    return this.request(`/api/session/${encodeURIComponent(sessionId)}/plan`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({ mode: 'stepwise', steps: steps.map(title => ({ title })) }),
+    });
+  }
+  getPlan(sessionId: string): Promise<PlanAnswer> {
+    return this.request(`/api/session/${encodeURIComponent(sessionId)}/plan`, {
+      headers: this.headers(),
+    });
+  }
+  decideStep(sessionId: string, action: PlanDecision): Promise<PlanAnswer> {
+    return this.request(`/api/session/${encodeURIComponent(sessionId)}/decision`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({ action }),
+    });
+  }
+  reportStep(sessionId: string, stepId: string, ok: boolean, output?: unknown): Promise<PlanAnswer> {
+    return this.request(`/api/session/${encodeURIComponent(sessionId)}/step-result`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify(output === undefined ? { stepId, ok } : { stepId, ok, output }),
     });
   }
   studioVersion(): Promise<StudioVersion> {

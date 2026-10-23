@@ -13,7 +13,7 @@ module UI.Commands
   ) where
 
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, listModels, planStep, approvePlan, denyPlan, subscribeSessionEvents)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, listModels, planStep, approvePlan, denyPlan, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, reportStep)
 import Core.Replay (renderReplay, renderReplayText)
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import Core.Transcript (listLocalSessions, loadTranscript, recordChunk, recordModelRequest, recordSession, recordToolEvent, recordUser)
@@ -134,8 +134,9 @@ executeCommand lang bridge _ _ Plugins = do
 executeCommand lang _ _ _ (Unknown cmd) =
   return $ Just $ tr lang "Unknown command: " <> cmd <> tr lang " — try /help"
 
--- | Submit a plan request; the orchestration layer holds it until the
--- host approves or denies.
+-- | Submit a plan. One line goes through the single-command gate; two or more
+-- (separated by @;@ or newlines) become a stepwise plan in the kernel, decided
+-- one step at a time.
 executeCommand lang bridge sessionRef _ (Plan planText) = do
   if T.null (T.strip planText)
     then return $ Just (tr lang "Usage: /plan <what to do>")
@@ -145,38 +146,63 @@ executeCommand lang bridge sessionRef _ (Plan planText) = do
         Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
         Just sid -> do
           recordUser sid planText
-          result <- planStep bridge sid planText
-          return $ Just $ case result of
-            Right (PlanAwaiting preview) ->
-              T.unlines [ tr lang "⏸ Plan submitted — awaiting your decision (/approve or /deny)."
-                        , tr lang "Plan: " <> preview ]
-            Left err -> tr lang "Error: " <> T.pack (show err)
+          let steps = splitPlanSteps planText
+          if length steps >= 2
+            then do
+              result <- submitPlan bridge sid steps
+              return $ Just $ case result of
+                Right pv -> T.unlines
+                  [ tr lang "Plan submitted — decide each step with /approve, /skip, /reject or /abandon."
+                  , renderPlanBrief pv ]
+                Left err -> tr lang "Error: " <> T.pack (show err)
+            else do
+              result <- planStep bridge sid planText
+              return $ Just $ case result of
+                Right (PlanAwaiting preview) ->
+                  T.unlines [ tr lang "⏸ Plan submitted — awaiting your decision (/approve or /deny)."
+                            , tr lang "Plan: " <> preview ]
+                Left err -> tr lang "Error: " <> T.pack (show err)
 
--- | Approve the pending plan and show the agent's reply.
+-- | Skip / reject the pending step, or drop the whole plan.
+executeCommand lang bridge sessionRef _ SkipStep = decidePlanStep lang bridge sessionRef "skip"
+executeCommand lang bridge sessionRef _ RejectStep = decidePlanStep lang bridge sessionRef "reject"
+executeCommand lang bridge sessionRef _ AbandonPlan = decidePlanStep lang bridge sessionRef "abandon"
+
+-- | Approve. If a multi-step plan is active in the kernel, approve its pending
+-- step, run it as a normal agent turn, then report the result; otherwise the
+-- single-command gate answers.
 executeCommand lang bridge sessionRef _ Approve = do
   session <- readIORef sessionRef
   case session of
     Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
     Just sid -> do
-      result <- approvePlan bridge sid
-      case result of
-        Right (PlanApproved reply) -> do
-          recordChunk sid (Right (ChunkDelta reply))
-          return $ Just reply
-        Right PlanDenied -> return $ Just (tr lang "Plan was not approved.")
-        Left err -> return $ Just $ tr lang "Error: " <> T.pack (show err)
+      mplan <- fetchPlan bridge sid
+      case mplan of
+        Right pv | pvPhase pv == "planning" -> approvePlanStep lang bridge sid
+        _ -> do
+          result <- approvePlan bridge sid
+          case result of
+            Right (PlanApproved reply) -> do
+              recordChunk sid (Right (ChunkDelta reply))
+              return $ Just reply
+            Right PlanDenied -> return $ Just (tr lang "Plan was not approved.")
+            Left err -> return $ Just $ tr lang "Error: " <> T.pack (show err)
 
--- | Deny the pending plan.
+-- | Deny: on a plan that means rejecting the pending step.
 executeCommand lang bridge sessionRef _ Deny = do
   session <- readIORef sessionRef
   case session of
     Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
     Just sid -> do
-      result <- denyPlan bridge sid
-      return $ Just $ case result of
-        Right PlanDenied -> tr lang "Plan denied."
-        Right (PlanApproved _) -> tr lang "Plan was approved (unexpected)."
-        Left err -> tr lang "Error: " <> T.pack (show err)
+      mplan <- fetchPlan bridge sid
+      case mplan of
+        Right pv | pvPhase pv == "planning" -> decidePlanStep lang bridge sessionRef "reject"
+        _ -> do
+          result <- denyPlan bridge sid
+          return $ Just $ case result of
+            Right PlanDenied -> tr lang "Plan denied."
+            Right (PlanApproved _) -> tr lang "Plan was approved (unexpected)."
+            Left err -> tr lang "Error: " <> T.pack (show err)
 
 -- | List local sessions (from ~/.trha transcript index).
 executeCommand lang _ _ _ ResumeList = do
@@ -247,3 +273,38 @@ toCardStatus s = case s of
   ToolRunRunning   -> ToolRunning
   ToolRunSucceeded -> ToolSucceeded
   ToolRunFailed e  -> ToolFailed e
+
+-- | One plan decision, rendered as a compact list.
+decidePlanStep :: Lang -> SchedulerBridge -> IORef (Maybe SessionId) -> Text -> IO (Maybe Text)
+decidePlanStep lang bridge sessionRef action = do
+  session <- readIORef sessionRef
+  case session of
+    Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
+    Just sid -> do
+      result <- decideStep bridge sid action
+      return $ Just $ case result of
+        Right pv -> renderPlanBrief pv
+        Left err -> tr lang "Error: " <> T.pack (show err)
+
+-- | Release the pending plan step, run it, and report back — the same shape the
+-- TUI and Desktop use, so all three shells tell the kernel the truth.
+approvePlanStep :: Lang -> SchedulerBridge -> SessionId -> IO (Maybe Text)
+approvePlanStep lang bridge sid = do
+  approved <- decideStep bridge sid "approve"
+  case approved of
+    Left err -> return $ Just $ tr lang "Error: " <> T.pack (show err)
+    Right pv -> case planStepOut pv of
+      Nothing -> return $ Just (renderPlanBrief pv)
+      Just step -> do
+        ran <- sendMessage bridge sid (psvTitle step)
+        let ok = either (const False) (const True) ran
+            reply = either (const "") chunkText ran
+        recorded <- reportStep bridge sid (psvId step) ok
+        case recorded of
+          Left err -> return $ Just $ tr lang "Error: " <> T.pack (show err)
+          Right pv' -> do
+            recordChunk sid (Right (ChunkDelta reply))
+            return $ Just (reply <> "\n" <> renderPlanBrief pv')
+  where
+    chunkText (ChunkDelta t) = t
+    chunkText _              = ""

@@ -10,6 +10,8 @@ import type {
   PortSession,
   PortSessionMessage,
   PortToolSpec,
+  PlanAnswer,
+  PlanDecision,
   StepResult,
   StudioVersion,
 } from './types.js';
@@ -33,6 +35,12 @@ export interface Port {
     target?: StepTarget,
   ): Promise<StepResult | PlanAwaiting>;
   decision(sessionId: string, approve: boolean): Promise<DecisionResult>;
+
+  // Multi-step plans (kernel-owned; these are thin forwards).
+  submitPlan(sessionId: string, steps: string[]): Promise<PlanAnswer>;
+  getPlan(sessionId: string): Promise<PlanAnswer>;
+  decideStep(sessionId: string, action: PlanDecision): Promise<PlanAnswer>;
+  reportStep(sessionId: string, stepId: string, ok: boolean, output?: unknown): Promise<PlanAnswer>;
   /** Subscribe to the session event stream; returns an unsubscribe fn. */
   subscribe(sessionId: string, onEvent: (e: PortEvent) => void): () => void;
   studioVersion(): Promise<StudioVersion>;

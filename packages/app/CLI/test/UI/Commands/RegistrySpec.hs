@@ -27,6 +27,7 @@ spec = do
         `shouldSatisfy` all (`elem` [ "/help", "/model", "/models", "/new"
                                     , "/sessions", "/delete", "/clear", "/status", "/settings"
                                     , "/plan", "/plugins", "/resume", "/approve", "/deny"
+                                    , "/skip", "/reject", "/abandon"
                                     , "/quit", "/exit" ])
 
   describe "pickerItems" $ do

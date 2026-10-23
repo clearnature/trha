@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 
 module UI.Brick
   ( -- * Brick UI
@@ -20,7 +21,7 @@ import Control.Concurrent.Async (async)
 import Control.Monad (forM_, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, listSessions, createSession, deleteSession, sendMessage, listModels, planStep, approvePlan, denyPlan)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, listSessions, createSession, deleteSession, sendMessage, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, reportStep)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import Core.Transcript (listLocalSessions, loadTranscript, recordChunk, recordSession, recordToolEvent, recordUser)
@@ -69,6 +70,7 @@ data AppState = AppState
   , appEffCfg    :: CLIConfig           -- ^ effective config snapshot for the panel
   , appSysRows   :: [StatusRow]         -- ^ cached /settings Status rows
   , appMetrics    :: [(Text, Text)]     -- ^ static metric values (workspace/git)
+  , appPlan       :: Maybe PlanView     -- ^ live multi-step plan (kernel-owned)
   }
 
 -- | Quick-picker state.  The candidate list is the shared registry
@@ -123,6 +125,7 @@ data AppEvent
   | EvDeleted SessionId
   | EvPlan (Either CLIError PlanSubmit)
   | EvVerdict (Either CLIError PlanVerdict)
+  | EvPlanState (Either CLIError (PlanView, Maybe Text))
   | EvTool (Either CLIError ToolEvent)
   | EvStatusInfo [StatusRow]
   | EvMetrics [(Text, Text)]
@@ -153,6 +156,7 @@ initialState bridge chan cfg = AppState
   , appEffCfg    = cfg
   , appSysRows   = []
   , appMetrics   = []
+  , appPlan      = Nothing
   }
   where lang = parseLang (configLang cfg)
 
@@ -231,6 +235,7 @@ drawUI st =
       [ vBox
           [ drawHeader (appLang st)
           , drawMessages st
+          , maybe emptyWidget drawPlanCard (appPlan st)
           , maybe emptyWidget (drawPickerWidget st) (appPicker st)
           , drawInput st
           , drawStatus st
@@ -443,6 +448,41 @@ drawInput st =
     busyLabel
       | appBusy st = withAttr (attrName "busy") $ str " ⏳ Thinking… "
       | otherwise  = str " Input "
+
+-- | Live multi-step plan card: the kernel owns the plan, this only renders it.
+--
+-- Marks: @[x]@ done, @[!]@ failed, @[-]@ skipped, @[+]@ approved (out with the
+-- host), @[·]@ pending. The pending step is the one a decision applies to.
+drawPlanCard :: PlanView -> Widget ResourceName
+drawPlanCard pv =
+  withAttr (attrName "plan") $
+    borderWithLabel (withAttr (attrName "plan") $ str " Plan ") $
+      vBox $
+        [ padLeftRight 1 $ withAttr (attrName "status") $
+            str (T.unpack (phaseLabel (pvPhase pv)))
+        ]
+        ++ zipWith (\n st -> padLeftRight 1 . str . T.unpack $ renderStep pv (n, st))
+                   [1 :: Int ..] (pvSteps pv)
+        ++ [ padLeftRight 1 $ withAttr (attrName "status") $ str (T.unpack hints)
+           | not (T.null hints) ]
+  where
+    phaseLabel "executing_step" = "running a step…"
+    phaseLabel "planning"       = "waiting for a decision"
+    phaseLabel other            = other
+    hints :: Text
+    hints
+      | pvPhase pv == "planning" = "/approve · /skip · /reject · /abandon"
+      | otherwise                = "/abandon"
+    renderStep p (n, st) =
+      let mark = case psvStatus st of
+            "done"     -> "[x]"
+            "failed"   -> "[!]"
+            "skipped"  -> "[-]"
+            "approved" -> "[+]"
+            "rejected" -> "[r]"
+            _          -> "[·]"
+          here = if pvPending pv == Just (psvId st) then "  ←" else ""
+      in T.pack (show (n :: Int)) <> ". " <> mark <> " " <> psvTitle st <> here
 
 drawStatus :: AppState -> Widget ResourceName
 drawStatus st =
@@ -658,6 +698,20 @@ handleAppEvent (EvPlan result) = do
       appendMsg (mkMsg "error" (T.pack (show err)) t)
       modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
   scrollBottom
+handleAppEvent (EvPlanState result) = do
+  lang <- gets appLang
+  t <- liftIO now
+  case result of
+    Right (pv, reply) -> do
+      modify $ \st -> st { appPlan = Just pv, appStatus = tr lang "Plan", appBusy = False }
+      case reply of
+        Just txt | not (T.null txt) -> appendMsg (mkMsg "assistant" txt t)
+        _ -> pure ()
+    Left err -> do
+      appendMsg (mkMsg "error" (T.pack (show err)) t)
+      modify $ \st -> st { appStatus = tr lang "Error", appBusy = False }
+  scrollBottom
+
 handleAppEvent (EvVerdict result) = do
   lang <- gets appLang
   t <- liftIO now
@@ -690,6 +744,32 @@ handleAppEvent (EvTool result) = do
       appendMsg (mkMsg "error" (tr lang "SSE: " <> T.pack (show err)) t)
       modify $ \st -> st { appStatus = tr (appLang st) "Error" }
   scrollBottom
+
+-- | Approve the pending step, run it as an ordinary agent turn, then report the
+-- result.
+--
+-- The kernel only *releases* a step; running it is the host's job. The shell's
+-- honest version of that job is asking the agent with the step's title, and
+-- then telling the kernel how it went — otherwise the kernel's progress would
+-- be a guess.
+approveAndRun :: SchedulerBridge -> SessionId -> IO (Either CLIError (PlanView, Maybe Text))
+approveAndRun bridge sid = do
+  approved <- decideStep bridge sid "approve"
+  case approved of
+    Left e -> pure (Left e)
+    Right pv -> case planStepOut pv of
+      Nothing -> pure (Right (pv, Nothing))
+      Just step -> do
+        ran <- sendMessage bridge sid (psvTitle step)
+        let ok = either (const False) (const True) ran
+            reply = either (const Nothing) (Just . chunkText) ran
+        reported <- reportStep bridge sid (psvId step) ok
+        pure $ case reported of
+          Left e    -> Left e
+          Right pv' -> Right (pv', reply)
+  where
+    chunkText (ChunkDelta t) = t
+    chunkText _              = ""
 
 -- | Status text for the footer/status line.
 statusTagOf :: ToolRunStatus -> Text
@@ -758,13 +838,20 @@ handleSlash input = do
       appendMsg (mkMsg "system" (statusLine st) t)
     "/approve" -> do
       cur <- gets appSessionId
+      plan <- gets appPlan
       case cur of
         Nothing -> appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
-        Just sid -> do
-          modify $ \s -> s { appBusy = True, appStatus = "Executing plan..." }
-          void $ liftIO $ async $ do
-            r <- approvePlan bridge sid
-            writeBChan chan (EvVerdict r)
+        Just sid -> case plan of
+          Just pv | pvPhase pv == "planning" -> do
+            -- multi-step plan: release the pending step, run it, report back
+            modify $ \s -> s { appBusy = True, appStatus = "Approving step..." }
+            void $ liftIO $ async $
+              writeBChan chan . EvPlanState =<< approveAndRun bridge sid
+          _ -> do
+            modify $ \s -> s { appBusy = True, appStatus = "Executing plan..." }
+            void $ liftIO $ async $ do
+              r <- approvePlan bridge sid
+              writeBChan chan (EvVerdict r)
     "/deny" -> do
       cur <- gets appSessionId
       case cur of
@@ -797,13 +884,23 @@ handleSlash input = do
           appendMsg (mkMsg "system" (tr lang "Usage: /plan <what to do>") t)
       | "/plan " `T.isPrefixOf` cmd -> do
           let planText = T.strip (T.drop 6 input)
+              steps = splitPlanSteps planText
           cur <- gets appSessionId
           case cur of
             Nothing ->
               appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
+            -- Two or more steps → a real multi-step plan, approved one step at a
+            -- time. A single line keeps the single-command gate.
+            Just sid | length steps >= 2 -> do
+              appendMsg (mkMsg "user" planText t)
+              modify $ \s2 -> s2 { appBusy = True, appStatus = "Planning..." }
+              void $ liftIO $ async $ do
+                recordUser sid planText
+                r <- submitPlan bridge sid steps
+                writeBChan chan (EvPlanState (fmap ((, Nothing)) r))
             Just sid -> do
               appendMsg (mkMsg "user" planText t)
-              modify $ \s -> s { appBusy = True, appStatus = "Awaiting approval..." }
+              modify $ \s2 -> s2 { appBusy = True, appStatus = "Awaiting approval..." }
               void $ liftIO $ async $ do
                 recordUser sid planText
                 r <- planStep bridge sid planText
@@ -825,6 +922,17 @@ handleSlash input = do
               void $ liftIO $ async $ do
                 _ <- deleteSession bridge sid
                 writeBChan chan (EvDeleted sid)
+      | cmd `elem` ["/skip", "/reject", "/abandon"] -> do
+          cur <- gets appSessionId
+          case cur of
+            Nothing ->
+              appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
+            Just sid -> do
+              let action = T.drop 1 cmd
+              modify $ \s2 -> s2 { appBusy = True, appStatus = "Plan decision..." }
+              void $ liftIO $ async $ do
+                r <- decideStep bridge sid action
+                writeBChan chan (EvPlanState (fmap ((, Nothing)) r))
       | otherwise ->
           appendMsg (mkMsg "system" (tr lang "Unknown command: " <> input <> tr lang " — try /help") t)
   scrollBottom

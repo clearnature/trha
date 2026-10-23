@@ -6,7 +6,10 @@
 
 import { create } from 'zustand';
 import type { Port } from '../port/port.js';
-import type { PortModeConfig, PortModel, PortSession, PortToolEvent, PortToolSpec, StudioVersion } from '../port/types.js';
+import type {
+  PlanAnswer, PlanDecision, PlanState, PortModeConfig, PortModel, PortSession,
+  PortToolEvent, PortToolSpec, StudioVersion,
+} from '../port/types.js';
 import { createPort } from '../port/index.js';
 
 export type UiMessage =
@@ -24,6 +27,8 @@ export interface SessionUiState {
   streamText: string;
   busy: boolean;
   pendingPlan: { message: string } | null;
+  /** Kernel-owned multi-step plan; null when none is active. */
+  plan: PlanState | null;
   selectedMode: string;
   /** Which saved provider/model answers steps (P6); null = kernel default. */
   selectedProvider: string | null;
@@ -47,6 +52,12 @@ export interface SessionUiState {
   remove(id: string): Promise<void>;
   send(text: string): Promise<void>;
   decide(approve: boolean): Promise<void>;
+  /** Submit a stepwise plan (one step per line / semicolon-separated). */
+  startPlan(text: string): Promise<void>;
+  /** Decide the pending plan step: approve releases it and runs it here. */
+  decideStep(action: PlanDecision): Promise<void>;
+  /** Read the plan back (e.g. after a restart). */
+  refreshPlan(): Promise<void>;
   setMode(mode: string): void;
   setTarget(provider: string | null, model: string | null): void;
   /** 设置模型生成参数（LLM 设置面板 ↔ step 请求）。 */
@@ -71,6 +82,13 @@ export function makeSessionStore(port?: Port) {
             : m.role === 'assistant' ? { kind: 'assistant' as const, text: m.content }
               : { kind: 'notice' as const, text: `[${m.role}] ${m.content}` }),
       });
+      // A plan is kernel state: after switching (or after a restart) read it
+      // back instead of assuming there is none.
+      try {
+        set({ plan: toPlanState(await p.getPlan(id)) });
+      } catch {
+        set({ plan: null });
+      }
       unsubscribe = p.subscribe(id, e => {
         if (e.type === 'tool') {
           set(s => ({ uiMessages: [...s.uiMessages, { kind: 'tool', tool: e.tool }] }));
@@ -95,6 +113,7 @@ export function makeSessionStore(port?: Port) {
       streamText: '',
       busy: false,
       pendingPlan: null,
+      plan: null,
       selectedMode: 'standard',
       selectedProvider: null,
       selectedModel: null,
@@ -198,6 +217,74 @@ export function makeSessionStore(port?: Port) {
         }
       },
 
+      startPlan: async (text) => {
+        const sid = get().currentId;
+        if (!sid) return;
+        const steps = text
+          .split(/[;\n]/)
+          .map(s => s.trim())
+          .filter(Boolean);
+        if (steps.length < 2) {
+          // One line is not a plan: keep the single-command gate.
+          set({ pendingPlan: { message: text } });
+          return;
+        }
+        set({ busy: true, lastError: null });
+        try {
+          const answer = await p.submitPlan(sid, steps);
+          set({ plan: toPlanState(answer), pendingPlan: null });
+        } catch (e) {
+          set({ lastError: String(e) });
+        } finally {
+          set({ busy: false });
+        }
+      },
+
+      decideStep: async (action) => {
+        const sid = get().currentId;
+        if (!sid) return;
+        set({ busy: true, lastError: null });
+        try {
+          const answer = await p.decideStep(sid, action);
+          let plan = toPlanState(answer);
+          set({ plan });
+          if (action === 'approve' && plan) {
+            // Approving only *releases* the step; running it is our job. Ask the
+            // agent with the step's title, then report so the kernel's progress
+            // is observed rather than guessed.
+            const step = plan.steps.find(st => st.status === 'approved');
+            if (step) {
+              let ok = true;
+              try {
+                const out = await p.step(sid, step.title);
+                if (out.status !== 'awaiting_approval') {
+                  set(st => ({ uiMessages: [...st.uiMessages, { kind: 'assistant', text: out.reply }] }));
+                }
+              } catch (e) {
+                ok = false;
+                set(st => ({ uiMessages: [...st.uiMessages, { kind: 'notice', text: String(e) }] }));
+              }
+              plan = toPlanState(await p.reportStep(sid, step.id, ok));
+              set({ plan });
+            }
+          }
+        } catch (e) {
+          set({ lastError: String(e) });
+        } finally {
+          set({ busy: false });
+        }
+      },
+
+      refreshPlan: async () => {
+        const sid = get().currentId;
+        if (!sid) return;
+        try {
+          set({ plan: toPlanState(await p.getPlan(sid)) });
+        } catch {
+          set({ plan: null });
+        }
+      },
+
       setMode: (mode) => set({ selectedMode: mode }),
 
       setTarget: (provider, model) => set({ selectedProvider: provider, selectedModel: model }),
@@ -208,3 +295,16 @@ export function makeSessionStore(port?: Port) {
 
 /** Development/test helper: a store wired to the mock port. */
 export const useMockSessionStore = makeSessionStore();
+
+/** The kernel answers with {plan, pending, agentState}; flatten it for the UI. */
+function toPlanState(answer: PlanAnswer): PlanState | null {
+  const plan = answer.plan;
+  if (!plan) return null;
+  return {
+    id: plan.id,
+    mode: (plan.mode as PlanState['mode']) ?? 'stepwise',
+    steps: plan.steps,
+    phase: answer.agentState?.state ?? 'idle',
+    pending: answer.pending?.id ?? null,
+  };
+}
