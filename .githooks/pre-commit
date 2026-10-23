@@ -32,6 +32,10 @@ esac
 case "$changed" in
   *package.json*) need_ci=1 ;;
 esac
+need_docs=0
+case "$changed" in
+  *.md) need_docs=1 ;;
+esac
 
 # Shared config affects every TypeScript project.
 case "$changed" in
@@ -118,9 +122,20 @@ check_ci() {
   fi
 }
 
+check_docs() {
+  printf '  %-28s %s ... ' "docs" "local links"
+  if node scripts/verify-doc-links.mjs --quiet >/dev/null 2>&1; then
+    echo ok
+  else
+    echo FAILED
+    node scripts/verify-doc-links.mjs
+    exit 1
+  fi
+}
+
 if [ "$need_scheduler" = 0 ] && [ "$need_web" = 0 ] && [ "$need_desktop" = 0 ] \
   && [ "$need_haskell" = 0 ] && [ "$need_lint" = 0 ] && [ "$need_hlint" = 0 ] \
-  && [ "$need_ci" = 0 ]; then
+  && [ "$need_ci" = 0 ] && [ "$need_docs" = 0 ]; then
   echo "check: nothing type-checked by this hook, skipping"
   exit 0
 fi
@@ -129,6 +144,7 @@ echo "check:"
 if [ "$need_haskell" = 1 ]; then check_haskell; fi
 if [ "$need_hlint" = 1 ]; then check_hlint; fi
 if [ "$need_ci" = 1 ]; then check_ci; fi
+if [ "$need_docs" = 1 ]; then check_docs; fi
 if [ "$need_lint" = 1 ]; then check_lint; fi
 if [ "$need_scheduler" = 1 ]; then check_ts packages/scheduler typecheck; fi
 if [ "$need_web" = 1 ]; then check_ts packages/app/Web typecheck; fi
