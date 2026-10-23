@@ -79,6 +79,7 @@ import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map as Map
 import Control.Monad.Free (liftF)
 import PluginSpec (pluginSpec)
+import CoreContractSpec (coreContractSpec)
 
 subsetOf :: (Eq a) => [a] -> [a] -> Bool
 subsetOf xs ys = all (`elem` ys) xs
@@ -101,6 +102,7 @@ tailCycle frames = listToMaybe [ d | d <- [1 .. 120], d < n, holdsFor d ]
 main :: IO ()
 main = hspec $ do
   pluginSpec
+  coreContractSpec
   describe "Infrastructure.CPU.GGUF (A6/M1)" $ do
     it "reads a real GGUF: version, alignment, metadata and tensor directory" $ do
       let path = "/home/yanli/work/9060xt/llama.cpp/models/ggml-vocab-baichuan.gguf"
