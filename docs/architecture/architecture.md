@@ -74,9 +74,10 @@ type Plugin = Free PluginF
 data SessionEvent
   = UserMessage Text
   | AssistantMessage Text
-  | ToolCall String Dynamic
-  | ToolResult String Dynamic
+  | ToolCall String Value        -- JSON payload，可落盘可回读
+  | ToolResult String Value
   | SystemEvent String
+  | AgentStateChanged AgentState  -- 让日志可重放
 
 data Session = Session
   { sessionId   :: SessionId
@@ -88,12 +89,20 @@ data Session = Session
 
 - **追加日志**：所有事件只追加，不可修改
 - **可投影**：支持从日志重建任意状态视图
-- **持久化**：内核会话快照（`sessionId` + `agentState`）落盘为
-  `<stateDir>/kernel/<sessionId>.json`（`Infrastructure.Storage.SessionStore`，
-  tmp+rename 原子写）。事件与投影含 `Dynamic`，是派生状态，**不进快照**——重启后
-  由下一步重算。`<stateDir>` 取 `trha serve --state-dir`，缺省回落到
-  `TRHA_STATE_DIR`（与编排层共用同一变量，但内核文件放在 `kernel/` 子目录，避免与
-  编排层同名会话文件互相覆盖）
+- **可重放**：每次 FSM 推进都追加 `AgentStateChanged`，状态即日志上的 fold
+- **持久化**（`Infrastructure.Storage.SessionStore`，两个文件一套）：
+  - checkpoint `<stateDir>/kernel/<id>.json`：`sessionId` + `agentState` +
+    `eventCount`（该状态已涵盖多少条事件），tmp+rename 原子写；
+  - 事件日志 `<stateDir>/kernel/<id>.events.jsonl`：一事件一行、就地追加，
+    写一步的代价与历史长度无关；末尾被截断的半行在读取时跳过，不牵连整段历史。
+  - **写序**：先日志后 checkpoint。崩在两次写之间时日志领先 checkpoint，
+    重启由 `restoreSession` 重放 `drop eventCount` 的尾部补齐；反之（日志比
+    checkpoint 短）以 checkpoint 为准。
+  - 投影仍是 `Dynamic` 派生状态，两个文件都不含它——重启后由下一步重算。
+  - `<stateDir>` 取 `trha serve --state-dir`，缺省回落到 `TRHA_STATE_DIR`
+    （与编排层共用同一变量，但内核文件在 `kernel/` 子目录，避免与编排层同名
+    会话文件互相覆盖）。
+  - 观测：`GET /session/<id>/events` 返回内核侧视角的日志（重启后即来自磁盘）。
 
 ### 3.3 Agent Loop (`Core.Agent`)
 
@@ -316,7 +325,7 @@ trha/                      ← 以下为**未采用的规划**
 1. **Phase 1**: 完成 `Core.Session` 和 `Core.Agent` ✅
 2. **Phase 2**: 实现 `LLM.DeepSeek` 适配器 ✅
 3. **Phase 3**: 开发 CLI 前端 —— ✅ 已建成（`packages/app/CLI`，`trha-cli-test` 182 例）
-4. **Phase 4**: 实现存储后端 (JSON/SQLite) —— ✅ 已建成（`trha-infra`；会话持久化两层：编排层对话在 `stateStore.ts`，内核 FSM 快照在 `Infrastructure.Storage.SessionStore`）
+4. **Phase 4**: 实现存储后端 (JSON/SQLite) —— ✅ 已建成（`trha-infra`；会话持久化两层：编排层对话在 `stateStore.ts`，内核 checkpoint + 事件日志在 `Infrastructure.Storage.SessionStore`）
 5. **Phase 5**: 开发 Desktop/Web 前端 —— Desktop 🟡（Electron + React，**不是本文 §4.3 写的 GTK/Qt**；linux deb 已验，win/mac 与实机启动未验）；Web ❌ 空壳
 
 > 另注：本文 §4.3 的 `trha-desktop（GTK/Qt）` 与 §4.4 的 `trha-web（Warp）` **均非现状** ——

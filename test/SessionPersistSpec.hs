@@ -18,6 +18,7 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.List (isInfixOf)
 import qualified Data.List as List
+import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import Network.HTTP.Client
 import Network.HTTP.Types (statusCode)
@@ -65,7 +66,7 @@ sessionPersistSpec = do
           snapshotId snap' `shouldBe` "sess-1"
           snapshotAgentState snap' `shouldBe` Processing "step-1"
           -- the restart path rebuilds a live session from the snapshot
-          s1 <- restoreSession snap'
+          s1 <- restoreSession snap' []
           sessionId s1 `shouldBe` "sess-1"
           getAgentState s1 >>= (`shouldBe` Processing "step-1")
           -- projections are derived state (Dynamic): recomputed, not persisted
@@ -84,7 +85,7 @@ sessionPersistSpec = do
     it "encodes a versioned object, so a future format change is detectable" $ do
       snap <- snapshotSession =<< createSession "sess-3"
       let bytes = encode snap
-      ("\"v\":1" `isInfixOf` BLC.unpack bytes) -- sanity: decoder below is the real check
+      ("\"v\":2" `isInfixOf` BLC.unpack bytes) -- sanity: decoder below is the real check
         `shouldBe` True
       (decode bytes :: Maybe SessionSnapshot) `shouldBe` Just snap
 
@@ -143,6 +144,102 @@ sessionPersistSpec = do
       -- a scheduler-only directory yields no snapshots at all
       SS.listSessionSnapshots dir `shouldReturn` [snap]
 
+  describe "Core.Session event log — appended, replayed, restored" $ do
+    let stepEvents :: AgentState -> [SessionEvent]
+        stepEvents st =
+          [ UserMessage "hi"
+          , AssistantMessage "hello"
+          , AgentStateChanged st
+          ]
+
+    it "appends events and reads them back in order, payloads intact" $ withScratch $ \dir -> do
+      let evs = stepEvents (Processing "step-1")
+             ++ [ ToolCall "read_file" (object ["path" .= ("/etc/hostname" :: T.Text)])
+                , ToolResult "read_file" (object ["ok" .= True])
+                , SystemEvent "compacted"
+                ]
+      SS.appendEventRecords dir "s" evs
+      SS.loadEventRecords dir "s" `shouldReturn` (evs :: [SessionEvent])
+
+    it "appends across writes without losing earlier lines" $ withScratch $ \dir -> do
+      SS.appendEventRecords dir "s" [UserMessage "one"]
+      SS.appendEventRecords dir "s" [AssistantMessage "two"]
+      SS.appendEventRecords dir "s" ([] :: [SessionEvent])  -- no-op, must not write a blank
+      SS.loadEventRecords dir "s"
+        `shouldReturn` ([UserMessage "one", AssistantMessage "two"] :: [SessionEvent])
+
+    it "skips a torn last line instead of losing the whole history" $ withScratch $ \dir -> do
+      SS.appendEventRecords dir "s" [UserMessage "one", AssistantMessage "two"]
+      -- simulate a crash mid-write: a partial record with no newline
+      BL.appendFile (SS.eventLogPath dir "s") "{\"kind\":\"assistant_mes"
+      SS.loadEventRecords dir "s"
+        `shouldReturn` ([UserMessage "one", AssistantMessage "two"] :: [SessionEvent])
+      -- and a later append still reads back cleanly
+      SS.appendEventRecords dir "s" [UserMessage "three"]
+      SS.loadEventRecords dir "s"
+        `shouldReturn` ([UserMessage "one", AssistantMessage "two", UserMessage "three"]
+                          :: [SessionEvent])
+
+    it "returns [] for a session that never logged anything" $ withScratch $ \dir ->
+      SS.loadEventRecords dir "nobody" `shouldReturn` ([] :: [SessionEvent])
+
+    it "snapshot records how many events its state accounts for" $ withScratch $ \dir -> do
+      s <- createSession "s"
+      _ <- advanceAgent s (StartCommand "s")
+      let firstStep = stepEvents (Processing "step-1")
+      mapM_ (appendEvent s) firstStep
+      SS.appendEventRecords dir "s" firstStep
+      snap <- snapshotSession s
+      snapshotEventCount snap `shouldBe` 3
+      SS.saveSessionSnapshot dir "s" snap
+
+      -- A second step's events reach the log, then the process dies before
+      -- the checkpoint is rewritten (the crash window the write order leaves).
+      let crashedStep = stepEvents (WaitingForTool "call-9")
+      SS.appendEventRecords dir "s" crashedStep
+
+      loaded <- SS.loadSessionSnapshot dir "s"
+      evs <- SS.loadEventRecords dir "s"
+      length evs `shouldBe` 6
+      session <- restoreSession (fromMaybe (error "missing snapshot") loaded) evs
+      -- replayed from the tail: the checkpoint alone would still say Processing
+      getAgentState session >>= (`shouldBe` WaitingForTool "call-9")
+      getEvents session >>= (`shouldBe` (firstStep ++ crashedStep))
+
+    it "replays past a state the checkpoint has not seen yet" $ withScratch $ \dir -> do
+      -- Crash between writes: log has the terminal event, checkpoint is older.
+      let snap = SessionSnapshot "s" (Processing "step-1") 3
+          logEvents = [ UserMessage "hi"
+                      , AssistantMessage "done"
+                      , AgentStateChanged (Processing "step-1")
+                      , AssistantMessage "extra"
+                      , AgentStateChanged (Completed (Result "done" 7))
+                      ]
+      session <- restoreSession snap logEvents
+      getAgentState session >>= (`shouldBe` Completed (Result "done" 7))
+
+    it "trusts the checkpoint when the log is shorter than it claims" $ withScratch $ \_ -> do
+      -- Log truncated/restored from an older copy: nothing to replay, so the
+      -- checkpoint's state stands (better than falling back to Idle).
+      let snap = SessionSnapshot "s" (Completed (Result "done" 7)) 9
+      session <- restoreSession snap [UserMessage "hi"]
+      getAgentState session >>= (`shouldBe` Completed (Result "done" 7))
+      getEvents session >>= (`shouldBe` [UserMessage "hi"])
+
+    it "deletes the log on demand and tolerates a second delete" $ withScratch $ \dir -> do
+      SS.appendEventRecords dir "s" [UserMessage "hi"]
+      SS.deleteEventLog dir "s"
+      SS.loadEventRecords dir "s" `shouldReturn` ([] :: [SessionEvent])
+      SS.deleteEventLog dir "s"  -- must not throw
+
+    it "keeps the log out of the snapshot namespace (different extension)" $ withScratch $ \dir -> do
+      s <- createSession "s"
+      snap <- snapshotSession s
+      SS.saveSessionSnapshot dir "s" snap
+      SS.appendEventRecords dir "s" [UserMessage "hi"]
+      -- listing snapshots must not try (and fail) to parse the .jsonl file
+      SS.listSessionSnapshots dir `shouldReturn` [snap]
+
   describe "API.Server — kernel restart resumes the persisted session (HTTP, 真实 warp)" $ do
     let withApp :: IO Application -> (Manager -> String -> IO a) -> IO a
         withApp app act =
@@ -157,6 +254,12 @@ sessionPersistSpec = do
                          , requestBody    = RequestBodyLBS (encode body)
                          , requestHeaders = [("Content-Type", "application/json")]
                          }
+          res <- httpLbs req mgr
+          pure (statusCode (responseStatus res), BLC.unpack (responseBody res))
+
+        httpGet :: Manager -> String -> IO (Int, String)
+        httpGet mgr url = do
+          req <- parseRequest ("GET " ++ url)
           res <- httpLbs req mgr
           pure (statusCode (responseStatus res), BLC.unpack (responseBody res))
 
@@ -178,6 +281,13 @@ sessionPersistSpec = do
         c1 `shouldBe` 200
         body1 `shouldSatisfy` ("Idle" `isInfixOf`)          -- before: Idle
         body1 `shouldSatisfy` ("Processing" `isInfixOf`)     -- after: Processing
+        -- the step is in the log, and the log is on disk
+        (cE, bodyE) <- httpGet mgr (base ++ "/session/restart-1/events")
+        cE `shouldBe` 200
+        bodyE `shouldSatisfy` ("\"count\":3" `isInfixOf`)
+        bodyE `shouldSatisfy` ("user_message" `isInfixOf`)
+        bodyE `shouldSatisfy` ("assistant_message" `isInfixOf`)
+        bodyE `shouldSatisfy` ("agent_state" `isInfixOf`)
 
       -- instance 2: nothing shared in memory, only the state directory.
       withApp (mkStubApp (Just dir)) $ \mgr base -> do
@@ -197,6 +307,13 @@ sessionPersistSpec = do
         (c4, body4) <- httpPost mgr (base ++ "/agent/step") stepBody
         c4 `shouldBe` 200
         body4 `shouldSatisfy` (not . ("Idle" `isInfixOf`))
+
+        -- (c) the log came back too, and both new steps were appended to it:
+        -- one step before the restart, two after
+        (c5, body5) <- httpGet mgr (base ++ "/session/restart-1/events")
+        c5 `shouldBe` 200
+        body5 `shouldSatisfy` ("\"count\":9" `isInfixOf`)
+        body5 `shouldSatisfy` ("user_message" `isInfixOf`)
 
     it "a brand-new id reports resumed:false" $ withScratch $ \dir ->
       withApp (mkStubApp (Just dir)) $ \mgr base -> do

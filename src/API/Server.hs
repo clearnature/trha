@@ -78,6 +78,7 @@ type API =
        "health" :> Get '[JSON] Value
   :<|> "session" :> "start" :> ReqBody '[JSON] StartReq :> Post '[JSON] Value
   :<|> "session" :> Capture "sid" Text :> Delete '[JSON] Value
+  :<|> "session" :> Capture "sid" Text :> "events" :> Get '[JSON] Value
   :<|> "agent" :> "step" :> ReqBody '[JSON] StepReq :> Post '[JSON] Value
   -- Provider registry (P1: list + protocols; P2: probe; P3: save/remove/check)
   :<|> "providers" :> Get '[JSON] Value
@@ -141,6 +142,7 @@ server adapter sessions stateDir =
        healthHandler
   :<|> startSessionHandler sessions stateDir
   :<|> deleteSessionHandler sessions stateDir
+  :<|> sessionEventsHandler sessions
   :<|> agentStepHandler adapter sessions stateDir
   :<|> P.providersHandler
   :<|> P.protocolsHandler
@@ -209,8 +211,29 @@ deleteSessionHandler sessionsVar stateDir sid = do
     pure (Map.member sid sessions)
   liftIO $ case stateDir of
     Nothing  -> pure ()
-    Just dir -> SS.deleteSessionSnapshot dir (T.unpack sid)
+    Just dir -> do
+      SS.deleteSessionSnapshot dir (T.unpack sid)
+      SS.deleteEventLog dir (T.unpack sid)
   return $ object ["sessionId" .= sid, "deleted" .= known]
+
+-- | The kernel's own view of a session's history.
+--
+-- Mostly a diagnostic surface: the log is restored from disk at startup, so
+-- after a restart this endpoint answers from the persisted file and is the
+-- cheapest way to confirm that what the kernel remembers matches what the host
+-- (which keeps the user-facing transcript) believes happened.
+sessionEventsHandler :: TVar (Map.Map Text Session) -> Text -> Handler Value
+sessionEventsHandler sessionsVar sid = do
+  sessions <- liftIO $ readTVarIO sessionsVar
+  case Map.lookup sid sessions of
+    Nothing -> throwError err404 { errBody = "Session not found" }
+    Just session -> do
+      events <- liftIO $ getEvents session
+      return $ object
+        [ "sessionId" .= sid
+        , "count"     .= length events
+        , "events"    .= events
+        ]
 
 -- Agent step
 agentStepHandler :: LLMAdapter -> TVar (Map.Map Text Session) -> Maybe FilePath -> StepReq -> Handler Value
@@ -242,7 +265,14 @@ agentStepHandler adapter sessionsVar stateDir req = do
       -- D-3：推进内核 FSM（Core.Agent.StateMachine 的 transition 为唯一语义来源）
       stBefore <- liftIO $ getAgentState session
       stAfter  <- liftIO $ advanceAgent session (StartCommand (T.unpack (srSessionId req)))
-      liftIO $ persistSnapshot stateDir session
+      -- 事件日志：这一步发生了什么（先入内存日志，再随 checkpoint 一起落盘）
+      let events =
+            [ UserMessage (srMessage req)
+            , AssistantMessage reply
+            , AgentStateChanged stAfter
+            ]
+      liftIO $ mapM_ (appendEvent session) events
+      liftIO $ persistStep stateDir session events
       return $ object
         [ "reply" .= reply
         , "usage" .= toJSON usage
@@ -352,8 +382,12 @@ touchKernelSession sessionsVar stateDir body replyText =
           let (verdict, t6st) = verdictOfWithState (T.unpack replyText)
           setProjection session "t6state" (toDyn t6st)
           setProjection session "constraint" (toDyn verdict)
-          _ <- advanceAgent session (StartCommand (T.unpack sid))
-          persistSnapshot stateDir session
+          st <- advanceAgent session (StartCommand (T.unpack sid))
+          -- Same two events as /agent/step: this path advances the FSM too, and
+          -- a log that omitted it would misreport the session's history.
+          let events = [AssistantMessage replyText, AgentStateChanged st]
+          mapM_ (appendEvent session) events
+          persistStep stateDir session events
 
 
 -- | Write the persistable slice after it changed. Best effort: a failed
@@ -364,6 +398,19 @@ persistSnapshot (Just dir) session = do
   snap <- snapshotSession session
   SS.saveSessionSnapshot dir (sessionId session) snap
     `catch` \(_ :: SomeException) -> pure ()
+
+-- | Flush one step: append its events, then the checkpoint.
+--
+-- Order matters. The checkpoint records how many events it accounts for, so
+-- writing it *after* the log means a crash in between leaves the log ahead —
+-- and 'restoreSession' repairs that by replaying the tail. The other order
+-- would leave the checkpoint claiming state for events that never landed.
+persistStep :: Maybe FilePath -> Session -> [SessionEvent] -> IO ()
+persistStep Nothing _ _ = pure ()
+persistStep (Just dir) session events = do
+  SS.appendEventRecords dir (sessionId session) events
+    `catch` \(_ :: SomeException) -> pure ()
+  persistSnapshot (Just dir) session
 
 -- | A refusal the UI can act on: HTTP status plus a machine-readable code.
 codedRefusal :: Int -> Text -> Text -> ServerError
@@ -1065,7 +1112,10 @@ mkApp adapter stateDir = do
     Just dir -> do
       snaps <- SS.listSessionSnapshots dir
       forM_ snaps $ \snap -> do
-        session <- restoreSession snap
+        -- Checkpoint + log together: the checkpoint may lag the log by the
+        -- events appended just before a crash, and restoreSession replays them.
+        events <- SS.loadEventRecords dir (snapshotId snap)
+        session <- restoreSession snap events
         atomically $ modifyTVar sessionsVar (Map.insert (T.pack (sessionId session)) session)
   pure (serve (Proxy :: Proxy API) (server adapter sessionsVar stateDir))
 

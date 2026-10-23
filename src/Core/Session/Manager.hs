@@ -17,6 +17,7 @@ import Core.Agent.Types (AgentState (..))
 import Core.Agent.StateMachine (AgentCommand (..), transition)
 import Data.IORef
 import Data.Dynamic (Dynamic)
+import Data.List (foldl')
 import qualified Data.Map as Map
 
 -- | Create a new session with a given ID
@@ -27,12 +28,15 @@ createSession sid = do
   stRef <- newIORef Idle          -- D-3：新会话的内核 FSM 从 Idle 开始
   return $ Session sid logRef projRef stRef
 
--- | Append an event to the session log
+-- | Append an event to the session log.
+--
+-- Strict on purpose: the log is the persistence payload, so a thunk chain
+-- would only be forced (and then serialized) later.
 appendEvent :: Session -> SessionEvent -> IO ()
-appendEvent session event = do
-  modifyIORef (eventLog session) (++ [event])
+appendEvent session event =
+  modifyIORef' (eventLog session) (++ [event])
 
--- | Get all events from the session
+-- | Get all events from the session log, oldest first
 getEvents :: Session -> IO [SessionEvent]
 getEvents session = readIORef (eventLog session)
 
@@ -86,14 +90,33 @@ advanceAgent session cmd = do
   setAgentState session nxt
   pure nxt
 
--- | Capture the persistable slice (id + FSM state) of a session.
+-- | Capture the persistable slice: identity, FSM state, and how many events
+-- that state already accounts for.
 snapshotSession :: Session -> IO SessionSnapshot
-snapshotSession session = SessionSnapshot (sessionId session) <$> getAgentState session
+snapshotSession session = do
+  st <- getAgentState session
+  evs <- getEvents session
+  pure $ SessionSnapshot (sessionId session) st (length evs)
 
--- | Rebuild a session from a snapshot.  Projections start empty by design:
--- they are derived state and are recomputed on the next step.
-restoreSession :: SessionSnapshot -> IO Session
-restoreSession snap = do
+-- | Rebuild a session from its checkpoint plus the persisted event log.
+--
+-- The checkpoint is written *after* the log, so a crash between the two writes
+-- leaves the log ahead of it. The tail beyond 'snapshotEventCount' is therefore
+-- replayed; anything the checkpoint already covers is not (the checkpoint is
+-- the cheaper, authoritative summary of it).
+--
+-- If the log is shorter than the checkpoint claims (truncated file, state
+-- restored from an older copy), nothing is replayed and the checkpoint's state
+-- stands — better than resurrecting a state the checkpoint moved past.
+--
+-- Projections start empty by design: they are derived state.
+restoreSession :: SessionSnapshot -> [SessionEvent] -> IO Session
+restoreSession snap events = do
   session <- createSession (snapshotId snap)
-  setAgentState session (snapshotAgentState snap)
+  let replayed = foldl' apply (snapshotAgentState snap) (drop (snapshotEventCount snap) events)
+  setAgentState session replayed
+  writeIORef (eventLog session) events
   pure session
+  where
+    apply _ (AgentStateChanged st) = st
+    apply st _                     = st

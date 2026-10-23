@@ -10,21 +10,51 @@ module Core.Session.Types
 import Data.IORef
 import qualified Data.Map as Map
 import Data.Dynamic
-import Data.Aeson (FromJSON (..), ToJSON (..), object, withObject, (.:), (.=))
+import Data.Aeson
+  ( FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.:?), (.!=), (.=) )
+import Data.Aeson.Types (Parser)
 import Data.Text (Text)
 import Core.Agent.Types (AgentState)
 
 -- | Unique identifier for a session
 type SessionId = String
 
--- | Events that can occur in a session
+-- | Events that can occur in a session.
+--
+-- Payloads are 'Value' rather than 'Dynamic' so the log can be written to disk
+-- and read back: a 'Dynamic' is erased and has no encoding. Structured JSON is
+-- also what the SDK's event type already uses.
+--
+-- @AgentStateChanged@ is what makes the log replayable — it is appended by the
+-- same call that advances the FSM, so the FSM state is a fold over the log.
 data SessionEvent
   = UserMessage Text
   | AssistantMessage Text
-  | ToolCall String Dynamic
-  | ToolResult String Dynamic
+  | ToolCall String Value
+  | ToolResult String Value
   | SystemEvent String
-  deriving (Show)
+  | AgentStateChanged AgentState
+  deriving (Show, Eq)
+
+instance ToJSON SessionEvent where
+  toJSON (UserMessage t)      = object ["kind" .= ("user_message" :: Text), "text" .= t]
+  toJSON (AssistantMessage t) = object ["kind" .= ("assistant_message" :: Text), "text" .= t]
+  toJSON (ToolCall n p)       = object ["kind" .= ("tool_call" :: Text), "tool" .= n, "payload" .= p]
+  toJSON (ToolResult n p)     = object ["kind" .= ("tool_result" :: Text), "tool" .= n, "payload" .= p]
+  toJSON (SystemEvent s)      = object ["kind" .= ("system" :: Text), "text" .= s]
+  toJSON (AgentStateChanged st) = object ["kind" .= ("agent_state" :: Text), "agentState" .= st]
+
+instance FromJSON SessionEvent where
+  parseJSON = withObject "SessionEvent" $ \o -> do
+    kind <- o .: "kind" :: Parser Text
+    case kind of
+      "user_message"      -> UserMessage <$> o .: "text"
+      "assistant_message" -> AssistantMessage <$> o .: "text"
+      "tool_call"         -> ToolCall <$> o .: "tool" <*> o .: "payload"
+      "tool_result"       -> ToolResult <$> o .: "tool" <*> o .: "payload"
+      "system"            -> SystemEvent <$> o .: "text"
+      "agent_state"       -> AgentStateChanged <$> o .: "agentState"
+      other               -> fail ("unknown session event kind: " <> show other)
 
 -- | A session contains an event log and projections
 --
@@ -39,29 +69,39 @@ data Session = Session
   , agentState  :: IORef AgentState
   }
 
--- | The persistable slice of a session: identity + FSM state.
+-- | The checkpoint of a session: identity, FSM state, and how many events that
+-- FSM state already accounts for.
 --
--- 'projections' and 'eventLog' are deliberately excluded:
+-- The event log itself is stored beside the checkpoint (one JSON object per
+-- line) rather than inside it, so appending an event does not rewrite the
+-- whole history.
 --
---   * projections are @Dynamic@ (opaque to Core by design — Core must not
---     depend on the CPU layer's concrete types);
---   * events contain @Dynamic@ payloads for the same reason.
+-- 'projections' stay out of both: they are @Dynamic@, opaque to Core by
+-- design (Core must not depend on the CPU layer's concrete types), and they
+-- are recomputed on the next step.
 --
--- Both are derived state under event sourcing: they are recomputed from the
--- next step, so persisting them is not required for a restart to continue.
--- The FSM state is what tells the host "how far this conversation got".
+-- 'snapshotEventCount' is what makes a crash between the two writes (log
+-- first, checkpoint second) recoverable: restore replays the tail of the log
+-- that the checkpoint has not accounted for yet.
 data SessionSnapshot = SessionSnapshot
   { snapshotId         :: SessionId
   , snapshotAgentState :: AgentState
+  , snapshotEventCount :: Int
   } deriving (Show, Eq)
 
 instance ToJSON SessionSnapshot where
   toJSON s = object
-    [ "v"          .= (1 :: Int)
+    [ "v"          .= (2 :: Int)
     , "sessionId"  .= snapshotId s
     , "agentState" .= snapshotAgentState s
+    , "eventCount" .= snapshotEventCount s
     ]
 
 instance FromJSON SessionSnapshot where
   parseJSON = withObject "SessionSnapshot" $ \o ->
-    SessionSnapshot <$> o .: "sessionId" <*> o .: "agentState"
+    -- @eventCount@ is optional so a v1 checkpoint (written before the event
+    -- log was persisted) still loads: it then counts as "no events replayed".
+    SessionSnapshot
+      <$> o .: "sessionId"
+      <*> o .: "agentState"
+      <*> o .:? "eventCount" .!= 0
