@@ -7,13 +7,14 @@ module Core.Agent.Types
   , StepId
   , ToolCallId
   , ErrorType(..)
+  , ApprovalRequest(..)
   , Message(..)
   , Result(..)
   , AgentConfig(..)
   ) where
 
 import Control.Concurrent.STM
-import Data.Aeson (FromJSON (..), ToJSON (..), object, withObject, (.:), (.=))
+import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.=))
 import Data.Aeson.Types (Parser)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -47,11 +48,25 @@ data Result = Result
   , resultTokens :: Int
   } deriving (Show, Eq)
 
+-- | A command held at the approval gate.
+--
+-- The kernel does not execute the gated action — it only decides whether the
+-- host may proceed. 'approvalPayload' keeps the original request, so a
+-- decision works without the host re-sending it, and a restart can still
+-- answer "what was pending?".
+data ApprovalRequest = ApprovalRequest
+  { approvalId      :: String
+  , approvalAction  :: String   -- ^ kind of gated command ("step", "tool", …)
+  , approvalSummary :: Text     -- ^ one line the host can show a user
+  , approvalPayload :: Value
+  } deriving (Show, Eq)
+
 -- | States of an agent
 data AgentState
   = Idle
   | Processing StepId
   | WaitingForTool ToolCallId
+  | AwaitingApproval ApprovalRequest
   | Completed Result
   | Error ErrorType
   deriving (Show, Eq)
@@ -102,10 +117,28 @@ instance FromJSON Result where
   parseJSON = withObject "Result" $ \o ->
     Result <$> o .: "text" <*> o .: "tokens"
 
+instance ToJSON ApprovalRequest where
+  toJSON r = object
+    [ "id"      .= approvalId r
+    , "action"  .= approvalAction r
+    , "summary" .= approvalSummary r
+    , "payload" .= approvalPayload r
+    ]
+
+instance FromJSON ApprovalRequest where
+  parseJSON = withObject "ApprovalRequest" $ \o ->
+    ApprovalRequest
+      <$> o .: "id"
+      <*> o .: "action"
+      <*> o .: "summary"
+      <*> o .: "payload"
+
 instance ToJSON AgentState where
   toJSON Idle = object ["state" .= ("idle" :: Text)]
   toJSON (Processing sid) = object ["state" .= ("processing" :: Text), "step" .= sid]
   toJSON (WaitingForTool cid) = object ["state" .= ("waiting_for_tool" :: Text), "call" .= cid]
+  toJSON (AwaitingApproval req) = object
+    ["state" .= ("awaiting_approval" :: Text), "approval" .= req]
   toJSON (Completed r) = object ["state" .= ("completed" :: Text), "result" .= r]
   toJSON (Error e) = object ["state" .= ("error" :: Text), "error" .= e]
 
@@ -113,9 +146,10 @@ instance FromJSON AgentState where
   parseJSON = withObject "AgentState" $ \o -> do
     st <- o .: "state" :: Parser Text
     case st of
-      "idle"             -> pure Idle
-      "processing"       -> Processing <$> o .: "step"
-      "waiting_for_tool" -> WaitingForTool <$> o .: "call"
-      "completed"        -> Completed <$> o .: "result"
-      "error"            -> Error <$> o .: "error"
-      other              -> fail ("unknown agent state: " <> T.unpack other)
+      "idle"              -> pure Idle
+      "processing"        -> Processing <$> o .: "step"
+      "waiting_for_tool"  -> WaitingForTool <$> o .: "call"
+      "awaiting_approval" -> AwaitingApproval <$> o .: "approval"
+      "completed"         -> Completed <$> o .: "result"
+      "error"             -> Error <$> o .: "error"
+      other               -> fail ("unknown agent state: " <> T.unpack other)

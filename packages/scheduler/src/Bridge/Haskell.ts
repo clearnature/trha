@@ -98,6 +98,32 @@ export class HaskellBridge {
     );
   }
 
+  /**
+   * Park a command at the kernel's approval gate.
+   *
+   * From here the kernel holds the session in `awaiting_approval`, which is a
+   * real barrier: it refuses steps until the decision arrives, and the parked
+   * request survives a kernel restart. The scheduler keeps its own
+   * `pendingApproval` for the shell's UX, but the kernel is the gate of record.
+   *
+   * 409 means the kernel already has a request parked for this session; the
+   * caller's own pending state says the same thing, so it is not an error.
+   */
+  async requestApproval(sessionId: string, message: string, action = 'step'): Promise<void> {
+    await this.httpClient.post<Record<string, unknown>>(
+      `/session/${encodeURIComponent(sessionId)}/approval`,
+      { message, action },
+    );
+  }
+
+  /** Release the kernel's gate. Idempotent from the caller's view (400 = nothing parked). */
+  async decideApproval(sessionId: string, approve: boolean): Promise<void> {
+    await this.httpClient.post<Record<string, unknown>>(
+      `/session/${encodeURIComponent(sessionId)}/decision`,
+      { approve },
+    );
+  }
+
   /** Call the kernel chat completions endpoint (non-streaming). */
   async queryModel(request: QueryRequest): Promise<QueryResponse> {
     const body: Record<string, unknown> = {

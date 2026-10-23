@@ -941,13 +941,27 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
 
     // Approval gate: hold the request until the host decides.
+    //
+    // The kernel is the gate of record (it parks the session in
+    // `awaiting_approval`, which it persists and enforces as a barrier), so
+    // tell it first. A kernel that is down must not break the shell, hence the
+    // local `pendingApproval` stays authoritative for the response shape.
     if (requireApproval) {
       session.pendingApproval = { message };
+      void bridge.requestApproval(sessionId, message).catch(e =>
+        console.error(`kernel approval request ${sessionId}:`, e));
       events.emit('agent:plan', { sessionId, status: 'awaiting_approval', message });
       return res.json({ status: 'awaiting_approval', pending: { message }, mode: session.mode });
     }
 
-    session.pendingApproval = null; // a regular step clears any stale gate
+    // A regular step supersedes a stale gate. Resolve it kernel-side as a
+    // rejection: otherwise the kernel's barrier would keep refusing every
+    // later step for this session.
+    if (session.pendingApproval) {
+      void bridge.decideApproval(session.id, false).catch(e =>
+        console.error(`kernel approval release ${session.id}:`, e));
+    }
+    session.pendingApproval = null;
     // A3: stream the answer to whoever listens on this session's SSE channel.
     const reply = await runStep(session, message, { provider, model, genParams },
       text => events.emit('agent:delta', { sessionId: session.id, text }));
@@ -966,6 +980,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     if (!pending) return res.status(400).json({ error: 'No pending approval' });
     const approve = req.body?.approve === true;
     session.pendingApproval = null;
+    // Release the kernel's barrier before running anything: if it kept the
+    // session parked, the next step would be refused.
+    void bridge.decideApproval(session.id, approve).catch(e =>
+      console.error(`kernel approval decision ${session.id}:`, e));
     events.emit('agent:decision', { sessionId: session.id, approve });
     if (!approve) {
       return res.json({ status: 'denied', mode: session.mode });

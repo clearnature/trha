@@ -14,7 +14,7 @@ import Data.Aeson
   ( FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.:?), (.!=), (.=) )
 import Data.Aeson.Types (Parser)
 import Data.Text (Text)
-import Core.Agent.Types (AgentState)
+import Core.Agent.Types (AgentState, ApprovalRequest)
 
 -- | Unique identifier for a session
 type SessionId = String
@@ -34,6 +34,8 @@ data SessionEvent
   | ToolResult String Value
   | SystemEvent String
   | AgentStateChanged AgentState
+  | ApprovalRequested ApprovalRequest
+  | ApprovalDecided Bool
   deriving (Show, Eq)
 
 instance ToJSON SessionEvent where
@@ -43,6 +45,8 @@ instance ToJSON SessionEvent where
   toJSON (ToolResult n p)     = object ["kind" .= ("tool_result" :: Text), "tool" .= n, "payload" .= p]
   toJSON (SystemEvent s)      = object ["kind" .= ("system" :: Text), "text" .= s]
   toJSON (AgentStateChanged st) = object ["kind" .= ("agent_state" :: Text), "agentState" .= st]
+  toJSON (ApprovalRequested req) = object ["kind" .= ("approval_requested" :: Text), "request" .= req]
+  toJSON (ApprovalDecided ok) = object ["kind" .= ("approval_decided" :: Text), "approve" .= ok]
 
 instance FromJSON SessionEvent where
   parseJSON = withObject "SessionEvent" $ \o -> do
@@ -54,6 +58,8 @@ instance FromJSON SessionEvent where
       "tool_result"       -> ToolResult <$> o .: "tool" <*> o .: "payload"
       "system"            -> SystemEvent <$> o .: "text"
       "agent_state"       -> AgentStateChanged <$> o .: "agentState"
+      "approval_requested" -> ApprovalRequested <$> o .: "request"
+      "approval_decided"   -> ApprovalDecided <$> o .: "approve"
       other               -> fail ("unknown session event kind: " <> show other)
 
 -- | A session contains an event log and projections

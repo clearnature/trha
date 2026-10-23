@@ -8,12 +8,15 @@ module Core.Session.Manager
   , getAgentState
   , setAgentState
   , advanceAgent
+  , pendingApproval
+  , requestApproval
+  , decideApproval
   , snapshotSession
   , restoreSession
   ) where
 
 import Core.Session.Types
-import Core.Agent.Types (AgentState (..))
+import Core.Agent.Types (AgentState (..), ApprovalRequest (..))
 import Core.Agent.StateMachine (AgentCommand (..), transition)
 import Data.IORef
 import Data.Dynamic (Dynamic)
@@ -89,6 +92,49 @@ advanceAgent session cmd = do
   let nxt = transition cur cmd
   setAgentState session nxt
   pure nxt
+
+--------------------------------------------------------------------------------
+-- 审批闸门（命令屏障）
+--
+-- 「命令」（一次要执行的步/工具）在放行前停在 AwaitingApproval。闸门只决定
+-- 能不能过，不执行被批准的动作 —— 执行归宿主。
+--------------------------------------------------------------------------------
+
+-- | The request currently parked at the gate, if any.
+pendingApproval :: Session -> IO (Maybe ApprovalRequest)
+pendingApproval session = do
+  st <- readIORef (agentState session)
+  pure $ case st of
+    AwaitingApproval req -> Just req
+    _                    -> Nothing
+
+-- | Park a command at the gate. Returns the request that now holds the session,
+-- or 'Nothing' when the current state cannot hold one (already parked, or
+-- completed) — the FSM, not this function, decides what is legal.
+requestApproval :: Session -> ApprovalRequest -> IO (Maybe ApprovalRequest)
+requestApproval session req = do
+  st <- readIORef (agentState session)
+  let nxt = transition st (RequestApprovalCommand req)
+  case nxt of
+    -- Same request id means the FSM kept the existing park (only the FSM
+    -- decides legality); report "nothing new" so callers do not log a second
+    -- request that never took effect.
+    AwaitingApproval r | approvalId r == approvalId req ->
+      writeIORef (agentState session) nxt >> pure (Just r)
+    _ -> pure Nothing
+
+-- | Resolve the parked request.
+--
+-- 'atomicModifyIORef'' makes the check-and-decide one step: two decisions
+-- racing (a double click, two hosts) cannot both win — the loser sees 'Nothing'
+-- because the state already left 'AwaitingApproval'.
+decideApproval :: Session -> Bool -> IO (Maybe AgentState)
+decideApproval session approve = atomicModifyIORef' (agentState session) $ \cur ->
+  case cur of
+    AwaitingApproval _ ->
+      let nxt = transition cur (if approve then ApproveCommand else RejectCommand)
+      in (nxt, Just nxt)
+    _ -> (cur, Nothing)
 
 -- | Capture the persistable slice: identity, FSM state, and how many events
 -- that state already accounts for.

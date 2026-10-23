@@ -29,6 +29,11 @@
 | GET /api/events/:sessionId | –(SSE) | data 帧（见 §3） | vitest tool-events |
 | GET /v1/models · /v1/chat/completions(±stream) · /v1/messages(±stream) · /v1/responses(±stream) | OpenAI/Anthropic/Responses | 标准协议 | vitest protocols |
 
+> **审批闸门的事实源在内核**：`requireApproval` 与 `decision` 两个路由会把请求
+> 转给内核 `/session/:id/approval` 与 `/session/:id/decision`（内核持有
+> `awaiting_approval` 状态、做屏障、并落盘跨重启）。内核不可达时编排层降级为本地
+> `pendingApproval`，上表响应形状不变。详见 `docs/architecture/architecture.md` §3.3。
+
 ## 3. SSE 事件帧（data: JSON，按 sessionId 过滤）
 | event 语义 | 载荷（字段） | CLI 类型 |
 |---|---|---|

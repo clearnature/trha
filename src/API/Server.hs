@@ -49,6 +49,7 @@ import Data.Dynamic (toDyn)
 
 -- Core modules
 import Core.Agent.StateMachine (AgentCommand (..))
+import Core.Agent.Types (AgentState (..), ApprovalRequest (..))
 import Core.Session.Types
 import Core.Session.Manager
 import Core.Agent.Modes
@@ -79,6 +80,8 @@ type API =
   :<|> "session" :> "start" :> ReqBody '[JSON] StartReq :> Post '[JSON] Value
   :<|> "session" :> Capture "sid" Text :> Delete '[JSON] Value
   :<|> "session" :> Capture "sid" Text :> "events" :> Get '[JSON] Value
+  :<|> "session" :> Capture "sid" Text :> "approval" :> ReqBody '[JSON] ApprovalReq :> Post '[JSON] Value
+  :<|> "session" :> Capture "sid" Text :> "decision" :> ReqBody '[JSON] DecisionReq :> Post '[JSON] Value
   :<|> "agent" :> "step" :> ReqBody '[JSON] StepReq :> Post '[JSON] Value
   -- Provider registry (P1: list + protocols; P2: probe; P3: save/remove/check)
   :<|> "providers" :> Get '[JSON] Value
@@ -123,6 +126,26 @@ data StartReq = StartReq
 data StepReq = StepReq { srSessionId :: Text, srMessage :: Text }
   deriving (Generic)
 
+-- | Park a command at the approval gate.
+--
+-- @action@ is free-form on purpose: the kernel gates whatever the host names
+-- ("step", "tool", "run"), and only stores it for the decision message.
+data ApprovalReq = ApprovalReq
+  { aqMessage :: Text
+  , aqAction  :: Maybe Text
+  }
+
+-- | Resolve the parked command: @{"approve": true|false}@.
+newtype DecisionReq = DecisionReq { dqApprove :: Bool }
+
+instance FromJSON ApprovalReq where
+  parseJSON = withObject "ApprovalReq" $ \o ->
+    ApprovalReq <$> o .: "message" <*> o .:? "action"
+
+instance FromJSON DecisionReq where
+  parseJSON = withObject "DecisionReq" $ \o ->
+    DecisionReq <$> o .: "approve"
+
 instance FromJSON StartReq where
   parseJSON = withObject "StartReq" $ \o ->
     StartReq <$> (o .:? "mode" <|> o .:? "srMode")
@@ -143,6 +166,8 @@ server adapter sessions stateDir =
   :<|> startSessionHandler sessions stateDir
   :<|> deleteSessionHandler sessions stateDir
   :<|> sessionEventsHandler sessions
+  :<|> requestApprovalHandler sessions stateDir
+  :<|> decisionHandler sessions stateDir
   :<|> agentStepHandler adapter sessions stateDir
   :<|> P.providersHandler
   :<|> P.protocolsHandler
@@ -235,6 +260,83 @@ sessionEventsHandler sessionsVar sid = do
         , "events"    .= events
         ]
 
+-- | Park a command at the approval gate.
+--
+-- This is the kernel's whole role in approval: hold the session in
+-- 'AwaitingApproval' until the host decides, so a pending command cannot be
+-- stepped past, and so a restart does not silently drop it. The kernel never
+-- runs the gated command — the host does, after 'approved'.
+requestApprovalHandler :: TVar (Map.Map Text Session) -> Maybe FilePath -> Text -> ApprovalReq -> Handler Value
+requestApprovalHandler sessionsVar stateDir sid req = do
+  sessions <- liftIO $ readTVarIO sessionsVar
+  case Map.lookup sid sessions of
+    Nothing -> throwError err404 { errBody = "Session not found" }
+    Just session -> do
+      seen <- liftIO $ length <$> getEvents session
+      let action = maybe "step" T.unpack (aqAction req)
+          -- Deterministic per session: the log length is the sequence number,
+          -- so ids stay unique across restarts without extra counters.
+          approval = ApprovalRequest
+            { approvalId      = T.unpack sid ++ "#" ++ show (seen + 1)
+            , approvalAction  = action
+            , approvalSummary = aqMessage req
+            , approvalPayload = object [ "message" .= aqMessage req ]
+            }
+      parked <- liftIO $ requestApproval session approval
+      case parked of
+        Nothing -> throwError $ codedRefusal 409 "approval.pending"
+          "This session is already waiting for a decision"
+        Just r -> do
+          let events = [ ApprovalRequested r
+                       , AgentStateChanged (AwaitingApproval r)
+                       ]
+          liftIO $ mapM_ (appendEvent session) events
+          liftIO $ persistStep stateDir session events
+          st <- liftIO $ getAgentState session
+          return $ object
+            [ "sessionId"  .= sid
+            , "status"     .= ("awaiting_approval" :: Text)
+            , "pending"    .= object
+                [ "id"      .= approvalId r
+                , "action"  .= approvalAction r
+                , "message" .= approvalSummary r
+                ]
+            , "agentState" .= st
+            ]
+
+-- | Resolve the parked command.
+--
+-- Approve and reject both release the session to 'Idle': the decision is the
+-- kernel's output, execution is the host's. A second decision finds nothing
+-- parked and gets 400, which is what makes a double click harmless.
+decisionHandler :: TVar (Map.Map Text Session) -> Maybe FilePath -> Text -> DecisionReq -> Handler Value
+decisionHandler sessionsVar stateDir sid req = do
+  sessions <- liftIO $ readTVarIO sessionsVar
+  case Map.lookup sid sessions of
+    Nothing -> throwError err404 { errBody = "Session not found" }
+    Just session -> do
+      parked <- liftIO $ pendingApproval session
+      case parked of
+        Nothing -> throwError $ codedRefusal 400 "approval.none"
+          "No pending approval"
+        Just r -> do
+          decided <- liftIO $ decideApproval session (dqApprove req)
+          case decided of
+            Nothing -> throwError $ codedRefusal 409 "approval.resolved"
+              "The pending approval was resolved by another decision"
+            Just st -> do
+              let events = [ ApprovalDecided (dqApprove req)
+                           , AgentStateChanged st
+                           ]
+              liftIO $ mapM_ (appendEvent session) events
+              liftIO $ persistStep stateDir session events
+              return $ object
+                [ "sessionId" .= sid
+                , "status"    .= (if dqApprove req then ("approved" :: Text) else "denied")
+                , "requestId" .= approvalId r
+                , "agentState" .= st
+                ]
+
 -- Agent step
 agentStepHandler :: LLMAdapter -> TVar (Map.Map Text Session) -> Maybe FilePath -> StepReq -> Handler Value
 agentStepHandler adapter sessionsVar stateDir req = do
@@ -242,6 +344,10 @@ agentStepHandler adapter sessionsVar stateDir req = do
   case Map.lookup (srSessionId req) sessions of
     Nothing -> throwError err404 { errBody = "Session not found" }
     Just session -> do
+      -- 屏障：有待决命令时不允许推进下一步（FSM 里同样是「不变」，这里给出明确错误）
+      blocked <- liftIO $ pendingApproval session
+      maybe (pure ()) (\p -> throwError $ codedRefusal 409 "approval.pending"
+        ("A decision is pending for " <> T.pack (approvalId p))) blocked
       let userMsg = LLM.Message LLM.User (srMessage req)
       chunks <- liftIO $ llmChat adapter [userMsg]
       let reply = T.concat [t | LLM.ChunkDelta t <- chunks]
@@ -379,15 +485,19 @@ touchKernelSession sessionsVar stateDir body replyText =
       case Map.lookup sid known of
         Nothing -> pure ()
         Just session -> do
-          let (verdict, t6st) = verdictOfWithState (T.unpack replyText)
-          setProjection session "t6state" (toDyn t6st)
-          setProjection session "constraint" (toDyn verdict)
-          st <- advanceAgent session (StartCommand (T.unpack sid))
-          -- Same two events as /agent/step: this path advances the FSM too, and
-          -- a log that omitted it would misreport the session's history.
-          let events = [AssistantMessage replyText, AgentStateChanged st]
-          mapM_ (appendEvent session) events
-          persistStep stateDir session events
+          blocked <- pendingApproval session
+          case blocked of
+            Just _ -> pure ()   -- 待决中：不推进 FSM，也不假装这一步发生过
+            Nothing -> do
+              let (verdict, t6st) = verdictOfWithState (T.unpack replyText)
+              setProjection session "t6state" (toDyn t6st)
+              setProjection session "constraint" (toDyn verdict)
+              st <- advanceAgent session (StartCommand (T.unpack sid))
+              -- Same two events as /agent/step: this path advances the FSM too,
+              -- and a log that omitted it would misreport the session.
+              let events = [AssistantMessage replyText, AgentStateChanged st]
+              mapM_ (appendEvent session) events
+              persistStep stateDir session events
 
 
 -- | Write the persistable slice after it changed. Best effort: a failed

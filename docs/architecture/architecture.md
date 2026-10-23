@@ -104,7 +104,45 @@ data Session = Session
     会话文件互相覆盖）。
   - 观测：`GET /session/<id>/events` 返回内核侧视角的日志（重启后即来自磁盘）。
 
-### 3.3 Agent Loop (`Core.Agent`)
+### 3.3 审批闸门（命令屏障）
+
+内核不执行工具，也不执行被批准的动作 —— 它只决定「能不能过」。闸门是 FSM 里的
+一个状态，不是宿主侧的一个布尔字段：
+
+```haskell
+data AgentState
+  = Idle | Processing StepId | WaitingForTool ToolCallId
+  | AwaitingApproval ApprovalRequest     -- 有待决命令
+  | Completed Result | Error ErrorType
+
+data AgentCommand
+  = StartCommand StepId | ToolCallCommand ToolCallId String | ToolResultCommand String
+  | CompleteCommand Result | ErrorCommand ErrorType
+  | RequestApprovalCommand ApprovalRequest   -- 挂起
+  | ApproveCommand | RejectCommand           -- 放行 / 否决
+```
+
+- **屏障是真的**：`AwaitingApproval` 下 `StartCommand`/`ToolCallCommand`/…全部落到
+  「保持不变」分支，且 `/agent/step` 直接返回 409 `approval.pending`；
+  `/v1/chat/completions` 的内核触点也不推进 FSM。待决期间没有命令能偷跑。
+- **放行 ≠ 执行**：批准与否决都回到 `Idle`。批准只是「这条命令现在可以跑了」，
+  执行归宿主（scheduler 拿到 `approved` 后自己跑工具）。否决不置 `Error` ——
+  拒绝是一条决策，不是会话故障。
+- **一次只能挂一条**：待决时再申请返回 409；重复决策第二次得 400 `approval.none`
+  （`decideApproval` 用 `atomicModifyIORef'` 做「检查+决策」一步，双击不会双赢）。
+- **落盘可跨重启**：`AwaitingApproval` 与其中的 `ApprovalRequest` 都是 JSON，
+  checkpoint 里原样保存；重启后闸门仍在，决策照常生效。事件日志记
+  `approval_requested` / `approval_decided`。
+- **端点**（两个，都在 `/session/<id>/` 下）：
+
+| 方法/路径 | 请求 | 响应 |
+|---|---|---|
+| POST `/session/<id>/approval` | `{message, action?}` | `{status:"awaiting_approval", pending:{id,action,message}, agentState}`；已挂起 → 409 `approval.pending` |
+| POST `/session/<id>/decision` | `{approve: bool}` | `{status:"approved"\|"denied", requestId, agentState}`；无待决 → 400 `approval.none` |
+- **分工**：编排层 `/api/agent/step {requireApproval}` 与 `/api/session/:id/decision`
+  委托这两个端点（内核不可达时降级回本地 `pendingApproval`），外壳协议形状不变。
+
+### 3.4 Agent Loop (`Core.Agent`)
 
 ```haskell
 data Agent = Agent
@@ -126,7 +164,7 @@ data AgentState
 - **STM 事务**：`TVar` + `TQueue` 保证并发安全
 - **可中断**：支持外部中断和超时
 
-### 3.4 Tool Registry (`Core.Tools`)
+### 3.5 Tool Registry (`Core.Tools`)
 
 ```haskell
 data Tool = Tool
@@ -146,7 +184,7 @@ data ToolRegistry = ToolRegistry
 - **类型安全**：输入输出 JSON Schema 验证
 - **可扩展**：支持动态注册/注销
 
-### 3.5 Event Bus (`Core.Event`)
+### 3.6 Event Bus (`Core.Event`)
 
 ```haskell
 data EventBus = EventBus
@@ -160,7 +198,7 @@ type EventHandler = Dynamic -> IO ()
 - **类型安全**：`Dynamic` 实现运行时类型检查
 - **动态订阅**：支持运行时订阅/取消订阅
 
-### 3.6 LLM Adapter (`LLM.Adapter`)
+### 3.7 LLM Adapter (`LLM.Adapter`)
 
 ```haskell
 data LLMAdapter = LLMAdapter
