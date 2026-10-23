@@ -5,6 +5,7 @@
   "scripts": {
     "lint": "node scripts/run-oxlint.mjs",
     "lint:hs": "hlint src test --ignore-glob='**/dist-newstyle/**'",
+    "verify:ci": "node scripts/verify-ci-workflows.mjs --quiet",
     "postinstall": "sh scripts/install-hooks.sh"
   },
   "devDependencies": {

@@ -25,10 +25,17 @@ if [ -n "$lint_files" ]; then need_lint=1; fi
 need_hlint=0
 haskell_sources=$(printf '%s\n' "$changed" | grep -E '\.(hs|lhs)$' || true)
 if [ -n "$haskell_sources" ]; then need_hlint=1; fi
+need_ci=0
+case "$changed" in
+  *.github/workflows/*) need_ci=1 ;;
+esac
+case "$changed" in
+  *package.json*) need_ci=1 ;;
+esac
 
 # Shared config affects every TypeScript project.
 case "$changed" in
-  tsconfig.base.json|package.json|package-lock.json)
+  *tsconfig.base.json*|*package.json*|*package-lock.json*)
     need_scheduler=1; need_web=1; need_desktop=1
     ;;
 esac
@@ -58,6 +65,14 @@ check_haskell() {
   else
     echo FAILED
     cabal build all
+    exit 1
+  fi
+  printf '  %-28s %s ... ' "haskell" "cabal check"
+  if cabal check >/dev/null 2>&1; then
+    echo ok
+  else
+    echo FAILED
+    cabal check
     exit 1
   fi
 }
@@ -92,8 +107,20 @@ check_hlint() {
   fi
 }
 
+check_ci() {
+  printf '  %-28s %s ... ' "ci workflows" "script refs"
+  if node scripts/verify-ci-workflows.mjs --quiet >/dev/null 2>&1; then
+    echo ok
+  else
+    echo FAILED
+    node scripts/verify-ci-workflows.mjs
+    exit 1
+  fi
+}
+
 if [ "$need_scheduler" = 0 ] && [ "$need_web" = 0 ] && [ "$need_desktop" = 0 ] \
-  && [ "$need_haskell" = 0 ] && [ "$need_lint" = 0 ] && [ "$need_hlint" = 0 ]; then
+  && [ "$need_haskell" = 0 ] && [ "$need_lint" = 0 ] && [ "$need_hlint" = 0 ] \
+  && [ "$need_ci" = 0 ]; then
   echo "check: nothing type-checked by this hook, skipping"
   exit 0
 fi
@@ -101,6 +128,7 @@ fi
 echo "check:"
 if [ "$need_haskell" = 1 ]; then check_haskell; fi
 if [ "$need_hlint" = 1 ]; then check_hlint; fi
+if [ "$need_ci" = 1 ]; then check_ci; fi
 if [ "$need_lint" = 1 ]; then check_lint; fi
 if [ "$need_scheduler" = 1 ]; then check_ts packages/scheduler typecheck; fi
 if [ "$need_web" = 1 ]; then check_ts packages/app/Web typecheck; fi
