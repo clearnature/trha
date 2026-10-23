@@ -12,8 +12,10 @@ import { startServer } from './Server/index.js';
 const port = Number(process.env.TRHA_PORT ?? 3456);
 const host = process.env.TRHA_HOST ?? '127.0.0.1';
 const token = process.env.TRHA_TOKEN ?? 'dev-token';
-const llmHost = process.env.TRHA_LLM_HOST ?? 'localhost';
-const llmPort = Number(process.env.TRHA_LLM_PORT ?? 8080);
+// Kernel default is 3333 (packages/app/CLI: `trha serve --kernel-port`), chosen
+// to stay clear of 3456 (scheduler) and ports commonly used by other tools.
+const llmHost = process.env.TRHA_LLM_HOST ?? '127.0.0.1';
+const llmPort = Number(process.env.TRHA_LLM_PORT ?? 3333);
 
 void startServer({
   port,

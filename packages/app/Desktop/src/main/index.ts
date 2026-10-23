@@ -86,6 +86,12 @@ function startScheduler(): Promise<void> {
         // Session persistence (G2). Without this the scheduler runs in
         // memory-only mode and a restart loses live conversations.
         TRHA_STATE_DIR: process.env.TRHA_STATE_DIR ?? path.join(app.getPath('userData'), 'sessions'),
+        // Kernel endpoint. 3333 is the `trha serve --kernel-port` default and
+        // is deliberately distinct from SCHEDULER_PORT (3456).
+        TRHA_LLM_HOST: process.env.TRHA_LLM_HOST ?? '127.0.0.1',
+        TRHA_LLM_PORT: process.env.TRHA_LLM_PORT ?? '3333',
+        // Plugin directory scan + hot reload (otherwise undefined => disabled).
+        TRHA_PLUGINS_DIR: process.env.TRHA_PLUGINS_DIR ?? path.join(app.getPath('userData'), 'plugins'),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

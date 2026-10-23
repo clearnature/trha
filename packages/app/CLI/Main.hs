@@ -21,6 +21,7 @@ import Options.Applicative
 import System.Console.ANSI
 import System.Console.Haskeline
 import System.Directory (getHomeDirectory, createDirectoryIfMissing)
+import Data.Maybe (fromMaybe)
 import System.FilePath ((</>))
 import System.IO (hFlush, stdout, hSetEncoding, utf8)
 
@@ -37,7 +38,7 @@ data GlobalOpts = GlobalOpts
 data SubCommand
   = CmdTUI
   | CmdCLI
-  | CmdServe
+  | CmdServe Int
   | CmdSettingsSchema
   deriving (Show)
 
@@ -81,9 +82,19 @@ tuiParser = pure CmdTUI
 cliParser :: Parser SubCommand
 cliParser = pure CmdCLI
 
--- | Serve subcommand
+-- | Serve subcommand.
+--
+-- The kernel port is deliberately separate from @configPort@: the latter is
+-- how the CLI/TUI reaches the *scheduler* (3456), while this is where the
+-- kernel's OpenAI-compatible API listens. 3333 keeps the two from colliding.
 serveParser :: Parser SubCommand
-serveParser = pure CmdServe
+serveParser = CmdServe <$> option auto
+  ( long "kernel-port"
+  <> metavar "PORT"
+  <> value 3333
+  <> showDefault
+  <> help "Kernel API port (default: 3333; the scheduler talks to this)"
+  )
 
 -- | Command parser with subcommands
 commandParser :: Parser (GlobalOpts, SubCommand)
@@ -111,11 +122,11 @@ buildConfig :: GlobalOpts -> IO CLIConfig
 buildConfig opts = do
   baseConfig <- initConfig
   return baseConfig
-    { configHost = maybe (configHost baseConfig) id (optHost opts)
-    , configPort = maybe (configPort baseConfig) id (optPort opts)
-    , configModel = maybe (configModel baseConfig) id (optModel opts)
-    , configTheme = maybe (configTheme baseConfig) id (optTheme opts)
-    , configLang = maybe (configLang baseConfig) id (optLang opts)
+    { configHost = fromMaybe (configHost baseConfig) (optHost opts)
+    , configPort = fromMaybe (configPort baseConfig) (optPort opts)
+    , configModel = fromMaybe (configModel baseConfig) (optModel opts)
+    , configTheme = fromMaybe (configTheme baseConfig) (optTheme opts)
+    , configLang = fromMaybe (configLang baseConfig) (optLang opts)
     }
 
 -- | Run TUI mode
@@ -148,13 +159,13 @@ runCLIMode config = do
 
 -- | Run serve mode: start the kernel's OpenAI-compatible API server so the
 -- scheduler (and therefore the CLI/TUI/Desktop shells) can reach it on
--- 127.0.0.1:PORT.  The stub adapter supplies a deterministic two-round tool
--- loop, which makes the whole chain work without an LLM key; swap it for a
--- real provider adapter once credentials are configured.
-runServeMode :: CLIConfig -> IO ()
-runServeMode config = do
-  putStrLn $ "Starting API server on " ++ T.unpack (configHost config) ++ ":" ++ show (configPort config)
-  API.Server.startStubKernel (configPort config)
+-- 127.0.0.1:3333 by default.  The stub adapter supplies a deterministic
+-- two-round tool loop, which makes the whole chain work without an LLM key;
+-- swap it for a real provider adapter once credentials are configured.
+runServeMode :: Int -> CLIConfig -> IO ()
+runServeMode kernelPort config = do
+  putStrLn $ "Starting API server on " ++ T.unpack (configHost config) ++ ":" ++ show kernelPort
+  API.Server.startStubKernel kernelPort
 
 -- | All slash commands for tab completion (derived from the shared
 -- registry so REPL completion, TUI picker and parser stay in sync).
@@ -220,7 +231,7 @@ main = do
   case cmd of
     CmdTUI   -> runTUIMode config
     CmdCLI   -> runCLIMode config
-    CmdServe -> runServeMode config
+    CmdServe kernelPort -> runServeMode kernelPort config
     CmdSettingsSchema -> putStrLn (T.unpack settingsSchemaJson)
   where
     opts' = info (commandParser <**> helper)
