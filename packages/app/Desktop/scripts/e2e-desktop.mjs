@@ -13,6 +13,9 @@
 //   4. release the stdin lease and assert the child exits 0.
 //
 // Exit code 0 = all assertions passed; non-zero = first failure.
+//
+// collectProtocol() is also used by test/protocol-snapshot.test.ts to record
+// the response *shape* (field names + types) as a fixture.
 
 import { spawn } from 'node:child_process';
 import * as path from 'node:path';
@@ -23,28 +26,29 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../../../..');
 const schedulerEntry = path.join(repoRoot, 'packages/scheduler/dist/cli.js');
 
-const TOKEN = 'e2e-smoke-token';
-const PORT = Number(process.env.E2E_PORT ?? 3479);
-const BASE = `http://127.0.0.1:${PORT}`;
+export const DEFAULT_PORT = Number(process.env.E2E_PORT ?? 3479);
+export const DEFAULT_TOKEN = 'e2e-smoke-token';
 
 const log = (...a) => console.log('[e2e]', ...a);
 const fail = (msg) => { console.error('[e2e] FAIL:', msg); process.exitCode = 1; };
 const assert = (cond, msg) => { if (!cond) { fail(msg); } else { log('ok:', msg); } };
 
-const authHeaders = { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' };
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-async function getJson(pathname) {
-  const res = await fetch(`${BASE}${pathname}`, { headers: authHeaders });
+function authHeaders(token) {
+  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+}
+
+async function getJson(base, pathname, headers) {
+  const res = await fetch(`${base}${pathname}`, { headers });
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-async function waitForHealth(timeoutMs = 15000) {
+async function waitForHealth(base, timeoutMs = 15000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${BASE}/health`);
+      const res = await fetch(`${base}/health`);
       if (res.ok) return await res.json();
     } catch { /* not up yet */ }
     await sleep(200);
@@ -52,12 +56,12 @@ async function waitForHealth(timeoutMs = 15000) {
   throw new Error(`scheduler did not become healthy within ${timeoutMs}ms`);
 }
 
-function startScheduler() {
+function startScheduler({ port, token }) {
   if (!fs.existsSync(schedulerEntry)) {
     throw new Error(`scheduler entry not found: ${schedulerEntry} (run the scheduler build first)`);
   }
   const child = spawn(process.execPath, [schedulerEntry], {
-    env: { ...process.env, TRHA_TOKEN: TOKEN, TRHA_PORT: String(PORT), TRHA_LEASE_STDIN: '1' },
+    env: { ...process.env, TRHA_TOKEN: token, TRHA_PORT: String(port), TRHA_LEASE_STDIN: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const handshake = new Promise((resolve, reject) => {
@@ -74,64 +78,101 @@ function startScheduler() {
   return { child, handshake };
 }
 
-async function main() {
-  log(`scheduler entry: ${schedulerEntry}`);
-  const { child, handshake } = startScheduler();
+/**
+ * Drive the same protocol surface the desktop shell uses and return the raw
+ * responses. Throws if the scheduler is missing or never becomes healthy.
+ *
+ * @param {{ port?: number, token?: string }} [opts]
+ */
+export async function collectProtocol({ port = DEFAULT_PORT, token = DEFAULT_TOKEN } = {}) {
+  const base = `http://127.0.0.1:${port}`;
+  const headers = authHeaders(token);
+  const { child, handshake } = startScheduler({ port, token });
 
   const line = await handshake;
-  let hs;
-  try { hs = JSON.parse(line); } catch { throw new Error(`handshake is not JSON: ${line}`); }
-  assert(hs.v === 1, `handshake version is 1 (got ${hs.v})`);
-  assert(hs.name === 'trha-scheduler', `handshake name is trha-scheduler (got ${hs.name})`);
-  assert(typeof hs.port === 'number', `handshake carries a numeric port (got ${hs.port})`);
+  const hs = JSON.parse(line);
 
-  await waitForHealth();
-  assert(true, 'GET /health is 200');
+  await waitForHealth(base);
 
-  const modes = await getJson('/api/modes');
-  assert(modes.status === 200 && modes.body && typeof modes.body === 'object',
-    `GET /api/modes returns a mode table (status ${modes.status})`);
+  const health = await getJson(base, '/health', headers);
+  const modes = await getJson(base, '/api/modes', headers);
+  const models = await getJson(base, '/api/models', headers);
 
-  const models = await getJson('/api/models');
-  assert(models.status === 200 && Array.isArray(models.body),
-    `GET /api/models returns a list (status ${models.status})`);
-
-  // Loopback origin-less reads are allowed by design; writes require Bearer.
-  const unauthRead = await fetch(`${BASE}/api/sessions`);
-  assert(unauthRead.status === 200, `loopback origin-less read is allowed (got ${unauthRead.status})`);
-
-  const unauthWrite = await fetch(`${BASE}/api/session/start`, {
+  const unauthRead = await fetch(`${base}/api/sessions`);
+  const unauthWrite = await fetch(`${base}/api/session/start`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mode: 'standard' }),
   });
-  assert(unauthWrite.status === 401, `write without a token is 401 (got ${unauthWrite.status})`);
 
-  const created = await fetch(`${BASE}/api/session/start`, {
-    method: 'POST', headers: authHeaders, body: JSON.stringify({ mode: 'standard' }),
+  const created = await fetch(`${base}/api/session/start`, {
+    method: 'POST', headers, body: JSON.stringify({ mode: 'standard' }),
   });
   const createdBody = await created.json().catch(() => null);
-  assert(created.ok && createdBody?.sessionId, `POST /api/session/start creates a session (${createdBody?.sessionId})`);
 
-  const sessions = await getJson('/api/sessions');
-  assert(sessions.status === 200 && Array.isArray(sessions.body), 'GET /api/sessions lists sessions');
+  const sessions = await getJson(base, '/api/sessions', headers);
+  const messages = await getJson(base, `/api/session/${createdBody?.sessionId}/messages`, headers);
 
-  const messages = await getJson(`/api/session/${createdBody.sessionId}/messages`);
-  assert(messages.status === 200, 'GET /api/session/:id/messages is reachable');
-
-  const deleted = await fetch(`${BASE}/api/session/${createdBody.sessionId}`, {
-    method: 'DELETE', headers: authHeaders,
+  const deleted = await fetch(`${base}/api/session/${createdBody?.sessionId}`, {
+    method: 'DELETE', headers,
   });
-  assert(deleted.status === 200, `DELETE /api/session/:id succeeds (status ${deleted.status})`);
 
-  // Release the stdin lease; the child must drain and exit 0.
   const exitCode = await new Promise((resolve) => {
     child.on('exit', (code) => resolve(code));
     child.stdin.end();
     setTimeout(() => { child.kill(); resolve('timeout'); }, 8000);
   });
-  assert(exitCode === 0, `scheduler exits 0 after the lease is released (got ${exitCode})`);
+
+  return {
+    handshake: hs,
+    health: health.body,
+    modes: modes.body,
+    models: models.body,
+    session: createdBody,
+    sessions: sessions.body,
+    messages: messages.body,
+    http: {
+      health: health.status,
+      modes: modes.status,
+      models: models.status,
+      unauthRead: unauthRead.status,
+      unauthWrite: unauthWrite.status,
+      createSession: created.status,
+      sessions: sessions.status,
+      messages: messages.status,
+      deleteSession: deleted.status,
+    },
+    exitCode,
+  };
+}
+
+async function main() {
+  log(`scheduler entry: ${schedulerEntry}`);
+  const snap = await collectProtocol();
+
+  assert(snap.handshake.v === 1, `handshake version is 1 (got ${snap.handshake.v})`);
+  assert(snap.handshake.name === 'trha-scheduler', `handshake name is trha-scheduler (got ${snap.handshake.name})`);
+  assert(typeof snap.handshake.port === 'number', `handshake carries a numeric port (got ${snap.handshake.port})`);
+
+  assert(snap.http.health === 200, 'GET /health is 200');
+  assert(snap.http.modes === 200 && snap.modes && typeof snap.modes === 'object',
+    `GET /api/modes returns a mode table (status ${snap.http.modes})`);
+  assert(snap.http.models === 200 && Array.isArray(snap.models),
+    `GET /api/models returns a list (status ${snap.http.models})`);
+
+  // Loopback origin-less reads are allowed by design; writes require Bearer.
+  assert(snap.http.unauthRead === 200, `loopback origin-less read is allowed (got ${snap.http.unauthRead})`);
+  assert(snap.http.unauthWrite === 401, `write without a token is 401 (got ${snap.http.unauthWrite})`);
+
+  assert(snap.http.createSession === 200 && snap.session?.sessionId,
+    `POST /api/session/start creates a session (${snap.session?.sessionId})`);
+  assert(snap.http.sessions === 200 && Array.isArray(snap.sessions), 'GET /api/sessions lists sessions');
+  assert(snap.http.messages === 200, 'GET /api/session/:id/messages is reachable');
+  assert(snap.http.deleteSession === 200, `DELETE /api/session/:id succeeds (status ${snap.http.deleteSession})`);
+  assert(snap.exitCode === 0, `scheduler exits 0 after the lease is released (got ${snap.exitCode})`);
 
   log(process.exitCode ? 'RESULT: FAIL' : 'RESULT: PASS');
 }
 
-main().catch(err => { fail(err.message); });
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(err => { fail(err.message); });
+}

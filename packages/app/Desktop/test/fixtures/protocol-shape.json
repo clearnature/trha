@@ -1,0 +1,193 @@
+{
+  "handshake": {
+    "name": "string",
+    "port": "number",
+    "v": "number"
+  },
+  "health": {
+    "modes": [
+      "string"
+    ],
+    "status": "string",
+    "version": "string"
+  },
+  "modes": {
+    "cordis": {
+      "compaction": {
+        "enabled": "boolean",
+        "headChars": "number",
+        "prunerEnabled": "boolean",
+        "tailChars": "number",
+        "thresholdChars": "number"
+      },
+      "contextSize": "number",
+      "delegation": {
+        "enabled": "boolean",
+        "forkEnabled": "boolean",
+        "maxRounds": "number",
+        "ralphEnabled": "boolean"
+      },
+      "description": "string",
+      "hasPlan": "boolean",
+      "hasShell": "boolean",
+      "hasTodo": "boolean",
+      "hasWebSearch": "boolean",
+      "maxTokens": "number",
+      "name": "string",
+      "persona": {
+        "enabled": "boolean",
+        "maxBytes": "number",
+        "template": "string"
+      },
+      "ptc": {
+        "description": "string",
+        "enabled": "boolean",
+        "language": "string"
+      },
+      "tools": []
+    },
+    "minimal": {
+      "compaction": {
+        "enabled": "boolean",
+        "headChars": "number",
+        "prunerEnabled": "boolean",
+        "tailChars": "number",
+        "thresholdChars": "number"
+      },
+      "contextSize": "number",
+      "delegation": {
+        "enabled": "boolean",
+        "forkEnabled": "boolean",
+        "maxRounds": "number",
+        "ralphEnabled": "boolean"
+      },
+      "description": "string",
+      "hasPlan": "boolean",
+      "hasShell": "boolean",
+      "hasTodo": "boolean",
+      "hasWebSearch": "boolean",
+      "maxTokens": "number",
+      "name": "string",
+      "persona": {
+        "enabled": "boolean",
+        "maxBytes": "number",
+        "template": "string"
+      },
+      "ptc": {
+        "description": "string",
+        "enabled": "boolean",
+        "language": "string"
+      },
+      "tools": [
+        "string"
+      ]
+    },
+    "ptc": {
+      "compaction": {
+        "enabled": "boolean",
+        "headChars": "number",
+        "prunerEnabled": "boolean",
+        "tailChars": "number",
+        "thresholdChars": "number"
+      },
+      "contextSize": "number",
+      "delegation": {
+        "enabled": "boolean",
+        "forkEnabled": "boolean",
+        "maxRounds": "number",
+        "ralphEnabled": "boolean"
+      },
+      "description": "string",
+      "hasPlan": "boolean",
+      "hasShell": "boolean",
+      "hasTodo": "boolean",
+      "hasWebSearch": "boolean",
+      "maxTokens": "number",
+      "name": "string",
+      "persona": {
+        "enabled": "boolean",
+        "maxBytes": "number",
+        "template": "string"
+      },
+      "ptc": {
+        "description": "string",
+        "enabled": "boolean",
+        "language": "string"
+      },
+      "tools": [
+        "string"
+      ]
+    },
+    "standard": {
+      "compaction": {
+        "enabled": "boolean",
+        "headChars": "number",
+        "prunerEnabled": "boolean",
+        "tailChars": "number",
+        "thresholdChars": "number"
+      },
+      "contextSize": "number",
+      "delegation": {
+        "enabled": "boolean",
+        "forkEnabled": "boolean",
+        "maxRounds": "number",
+        "ralphEnabled": "boolean"
+      },
+      "description": "string",
+      "hasPlan": "boolean",
+      "hasShell": "boolean",
+      "hasTodo": "boolean",
+      "hasWebSearch": "boolean",
+      "maxTokens": "number",
+      "name": "string",
+      "persona": {
+        "enabled": "boolean",
+        "maxBytes": "number",
+        "template": "string"
+      },
+      "ptc": {
+        "description": "string",
+        "enabled": "boolean",
+        "language": "string"
+      },
+      "tools": [
+        "string"
+      ]
+    }
+  },
+  "models": [
+    {
+      "contextSize": "number",
+      "description": "string",
+      "name": "string"
+    }
+  ],
+  "session": {
+    "mode": "string",
+    "sessionId": "string"
+  },
+  "sessions": [
+    {
+      "createdAt": "string",
+      "id": "string",
+      "messages": [],
+      "mode": "string",
+      "pendingApproval": "object"
+    }
+  ],
+  "messages": {
+    "messages": []
+  },
+  "http": {
+    "health": 200,
+    "modes": 200,
+    "models": 200,
+    "unauthRead": 200,
+    "unauthWrite": 401,
+    "createSession": 200,
+    "sessions": 200,
+    "messages": 200,
+    "deleteSession": 200
+  },
+  "exitCode": 0
+}
