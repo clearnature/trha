@@ -4,6 +4,7 @@
   "description": "trha Desktop Application",
   "main": "dist/main/index.js",
   "scripts": {
+    "coverage": "vitest run --coverage",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:main": "tsc -p tsconfig.main.json --noEmit",
     "dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\"",
@@ -38,6 +39,7 @@
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "@vitejs/plugin-react": "^4.0.0",
+    "@vitest/coverage-v8": "^1.6.1",
     "concurrently": "^8.0.0",
     "cross-env": "^10.1.0",
     "electron": "44.2.0",

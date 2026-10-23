@@ -2,8 +2,9 @@
 # Slower gates that would make every commit painful.
 # Installed by scripts/install-hooks.sh (root postinstall).
 #
-# Timings on a warm tree: cabal test trha-test ~135s, the three vitest
-# projects ~13s total. Full `cabal test all` (~6.5 min) stays in CI.
+# Timings on a warm tree: cabal test trha-test ~135s, scheduler/desktop
+# coverage ~15s total, web vitest ~1s. Full `cabal test all` (~6.5 min) and the
+# full coverage report stay in CI.
 set -e
 
 cd "$(git rev-parse --show-toplevel)"
@@ -26,7 +27,7 @@ run() {
 
 echo "pre-push:"
 run "cabal test trha-test" cabal test trha-test
-run "scheduler vitest" sh -c 'cd packages/scheduler && ./node_modules/.bin/vitest run'
+run "scheduler coverage" sh -c 'cd packages/scheduler && npm run --silent coverage'
 run "web vitest" sh -c 'cd packages/app/Web && ./node_modules/.bin/vitest run'
-run "desktop vitest" sh -c 'cd packages/app/Desktop && ./node_modules/.bin/vitest run'
+run "desktop coverage" sh -c 'cd packages/app/Desktop && npm run --silent coverage'
 echo "pre-push checks passed"

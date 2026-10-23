@@ -4,6 +4,7 @@
   "description": "trha Web Application",
   "type": "module",
   "scripts": {
+    "coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "dev": "vite",
     "build": "vite build",
@@ -26,6 +27,7 @@
     "@types/react": "^18.0.0",
     "@types/react-dom": "^18.0.0",
     "@vitejs/plugin-react": "^4.0.0",
+    "@vitest/coverage-v8": "^1.6.1",
     "typescript": "^7.0.2",
     "vite": "^5.0.0",
     "vitest": "^1.0.0"
