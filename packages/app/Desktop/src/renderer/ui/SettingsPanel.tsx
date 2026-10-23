@@ -6,24 +6,9 @@
 
 import { useState } from 'react';
 import { usePrefs } from './PrefsContext.js';
-import { FONT_SIZE_RANGE, type Lang, type Theme } from '../state/prefs.js';
-import { LANGS } from './i18n.js';
 import { useSession, useSessionStore } from './SessionContext.js';
-import { ProvidersPanel } from './ProvidersPanel.js';
 import { SettingsNavigation } from './SettingsNavigation.js';
-import { LlmSettingsPanel } from './LlmSettingsPanel.js';
 import { GeneralSettingsPanel } from './GeneralSettingsPanel.js';
-import { ModelPreferencesPanel } from './ModelPreferencesPanel.js';
-import { McpPanel } from './McpPanel.js';
-import { SkillsPanel } from './SkillsPanel.js';
-import { SubagentsPanel } from './SubagentsPanel.js';
-import { PluginsPanel } from './PluginsPanel.js';
-import { MemoryPanel } from './MemoryPanel.js';
-import { HooksPanel } from './HooksPanel.js';
-import { DiagnosticsPanel } from './DiagnosticsPanel.js';
-import { PermissionsPanel } from './PermissionsPanel.js';
-import { SandboxPanel } from './SandboxPanel.js';
-import { BrowserPanel } from './BrowserPanel.js';
 import { AppearancePanel } from './AppearancePanel.js';
 import { StoragePanel } from './StoragePanel.js';
 import { UpdatesPanel } from './UpdatesPanel.js';
@@ -33,14 +18,14 @@ import { BotsPanel } from './BotsPanel.js';
 import { RemotePanel as RemoteSSHPanel } from './RemotePanel.js';
 import { ShortcutsPanel } from './ShortcutsPanel.js';
 import { ScaffoldPanel } from './ScaffoldPanel.js';
-import { ALL_SETTINGS_TABS, SETTINGS_GROUPS } from '../state/settingsTypes.js';
+import { SETTINGS_GROUPS } from '../state/settingsTypes.js';
 
 export interface SettingsPanelProps {
   onClose: () => void;
 }
 
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
-  const { prefs, setPrefs, t } = usePrefs();
+  const { t } = usePrefs();
   const mode = useSession(s => s.modes[s.selectedMode]);
   const version = useSession(s => s.version);
   const store = useSessionStore();

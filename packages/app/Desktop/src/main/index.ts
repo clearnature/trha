@@ -128,7 +128,7 @@ function startScheduler(): Promise<void> {
       settle(null); // don't block app startup on spawn errors
     });
 
-    schedulerProcess.on('exit', (code) => {
+    schedulerProcess.on('exit', (_code) => {
       schedulerProcess = null;
     });
 

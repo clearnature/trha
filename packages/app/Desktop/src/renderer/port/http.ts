@@ -33,7 +33,7 @@ export class SchedulerPort implements Port {
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const merged = {
       ...init,
-      headers: { ...this.headers(), ...((init?.headers as Record<string, string>) ?? {}) },
+      headers: { ...this.headers(), ...(init?.headers as Record<string, string> | undefined) },
     };
     const res = await fetch(`${this.cfg.base}${path}`, merged);
     if (!res.ok) {

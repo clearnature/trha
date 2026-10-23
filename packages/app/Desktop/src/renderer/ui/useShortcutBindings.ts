@@ -4,7 +4,6 @@
 
 import { useEffect } from 'react';
 import { useExtSettings } from '../state/settingsStore.js';
-import { useSessionStore } from './SessionContext.js';
 
 export interface ShortcutActions {
   newSession: () => void;

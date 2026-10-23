@@ -6,7 +6,6 @@
 
 import { create } from 'zustand';
 import type { Port } from '../port/port.js';
-import type { MockPort } from '../port/mock.js';
 import type { PortModeConfig, PortModel, PortSession, PortToolEvent, PortToolSpec, StudioVersion } from '../port/types.js';
 import { createPort } from '../port/index.js';
 
@@ -58,7 +57,6 @@ export function makeSessionStore(port?: Port) {
   return create<SessionUiState>((set, get) => {
     let unsubscribe: (() => void) | null = null;
     const p = port ?? createPort();
-    const pMock = p as MockPort; // optional synthetic events in dev/tests
 
     const attach = async (id: string) => {
       if (unsubscribe) { unsubscribe(); unsubscribe = null; }

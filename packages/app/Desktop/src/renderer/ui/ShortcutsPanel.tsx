@@ -9,8 +9,6 @@ export interface ShortcutsPanelProps {
   t: (key: string) => string;
 }
 
-interface Shortcut { actionKey: string; combo: string; }
-
 export function ShortcutsPanel({ t }: ShortcutsPanelProps) {
   // 快捷键持久化（localStorage；内核绑定仍预留 port.shortcuts()）
   const items0 = useExtSettings(s => s.shortcuts);

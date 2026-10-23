@@ -6,7 +6,7 @@ import express from 'express';
 import cors from 'cors';
 import { HaskellBridge } from '../Bridge/Haskell.js';
 import type { BridgeToolSpec, ToolCallData } from '../Bridge/Haskell.js';
-import { findTool, toToolSpecs } from './toolCatalog.js';
+import { toToolSpecs } from './toolCatalog.js';
 import { confineWritePath, limitOutput } from './toolGuard.js';
 import { decidePermission, setPermissionRules, compileRules, getPermissionRules } from '../Permission/permissionRules.js';
 import { EventEmitter } from '../Utils/EventEmitter.js';
@@ -1016,7 +1016,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 
   // POST /v1/chat/completions — OpenAI chat completions
   app.post('/v1/chat/completions', async (req, res) => {
-    const { model, messages, stream, max_tokens, temperature, tools } = req.body;
+    const { model, messages, stream } = req.body;
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: { message: 'messages is required', type: 'invalid_request_error' } });
@@ -1120,7 +1120,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 
   // POST /v1/messages — Anthropic messages API
   app.post('/v1/messages', async (req, res) => {
-    const { model, messages, max_tokens, stream, system, temperature } = req.body;
+    const { model, messages, stream, system } = req.body;
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({
@@ -1253,7 +1253,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 
   // POST /v1/responses — OpenAI Responses API (newer protocol)
   app.post('/v1/responses', async (req, res) => {
-    const { model, input, stream, instructions, tools: respTools } = req.body;
+    const { model, input, stream, instructions } = req.body;
 
     if (!input) {
       return res.status(400).json({ error: { message: 'input is required', type: 'invalid_request_error' } });

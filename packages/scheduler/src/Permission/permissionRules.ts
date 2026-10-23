@@ -69,7 +69,7 @@ function argsMatch(re: RegExp, args: Record<string, unknown>): boolean {
   return Object.values(args).some(v => typeof v === 'string' && re.test(v));
 }
 
-export function isBashPattern(p: string): boolean { return /^Bash\(/.test(p.trim()); }
+export function isBashPattern(p: string): boolean { return p.trim().startsWith('Bash('); }
 
 // 预编译缓存
 interface Compiled { rule: PermissionRule; match: (name: string, args: Record<string, unknown>) => boolean; }

@@ -4,7 +4,7 @@
 //   区块二「系统行为」：硬件加速、关闭窗口时、声音、底部信息栏样式、信息栏显示项（预留）
 // 接线状态：语言 = done（prefs 持久化 + auto 跟随系统）；其余 = 预留（UI 呈现 + plannedInterface）。
 
-import { FONT_SIZE_RANGE, type Lang, type Theme } from '../state/prefs.js';
+import { FONT_SIZE_RANGE, type Lang } from '../state/prefs.js';
 import { LANGS } from './i18n.js';
 import { usePrefs } from './PrefsContext.js';
 

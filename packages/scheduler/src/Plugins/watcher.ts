@@ -146,7 +146,7 @@ export function startPluginWatcher(
         pluginName: loaded.get(file) ?? state.get(file)?.pluginName,
       });
     }
-    for (const file of [...state.keys()]) {
+    for (const file of state.keys()) {
       if (!seen.has(file)) {
         state.delete(file);
       }

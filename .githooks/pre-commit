@@ -1,21 +1,29 @@
 #!/bin/sh
-# Type-check only the projects touched by the staged changes.
+# Fast checks for the code touched by the staged changes.
 # Installed by scripts/install-hooks.sh (root postinstall).
+#
+# Haskell: incremental `cabal build all` (~1s when nothing changed, but a
+# fresh clone pays a full rebuild). Full `cabal test all` takes ~6.5 minutes
+# and belongs to CI / pre-push, not here.
 set -e
 
 cd "$(git rev-parse --show-toplevel)"
 
 changed=$(git diff --cached --name-only)
 if [ -z "$changed" ]; then
-  echo "typecheck: nothing staged, skipping"
+  echo "check: nothing staged, skipping"
   exit 0
 fi
 
 need_scheduler=0
 need_web=0
 need_desktop=0
+need_haskell=0
+need_lint=0
+lint_files=$(printf '%s\n' "$changed" | grep -E '\.(ts|tsx|mts|cts|js|mjs)$' || true)
+if [ -n "$lint_files" ]; then need_lint=1; fi
 
-# Shared config affects every project.
+# Shared config affects every TypeScript project.
 case "$changed" in
   tsconfig.base.json|package.json|package-lock.json)
     need_scheduler=1; need_web=1; need_desktop=1
@@ -25,8 +33,9 @@ esac
 case "$changed" in *packages/scheduler/*) need_scheduler=1 ;; esac
 case "$changed" in *packages/app/Web/*) need_web=1 ;; esac
 case "$changed" in *packages/app/Desktop/*) need_desktop=1 ;; esac
+case "$changed" in *.hs|*.lhs|*.cabal|cabal.project) need_haskell=1 ;; esac
 
-check() {
+check_ts() {
   dir=$1
   script=$2
   printf '  %-28s %s ... ' "$dir" "$script"
@@ -39,16 +48,43 @@ check() {
   fi
 }
 
-if [ "$need_scheduler" = 0 ] && [ "$need_web" = 0 ] && [ "$need_desktop" = 0 ]; then
-  echo "typecheck: no TypeScript project touched, skipping"
+check_haskell() {
+  printf '  %-28s %s ... ' "haskell" "cabal build all"
+  if cabal build all >/dev/null 2>&1; then
+    echo ok
+  else
+    echo FAILED
+    cabal build all
+    exit 1
+  fi
+}
+
+check_lint() {
+  printf '  %-28s %s ... ' "lint" "oxlint (staged)"
+  # shellcheck disable=SC2086 # lint_files is a newline list without spaces
+  if node scripts/run-oxlint.mjs $lint_files >/dev/null 2>&1; then
+    echo ok
+  else
+    echo FAILED
+    # shellcheck disable=SC2086
+    node scripts/run-oxlint.mjs $lint_files
+    exit 1
+  fi
+}
+
+if [ "$need_scheduler" = 0 ] && [ "$need_web" = 0 ] && [ "$need_desktop" = 0 ] \
+  && [ "$need_haskell" = 0 ] && [ "$need_lint" = 0 ]; then
+  echo "check: nothing type-checked by this hook, skipping"
   exit 0
 fi
 
-echo "typecheck:"
-if [ "$need_scheduler" = 1 ]; then check packages/scheduler typecheck; fi
-if [ "$need_web" = 1 ]; then check packages/app/Web typecheck; fi
+echo "check:"
+if [ "$need_haskell" = 1 ]; then check_haskell; fi
+if [ "$need_lint" = 1 ]; then check_lint; fi
+if [ "$need_scheduler" = 1 ]; then check_ts packages/scheduler typecheck; fi
+if [ "$need_web" = 1 ]; then check_ts packages/app/Web typecheck; fi
 if [ "$need_desktop" = 1 ]; then
-  check packages/app/Desktop typecheck
-  check packages/app/Desktop "typecheck:main"
+  check_ts packages/app/Desktop typecheck
+  check_ts packages/app/Desktop "typecheck:main"
 fi
-echo "all type checks passed"
+echo "all checks passed"

@@ -3,7 +3,7 @@
 import { EventEmitter } from '../../Utils/EventEmitter.js';
 import { Queue } from '../../Utils/Queue.js';
 import { createLogger } from '../../Core/Logger.js';
-import { withRetry, defaultRetryConfig } from '../../Core/Retry.js';
+import { withRetry } from '../../Core/Retry.js';
 
 // Types
 export interface SubAgentConfig {

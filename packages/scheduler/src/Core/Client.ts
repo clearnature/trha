@@ -1,6 +1,6 @@
 // SDK Client for trha
 
-import { SchedulerConfig, defaultConfig, SchedulerError } from './Types.js';
+import { SchedulerConfig, defaultConfig } from './Types.js';
 import { HttpClient } from './HTTP.js';
 
 export class SchedulerClient {
