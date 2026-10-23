@@ -172,7 +172,7 @@ export class MockPort implements Port {
     const models = ['mock-model-a', 'mock-model-b'];
     return {
       kind: 'openai', kinds: ['openai', 'responses'], authHeader: true,
-      models, default: models[0], efforts: [], effort: '', vision: [],
+      models, default: models[0] ?? '', efforts: [], effort: '', vision: [],
       ambiguous: false, noProxy: false,
     };
   }

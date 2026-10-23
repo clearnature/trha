@@ -88,9 +88,9 @@ export type { Protocol, ProviderCheck, ProviderDraft, ProviderEdit, ProviderEntr
 
 /** Which saved provider/model should answer a step (P6). */
 export type StepTarget = {
-  provider?: string;
-  model?: string;
+  provider?: string | undefined;
+  model?: string | undefined;
   /** 模型生成参数（LLM 设置；省略 = 内核默认）。 */
-  genParams?: { temperature?: number; topP?: number; maxTokens?: number };
+  genParams?: { temperature?: number | undefined; topP?: number | undefined; maxTokens?: number | undefined };
 };
 

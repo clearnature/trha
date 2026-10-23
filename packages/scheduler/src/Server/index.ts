@@ -23,22 +23,22 @@ import path from 'node:path';
 export interface ServerConfig {
   port: number;
   /** Listen address; loopback only by default (host gate). */
-  host?: string;
+  host?: string | undefined;
   token: string;
   haskellHost: string;
   haskellPort: number;
   /** Plugins registered at startup (Phase 3 plugin architecture). */
-  plugins?: Plugin[];
+  plugins?: Plugin[] | undefined;
   /** Directory of plugin modules (*.js/*.mjs, default-export Plugin) loaded at startup. */
-  pluginsDir?: string;
+  pluginsDir?: string | undefined;
   /** Hot-reload the plugins directory (default true). */
-  watchPlugins?: boolean;
+  watchPlugins?: boolean | undefined;
   /** Directory for server-side session persistence (absent = memory only). */
-  stateDir?: string;
+  stateDir?: string | undefined;
   /** Directory of static /studio pages (default: scheduler/studio-public). */
-  studioDir?: string;
+  studioDir?: string | undefined;
   /** Unix domain socket for host-local IPC (no TCP network surface). */
-  socketPath?: string;
+  socketPath?: string | undefined;
 }
 
 export const defaultServerConfig: ServerConfig = {
@@ -167,8 +167,8 @@ interface ToolEvent {
 interface SessionMessage {
   role: string;
   content: string;
-  tool_calls?: unknown[];
-  tool_call_id?: string;
+  tool_calls?: unknown[] | undefined;
+  tool_call_id?: string | undefined;
   [key: string]: unknown;
 }
 
@@ -198,7 +198,7 @@ interface ModeConfig {
   contextSize: number;
 }
 
-const MODES: Record<string, ModeConfig> = {
+const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
   standard: {
     name: 'standard',
     description: 'Full coding agent with all tools and capabilities',
@@ -506,7 +506,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       const r = await fetch(`${kernelBase()}${path}`, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
       const text = await r.text();
       res.status(r.status).type('application/json').send(text || '{}');
@@ -802,10 +802,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   const runStep = async (
     session: SchedulerSession,
     message: string,
-    target: { provider?: string; model?: string; genParams?: { temperature?: number; topP?: number; maxTokens?: number } } = {},
+    target: { provider?: string | undefined; model?: string | undefined; genParams?: { temperature?: number | undefined; topP?: number | undefined; maxTokens?: number | undefined } | undefined } = {},
     onDelta?: (text: string) => void,
   ): Promise<string> => {
-    const mode = MODES[session.mode];
+    const mode = MODES[session.mode] ?? MODES.standard;
     // Plugins may intercept the whole step (approval / short-circuit) by
     // bailing on 'agent:step:before' with a reply.
     const intercepted = await plugins.runBail('agent:step:before', message);
@@ -893,7 +893,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         if (output.startsWith('REQUIRE_APPROVAL:')) {
           await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'failed', started, output);
           session.pendingApproval = { message: output };
-          (session as { pendingToolCall?: ToolCallData }).pendingToolCall = call;
+          (session as { pendingToolCall?: ToolCallData | undefined }).pendingToolCall = call;
           events.emit('agent:plan', { sessionId: session.id, status: 'awaiting_approval', message: output });
           return `awaiting_approval: ${output}`;
         }
@@ -953,10 +953,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       return res.json({ status: 'denied', mode: session.mode });
     }
     // ask 工具确认后批准 → 重放该工具结果（权限规则 ask 分支）
-    const pendingCall = (session as { pendingToolCall?: ToolCallData }).pendingToolCall;
+    const pendingCall = (session as { pendingToolCall?: ToolCallData | undefined }).pendingToolCall;
     if (pendingCall) {
       const output = await executeTool(pendingCall);
-      (session as { pendingToolCall?: ToolCallData }).pendingToolCall = undefined;
+      (session as { pendingToolCall?: ToolCallData | undefined }).pendingToolCall = undefined;
       session.messages.push({ role: 'tool', tool_call_id: pendingCall.id, content: output });
       const reply = await runStep(session, pending.message);
       return res.json({ status: 'approved', tool: pendingCall.name, output, reply, messages: session.messages, mode: session.mode });
@@ -1023,6 +1023,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
 
     const modelInfo = models.find(m => m.name === model) || models[0];
+    if (!modelInfo) {
+      return res.status(400).json({ error: { message: `model not found: ${String(model)}`, type: 'invalid_request_error' } });
+    }
     const requestId = `chatcmpl-${Date.now()}`;
 
     // Convert messages to bridge format
@@ -1127,6 +1130,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
 
     const modelInfo = models.find(m => m.name === model) || models[0];
+    if (!modelInfo) {
+      return res.status(400).json({ error: { message: `model not found: ${String(model)}`, type: 'invalid_request_error' } });
+    }
     const requestId = `msg-${Date.now()}`;
 
     // Convert Anthropic messages to bridge format
@@ -1254,6 +1260,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
 
     const modelInfo = models.find(m => m.name === model) || models[0];
+    if (!modelInfo) {
+      return res.status(400).json({ error: { message: `model not found: ${String(model)}`, type: 'invalid_request_error' } });
+    }
     const responseId = `resp-${Date.now()}`;
 
     // Normalize input to messages

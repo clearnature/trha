@@ -17,8 +17,8 @@ export interface RequestMessage extends BaseMessage {
 export interface ResponseMessage extends BaseMessage {
   type: 'response';
   requestId: string;
-  result?: unknown;
-  error?: string;
+  result?: unknown | undefined;
+  error?: string | undefined;
 }
 
 export interface EventMessage extends BaseMessage {

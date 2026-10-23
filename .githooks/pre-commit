@@ -1,0 +1,26 @@
+#!/bin/sh
+# Type-check every TypeScript project before committing.
+# Enabled via: git config core.hooksPath .githooks
+set -e
+
+cd "$(git rev-parse --show-toplevel)"
+
+check() {
+  dir=$1
+  script=$2
+  printf '  %-28s %s ... ' "$dir" "$script"
+  if (cd "$dir" && npm run --silent "$script" >/dev/null 2>&1); then
+    echo ok
+  else
+    echo FAILED
+    (cd "$dir" && npm run --silent "$script")
+    exit 1
+  fi
+}
+
+echo "typecheck:"
+check packages/scheduler typecheck
+check packages/app/Web typecheck
+check packages/app/Desktop typecheck
+check packages/app/Desktop typecheck:main
+echo "all type checks passed"

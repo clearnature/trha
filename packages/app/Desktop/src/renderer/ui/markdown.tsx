@@ -27,17 +27,18 @@ function renderInline(text: string): ReactNode[] {
 
 export function Markdown({ text }: { text: string }) {
   const lines = text.split('\n');
+  const lineAt = (n: number): string => lines[n] ?? '';
   const blocks: ReactNode[] = [];
   let key = 0;
   let i = 0;
   while (i < lines.length) {
-    const line = lines[i];
+    const line = lineAt(i);
 
     if (line.trimStart().startsWith('```')) {
       const lang = line.trim().slice(3).trim();
       const buf: string[] = [];
       i++;
-      while (i < lines.length && !lines[i].trimStart().startsWith('```')) buf.push(lines[i++]);
+      while (i < lines.length && !lineAt(i).trimStart().startsWith('```')) buf.push(lineAt(i++));
       if (i < lines.length) i++; // closing fence
       blocks.push(
         <pre key={key++} className="md-code" {...(lang ? { 'data-lang': lang } : {})}>
@@ -49,23 +50,23 @@ export function Markdown({ text }: { text: string }) {
 
     const head = /^(#{1,3})\s+(.*)$/.exec(line);
     if (head) {
-      const level = head[1].length + 2; // h1..h3 -> h3..h5 (keeps page h1/h2 free)
+      const level = (head[1] ?? '').length + 2; // h1..h3 -> h3..h5 (keeps page h1/h2 free)
       const Tag = (`h${level}`) as 'h3' | 'h4' | 'h5';
-      blocks.push(<Tag key={key++} className="md-heading" data-level={head[1].length}>{renderInline(head[2])}</Tag>);
+      blocks.push(<Tag key={key++} className="md-heading" data-level={(head[1] ?? '').length}>{renderInline(head[2] ?? '')}</Tag>);
       i++;
       continue;
     }
 
     if (/^\s*[-*]\s+/.test(line)) {
       const items: string[] = [];
-      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*[-*]\s+/, ''));
+      while (i < lines.length && /^\s*[-*]\s+/.test(lineAt(i))) items.push(lineAt(i++).replace(/^\s*[-*]\s+/, ''));
       blocks.push(<ul key={key++} className="md-list">{items.map((it, n) => <li key={n}>{renderInline(it)}</li>)}</ul>);
       continue;
     }
 
     if (/^\s*\d+\.\s+/.test(line)) {
       const items: string[] = [];
-      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*\d+\.\s+/, ''));
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lineAt(i))) items.push(lineAt(i++).replace(/^\s*\d+\.\s+/, ''));
       blocks.push(<ol key={key++} className="md-list">{items.map((it, n) => <li key={n}>{renderInline(it)}</li>)}</ol>);
       continue;
     }
@@ -73,9 +74,9 @@ export function Markdown({ text }: { text: string }) {
     if (line.trim() === '') { i++; continue; }
 
     const para: string[] = [];
-    while (i < lines.length && lines[i].trim() !== '' && !lines[i].trimStart().startsWith('```')
-      && !/^(#{1,3})\s+/.test(lines[i]) && !/^\s*[-*]\s+/.test(lines[i]) && !/^\s*\d+\.\s+/.test(lines[i])) {
-      para.push(lines[i++]);
+    while (i < lines.length && lineAt(i).trim() !== '' && !lineAt(i).trimStart().startsWith('```')
+      && !/^(#{1,3})\s+/.test(lineAt(i)) && !/^\s*[-*]\s+/.test(lineAt(i)) && !/^\s*\d+\.\s+/.test(lineAt(i))) {
+      para.push(lineAt(i++));
     }
     blocks.push(<p key={key++} className="md-paragraph">{renderInline(para.join('\n'))}</p>);
   }

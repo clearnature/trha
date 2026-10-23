@@ -32,7 +32,7 @@ function compilePattern(pattern: string): (name: string, args: Record<string, un
   // Bash(command:*) —— 匹配工具名 bash 或任何 command 参数
   const bashMatch = /^Bash\(command:(.*)\)$/.exec(p);
   if (bashMatch) {
-    const glob = bashMatch[1];
+    const glob = bashMatch[1] ?? '';
     const re = new RegExp(globToRegex(glob), 'i');
     return (_name, args) => {
       const cmd = typeof args.command === 'string' ? args.command
@@ -45,7 +45,7 @@ function compilePattern(pattern: string): (name: string, args: Record<string, un
   const toolArgMatch = /^([A-Za-z0-9_]+)\((.*)\)$/.exec(p);
   if (toolArgMatch) {
     const tool = toolArgMatch[1];
-    const glob = toolArgMatch[2];
+    const glob = toolArgMatch[2] ?? '';
     const re = new RegExp(globToRegex(glob), 'i');
     return (name, args) => name === tool && argsMatch(re, args);
   }

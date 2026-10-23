@@ -11,9 +11,9 @@ export type ErrorType =
 export interface SubAgentError {
   type: ErrorType;
   message: string;
-  subagentId?: string;
-  taskId?: string;
-  details?: unknown;
+  subagentId?: string | undefined;
+  taskId?: string | undefined;
+  details?: unknown | undefined;
   timestamp: Date;
   retryable: boolean;
 }

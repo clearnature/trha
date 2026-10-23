@@ -8,14 +8,14 @@ export interface ProviderEntry {
   models: string[];
   default: string;
   hasKey: boolean;
-  keyEnv?: string;
-  visionModels?: string[];
+  keyEnv?: string | undefined;
+  visionModels?: string[] | undefined;
   preset?: boolean;      // shipped by the kernel, not typed by the user
-  inUse?: boolean;
-  contextWindow?: number;
+  inUse?: boolean | undefined;
+  contextWindow?: number | undefined;
   /** Endpoint-executed search / thinking on the wire; absent = not set. */
-  webSearch?: boolean | null;
-  sendsThinking?: boolean | null;
+  webSearch?: boolean | null | undefined;
+  sendsThinking?: boolean | null | undefined;
 }
 
 /** A wire format a source may be saved as, as the kernel declares it. */

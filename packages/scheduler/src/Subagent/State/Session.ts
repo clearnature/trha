@@ -16,7 +16,7 @@ export interface SessionMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   timestamp: Date;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown> | undefined;
 }
 
 export class SessionManager {
@@ -107,7 +107,7 @@ export class SessionManager {
     parentSessionId: string;
     status: string;
     messageCount: number;
-    duration?: number;
+    duration?: number | undefined;
   }> {
     const session = this.sessions.get(sessionId);
     if (!session) {
@@ -135,7 +135,7 @@ export class SessionManager {
     parentSessionId: string;
     status: string;
     messageCount: number;
-    duration?: number;
+    duration?: number | undefined;
   }>> {
     const sessions = Array.from(this.sessions.values());
 

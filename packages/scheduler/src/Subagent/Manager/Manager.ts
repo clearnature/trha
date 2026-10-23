@@ -243,7 +243,7 @@ export class SubAgentManager {
     completed: number;
     failed: number;
     running: number;
-    results: Array<{ id: string; status: string; result?: unknown; error?: string }>;
+    results: Array<{ id: string; status: string; result?: unknown; error?: string | undefined }>;
   }> {
     const agents = Array.from(this.agents.values());
 

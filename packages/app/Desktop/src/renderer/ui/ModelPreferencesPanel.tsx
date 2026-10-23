@@ -48,7 +48,7 @@ export function ModelPreferencesPanel({ t }: ModelPreferencesPanelProps) {
   const setModelPrefs = useExtSettings(s => s.setModelPrefs);
   const { planner, vision, webSearch, subagentModel, subagentEffort, thinkLang, compactMode, compactCustom } = mp;
 
-  const rows: ChoiceRow[] = [
+  const rows: readonly [ChoiceRow, ChoiceRow, ChoiceRow, ChoiceRow, ChoiceRow, ChoiceRow] = [
     { labelKey: t('settings.modelPrefs.defaultModel'), hintKey: t('settings.modelPrefs.defaultModelHint'),
       allowSession: false, options: modelNames, selectionKey: 'defaultModel' },
     { labelKey: t('settings.modelPrefs.plannerModel'), hintKey: t('settings.modelPrefs.plannerModelHint'),

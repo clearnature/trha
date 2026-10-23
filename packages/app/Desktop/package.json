@@ -4,6 +4,8 @@
   "description": "trha Desktop Application",
   "main": "dist/main/index.js",
   "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:main": "tsc -p tsconfig.main.json --noEmit",
     "dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\"",
     "dev:main": "tsc -p tsconfig.main.json --watch",
     "dev:renderer": "vite",

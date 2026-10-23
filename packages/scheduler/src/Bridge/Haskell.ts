@@ -22,12 +22,12 @@ export interface BridgeToolSpec {
 
 export interface QueryRequest {
   messages: BridgeMessage[];
-  tools?: BridgeToolSpec[];
-  model?: string;
+  tools?: BridgeToolSpec[] | undefined;
+  model?: string | undefined;
   /** Which saved provider answers this request (P6). */
-  provider?: string;
+  provider?: string | undefined;
   /** Model generation params (LLM settings; absent = kernel defaults). */
-  genParams?: { temperature?: number; topP?: number; maxTokens?: number };
+  genParams?: { temperature?: number | undefined; topP?: number | undefined; maxTokens?: number | undefined } | undefined;
 }
 
 export interface ToolCallData {
@@ -39,7 +39,7 @@ export interface ToolCallData {
 export interface QueryResponse {
   reply: string;
   toolCalls?: ToolCallData[];
-  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+  usage?: { promptTokens?: number | undefined; completionTokens?: number | undefined; totalTokens?: number | undefined };
   /** Kernel's causal-constraint verdict (`trha_constraint`), verbatim object,
    *  when the kernel attaches it to the completion response (D-1). */
   constraint?: Record<string, unknown>;

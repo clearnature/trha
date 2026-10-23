@@ -6,7 +6,7 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface LoggerConfig {
   level: LogLevel;
-  prefix?: string;
+  prefix?: string | undefined;
 }
 
 export class Logger {

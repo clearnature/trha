@@ -20,8 +20,8 @@ export interface PortToolEvent {
   name: string;
   args: string[];
   status: 'running' | 'succeeded' | 'failed';
-  durationMs?: number;
-  error?: string;
+  durationMs?: number | undefined;
+  error?: string | undefined;
 }
 
 export type PortEvent =

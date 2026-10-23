@@ -13,7 +13,7 @@ import { loadPluginFromFile } from './loader.js';
 
 export interface FileState {
   /** Plugin name currently loaded from this file, when known. */
-  pluginName?: string;
+  pluginName?: string | undefined;
   /** mtime (ms) of the file when it was last loaded. */
   mtimeMs: number;
 }

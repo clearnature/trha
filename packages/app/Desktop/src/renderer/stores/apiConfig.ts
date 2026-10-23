@@ -14,7 +14,7 @@ export interface ApiConfig {
 
 export interface RuntimeHints {
   hasPreload: boolean;
-  schedulerPort?: number;
+  schedulerPort?: number | undefined;
   isStudioPath: boolean;
 }
 
