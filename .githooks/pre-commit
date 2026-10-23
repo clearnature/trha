@@ -1,9 +1,30 @@
 #!/bin/sh
-# Type-check every TypeScript project before committing.
-# Enabled via: git config core.hooksPath .githooks
+# Type-check only the projects touched by the staged changes.
+# Installed by scripts/install-hooks.sh (root postinstall).
 set -e
 
 cd "$(git rev-parse --show-toplevel)"
+
+changed=$(git diff --cached --name-only)
+if [ -z "$changed" ]; then
+  echo "typecheck: nothing staged, skipping"
+  exit 0
+fi
+
+need_scheduler=0
+need_web=0
+need_desktop=0
+
+# Shared config affects every project.
+case "$changed" in
+  tsconfig.base.json|package.json|package-lock.json)
+    need_scheduler=1; need_web=1; need_desktop=1
+    ;;
+esac
+
+case "$changed" in *packages/scheduler/*) need_scheduler=1 ;; esac
+case "$changed" in *packages/app/Web/*) need_web=1 ;; esac
+case "$changed" in *packages/app/Desktop/*) need_desktop=1 ;; esac
 
 check() {
   dir=$1
@@ -18,9 +39,16 @@ check() {
   fi
 }
 
+if [ "$need_scheduler" = 0 ] && [ "$need_web" = 0 ] && [ "$need_desktop" = 0 ]; then
+  echo "typecheck: no TypeScript project touched, skipping"
+  exit 0
+fi
+
 echo "typecheck:"
-check packages/scheduler typecheck
-check packages/app/Web typecheck
-check packages/app/Desktop typecheck
-check packages/app/Desktop typecheck:main
+if [ "$need_scheduler" = 1 ]; then check packages/scheduler typecheck; fi
+if [ "$need_web" = 1 ]; then check packages/app/Web typecheck; fi
+if [ "$need_desktop" = 1 ]; then
+  check packages/app/Desktop typecheck
+  check packages/app/Desktop "typecheck:main"
+fi
 echo "all type checks passed"
