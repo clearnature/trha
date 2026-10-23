@@ -25,7 +25,11 @@ runPlugin env plugin = do
   actions <- execPlugin env plugin
   return $ Disposer (sequence_ actions)
 
--- | Execute a plugin and collect cleanup actions
+-- | Execute a plugin and collect cleanup actions.
+--
+-- Cleanups are returned in LIFO order (last acquired runs first) and only
+-- include effects acquired by this plugin; the shared @envEffects@ ref is kept
+-- for observability, not as the source of truth for disposal.
 execPlugin :: Env -> Plugin () -> IO [IO ()]
 execPlugin env (Pure _) = return []
 execPlugin env (Free (RegisterService name val next)) = do
@@ -37,7 +41,8 @@ execPlugin env (Free (SubscribeEvent name handler next)) = do
 execPlugin env (Free (ProvideEffect acquire next)) = do
   cleanup <- acquire
   modifyIORef (envEffects env) (cleanup :)
-  execPlugin env next
+  rest <- execPlugin env next
+  return (rest ++ [cleanup])
 execPlugin env (Free (WithContext action k)) = do
   result <- action
   execPlugin env (k result)
