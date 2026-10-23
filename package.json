@@ -1,0 +1,8 @@
+{
+  "name": "trha",
+  "private": true,
+  "description": "Repository-level tooling only. Applications live under packages/ and benchmarks/.",
+  "scripts": {
+    "postinstall": "sh scripts/install-hooks.sh"
+  }
+}
