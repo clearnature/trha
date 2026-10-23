@@ -123,7 +123,25 @@ sessionPersistSpec = do
     it "keeps host-supplied ids file-safe (no path traversal, no subdirs)" $ withScratch $ \dir -> do
       let p = SS.snapshotPath dir "../../etc/passwd"
       takeFileName p `shouldBe` ".._.._etc_passwd.json"
-      p `shouldBe` (dir </> takeFileName p)
+      -- one level down (the store's namespace), never escaping the state dir
+      p `shouldBe` (dir </> "kernel" </> takeFileName p)
+
+    it "namespaces its files, so the scheduler's per-session JSON survives" $ withScratch $ \dir -> do
+      -- Same directory, same session id, different owner: the two stores must
+      -- not overwrite each other (they would both use <id>.json at the top).
+      let sid = "session-1750000000000"
+          scheduler = "{\"v\":1,\"sessionId\":\"" ++ sid
+                   ++ "\",\"mode\":\"standard\",\"messages\":[]}"
+      BL.writeFile (dir </> (sid ++ ".json")) (BLC.pack scheduler)
+      s <- createSession sid
+      snap <- snapshotSession s
+      SS.saveSessionSnapshot dir sid snap
+      -- the scheduler's record is untouched...
+      BL.readFile (dir </> (sid ++ ".json")) `shouldReturn` BLC.pack scheduler
+      -- ...and the kernel reads back only its own file
+      SS.loadSessionSnapshot dir sid `shouldReturn` Just snap
+      -- a scheduler-only directory yields no snapshots at all
+      SS.listSessionSnapshots dir `shouldReturn` [snap]
 
   describe "API.Server — kernel restart resumes the persisted session (HTTP, 真实 warp)" $ do
     let withApp :: IO Application -> (Manager -> String -> IO a) -> IO a

@@ -30,12 +30,22 @@ import System.FilePath ((</>), takeExtension)
 safeName :: String -> String
 safeName = map (\c -> if isAlphaNum c || c `elem` "._-" then c else '_')
 
+-- | Snapshots live in a subdirectory of the state directory.
+--
+-- The host's state directory is shared: the scheduler keeps one @\<id\>.json@
+-- per session there (packages/scheduler/src/Server/stateStore.ts), using the
+-- *same* ids and file names. Writing at the top level would make the two
+-- stores overwrite each other for every session, losing whichever half was
+-- written first. Each side therefore keeps its own namespace.
+storeDir :: FilePath -> FilePath
+storeDir dir = dir </> "kernel"
+
 snapshotPath :: FilePath -> String -> FilePath
-snapshotPath dir sid = dir </> (safeName sid ++ ".json")
+snapshotPath dir sid = storeDir dir </> (safeName sid ++ ".json")
 
 saveSessionSnapshot :: ToJSON a => FilePath -> String -> a -> IO ()
 saveSessionSnapshot dir sid value = do
-  createDirectoryIfMissing True dir
+  createDirectoryIfMissing True (storeDir dir)
   let target = snapshotPath dir sid
       tmp = target ++ ".tmp"
   BL.writeFile tmp (encode value)
@@ -53,13 +63,14 @@ loadSessionSnapshot dir sid = do
 
 listSessionSnapshots :: FromJSON a => FilePath -> IO [a]
 listSessionSnapshots dir = do
-  exists <- doesDirectoryExist dir
+  let here = storeDir dir
+  exists <- doesDirectoryExist here
   if not exists
     then pure []
     else do
-      names <- listDirectory dir
+      names <- listDirectory here
       fmap concat $ forM [n | n <- names, takeExtension n == ".json"] $ \n -> do
-        r <- try (BL.readFile (dir </> n)) :: IO (Either SomeException BL.ByteString)
+        r <- try (BL.readFile (here </> n)) :: IO (Either SomeException BL.ByteString)
         pure $ case r of
           Left _   -> []
           Right bs -> maybe [] pure (decode bs)

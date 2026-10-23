@@ -22,6 +22,8 @@ import System.Console.ANSI
 import System.Console.Haskeline
 import System.Directory (getHomeDirectory, createDirectoryIfMissing)
 import Data.Maybe (fromMaybe)
+import Control.Applicative ((<|>))
+import System.Environment (lookupEnv)
 import System.FilePath ((</>))
 import System.IO (hFlush, stdout, hSetEncoding, utf8)
 
@@ -168,9 +170,18 @@ runCLIMode config = do
 -- 127.0.0.1:3333 by default.  The stub adapter supplies a deterministic
 -- two-round tool loop, which makes the whole chain work without an LLM key;
 -- swap it for a real provider adapter once credentials are configured.
+--
+-- The state directory resolves in the usual order: flag, then @TRHA_STATE_DIR@.
+-- The Desktop app already exports that variable to the scheduler it spawns,
+-- so an operator who runs the kernel from the same shell gets kernel-side
+-- session persistence without repeating the path. Absent both, the kernel is
+-- in-memory only (and says so).
 runServeMode :: Int -> Maybe FilePath -> CLIConfig -> IO ()
-runServeMode kernelPort stateDir config = do
+runServeMode kernelPort cliStateDir config = do
+  envStateDir <- lookupEnv "TRHA_STATE_DIR"
+  let stateDir = cliStateDir <|> envStateDir
   putStrLn $ "Starting API server on " ++ T.unpack (configHost config) ++ ":" ++ show kernelPort
+            ++ maybe " (sessions: in-memory only)" (\d -> " (sessions: " ++ d ++ ")") stateDir
   API.Server.startStubKernel kernelPort stateDir
 
 -- | All slash commands for tab completion (derived from the shared
