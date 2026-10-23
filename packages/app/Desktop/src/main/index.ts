@@ -83,6 +83,9 @@ function startScheduler(): Promise<void> {
         TRHA_TOKEN: SESSION_TOKEN,
         TRHA_PORT: String(SCHEDULER_PORT),
         TRHA_LEASE_STDIN: '1',
+        // Session persistence (G2). Without this the scheduler runs in
+        // memory-only mode and a restart loses live conversations.
+        TRHA_STATE_DIR: process.env.TRHA_STATE_DIR ?? path.join(app.getPath('userData'), 'sessions'),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
