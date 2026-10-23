@@ -77,6 +77,7 @@ type API =
   -- Custom API
        "health" :> Get '[JSON] Value
   :<|> "session" :> "start" :> ReqBody '[JSON] StartReq :> Post '[JSON] Value
+  :<|> "session" :> Capture "sid" Text :> Delete '[JSON] Value
   :<|> "agent" :> "step" :> ReqBody '[JSON] StepReq :> Post '[JSON] Value
   -- Provider registry (P1: list + protocols; P2: probe; P3: save/remove/check)
   :<|> "providers" :> Get '[JSON] Value
@@ -139,6 +140,7 @@ server :: LLMAdapter -> TVar (Map.Map Text Session) -> Maybe FilePath -> Server 
 server adapter sessions stateDir =
        healthHandler
   :<|> startSessionHandler sessions stateDir
+  :<|> deleteSessionHandler sessions stateDir
   :<|> agentStepHandler adapter sessions stateDir
   :<|> P.providersHandler
   :<|> P.protocolsHandler
@@ -193,6 +195,22 @@ startSessionHandler sessionsVar stateDir req = do
       st <- liftIO $ getAgentState session
       return $ object
         [ "sessionId" .= key, "mode" .= mode, "resumed" .= False, "agentState" .= st ]
+
+-- | Forget a session: the host deleted it, so the kernel must too.
+--
+-- Without this the in-memory session survives and — worse — the snapshot on
+-- disk resurrects it after a restart, so a "deleted" conversation would come
+-- back. Idempotent: deleting an unknown id still removes any stale snapshot.
+deleteSessionHandler :: TVar (Map.Map Text Session) -> Maybe FilePath -> Text -> Handler Value
+deleteSessionHandler sessionsVar stateDir sid = do
+  known <- liftIO $ atomically $ do
+    sessions <- readTVar sessionsVar
+    writeTVar sessionsVar (Map.delete sid sessions)
+    pure (Map.member sid sessions)
+  liftIO $ case stateDir of
+    Nothing  -> pure ()
+    Just dir -> SS.deleteSessionSnapshot dir (T.unpack sid)
+  return $ object ["sessionId" .= sid, "deleted" .= known]
 
 -- Agent step
 agentStepHandler :: LLMAdapter -> TVar (Map.Map Text Session) -> Maybe FilePath -> StepReq -> Handler Value

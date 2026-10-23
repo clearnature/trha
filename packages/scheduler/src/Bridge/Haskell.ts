@@ -87,6 +87,17 @@ export class HaskellBridge {
     await this.httpClient.post<Record<string, unknown>>('/session/start', { sessionId, mode });
   }
 
+  /**
+   * Drop a session kernel-side. Idempotent. Needed in addition to removing
+   * the scheduler's own record: the kernel keeps a snapshot on disk, and an
+   * undeleted snapshot brings a deleted conversation back after a restart.
+   */
+  async deleteKernelSession(sessionId: string): Promise<void> {
+    await this.httpClient.delete<Record<string, unknown>>(
+      `/session/${encodeURIComponent(sessionId)}`,
+    );
+  }
+
   /** Call the kernel chat completions endpoint (non-streaming). */
   async queryModel(request: QueryRequest): Promise<QueryResponse> {
     const body: Record<string, unknown> = {

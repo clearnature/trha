@@ -690,6 +690,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     if (config.stateDir) {
       void removeSessionFile(config.stateDir, req.params.id).catch(() => {});
     }
+    // Tell the kernel too: it holds the session and a snapshot on disk, and
+    // an undeleted snapshot would resurrect this conversation after restart.
+    void bridge.deleteKernelSession(req.params.id).catch(e =>
+      console.error(`kernel session delete ${req.params.id}:`, e));
     events.emit('session:deleted', { sessionId: req.params.id });
     emitSafe(plugins.emitSessionDelete(req.params.id));
     res.json({ ok: true, sessionId: req.params.id });

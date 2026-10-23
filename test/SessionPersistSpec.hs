@@ -204,6 +204,22 @@ sessionPersistSpec = do
         c `shouldBe` 200
         body `shouldSatisfy` ("\"resumed\":false" `isInfixOf`)
 
+    it "deleting a session drops its snapshot (no resurrection after restart)" $ withScratch $ \dir -> do
+      withApp (mkStubApp (Just dir)) $ \mgr base -> do
+        (c0, _) <- httpPost mgr (base ++ "/session/start") startBody
+        c0 `shouldBe` 200
+        (c1, _) <- httpPost mgr (base ++ "/agent/step") stepBody
+        c1 `shouldBe` 200
+        req0 <- parseRequest ("DELETE " ++ base ++ "/session/restart-1")
+        res <- httpLbs (req0 { method = "DELETE" }) mgr
+        statusCode (responseStatus res) `shouldBe` 200
+      -- the snapshot is gone, so a restarted kernel cannot bring it back
+      SS.loadSessionSnapshot dir "restart-1"
+        `shouldReturn` (Nothing :: Maybe SessionSnapshot)
+      withApp (mkStubApp (Just dir)) $ \mgr base -> do
+        (c2, _) <- httpPost mgr (base ++ "/agent/step") stepBody
+        c2 `shouldBe` 404
+
     it "an empty state directory starts clean (no phantom sessions)" $ withScratch $ \dir ->
       withApp (mkStubApp (Just dir)) $ \mgr base -> do
         (c, _) <- httpPost mgr (base ++ "/agent/step") stepBody
