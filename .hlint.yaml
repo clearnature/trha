@@ -1,0 +1,58 @@
+# HLint configuration.
+#
+# Style-only rules are disabled repo-wide: they fire on pre-existing lines
+# and say nothing about correctness. Everything else still outstanding is
+# ignored per module, so *new* modules get the full rule set. Burn the list
+# down by deleting entries after fixing a module.
+
+# Style-only (repo-wide).
+- ignore: {name: 'Eta reduce'}
+- ignore: {name: 'Redundant bracket'}
+- ignore: {name: 'Use let'}
+- ignore: {name: 'Unused LANGUAGE pragma'}
+- ignore: {name: 'Avoid lambda'}
+- ignore: {name: 'Use fewer imports'}
+
+# Historical hints, per module (TODO: shrink this list).
+- ignore: {within: [API.ProviderProbe], name: 'Use mapMaybe'}
+- ignore: {within: [API.ProviderRuntime], name: 'Redundant maybe'}
+- ignore: {within: [API.ProviderRuntime], name: 'Use fromMaybe'}
+- ignore: {within: [API.ProviderRuntime], name: 'Use list comprehension'}
+- ignore: {within: [API.Providers], name: 'Avoid lambda using `infix`'}
+- ignore: {within: [API.Providers], name: 'Use fromMaybe'}
+- ignore: {within: [API.Server], name: 'Avoid lambda using `infix`'}
+- ignore: {within: [API.Server], name: 'Use :'}
+- ignore: {within: [API.Server], name: 'Use catMaybes'}
+- ignore: {within: [API.Server], name: 'Use fromMaybe'}
+- ignore: {within: [API.Server], name: 'Use lambda-case'}
+- ignore: {within: [API.Server], name: 'Use newtype instead of data'}
+- ignore: {within: [Core.Event.Bus], name: 'Use forM_'}
+- ignore: {within: [Core.Event.Bus], name: 'Use newtype instead of data'}
+- ignore: {within: [Core.Provider.Types], name: 'Use fromMaybe'}
+- ignore: {within: [Infrastructure.CPU.GF27SIMD], name: 'Use fmap'}
+- ignore: {within: [Infrastructure.CPU.GGUF], name: 'Use first'}
+- ignore: {within: [Infrastructure.CPU.SovereignFull], name: 'Redundant pure'}
+- ignore: {within: [Infrastructure.CPU.SovereignGF27], name: 'Use map once'}
+- ignore: {within: [Infrastructure.Sandbox.Process], name: 'Use newtype instead of data'}
+- ignore: {within: [Infrastructure.Storage.JSON], name: 'Use newtype instead of data'}
+- ignore: {within: [Infrastructure.Storage.SQLite], name: 'Use newtype instead of data'}
+- ignore: {within: [LLM.Adapter.Interface], name: 'Use fromMaybe'}
+- ignore: {within: [LLM.Stream], name: 'Use for_'}
+- ignore: {within: [LLM.Stream], name: 'Use unless'}
+- ignore: {within: [Presentation.Desktop.IPC], name: 'Use <$>'}
+- ignore: {within: [Presentation.Desktop.Menu], name: 'Use newtype instead of data'}
+- ignore: {within: [Presentation.Web.Main], name: 'Redundant $'}
+- ignore: {within: [Main], name: 'Avoid lambda using `infix`'}
+- ignore: {within: [Main], name: 'Evaluate'}
+- ignore: {within: [Main], name: 'Move filter'}
+- ignore: {within: [Main], name: 'Move map inside list comprehension'}
+- ignore: {within: [Main], name: 'Redundant bang pattern'}
+- ignore: {within: [Main], name: 'Redundant pure'}
+- ignore: {within: [Main], name: 'Use !!'}
+- ignore: {within: [Main], name: 'Use concatMap'}
+- ignore: {within: [Main], name: 'Use const'}
+- ignore: {within: [Main], name: 'Use forM_'}
+- ignore: {within: [Main], name: 'Use head'}
+- ignore: {within: [Main], name: 'Use lambda-case'}
+- ignore: {within: [Main], name: 'Use map once'}
+- ignore: {within: [Main], name: 'Use maybeToList'}

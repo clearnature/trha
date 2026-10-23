@@ -73,9 +73,9 @@ data SovereignWeights = SovereignWeights
 -- (sovereign_model_trit.py:500-522): cells 2,3,6,7,10,11 are all-zero; cells
 -- 0,1 / 4,5 / 8,9 carry a fixed six-trit pattern, written at phase 0.
 defaultMonopolePrototype :: Int -> [[[Int]]]
-defaultMonopolePrototype heads = replicate heads [ pattern cell | cell <- [0 .. s2NumCells - 1] ]
+defaultMonopolePrototype heads = replicate heads [ cellPattern cell | cell <- [0 .. s2NumCells - 1] ]
   where
-    pattern cell
+    cellPattern cell
       | cell `elem` [2, 3, 6, 7, 10, 11] = [0, 0, 0, 0, 0, 0]
       | cell `elem` [0, 1]               = [0, 1, 2, 1, 2, 0]
       | cell `elem` [4, 5]               = [1, 2, 0, 2, 0, 1]

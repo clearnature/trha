@@ -22,6 +22,9 @@ need_haskell=0
 need_lint=0
 lint_files=$(printf '%s\n' "$changed" | grep -E '\.(ts|tsx|mts|cts|js|mjs)$' || true)
 if [ -n "$lint_files" ]; then need_lint=1; fi
+need_hlint=0
+haskell_sources=$(printf '%s\n' "$changed" | grep -E '\.(hs|lhs)$' || true)
+if [ -n "$haskell_sources" ]; then need_hlint=1; fi
 
 # Shared config affects every TypeScript project.
 case "$changed" in
@@ -72,14 +75,32 @@ check_lint() {
   fi
 }
 
+check_hlint() {
+  if ! command -v hlint >/dev/null 2>&1; then
+    printf '  %-28s %s\n' "hlint" "SKIPPED (apt install hlint)"
+    return 0
+  fi
+  printf '  %-28s %s ... ' "hlint" "staged modules"
+  # shellcheck disable=SC2086 # haskell_sources is a newline list without spaces
+  if hlint $haskell_sources >/dev/null 2>&1; then
+    echo ok
+  else
+    echo FAILED
+    # shellcheck disable=SC2086
+    hlint $haskell_sources
+    exit 1
+  fi
+}
+
 if [ "$need_scheduler" = 0 ] && [ "$need_web" = 0 ] && [ "$need_desktop" = 0 ] \
-  && [ "$need_haskell" = 0 ] && [ "$need_lint" = 0 ]; then
+  && [ "$need_haskell" = 0 ] && [ "$need_lint" = 0 ] && [ "$need_hlint" = 0 ]; then
   echo "check: nothing type-checked by this hook, skipping"
   exit 0
 fi
 
 echo "check:"
 if [ "$need_haskell" = 1 ]; then check_haskell; fi
+if [ "$need_hlint" = 1 ]; then check_hlint; fi
 if [ "$need_lint" = 1 ]; then check_lint; fi
 if [ "$need_scheduler" = 1 ]; then check_ts packages/scheduler typecheck; fi
 if [ "$need_web" = 1 ]; then check_ts packages/app/Web typecheck; fi
