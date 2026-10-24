@@ -240,6 +240,39 @@ interface ModeConfig {
   contextSize: number;
 }
 
+
+/** Tool discipline that applies to every mode with a plan/todo surface. */
+const TOOL_DISCIPLINE = [
+  'Tool discipline:',
+  '- `todo_write` replaces the whole list. Write it once when the plan is set, and at most once',
+  '  more when the batch of work is finished. Do not rewrite it after every individual action;',
+  '  if nothing in the list changed, do not call it at all.',
+  '- Batch independent tool calls into one turn instead of one call per turn.',
+].join('\n');
+
+/** Render the mode persona as the system message (the config existed but was never sent). */
+function systemMessageFor(mode: ModeConfig, model: string, cwd: string): string | null {
+  if (!mode.persona.enabled) return null;
+  const body = mode.persona.template
+    .replace(/\{\{\s*model\s*\}\}/g, model)
+    .replace(/\{\{\s*cwd\s*\}\}/g, cwd);
+  const text = `${body}\n\n${TOOL_DISCIPLINE}`;
+  return text.slice(0, mode.persona.maxBytes || text.length);
+}
+
+/** Session messages as the model should see them: a system message first, then the rest. */
+function withSystemPrompt(
+  mode: ModeConfig, model: string, cwd: string,
+  messages: Array<{ role: string; content: string }>,
+): Array<Record<string, unknown>> {
+  const system = systemMessageFor(mode, model, cwd);
+  // Computed per request instead of stored: a stored system message would be
+  // rewritten by maintenance and would pollute the transcript the shell shows.
+  return system
+    ? [{ role: 'system', content: system }, ...messages]
+    : [...messages];
+}
+
 const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
   standard: {
     name: 'standard',
@@ -1232,7 +1265,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           persistSession(session);
         }
         const request = {
-          messages: session.messages, tools: toolsCfg,
+          messages: withSystemPrompt(mode, target.model ?? 'deepseek-flash',
+                                     session.cwd ?? WORKSPACE, session.messages),
+          tools: toolsCfg,
           model: target.model, provider: target.provider,
           genParams: target.genParams,
           // Same key the kernel session was registered under, so this round

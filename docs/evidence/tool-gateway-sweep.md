@@ -105,3 +105,22 @@ Tools: 74 · rows: 56 · verdicts: {"ok":50,"refused":6}
 
 顺带：`WAITING_FOR_INPUT/APPROVAL` 现在也先把工具结果写进历史再结束本轮，
 否则下一次请求同样会因「tool_calls 未应答」被拒。
+
+## 3. 让模型别反复写 todo（同一任务复测）
+
+发现 `mode.persona` 是**死配置**——`runStep` 从来没发过 system 消息，模型收到的
+第一条就是 user。于是把 persona 真正渲染成 system message（每次请求计算，不落盘、
+不污染 transcript），并在其中加入工具纪律：
+
+> `todo_write` 替换整份清单：建计划时写一次，整批完成后最多再写一次；
+> 单个动作之间不要重写；清单没变就别调用。独立工具调用合并到一轮。
+
+同一任务复测（deepseek-flash）：
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 工具调用 | 5 次（todo_write ×3，逐个发） | 4 次（todo_write ×2，首轮并行 todo/run_code/present） |
+| 汇报准确性 | 45 ✅ | 45 ✅ |
+
+system 消息现在带 `working directory is <cwd>`，`{{cwd}}`/`{{model}}` 会被替换；
+`minimal` 等 `persona.enabled=false` 的模式仍然不发 system 消息（有测试钉住）。

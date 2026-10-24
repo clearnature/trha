@@ -288,6 +288,11 @@ type EventHandler = Dynamic -> IO ()
 **流式用量**：请求带 `stream_options.include_usage`，内核把末帧 `usage`（含
 cache hit/miss）透传给 scheduler，所以流式会话也能记账。
 
+**系统提示**：`mode.persona` 现在真的会作为 system message 发出（此前只是配置，
+没有代码读它）——每次请求渲染 `{{model}}`/`{{cwd}}`，附加工具纪律
+（`todo_write` 一个阶段只写一次、独立调用合并到一轮），且**不落盘**，
+所以 transcript 与治理逻辑都不会被它污染。
+
 **工具**：模型可见目录与执行器同源于 `Server/toolCatalog.ts`，名字对齐
 deepseek-harness 的 `standard` 预设（`bash/read/write/edit/glob/grep`、`todo_write`、
 `create_goal/get_goal/update_goal`、`schedule_*`、`job_*`、`skill`、`web_fetch`；
