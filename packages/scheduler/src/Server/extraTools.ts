@@ -386,24 +386,24 @@ export async function runExtraTool(
     const url = typeof args.url === 'string' ? args.url : '';
     if (!url) return 'ERROR: url is required';
     try {
-      const page = await browserNavigate(url);
+      const page = await browserNavigate(host.sessionId, url);
       return clip(`title: ${page.title}\nurl: ${page.url}\n\n${page.text}`);
     } catch (e) { return `ERROR: ${(e as Error).message}`; }
   }
   if (name === 'stagehand_extract') {
-    try { return clip(await browserExtract(typeof args.selector === 'string' ? args.selector : undefined)); }
+    try { return clip(await browserExtract(host.sessionId, typeof args.selector === 'string' ? args.selector : undefined)); }
     catch (e) { return `ERROR: ${(e as Error).message}`; }
   }
   if (name === 'stagehand_screenshot') {
-    try { return `OK: screenshot -> ${await browserScreenshot(host.workspace, typeof args.path === 'string' ? args.path : undefined)}`; }
+    try { return `OK: screenshot -> ${await browserScreenshot(host.sessionId, host.workspace, typeof args.path === 'string' ? args.path : undefined)}`; }
     catch (e) { return `ERROR: ${(e as Error).message}`; }
   }
   if (name === 'stagehand_tabs') {
     try {
       // Ask the page, don't navigate: 'about:blank' is not http(s) and would be
       // rejected by the navigate guard.
-      const href = await browserEvaluate('location.href');
-      const title = await browserEvaluate('document.title');
+      const href = await browserEvaluate(host.sessionId, 'location.href');
+      const title = await browserEvaluate(host.sessionId, 'document.title');
       return `single-tab mode; current url: ${href}\ntitle: ${title}`;
     } catch (e) { return `ERROR: ${(e as Error).message}`; }
   }
@@ -411,7 +411,7 @@ export async function runExtraTool(
     // No planner: report the interactive elements, which is what an observe
     // step needs to hand back to a model.
     try {
-      const text = await browserExtract('a,button,input,select,textarea');
+      const text = await browserExtract(host.sessionId, 'a,button,input,select,textarea');
       return clip(text || '(no interactive elements)');
     } catch (e) { return `ERROR: ${(e as Error).message}`; }
   }
@@ -422,7 +422,7 @@ export async function runExtraTool(
     if (!action || !selector) return 'ERROR: action and selector are required';
     try {
       // Drive the page through the same browser session via a tiny JS shim.
-      if (typeof args.url === 'string') await browserNavigate(args.url);
+      if (typeof args.url === 'string') await browserNavigate(host.sessionId, args.url);
       const js = action === 'click'
         ? `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return 'not found'; el.click(); return 'clicked'; })()`
         : action === 'type'
@@ -433,7 +433,7 @@ export async function runExtraTool(
             + ` el.dispatchEvent(new Event('input', { bubbles: true })); return 'typed'; })()`
           : null;
       if (!js) return `ERROR: unsupported action "${action}" (click|type)`;
-      return await browserEvaluate(js);
+      return await browserEvaluate(host.sessionId, js);
     } catch (e) { return `ERROR: ${(e as Error).message}`; }
   }
 

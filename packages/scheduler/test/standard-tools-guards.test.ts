@@ -103,7 +103,7 @@ describe('standard tool guards', () => {
   });
 
   it('browser_close is safe when nothing was opened', async () => {
-    expect(await run('browser_close')).toBe('OK: browser closed');
+    expect(await run('browser_close')).toMatch(/^OK: browser closed/);
   });
 });
 

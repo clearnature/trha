@@ -19,6 +19,7 @@ import { loadPin, loadSessionsSync, removeSessionFile, savePin, saveSession } fr
 import { govern, DEFAULT_GOVERNANCE, type GovernanceConfig } from './contextGovernor.js';
 import { envCap, envInt } from './env.js';
 import { isSessionBusy, withSessionLock } from './sessionLock.js';
+import { browserClose } from './browser.js';
 import { isExtraTool, runExtraTool, type ExtraHost, type Terminal } from './extraTools.js';
 import {
   isStandardTool, runStandardTool, startJob,
@@ -823,6 +824,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     const session = sessions.get(req.params.id);
     if (!session) return res.status(404).json({ error: 'Session not found' });
     sessions.delete(req.params.id);
+    // The session may own a browser tab; leaving it alive would leak a page per
+    // deleted conversation.
+    void browserClose(req.params.id).catch(() => {});
     if (config.stateDir) {
       void removeSessionFile(config.stateDir, req.params.id).catch(() => {});
     }

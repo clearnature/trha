@@ -34,7 +34,7 @@
 | `workflow` | 按顺序跑 `[{name, task}]`，逐个起子智能体并汇总结果 | 子会话 |
 | `list_mcp_resources` / `list_mcp_resource_templates` / `read_mcp_resource` | MCP 资源三件套（stdio JSON-RPC 客户端） | `TRHA_MCP_CONFIG` |
 | `lsp` | 语言服务器查询：hover / definition / references / diagnostics / symbols | `TRHA_LSP_COMMAND` |
-| `browser_navigate` / `browser_extract` / `browser_screenshot` / `browser_close` | 真 headless Chrome（CDP）：渲染后取文本、取选择器、截图 PNG | `TRHA_BROWSER` |
+| `browser_navigate` / `browser_extract` / `browser_screenshot` / `browser_close` | 真 headless Chrome（CDP），**每个会话一个标签页**（`Target.createTarget` + 按 CDP sessionId 分流）：渲染后取文本、取选择器、截图 PNG；`browser_close` 只关本会话的页 | `TRHA_BROWSER` |
 | `working_directory` | 读/切会话 cwd（必须留在工作区内）；bash 与 fs 工具都跟随 | 会话（持久化 v2） |
 | `str_replace_editor` / `unified_edit` | 编辑器式操作：view / create / str_replace / insert | 工作区 |
 | `terminal_open/send/read/signal/close/list` | 每会话持久 shell：输入、增量读、发信号、关闭 | 进程内 |

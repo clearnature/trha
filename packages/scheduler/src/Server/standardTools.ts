@@ -213,7 +213,7 @@ export async function runStandardTool(
     const url = typeof args.url === 'string' ? args.url : '';
     if (!url) return 'ERROR: url is required';
     try {
-      const page = await browserNavigate(url);
+      const page = await browserNavigate(host.sessionId, url);
       return clip(`title: ${page.title}\nurl: ${page.url}\n\n${page.text}`);
     } catch (e) {
       return `ERROR: ${(e as Error).message}`;
@@ -222,7 +222,7 @@ export async function runStandardTool(
 
   if (name === 'browser_extract') {
     try {
-      return clip(await browserExtract(typeof args.selector === 'string' ? args.selector : undefined));
+      return clip(await browserExtract(host.sessionId, typeof args.selector === 'string' ? args.selector : undefined));
     } catch (e) {
       return `ERROR: ${(e as Error).message}`;
     }
@@ -230,7 +230,7 @@ export async function runStandardTool(
 
   if (name === 'browser_screenshot') {
     try {
-      const file = await browserScreenshot(host.workspace, typeof args.path === 'string' ? args.path : undefined);
+      const file = await browserScreenshot(host.sessionId, host.workspace, typeof args.path === 'string' ? args.path : undefined);
       return `OK: screenshot -> ${file}`;
     } catch (e) {
       return `ERROR: ${(e as Error).message}`;
@@ -238,8 +238,8 @@ export async function runStandardTool(
   }
 
   if (name === 'browser_close') {
-    browserClose();
-    return 'OK: browser closed';
+    await browserClose(host.sessionId);
+    return 'OK: browser closed for this session';
   }
 
   if (name === 'lsp') {

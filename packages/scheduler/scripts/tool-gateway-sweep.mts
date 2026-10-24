@@ -303,8 +303,8 @@ stop();
 kernelServer.close();
 scheduler.close();
 // Child processes (browser, MCP/LSP servers, terminals) keep the loop alive.
-const { browserClose } = await import('../src/Server/browser.js');
+const { browserCloseAll } = await import('../src/Server/browser.js');
 const { shutdownMcp } = await import('../src/Server/mcp.js');
 const { shutdownLsp } = await import('../src/Server/lsp.js');
-browserClose(); shutdownMcp(); shutdownLsp();
+await browserCloseAll(); shutdownMcp(); shutdownLsp();
 setTimeout(() => process.exit(0), 100);

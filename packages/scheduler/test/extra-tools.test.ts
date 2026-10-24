@@ -8,7 +8,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { runExtraTool, type ExtraHost, type Terminal } from '../src/Server/extraTools.js';
-import { browserClose } from '../src/Server/browser.js';
+import { browserCloseAll } from '../src/Server/browser.js';
 
 let dir = '';
 let host: ExtraHost;
@@ -190,7 +190,7 @@ describe('stagehand aliases', () => {
     url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}/`;
   });
   afterAll(() => { srv.close(); });
-  afterEach(() => { browserClose(); });
+  afterEach(async () => { await browserCloseAll(); });
 
   it('navigates with the stagehand name', async () => {
     const out = await runExtraTool('stagehand_navigate', { url }, host);
@@ -360,7 +360,7 @@ describe('closing the remaining branches', () => {
     expect(await runExtraTool('stagehand_screenshot', { path: 'sh.png' }, host)).toMatch(/^OK: screenshot/);
     await readFile(path.join(dir, 'sh.png'));
     srv.close();
-    browserClose();
+    await browserCloseAll();
   });
 
   it('team tools explain a host without agent hooks', async () => {

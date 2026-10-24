@@ -1,28 +1,37 @@
-// Minimal browser tool over Chrome DevTools Protocol.
+// Headless Chrome over CDP, one tab per agent session.
 //
-// Ported semantics from deepseek-harness's stagehand/browser tools at the layer
-// that matters for a coding agent: open a page, read its text, take a
-// screenshot, close. No DOM-level "act" DSL — that needs a planner we do not
-// have — but what is here is a real browser, not an HTTP fetch.
+// A single shared page looked fine in tests and was wrong in practice: session A
+// navigating to a.com while B navigates to b.com means B's extract reads A's
+// page. Each scheduler session now gets its own target (tab) inside one browser
+// process, and all commands/events are routed by the CDP session id that
+// `Target.attachToTarget {flatten: true}` returns.
 //
-// Browser: TRHA_BROWSER (default: first of chromium / google-chrome).
-// Each call reuses one headless instance; `browser_close` stops it.
+// Browser: TRHA_BROWSER (default chromium).
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-interface Cdp {
+interface Page {
+  targetId: string;
+  cdpSession: string;
+}
+
+interface Browser {
   child: ChildProcess;
   ws: WebSocket;
   nextId: number;
   pending: Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>;
+  /** scheduler session id -> its tab */
+  pages: Map<string, Page>;
+  /** cdp session id -> resolve, for the pending load event */
+  loadWaiters: Map<string, () => void>;
   profile: string;
 }
 
-let session: Cdp | undefined;
-let starting: Promise<Cdp> | undefined;
+let browser: Browser | undefined;
+let starting: Promise<Browser> | undefined;
 
 const browserBin = (): string => process.env.TRHA_BROWSER ?? 'chromium';
 
@@ -39,7 +48,7 @@ async function freePort(): Promise<number> {
   });
 }
 
-async function launch(): Promise<Cdp> {
+async function launch(): Promise<Browser> {
   const port = await freePort();
   const profile = await mkdtemp(path.join(tmpdir(), 'trha-chrome-'));
   const child = spawn(browserBin(), [
@@ -47,22 +56,22 @@ async function launch(): Promise<Cdp> {
     `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, 'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
   child.stderr?.on('data', () => { /* chrome is chatty; ignore */ });
-  // Without this a bad TRHA_BROWSER waits the full 15 s for a port that will
-  // never open; the spawn error is the real answer.
+
   let launchError: string | undefined;
   child.on('error', e => { launchError = e.message; });
   child.on('exit', code => {
     if (code !== null && code !== 0 && !launchError) launchError = `browser exited (${code})`;
   });
 
+  // Browser-level endpoint: targets are created through it, so one connection
+  // serves every session's tab.
   const deadline = Date.now() + 15_000;
   let wsUrl = '';
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/json/list`);
-      const list = (await res.json()) as Array<{ type?: string; webSocketDebuggerUrl?: string }>;
-      const page = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl);
-      if (page?.webSocketDebuggerUrl) { wsUrl = page.webSocketDebuggerUrl; break; }
+      const res = await fetch(`http://127.0.0.1:${port}/json/version`);
+      const info = (await res.json()) as { webSocketDebuggerUrl?: string };
+      if (info.webSocketDebuggerUrl) { wsUrl = info.webSocketDebuggerUrl; break; }
     } catch { /* not up yet */ }
     if (launchError) break;
     await new Promise(r => setTimeout(r, 150));
@@ -74,43 +83,64 @@ async function launch(): Promise<Cdp> {
   }
 
   const ws = new WebSocket(wsUrl);
-  const cdp: Cdp = { child, ws, nextId: 1, pending: new Map(), profile };
+  const b: Browser = { child, ws, nextId: 1, pending: new Map(), pages: new Map(), loadWaiters: new Map(), profile };
   await new Promise<void>((resolve, reject) => {
     ws.addEventListener('open', () => resolve(), { once: true });
     ws.addEventListener('error', () => reject(new Error('browser websocket failed')), { once: true });
   });
   ws.addEventListener('message', event => {
     const msg = JSON.parse(String((event as MessageEvent).data)) as {
-      id?: number; result?: unknown; error?: { message: string };
+      id?: number; method?: string; sessionId?: string; result?: unknown; error?: { message: string };
     };
+    if (msg.method === 'Page.loadEventFired' && msg.sessionId) {
+      b.loadWaiters.get(msg.sessionId)?.();
+      return;
+    }
     if (msg.id === undefined) return;
-    const waiter = cdp.pending.get(msg.id);
+    const waiter = b.pending.get(msg.id);
     if (!waiter) return;
-    cdp.pending.delete(msg.id);
+    b.pending.delete(msg.id);
     if (msg.error) waiter.reject(new Error(msg.error.message));
     else waiter.resolve(msg.result);
   });
-  child.on('exit', () => { session = undefined; });
-  session = cdp;
-  return cdp;
+  child.on('exit', () => { browser = undefined; });
+  browser = b;
+  return b;
 }
 
-async function ensure(): Promise<Cdp> {
-  if (session) return session;
+async function ensure(): Promise<Browser> {
+  if (browser) return browser;
   starting ??= launch().finally(() => { starting = undefined; });
   return starting;
 }
 
-function send(cdp: Cdp, method: string, params: Record<string, unknown> = {}): Promise<unknown> {
-  const id = cdp.nextId++;
+/** Send a command, optionally inside one tab's CDP session. */
+function send(b: Browser, method: string, params: Record<string, unknown> = {}, cdpSession?: string): Promise<unknown> {
+  const id = b.nextId++;
   return new Promise((resolve, reject) => {
-    cdp.pending.set(id, { resolve, reject });
+    b.pending.set(id, { resolve, reject });
     const timer = setTimeout(() => {
-      if (cdp.pending.delete(id)) reject(new Error(`CDP ${method} timed out`));
+      if (b.pending.delete(id)) reject(new Error(`CDP ${method} timed out`));
     }, 20_000);
     timer.unref?.();
-    cdp.ws.send(JSON.stringify({ id, method, params }));
+    b.ws.send(JSON.stringify({ id, method, params, ...(cdpSession ? { sessionId: cdpSession } : {}) }));
   });
+}
+
+/** The calling session's tab, created on first use. */
+async function pageFor(scope: string): Promise<{ b: Browser; page: Page }> {
+  const b = await ensure();
+  const existing = b.pages.get(scope);
+  if (existing) return { b, page: existing };
+
+  const created = (await send(b, 'Target.createTarget', { url: 'about:blank' })) as { targetId: string };
+  const attached = (await send(b, 'Target.attachToTarget', {
+    targetId: created.targetId, flatten: true,
+  })) as { sessionId: string };
+  const page: Page = { targetId: created.targetId, cdpSession: attached.sessionId };
+  b.pages.set(scope, page);
+  await send(b, 'Page.enable', {}, page.cdpSession);
+  return { b, page };
 }
 
 export interface BrowserPage {
@@ -119,61 +149,54 @@ export interface BrowserPage {
   text: string;
 }
 
-/** Navigate and return the rendered text (what a reader would see). */
-export async function browserNavigate(url: string): Promise<BrowserPage> {
+/** Navigate this session's tab and return the rendered text. */
+export async function browserNavigate(scope: string, url: string): Promise<BrowserPage> {
   if (!/^https?:\/\//i.test(url)) throw new Error('url must be http(s)');
-  const cdp = await ensure();
-  await send(cdp, 'Page.enable');
-  await send(cdp, 'Page.navigate', { url });
-  // Wait for the load event, then let the microtask queue settle.
+  const { b, page } = await pageFor(scope);
+  await send(b, 'Page.navigate', { url }, page.cdpSession);
+  // Wait for this tab's load event only: another session's navigation must not
+  // release this waiter.
   await new Promise<void>(resolve => {
-    const onMsg = (event: MessageEvent): void => {
-      const msg = JSON.parse(String(event.data)) as { method?: string };
-      if (msg.method === 'Page.loadEventFired') {
-        cdp.ws.removeEventListener('message', onMsg);
-        resolve();
-      }
-    };
-    cdp.ws.addEventListener('message', onMsg);
-    setTimeout(() => {
-      cdp.ws.removeEventListener('message', onMsg);
+    let settled = false;
+    const done = (): void => {
+      if (settled) return;
+      settled = true;
+      b.loadWaiters.delete(page.cdpSession);
       resolve();
-    }, 10_000).unref?.();
+    };
+    b.loadWaiters.set(page.cdpSession, done);
+    setTimeout(done, 10_000).unref?.();
   });
-  const evaluated = (await send(cdp, 'Runtime.evaluate', {
+  const evaluated = (await send(b, 'Runtime.evaluate', {
     expression: 'JSON.stringify({title: document.title, text: document.body ? document.body.innerText : ""})',
     returnByValue: true,
-  })) as { result?: { value?: string } };
+  }, page.cdpSession)) as { result?: { value?: string } };
   const parsed = JSON.parse(evaluated.result?.value ?? '{}') as { title?: string; text?: string };
   return { url, title: parsed.title ?? '', text: parsed.text ?? '' };
 }
 
-/** Evaluate a JS expression in the current page and return its string value. */
-export async function browserEvaluate(expression: string): Promise<string> {
-  const cdp = await ensure();
-  const evaluated = (await send(cdp, 'Runtime.evaluate', {
+/** Evaluate JS in this session's tab and return its string value. */
+export async function browserEvaluate(scope: string, expression: string): Promise<string> {
+  const { b, page } = await pageFor(scope);
+  const evaluated = (await send(b, 'Runtime.evaluate', {
     expression, returnByValue: true, awaitPromise: true,
-  })) as { result?: { value?: unknown } };
+  }, page.cdpSession)) as { result?: { value?: unknown } };
   const v = evaluated.result?.value;
   return typeof v === 'string' ? v : JSON.stringify(v ?? null);
 }
 
 /** Extract one CSS selector's text, or the whole body when omitted. */
-export async function browserExtract(selector?: string): Promise<string> {
-  const cdp = await ensure();
+export async function browserExtract(scope: string, selector?: string): Promise<string> {
   const expression = selector
     ? `(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el ? el.innerText : ''; })()`
     : 'document.body ? document.body.innerText : ""';
-  const evaluated = (await send(cdp, 'Runtime.evaluate', {
-    expression, returnByValue: true,
-  })) as { result?: { value?: string } };
-  return (evaluated.result?.value ?? '').toString();
+  return browserEvaluate(scope, expression);
 }
 
-/** Screenshot into the workspace; returns the absolute path written. */
-export async function browserScreenshot(workspace: string, relPath?: string): Promise<string> {
-  const cdp = await ensure();
-  const shot = (await send(cdp, 'Page.captureScreenshot', { format: 'png' })) as { data?: string };
+/** Screenshot this session's tab into the workspace. */
+export async function browserScreenshot(scope: string, workspace: string, relPath?: string): Promise<string> {
+  const { b, page } = await pageFor(scope);
+  const shot = (await send(b, 'Page.captureScreenshot', { format: 'png' }, page.cdpSession)) as { data?: string };
   const data = shot.data ?? '';
   if (!data) throw new Error('screenshot returned no data');
   const target = path.resolve(workspace, relPath ?? `.trha-shot-${Date.now()}.png`);
@@ -181,11 +204,26 @@ export async function browserScreenshot(workspace: string, relPath?: string): Pr
   return target;
 }
 
-export function browserClose(): void {
-  if (!session) return;
-  const { child, ws, profile } = session;
-  session = undefined;
-  try { ws.close(); } catch { /* ignore */ }
-  try { child.kill('SIGTERM'); } catch { /* ignore */ }
-  void rm(profile, { recursive: true, force: true }).catch(() => {});
+/** Close one session's tab (the browser stays up for the others). */
+export async function browserClose(scope: string): Promise<void> {
+  const b = browser;
+  if (!b) return;
+  const page = b.pages.get(scope);
+  if (!page) return;
+  b.pages.delete(scope);
+  try { await send(b, 'Target.closeTarget', { targetId: page.targetId }); } catch { /* gone already */ }
+}
+
+/** Close every tab and the browser process. */
+export async function browserCloseAll(): Promise<void> {
+  const b = browser;
+  browser = undefined;
+  if (!b) return;
+  for (const page of b.pages.values()) {
+    try { await send(b, 'Target.closeTarget', { targetId: page.targetId }); } catch { /* ignore */ }
+  }
+  b.pages.clear();
+  try { b.ws.close(); } catch { /* ignore */ }
+  try { b.child.kill('SIGTERM'); } catch { /* ignore */ }
+  void rm(b.profile, { recursive: true, force: true }).catch(() => {});
 }
