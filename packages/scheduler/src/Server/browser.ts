@@ -47,6 +47,13 @@ async function launch(): Promise<Cdp> {
     `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, 'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
   child.stderr?.on('data', () => { /* chrome is chatty; ignore */ });
+  // Without this a bad TRHA_BROWSER waits the full 15 s for a port that will
+  // never open; the spawn error is the real answer.
+  let launchError: string | undefined;
+  child.on('error', e => { launchError = e.message; });
+  child.on('exit', code => {
+    if (code !== null && code !== 0 && !launchError) launchError = `browser exited (${code})`;
+  });
 
   const deadline = Date.now() + 15_000;
   let wsUrl = '';
@@ -57,12 +64,13 @@ async function launch(): Promise<Cdp> {
       const page = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl);
       if (page?.webSocketDebuggerUrl) { wsUrl = page.webSocketDebuggerUrl; break; }
     } catch { /* not up yet */ }
+    if (launchError) break;
     await new Promise(r => setTimeout(r, 150));
   }
   if (!wsUrl) {
     child.kill('SIGKILL');
     await rm(profile, { recursive: true, force: true }).catch(() => {});
-    throw new Error(`browser did not start (${browserBin()})`);
+    throw new Error(`browser did not start (${browserBin()})${launchError ? `: ${launchError}` : ''}`);
   }
 
   const ws = new WebSocket(wsUrl);

@@ -38,6 +38,8 @@ function fileFor(dir: string, sessionId: string): string {
 }
 
 /** Persist one session atomically. */
+let saveSeq = 0;
+
 export async function saveSession(
   dir: string,
   session: {
@@ -64,7 +66,10 @@ export async function saveSession(
     ...(session.parentId ? { parentId: session.parentId } : {}),
   };
   const target = fileFor(dir, session.id);
-  const tmp = `${target}.tmp`;
+  // Unique temp name: two writes of the same session (a tool update racing the
+  // schedule driver) would otherwise share `<target>.tmp` and one rename would
+  // fail with ENOENT after the other consumed the file.
+  const tmp = `${target}.${process.pid}.${++saveSeq}.tmp`;
   await writeFile(tmp, JSON.stringify(record), 'utf8');
   await rename(tmp, target);
 }
