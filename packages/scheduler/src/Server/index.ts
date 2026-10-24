@@ -208,6 +208,8 @@ interface SchedulerSession {
   teamTasks?: TeamTask[];
   /** Tool working directory for this session (inside the workspace). */
   cwd?: string;
+  /** Cards shown to the user; never part of the model's history. */
+  presentations?: Array<{ card: string; at: string }>;
 }
 
 // ── Context governance (window / thresholds) ──────────────────────────────
@@ -725,6 +727,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           ...(Array.isArray(r.schedules) ? { schedules: r.schedules as Schedule[] } : {}),
           ...(r.pendingQuestion !== undefined
             ? { pendingQuestion: r.pendingQuestion as PendingQuestion | null } : {}),
+          ...(Array.isArray(r.presentations)
+            ? { presentations: r.presentations as Array<{ card: string; at: string }> } : {}),
           ...(Array.isArray(r.teamTasks) ? { teamTasks: r.teamTasks as TeamTask[] } : {}),
           ...(typeof r.parentId === 'string' ? { parentId: r.parentId } : {}),
           ...(typeof r.cwd === 'string' ? { cwd: r.cwd } : {}),
@@ -1319,18 +1323,35 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           events.emit('agent:plan', { sessionId: session.id, status: 'awaiting_approval', message: output });
           return `awaiting_approval: ${output}`;
         }
+        // A provider requires every tool_calls message to be followed by a tool
+        // message per call id before anything else. So the tool result goes in
+        // first, and *then* any marker-derived message (a card, a question).
+        const failed = output.startsWith('ERROR');
+        await emitToolLifecycle(session.id, call.name, parseToolArgs(call),
+          failed ? 'failed' : 'succeeded', started, failed ? output : undefined);
+        session.messages.push({ role: 'tool', tool_call_id: call.id, content: output });
+
+        if (output.startsWith('PRESENT:')) {
+          const card = output.slice('PRESENT:'.length);
+          // UI-only: pushing it into the transcript would put a synthetic
+          // assistant turn in front of the model on the next request.
+          session.presentations = [
+            ...(session.presentations ?? []),
+            { card, at: new Date().toISOString() },
+          ];
+          events.emit('agent:present', { sessionId: session.id, card });
+        }
         // A tool that needs a human must end the turn: continuing would mean
-        // inventing the answer inside the same loop.
+        // inventing the answer inside the same loop. The tool result is already
+        // in the history, so the next request stays valid.
         if (output.startsWith('WAITING_FOR_INPUT:')) {
           const question = output.slice('WAITING_FOR_INPUT:'.length).trim();
-          await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'succeeded', started);
           events.emit('agent:question', { sessionId: session.id, question });
           await persistSession(session);
           return question;
         }
         if (output.startsWith('WAITING_FOR_APPROVAL:')) {
           const plan = output.slice('WAITING_FOR_APPROVAL:'.length).trim();
-          await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'failed', started, output);
           session.pendingApproval = { message: plan };
           void bridge.requestApproval(session.id, plan).catch(e =>
             console.error(`kernel approval request ${session.id}:`, e));
@@ -1338,15 +1359,6 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           await persistSession(session);
           return plan;
         }
-        if (output.startsWith('PRESENT:')) {
-          const card = output.slice('PRESENT:'.length);
-          session.messages.push({ role: 'assistant', content: `[presentation] ${card}` });
-          events.emit('agent:present', { sessionId: session.id, card });
-        }
-        const failed = output.startsWith('ERROR');
-        await emitToolLifecycle(session.id, call.name, parseToolArgs(call),
-          failed ? 'failed' : 'succeeded', started, failed ? output : undefined);
-        session.messages.push({ role: 'tool', tool_call_id: call.id, content: output });
       }
     }
 

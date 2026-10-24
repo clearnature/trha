@@ -58,6 +58,9 @@ data StreamChunk
   = ChunkDelta Text           -- ^ Partial text content
   | ChunkReasoning Text       -- ^ Partial thinking-mode content
   | ChunkToolCall Text Text   -- ^ Tool call (name, arguments JSON)
+  | ChunkToolCallAt Int Text Text Text
+      -- ^ Tool call with its stream index and provider id. Parallel calls need
+      -- both: without the index clients merge them into one.
   | ChunkDone Usage           -- ^ Stream complete with usage stats
   | ChunkError Text           -- ^ Error during streaming
   deriving (Show, Eq)

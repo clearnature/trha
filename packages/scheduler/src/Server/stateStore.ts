@@ -22,6 +22,7 @@ export interface PersistedSession {
   goal?: unknown;
   schedules?: unknown[];
   pendingQuestion?: unknown;
+  presentations?: unknown[];
   teamTasks?: unknown[];
   parentId?: string;
   cwd?: string;
@@ -47,6 +48,7 @@ export async function saveSession(
     id: string; mode: string; messages: unknown[];
     pendingApproval: { message: string } | null; createdAt: Date;
     todos?: unknown[]; goal?: unknown; schedules?: unknown[]; pendingQuestion?: unknown;
+    presentations?: unknown[];
     teamTasks?: unknown[]; parentId?: string; cwd?: string;
   },
 ): Promise<void> {
@@ -63,6 +65,7 @@ export async function saveSession(
     ...(session.goal !== undefined ? { goal: session.goal } : {}),
     ...(session.schedules ? { schedules: session.schedules } : {}),
     ...(session.pendingQuestion !== undefined ? { pendingQuestion: session.pendingQuestion } : {}),
+    ...(session.presentations ? { presentations: session.presentations } : {}),
     ...(session.teamTasks ? { teamTasks: session.teamTasks } : {}),
     ...(session.parentId ? { parentId: session.parentId } : {}),
     ...(session.cwd ? { cwd: session.cwd } : {}),

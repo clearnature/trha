@@ -223,8 +223,11 @@ describe('interaction tools', () => {
     expect(step.status).toBe(200);
     const record = JSON.parse(await readFile(path.join(stateDir, `${sessionId}.json`), 'utf8')) as {
       messages: Array<{ role: string; content: string }>;
+      presentations?: Array<{ card: string }>;
     };
-    expect(record.messages.some(m => m.content.startsWith('[presentation]'))).toBe(true);
+    // A card is UI state, not a fabricated assistant turn in the history.
+    expect(record.presentations?.[0]?.card).toContain('all green');
+    expect(record.messages.some(m => (m.content ?? '').startsWith('[presentation]'))).toBe(false);
 
     stop(); kernelServer.server.close(); schedulerServer.server.close();
   });

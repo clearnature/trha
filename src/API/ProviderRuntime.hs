@@ -356,7 +356,9 @@ openAICompatAdapter baseUrl apiKey model = do
     , llmChatTools = \msgs specs _gp -> do
         (code, body, ok) <- call msgs specs
         if not ok
-          then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code))) Nothing)
+          then pure (ChatTurn "" [] Nothing (Just
+                 ("HTTP " <> T.pack (show code) <> ": "
+                   <> T.take 500 (TE.decodeUtf8 (BL.toStrict body)))) Nothing)
           else case decode body of
                  Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response") Nothing)
                  Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e) Nothing) id (parseDeepSeekChatTurn v))

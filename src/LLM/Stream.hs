@@ -44,6 +44,7 @@ data StreamEvent
   = SEVDelta Text
   | SEVReasoning Text        -- ^ thinking-mode delta (echoed back on tool turns)
   | SEVToolCall Text Text
+  | SEVToolCallAt Int Text Text Text   -- ^ index, id, name, args
   | SEVUsage Int Int Int
   | SEVUsageFull Usage       -- ^ same numbers, with cache accounting
   | SEVDone
@@ -351,7 +352,7 @@ openAICompatStreamCall
   -> Value                           -- ^ request body (caller sets @stream@)
   -> (StreamChunk -> IO ()) -> IO ChatTurn
 openAICompatStreamCall url apiKey body onEvent = do
-  acc <- newIORef []
+  acc <- newIORef ([] :: [(Int, Text, Text, Text)])
   textRef <- newIORef []
   reasonRef <- newIORef []
   usageRef <- newIORef Nothing
@@ -372,8 +373,8 @@ openAICompatStreamCall url apiKey body onEvent = do
     calls <- readIORef acc
     writeIORef acc (foldl mergeCall calls (openAICompatToolDeltas v))
   done <- readIORef acc
-  mapM_ (\(_, nm, args) -> onEvent (ChunkToolCall nm args))
-        (sortOn (\(i, _, _) -> i) (reverse done))
+  mapM_ (\(i, id0, nm, args) -> onEvent (ChunkToolCallAt i id0 nm args))
+        (sortOn (\(i, _, _, _) -> i) (reverse done))
   txt <- T.concat . reverse <$> readIORef textRef
   reason <- readIORef reasonRef
   usage <- readIORef usageRef
@@ -381,8 +382,8 @@ openAICompatStreamCall url apiKey body onEvent = do
         "" -> Nothing
         r  -> Just r
       turn = ChatTurn txt
-               [ ToolCall ("call-" <> T.pack (show i)) nm args
-               | (i, nm, args) <- sortOn (\(i, _, _) -> i) (reverse done) ]
+               [ ToolCall (if T.null id0 then "call-" <> T.pack (show i) else id0) nm args
+               | (i, id0, nm, args) <- sortOn (\(i, _, _, _) -> i) (reverse done) ]
                usage Nothing reasoning
   case result of
     Left e -> do
@@ -398,10 +399,11 @@ openAICompatStreamCall url apiKey body onEvent = do
 -- | Merge one tool-call fragment into the running list.  Fragments must be
 -- appended (@new@ after @old@), never prepended — the provider sends the name
 -- first and the arguments in pieces.
-mergeCall :: [(Int, Text, Text)] -> (Int, Text, Text) -> [(Int, Text, Text)]
-mergeCall acc (i, nm, ag) = case break (\(j, _, _) -> j == i) acc of
-  (before, (_, nm0, ag0) : after) -> before ++ [(i, nm0 <> nm, ag0 <> ag)] ++ after
-  _                               -> acc ++ [(i, nm, ag)]
+mergeCall :: [(Int, Text, Text, Text)] -> (Int, Text, Text, Text) -> [(Int, Text, Text, Text)]
+mergeCall acc (i, id0, nm, ag) = case break (\(j, _, _, _) -> j == i) acc of
+  (before, (_, id1, nm0, ag0) : after) ->
+    before ++ [(i, if T.null id1 then id0 else id1, nm0 <> nm, ag0 <> ag)] ++ after
+  _ -> acc ++ [(i, id0, nm, ag)]
 
 -- | @choices[0].delta.reasoning_content@ from a streaming frame.
 openAICompatReasoning :: Value -> Maybe Text
@@ -441,17 +443,18 @@ openAICompatDelta v = case v of
   _ -> Nothing
 
 -- | @choices[0].delta.tool_calls@ → (index, name chunk, argument chunk).
-openAICompatToolDeltas :: Value -> [(Int, Text, Text)]
+openAICompatToolDeltas :: Value -> [(Int, Text, Text, Text)]
 openAICompatToolDeltas v = case v of
   Object o -> case fieldOf "choices" o of
     Just (Array a) -> case V.toList a of
       (Object c : _) -> case fieldOf "delta" c of
         Just (Object d) -> case fieldOf "tool_calls" d of
-          Just (Array tcs) -> [ (idx, nm, ag)
+          Just (Array tcs) -> [ (idx, id0, nm, ag)
                               | Object tc <- V.toList tcs
                               , let idx = case fieldOf "index" tc of
                                             Just (Number n) -> round n
                                             _               -> 0
+                              , let id0 = textOf (fieldOf "id" tc)
                               , let fn  = case fieldOf "function" tc of
                                             Just (Object f) -> f
                                             _               -> KM.empty

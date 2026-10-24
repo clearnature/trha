@@ -1086,6 +1086,7 @@ providerEvents (entry, key) msgs specs onEvent = do
   _ <- call msgs specs $ \chunk -> case chunk of
     ChunkDelta t    -> onEvent (Stream.SEVDelta t)
     ChunkToolCall n a -> onEvent (Stream.SEVToolCall n a)
+    ChunkToolCallAt i id0 n a -> onEvent (Stream.SEVToolCallAt i id0 n a)
     ChunkReasoning t -> onEvent (Stream.SEVReasoning t)
     ChunkDone u     -> onEvent (Stream.SEVUsageFull u)
     ChunkError e    -> onEvent (Stream.SEVError e)
@@ -1371,6 +1372,7 @@ sse write eventName pairs = write $ mconcat $
 fromKernelEvent :: Stream.StreamEvent -> StreamChunk
 fromKernelEvent (Stream.SEVDelta t)      = ChunkDelta t
 fromKernelEvent (Stream.SEVToolCall n a) = ChunkToolCall n a
+fromKernelEvent (Stream.SEVToolCallAt i id0 n a) = ChunkToolCallAt i id0 n a
 fromKernelEvent (Stream.SEVReasoning t)   = ChunkReasoning t
 fromKernelEvent (Stream.SEVUsage p c t)  = ChunkDone (mkUsage p c t)
 fromKernelEvent (Stream.SEVUsageFull u)  = ChunkDone u
@@ -1387,9 +1389,25 @@ emitOpenAI write chunk = case chunk of
   ChunkReasoning t -> sse write Nothing
     [ "choices" .= [object ["index" .= (0 :: Int), "delta" .= object ["reasoning_content" .= t]]] ]
   ChunkToolCall n a -> sse write Nothing
+    [ "choices" .= [ object
+        [ "index" .= (0 :: Int)
+        , "delta" .= object
+            [ "tool_calls" .= [ object
+                [ "index" .= (0 :: Int)
+                , "type" .= ("function" :: Text)
+                , "function" .= object [ "name" .= n, "arguments" .= a ]
+                ]
+              ]
+            ]
+        ]
+      ]
+    ]
+  ChunkToolCallAt i id0 n a -> sse write Nothing
     [ "choices" .= [object [ "index" .= (0 :: Int)
                            , "delta" .= object [ "tool_calls" .= [ object
-                               [ "index" .= (0 :: Int)
+                               [ "id" .= (if T.null id0 then "call-" <> T.pack (show i) else id0)
+                               , "type" .= ("function" :: Text)
+                               , "index" .= i
                                , "function" .= object ["name" .= n, "arguments" .= a] ] ] ] ]] ]
   ChunkDone u -> do
     sse write Nothing
@@ -1412,6 +1430,12 @@ emitAnthropic write chunk = case chunk of
     , "delta" .= object [ "type" .= ("text_delta" :: Text), "text" .= t ] ]
   ChunkToolCall n a -> sse write (Just "content_block_start")
     [ "type" .= ("content_block_start" :: Text)
+    , "index" .= (0 :: Int)
+    , "content_block" .= object
+        [ "type" .= ("tool_use" :: Text), "id" .= ("call-0" :: Text), "name" .= n, "input" .= object [] ]
+    ]
+  ChunkToolCallAt i id0 n a -> sse write (Just "content_block_start")
+    [ "type" .= ("content_block_start" :: Text)
     , "index" .= (1 :: Int)
     , "content_block" .= object
         [ "type" .= ("tool_use" :: Text)
@@ -1428,6 +1452,11 @@ emitResponses write chunk = case chunk of
   ChunkDelta t -> sse write (Just "response.output_text.delta")
     [ "type" .= ("response.output_text.delta" :: Text), "delta" .= t ]
   ChunkToolCall n a -> sse write (Just "response.output_item.added")
+    [ "type" .= ("response.output_item.added" :: Text)
+    , "item" .= object
+        [ "type" .= ("function_call" :: Text), "id" .= ("call-0" :: Text), "name" .= n, "arguments" .= a ]
+    ]
+  ChunkToolCallAt i id0 n a -> sse write (Just "response.output_item.added")
     [ "type" .= ("response.output_item.added" :: Text)
     , "item" .= object
         [ "type" .= ("function_call" :: Text), "name" .= n, "arguments" .= a ] ]

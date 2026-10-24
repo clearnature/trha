@@ -46,6 +46,7 @@ export const EXTRA_TOOL_NAMES = [
   'session_search', 'session_trace', 'session_event_read', 'session_event_search', 'session_event_trace',
   'create_worktree', 'load_workspace_dependencies', 'pwsh',
   'web_search', 'list_subagent_models', 'plugin_manager', 'cordis_inspect_list', 'cordis_inspect_query',
+  'plugin_market',
   'stagehand_navigate', 'stagehand_extract', 'stagehand_screenshot', 'stagehand_tabs', 'stagehand_act', 'stagehand_observe',
   'ralph',
 ] as const;
