@@ -393,6 +393,167 @@ export const toolCatalog: ToolDefinition[] = [
     parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
   },
   {
+    name: 'working_directory',
+    description: 'Read or change the tool working directory (must stay inside the workspace)',
+    parameters: { type: 'object', properties: { path: { type: 'string' } }, required: [] },
+  },
+  {
+    name: 'str_replace_editor',
+    description: 'Editor-style file ops: view | create | str_replace | insert',
+    parameters: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', enum: ['view', 'create', 'str_replace', 'insert'] },
+        path: { type: 'string' },
+        file_text: { type: 'string' },
+        old_str: { type: 'string' },
+        new_str: { type: 'string' },
+        insert_line: { type: 'number' },
+      },
+      required: ['command', 'path'],
+    },
+  },
+  {
+    name: 'unified_edit',
+    description: 'Alias of str_replace_editor (same commands and semantics)',
+    parameters: {
+      type: 'object',
+      properties: {
+        command: { type: 'string' }, path: { type: 'string' },
+        file_text: { type: 'string' }, old_str: { type: 'string' },
+        new_str: { type: 'string' }, insert_line: { type: 'number' },
+      },
+      required: ['command', 'path'],
+    },
+  },
+  { name: 'terminal_open', description: 'Open a persistent shell for this session', parameters: { type: 'object', properties: {}, required: [] } },
+  {
+    name: 'terminal_send',
+    description: 'Send input to a persistent shell',
+    parameters: { type: 'object', properties: { id: { type: 'string' }, input: { type: 'string' } }, required: ['id', 'input'] },
+  },
+  {
+    name: 'terminal_read',
+    description: 'Read a persistent shell output (status + text)',
+    parameters: { type: 'object', properties: { id: { type: 'string' }, since: { type: 'number' } }, required: ['id'] },
+  },
+  {
+    name: 'terminal_signal',
+    description: 'Send a signal (default SIGINT) to a persistent shell',
+    parameters: { type: 'object', properties: { id: { type: 'string' }, signal: { type: 'string' } }, required: ['id'] },
+  },
+  {
+    name: 'terminal_close',
+    description: 'Close a persistent shell',
+    parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  },
+  { name: 'terminal_list', description: 'List persistent shells for this session', parameters: { type: 'object', properties: {}, required: [] } },
+  {
+    name: 'wait_agent',
+    description: 'Wait until an agent is idle (bounded)',
+    parameters: { type: 'object', properties: { id: { type: 'string' }, timeout_ms: { type: 'number' } }, required: ['id'] },
+  },
+  {
+    name: 'spawn_teammate',
+    description: 'Spawn a named teammate and record it on the shared task list',
+    parameters: { type: 'object', properties: { task: { type: 'string' }, name: { type: 'string' } }, required: ['task'] },
+  },
+  {
+    name: 'team_task_get',
+    description: 'Read one team task by id',
+    parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  },
+  {
+    name: 'session_search',
+    description: 'Search every session transcript for a substring',
+    parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] },
+  },
+  {
+    name: 'session_trace',
+    description: 'List a session transcript as a timeline',
+    parameters: { type: 'object', properties: { sessionId: { type: 'string' } }, required: [] },
+  },
+  {
+    name: 'session_event_read',
+    description: "Read the kernel's event log for a session",
+    parameters: { type: 'object', properties: { sessionId: { type: 'string' }, limit: { type: 'number' } }, required: [] },
+  },
+  {
+    name: 'session_event_search',
+    description: 'Search the kernel event log for a substring',
+    parameters: { type: 'object', properties: { query: { type: 'string' }, sessionId: { type: 'string' } }, required: ['query'] },
+  },
+  {
+    name: 'session_event_trace',
+    description: 'Summarise kernel event kinds for a session',
+    parameters: { type: 'object', properties: { sessionId: { type: 'string' } }, required: [] },
+  },
+  {
+    name: 'create_worktree',
+    description: 'git worktree add a new branch checkout',
+    parameters: { type: 'object', properties: { path: { type: 'string' }, branch: { type: 'string' } }, required: ['path'] },
+  },
+  { name: 'load_workspace_dependencies', description: 'Install/fetch the working directory dependencies', parameters: { type: 'object', properties: {}, required: [] } },
+  {
+    name: 'pwsh',
+    description: 'Run a PowerShell command (requires pwsh)',
+    parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
+  },
+  {
+    name: 'web_search',
+    description: 'Web search (SearXNG via TRHA_SEARX_URL, else DuckDuckGo HTML)',
+    parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+  },
+  { name: 'list_subagent_models', description: 'List models available to subagents', parameters: { type: 'object', properties: {}, required: [] } },
+  { name: 'plugin_manager', description: 'List loaded plugins and their hooks', parameters: { type: 'object', properties: {}, required: [] } },
+  { name: 'cordis_inspect_list', description: 'Alias of plugin_manager', parameters: { type: 'object', properties: {}, required: [] } },
+  {
+    name: 'cordis_inspect_query',
+    description: 'Inspect one plugin by name',
+    parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+  },
+  { name: 'plugin_market', description: 'List plugins from TRHA_PLUGIN_MARKET (URL or JSON file)', parameters: { type: 'object', properties: {}, required: [] } },
+  {
+    name: 'stagehand_navigate',
+    description: 'Open a URL and return rendered text (alias of browser_navigate)',
+    parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
+  },
+  {
+    name: 'stagehand_extract',
+    description: 'Extract page text or one selector (alias of browser_extract)',
+    parameters: { type: 'object', properties: { selector: { type: 'string' } }, required: [] },
+  },
+  {
+    name: 'stagehand_screenshot',
+    description: 'Screenshot the page (alias of browser_screenshot)',
+    parameters: { type: 'object', properties: { path: { type: 'string' } }, required: [] },
+  },
+  { name: 'stagehand_tabs', description: 'Report the current tab', parameters: { type: 'object', properties: {}, required: [] } },
+  { name: 'stagehand_observe', description: 'List interactive elements on the page', parameters: { type: 'object', properties: {}, required: [] } },
+  {
+    name: 'stagehand_act',
+    description: 'Act on the page: click | type a selector',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['click', 'type'] },
+        selector: { type: 'string' },
+        value: { type: 'string' },
+        url: { type: 'string' },
+      },
+      required: ['action', 'selector'],
+    },
+  },
+  {
+    name: 'ralph',
+    description: 'Ralph loop: fresh child agents, one round each, until DONE/BLOCKED',
+    parameters: {
+      type: 'object',
+      properties: { objective: { type: 'string' }, rounds: { type: 'number' } },
+      required: ['objective'],
+    },
+  },
+  {
     name: 'append_file',
     description: 'Append text to a file inside the workspace (creates if missing)',
     parameters: {

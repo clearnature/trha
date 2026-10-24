@@ -166,6 +166,20 @@ export class HaskellBridge {
     );
   }
 
+  /** Read the kernel's own event log for a session (empty when unreachable). */
+  async getSessionEvents(sessionId: string): Promise<Array<Record<string, unknown>>> {
+    try {
+      const answer = await this.httpClient.get<{ events?: Array<Record<string, unknown>> }>(
+        `/session/${encodeURIComponent(sessionId)}/events`,
+      );
+      return answer.events ?? [];
+    } catch {
+      // The kernel may be down; an empty log is the honest answer, not an error
+      // that breaks the whole tool call.
+      return [];
+    }
+  }
+
   /** Call the kernel chat completions endpoint (non-streaming). */
   async queryModel(request: QueryRequest): Promise<QueryResponse> {
     const body: Record<string, unknown> = {

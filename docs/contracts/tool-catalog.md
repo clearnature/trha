@@ -1,6 +1,7 @@
 # 工具目录（对齐 deepseek-harness standard preset）
 
-模型可见的工具集由 `packages/scheduler/src/Server/toolCatalog.ts` 单一来源定义，
+共 **74** 个工具，覆盖 dsh `standard` 预设的全部名字。模型可见的工具集由
+`packages/scheduler/src/Server/toolCatalog.ts` 单一来源定义，
 执行器按同一份名字分派；旧名通过 `TOOL_ALIASES` 映射，不会与目录漂移。
 
 ## 已实现
@@ -34,6 +35,22 @@
 | `list_mcp_resources` / `list_mcp_resource_templates` / `read_mcp_resource` | MCP 资源三件套（stdio JSON-RPC 客户端） | `TRHA_MCP_CONFIG` |
 | `lsp` | 语言服务器查询：hover / definition / references / diagnostics / symbols | `TRHA_LSP_COMMAND` |
 | `browser_navigate` / `browser_extract` / `browser_screenshot` / `browser_close` | 真 headless Chrome（CDP）：渲染后取文本、取选择器、截图 PNG | `TRHA_BROWSER` |
+| `working_directory` | 读/切会话 cwd（必须留在工作区内）；bash 与 fs 工具都跟随 | 会话（持久化 v2） |
+| `str_replace_editor` / `unified_edit` | 编辑器式操作：view / create / str_replace / insert | 工作区 |
+| `terminal_open/send/read/signal/close/list` | 每会话持久 shell：输入、增量读、发信号、关闭 | 进程内 |
+| `wait_agent` | 等某会话空闲（有上限）；`spawn_teammate` 起具名队友并登记任务 | – |
+| `team_task_get` | 读一条团队任务 | 会话 |
+| `session_search` / `session_trace` | 跨会话搜消息 / 单会话时间线 | 会话存储 |
+| `session_event_read/search/trace` | 内核事件日志：尾部读取 / 子串搜索 / 按 kind 计数 | 内核 `/session/:id/events` |
+| `create_worktree` | `git worktree add` 新分支 | 仓库 |
+| `load_workspace_dependencies` | 按清单装依赖（pnpm/npm/cargo/stack/cabal） | 工作区 |
+| `pwsh` | PowerShell 命令（无 pwsh 时明确报错） | – |
+| `web_search` | 搜索（SearXNG JSON 优先，否则 DuckDuckGo HTML） | `TRHA_SEARX_URL` |
+| `list_subagent_models` | 列出可供子智能体使用的模型 | – |
+| `plugin_manager` / `cordis_inspect_list` / `cordis_inspect_query` | 列出/检视已加载插件与其钩子 | – |
+| `plugin_market` | 插件市场列表（URL 或 JSON 文件） | `TRHA_PLUGIN_MARKET` |
+| `stagehand_navigate/extract/screenshot/tabs/act/observe` | stagehand 语义的别名 + `act`（click/type）与 `observe`（交互动元素） | 共用 CDP 浏览器 |
+| `ralph` | Ralph 循环：每轮**全新子会话**，共享工作区，直到 DONE/BLOCKED | 子会话 |
 
 配置：`TRHA_WORKSPACE`（工作区，默认 `/tmp/trha-workspace`）、`TRHA_SKILLS_DIR`、
 `TRHA_MAX_TOOL_ROUNDS`（0/未设 = 不限轮；同一调用连续重复 3 次判停）、
@@ -65,6 +82,8 @@
 | `TRHA_MCP_CONFIG` | MCP 服务器配置 JSON | 未设＝未配置 |
 | `TRHA_LSP_COMMAND` / `TRHA_LSP_ROOT` | 语言服务器命令 / 根目录 | `typescript-language-server --stdio` / workspace |
 | `TRHA_BROWSER` | 浏览器可执行文件 | `chromium` |
+| `TRHA_SEARX_URL` | `web_search` 的 SearXNG 地址 | 未设＝DuckDuckGo HTML |
+| `TRHA_PLUGIN_MARKET` | 插件市场 URL 或 JSON 文件 | 未设＝报错说明 |
 
 ## 为什么没有直接 `npm i` dsh 的工具包
 

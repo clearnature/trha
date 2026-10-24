@@ -148,6 +148,16 @@ export async function browserNavigate(url: string): Promise<BrowserPage> {
   return { url, title: parsed.title ?? '', text: parsed.text ?? '' };
 }
 
+/** Evaluate a JS expression in the current page and return its string value. */
+export async function browserEvaluate(expression: string): Promise<string> {
+  const cdp = await ensure();
+  const evaluated = (await send(cdp, 'Runtime.evaluate', {
+    expression, returnByValue: true, awaitPromise: true,
+  })) as { result?: { value?: unknown } };
+  const v = evaluated.result?.value;
+  return typeof v === 'string' ? v : JSON.stringify(v ?? null);
+}
+
 /** Extract one CSS selector's text, or the whole body when omitted. */
 export async function browserExtract(selector?: string): Promise<string> {
   const cdp = await ensure();

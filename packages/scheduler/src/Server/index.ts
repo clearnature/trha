@@ -17,6 +17,7 @@ import { readFileSync, rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { loadPin, loadSessionsSync, removeSessionFile, savePin, saveSession } from './stateStore.js';
 import { govern, DEFAULT_GOVERNANCE, type GovernanceConfig } from './contextGovernor.js';
+import { isExtraTool, runExtraTool, type ExtraHost, type Terminal } from './extraTools.js';
 import {
   isStandardTool, runStandardTool, startJob,
   type AgentHooks, type Goal, type PendingQuestion, type Schedule, type TeamTask,
@@ -205,6 +206,8 @@ interface SchedulerSession {
   abortRequested?: boolean;
   /** Team tasks are shared on the root session. */
   teamTasks?: TeamTask[];
+  /** Tool working directory for this session (inside the workspace). */
+  cwd?: string;
 }
 
 // ── Context governance (window / thresholds) ──────────────────────────────
@@ -724,6 +727,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
             ? { pendingQuestion: r.pendingQuestion as PendingQuestion | null } : {}),
           ...(Array.isArray(r.teamTasks) ? { teamTasks: r.teamTasks as TeamTask[] } : {}),
           ...(typeof r.parentId === 'string' ? { parentId: r.parentId } : {}),
+          ...(typeof r.cwd === 'string' ? { cwd: r.cwd } : {}),
         });
         // A restarted kernel may have an empty session map; re-register so the
         // restored conversation keeps its projections and FSM state going.
@@ -813,6 +817,14 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // Background jobs cannot outlive this process, so they are process-local on
   // purpose (the tool tells the model exactly that).
   const jobsBySession = new Map<string, Map<string, JobRecord>>();
+  // Persistent terminals are process-local (a child cannot outlive us).
+  const terminalsBySession = new Map<string, Map<string, Terminal>>();
+  const terminalsFor = (sessionId: string): Map<string, Terminal> => {
+    let m = terminalsBySession.get(sessionId);
+    if (!m) { m = new Map(); terminalsBySession.set(sessionId, m); }
+    return m;
+  };
+
   const jobsFor = (sessionId: string): Map<string, JobRecord> => {
     let m = jobsBySession.get(sessionId);
     if (!m) { m = new Map(); jobsBySession.set(sessionId, m); }
@@ -862,9 +874,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // Reads may leave the workspace: `bash` already can, so confining only the
   // read tool would buy no safety while breaking absolute paths that callers
   // legitimately use. Writes stay confined.
-  const resolveReadPath = (raw: unknown): string | null => {
+  const resolveReadPath = (raw: unknown, base = WORKSPACE): string | null => {
     if (typeof raw !== 'string' || !raw.trim()) return null;
-    return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(WORKSPACE, raw);
+    return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(base, raw);
   };
 
   /** Recursive file walk with a depth/file cap and the usual noise skipped. */
@@ -913,8 +925,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     return new RegExp(`^${re}$`);
   };
 
-  const workspaceRelative = (raw: string): string =>
-    path.isAbsolute(raw) ? raw : path.join(WORKSPACE, raw);
+  const workspaceRelative = (raw: string, base = WORKSPACE): string =>
+    path.isAbsolute(raw) ? raw : path.join(base, raw);
 
   const executeTool = async (c: ToolCallData, sessionId?: string): Promise<string> => {
     let argsObj: Record<string, unknown> = {};
@@ -926,6 +938,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // Canonical names first, then the legacy aliases: one implementation per
     // capability, so the schema and the executor cannot drift apart.
     const name = canonicalToolName(c.name);
+    // One cwd per call: a session may have switched directories, and every fs
+    // operation must agree on which one it is.
+    const cwd = (sessionId ? sessions.get(sessionId)?.cwd : undefined) ?? WORKSPACE;
     // 权限规则引擎：deny > ask > allow（显式规则覆盖，沙箱兜底文件边界）
     const verdict = decidePermission(name, argsObj);
     if (verdict.action === 'deny') return `ERROR: ${verdict.reason}`;
@@ -936,14 +951,14 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       if (argsObj.background === true) {
         if (!sessionId) return 'ERROR: background jobs need a session';
         const id = startJob(
-          { workspace: WORKSPACE, state: {}, jobs: jobsFor(sessionId), sessionId },
+          { workspace: cwd, state: {}, jobs: jobsFor(sessionId), sessionId },
           cmd,
         );
         return `OK: started ${id} (use job_output to read it)`;
       }
       try {
         const { stdout, stderr } = await runShell(cmd, {
-          cwd: WORKSPACE, timeout: 120_000, maxBuffer: 4 * 1024 * 1024,
+          cwd, timeout: 120_000, maxBuffer: 4 * 1024 * 1024,
         });
         return limitOutput(`exit 0\n${stdout}${stderr ? `\n[stderr]\n${stderr}` : ''}`);
       } catch (e) {
@@ -953,7 +968,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       }
     }
     if (name === 'read') {
-      const target = resolveReadPath(argsObj.path);
+      const target = resolveReadPath(argsObj.path, cwd);
       if (!target) return 'ERROR: missing/invalid path argument';
       try {
         const text = await readFile(target, 'utf8');
@@ -973,7 +988,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       // Relative paths are relative to the *workspace*, not to whatever cwd the
       // scheduler happens to have — the model has no way to know the latter,
       // and "path escapes the workspace" for "hello.txt" is a dead end.
-      const target = await confineWritePath(WORKSPACE, workspaceRelative(argsObj.path), extraWriteRoots);
+      const target = await confineWritePath(WORKSPACE, workspaceRelative(argsObj.path, cwd), extraWriteRoots);
       if (!target) return 'ERROR: path escapes the workspace';
       const rawContent = argsObj.content;
       if (rawContent === undefined || rawContent === null) return 'ERROR: missing content';
@@ -996,7 +1011,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       const newString = argsObj.new_string;
       if (typeof oldString !== 'string' || oldString === '') return 'ERROR: old_string is required';
       if (typeof newString !== 'string') return 'ERROR: new_string is required';
-      const target = await confineWritePath(WORKSPACE, workspaceRelative(argsObj.path), extraWriteRoots);
+      const target = await confineWritePath(WORKSPACE, workspaceRelative(argsObj.path, cwd), extraWriteRoots);
       if (!target) return 'ERROR: path escapes the workspace';
       try {
         const before = await readFile(target, 'utf8');
@@ -1020,7 +1035,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         return 'ERROR: pattern is required';
       }
       const root = typeof argsObj.path === 'string' ? argsObj.path : '.';
-      const dir = resolveReadPath(root);
+      const dir = resolveReadPath(root, cwd);
       if (!dir) return 'ERROR: path escapes the workspace';
       try {
         const found = await walkFiles(dir, 4000);
@@ -1042,7 +1057,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       } catch (e) {
         return `ERROR: invalid pattern: ${(e as Error).message}`;
       }
-      const dir = resolveReadPath(typeof argsObj.path === 'string' ? argsObj.path : '.');
+      const dir = resolveReadPath(typeof argsObj.path === 'string' ? argsObj.path : '.', cwd);
       if (!dir) return 'ERROR: path escapes the workspace';
       const only = typeof argsObj.glob === 'string' ? globToRegExp(argsObj.glob) : null;
       try {
@@ -1083,6 +1098,47 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       if (out !== null) {
         // todos/goal/schedules belong to the session: persist them with it,
         // and wait — a crash right after the tool must not lose the update.
+        await persistSession(session);
+        return out;
+      }
+    }
+
+    if (isExtraTool(name)) {
+      const session = sessionId ? sessions.get(sessionId) : undefined;
+      if (!session) return `ERROR: ${name} needs a live session`;
+      const host: ExtraHost = {
+        workspace: WORKSPACE,
+        state: session,
+        jobs: jobsFor(sessionId!),
+        sessionId: sessionId!,
+        agents: agentHooksFor(session),
+        cwd: () => session.cwd ?? WORKSPACE,
+        setCwd: (dir: string) => {
+          session.cwd = dir;
+          void persistSession(session);
+        },
+        terminals: terminalsFor(sessionId!),
+        kernelEvents: id => bridge.getSessionEvents(id),
+        allSessions: () => [...sessions.values()].map(s2 => ({
+          id: s2.id,
+          messages: s2.messages.map(m => ({ role: m.role, content: m.content })),
+        })),
+        models: () => models.map(m => ({ name: m.name, description: m.description })),
+        plugins: {
+          list: () => plugins.listPlugins().map(p => ({
+            name: p.name,
+            enabled: true,
+            hooks: Object.keys(p).filter(k => k.startsWith('on')),
+          })),
+          inspect: (n: string) => {
+            const p = plugins.getPlugin(n);
+            return p ? { name: p.name, version: p.version, hooks: Object.keys(p).filter(k => k.startsWith('on')) } : undefined;
+          },
+        },
+        spawnFresh: (task, label) => spawnAgent(session, task, label),
+      };
+      const out = await runExtraTool(name, argsObj, host).catch((e: unknown) => `ERROR: ${String(e)}`);
+      if (out !== null) {
         await persistSession(session);
         return out;
       }

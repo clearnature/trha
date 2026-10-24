@@ -24,6 +24,7 @@ export interface PersistedSession {
   pendingQuestion?: unknown;
   teamTasks?: unknown[];
   parentId?: string;
+  cwd?: string;
 }
 
 /** Directory is created on demand. */
@@ -46,7 +47,7 @@ export async function saveSession(
     id: string; mode: string; messages: unknown[];
     pendingApproval: { message: string } | null; createdAt: Date;
     todos?: unknown[]; goal?: unknown; schedules?: unknown[]; pendingQuestion?: unknown;
-    teamTasks?: unknown[]; parentId?: string;
+    teamTasks?: unknown[]; parentId?: string; cwd?: string;
   },
 ): Promise<void> {
   await ensureDir(dir);
@@ -64,6 +65,7 @@ export async function saveSession(
     ...(session.pendingQuestion !== undefined ? { pendingQuestion: session.pendingQuestion } : {}),
     ...(session.teamTasks ? { teamTasks: session.teamTasks } : {}),
     ...(session.parentId ? { parentId: session.parentId } : {}),
+    ...(session.cwd ? { cwd: session.cwd } : {}),
   };
   const target = fileFor(dir, session.id);
   // Unique temp name: two writes of the same session (a tool update racing the
