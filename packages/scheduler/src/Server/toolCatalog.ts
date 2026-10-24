@@ -93,6 +93,57 @@ export const toolCatalog: ToolDefinition[] = [
     },
   },
   {
+    name: 'ask_user_question',
+    description: 'Ask the user a question and end this turn; the answer arrives as the next message',
+    parameters: {
+      type: 'object',
+      properties: {
+        question: { type: 'string' },
+        options: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['question'],
+    },
+  },
+  {
+    name: 'exit_plan_mode',
+    description: 'Leave planning and ask for approval to start executing',
+    parameters: {
+      type: 'object',
+      properties: { plan: { type: 'string' } },
+      required: [],
+    },
+  },
+  {
+    name: 'present',
+    description: 'Show a card to the user (title + body) without leaving the turn',
+    parameters: {
+      type: 'object',
+      properties: { title: { type: 'string' }, body: { type: 'string' } },
+      required: [],
+    },
+  },
+  {
+    name: 'run_code',
+    description: 'Run a snippet (python|javascript|bash|lean) in the workspace and return stdout/stderr',
+    parameters: {
+      type: 'object',
+      properties: {
+        language: { type: 'string', enum: ['python', 'javascript', 'bash', 'lean'] },
+        code: { type: 'string' },
+      },
+      required: ['language', 'code'],
+    },
+  },
+  {
+    name: 'read_image',
+    description: 'Read an image file as a data URL (2 MiB cap) for a vision model',
+    parameters: {
+      type: 'object',
+      properties: { path: { type: 'string' } },
+      required: ['path'],
+    },
+  },
+  {
     name: 'todo_write',
     description: 'Replace the session todo list (the plan you are working through)',
     parameters: {
@@ -138,7 +189,7 @@ export const toolCatalog: ToolDefinition[] = [
   },
   {
     name: 'schedule_create',
-    description: 'Schedule a prompt for this session (recorded; firing needs a driver)',
+    description: 'Schedule a prompt for this session; it fires automatically at `at` (repeat with repeat_ms)',
     parameters: {
       type: 'object',
       properties: {

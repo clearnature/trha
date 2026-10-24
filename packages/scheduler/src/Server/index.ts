@@ -19,7 +19,7 @@ import { loadPin, loadSessionsSync, removeSessionFile, savePin, saveSession } fr
 import { govern, DEFAULT_GOVERNANCE, type GovernanceConfig } from './contextGovernor.js';
 import {
   isStandardTool, runStandardTool, startJob,
-  type Goal, type Schedule, type Todo, type JobRecord,
+  type Goal, type PendingQuestion, type Schedule, type Todo, type JobRecord,
 } from './standardTools.js';
 import { startPluginWatcher } from '../Plugins/watcher.js';
 import { mkdir, readdir, readFile, writeFile, appendFile } from 'node:fs/promises';
@@ -197,6 +197,7 @@ interface SchedulerSession {
   todos?: Todo[];
   goal?: Goal | null;
   schedules?: Schedule[];
+  pendingQuestion?: PendingQuestion | null;
 }
 
 // ── Context governance (window / thresholds) ──────────────────────────────
@@ -712,6 +713,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           ...(Array.isArray(r.todos) ? { todos: r.todos as Todo[] } : {}),
           ...(r.goal !== undefined ? { goal: r.goal as Goal | null } : {}),
           ...(Array.isArray(r.schedules) ? { schedules: r.schedules as Schedule[] } : {}),
+          ...(r.pendingQuestion !== undefined
+            ? { pendingQuestion: r.pendingQuestion as PendingQuestion | null } : {}),
         });
         // A restarted kernel may have an empty session map; re-register so the
         // restored conversation keeps its projections and FSM state going.
@@ -1240,6 +1243,30 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           events.emit('agent:plan', { sessionId: session.id, status: 'awaiting_approval', message: output });
           return `awaiting_approval: ${output}`;
         }
+        // A tool that needs a human must end the turn: continuing would mean
+        // inventing the answer inside the same loop.
+        if (output.startsWith('WAITING_FOR_INPUT:')) {
+          const question = output.slice('WAITING_FOR_INPUT:'.length).trim();
+          await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'succeeded', started);
+          events.emit('agent:question', { sessionId: session.id, question });
+          await persistSession(session);
+          return question;
+        }
+        if (output.startsWith('WAITING_FOR_APPROVAL:')) {
+          const plan = output.slice('WAITING_FOR_APPROVAL:'.length).trim();
+          await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'failed', started, output);
+          session.pendingApproval = { message: plan };
+          void bridge.requestApproval(session.id, plan).catch(e =>
+            console.error(`kernel approval request ${session.id}:`, e));
+          events.emit('agent:plan', { sessionId: session.id, status: 'awaiting_approval', message: plan });
+          await persistSession(session);
+          return plan;
+        }
+        if (output.startsWith('PRESENT:')) {
+          const card = output.slice('PRESENT:'.length);
+          session.messages.push({ role: 'assistant', content: `[presentation] ${card}` });
+          events.emit('agent:present', { sessionId: session.id, card });
+        }
         const failed = output.startsWith('ERROR');
         await emitToolLifecycle(session.id, call.name, parseToolArgs(call),
           failed ? 'failed' : 'succeeded', started, failed ? output : undefined);
@@ -1266,6 +1293,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     if (typeof message !== 'string' || message.trim() === '') {
       return res.status(400).json({ error: 'Missing message' });
     }
+    // A new message is also an answer: do not leave a stale question parked.
+    session.pendingQuestion = null;
 
     // Approval gate: hold the request until the host decides.
     //
@@ -1341,6 +1370,130 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     const reply = await runStep(session, pending.message);
     res.json({ status: 'approved', reply, messages: session.messages, mode: session.mode });
   });
+
+  // ── Human answers ─────────────────────────────────────────────────────
+  // ask_user_question parks a question on the session; this is the way back.
+  // Answering runs the next turn: the agent asked in order to continue.
+  app.post('/api/session/:id/answer', async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    const answer = typeof req.body?.answer === 'string' ? req.body.answer : '';
+    if (!answer.trim()) return res.status(400).json({ error: 'Answer must be a non-empty string' });
+    const pending = session.pendingQuestion;
+    if (!pending) return res.status(400).json({ error: 'No question is pending' });
+    session.pendingQuestion = null;
+    events.emit('agent:answer', { sessionId: session.id, questionId: pending.id, answer });
+    try {
+      const reply = await runStep(session, answer, {});
+      await persistSession(session);
+      return res.json({ status: 'answered', questionId: pending.id, reply, mode: session.mode });
+    } catch (e) {
+      return res.status(502).json({ error: `turn failed: ${String(e)}` });
+    }
+  });
+
+  // ── Schedule driver ───────────────────────────────────────────────────
+  //
+  // A schedule record is only half the feature: something has to turn `at` into
+  // a turn. The driver runs on a timer, fires due schedules by calling the same
+  // `runStep` the HTTP route uses, and persists *before* spending so a crash
+  // cannot double-fire.
+  //
+  // Catch-up rule: a schedule that came due while the process was down is fired
+  // if it is younger than the grace window; older ones are marked `missed`.
+  // Replaying an arbitrary backlog at boot would be a cost bomb, and silently
+  // firing nothing would make the schedule look honoured when it was not.
+  const scheduleTickMs = (() => {
+    const n = Number(process.env.TRHA_SCHEDULE_TICK_MS ?? '');
+    return Number.isFinite(n) && n >= 0 ? n : 5000;
+  })();
+  const scheduleGraceMs = (() => {
+    const n = Number(process.env.TRHA_SCHEDULE_GRACE_MS ?? '');
+    return Number.isFinite(n) && n > 0 ? n : 5 * 60_000;
+  })();
+  const drivingSessions = new Set<string>();
+  let ticking = false;
+
+  const fireSchedule = async (session: SchedulerSession, s: Schedule): Promise<void> => {
+    // Never step past a gate: the host owes a decision first.
+    if (session.pendingApproval) return;
+    if (drivingSessions.has(session.id)) return;
+    drivingSessions.add(session.id);
+    s.runs = (s.runs ?? 0) + 1;
+    s.lastFiredAt = new Date().toISOString();
+    if (s.repeatMs && s.repeatMs > 0) {
+      s.at = new Date(Date.now() + s.repeatMs).toISOString();
+    } else {
+      s.status = 'fired';
+    }
+    // Durable before the spend: a crash mid-turn must not fire it twice.
+    await persistSession(session);
+    events.emit('agent:schedule', {
+      sessionId: session.id, id: s.id, run: s.runs, prompt: s.prompt, status: 'firing',
+    });
+    try {
+      const reply = await runStep(session, s.prompt, {});
+      events.emit('agent:schedule', {
+        sessionId: session.id, id: s.id, run: s.runs, status: 'done', reply: reply.slice(0, 200),
+      });
+    } catch (e) {
+      events.emit('agent:schedule', {
+        sessionId: session.id, id: s.id, run: s.runs, status: 'error', error: String(e),
+      });
+      console.error(`schedule ${s.id} (${session.id}) failed:`, e);
+    } finally {
+      drivingSessions.delete(session.id);
+      await persistSession(session);
+    }
+  };
+
+  const tickSchedules = async (): Promise<void> => {
+    if (ticking) return;
+    ticking = true;
+    try {
+      const now = Date.now();
+      for (const session of sessions.values()) {
+        for (const s of session.schedules ?? []) {
+          if (s.status !== 'active') continue;
+          if (new Date(s.at).getTime() > now) continue;
+          await fireSchedule(session, s);
+        }
+      }
+    } catch (e) {
+      console.error('schedule tick failed:', e);
+    } finally {
+      ticking = false;
+    }
+  };
+
+  // Catch-up sweep at boot: too-old one-shots are recorded as missed.
+  const sweepOverdue = (): void => {
+    const now = Date.now();
+    for (const session of sessions.values()) {
+      let changed = false;
+      for (const s of session.schedules ?? []) {
+        if (s.status !== 'active' || s.repeatMs) continue;
+        if (new Date(s.at).getTime() < now - scheduleGraceMs) {
+          s.status = 'missed';
+          changed = true;
+        }
+      }
+      if (changed) void persistSession(session);
+    }
+  };
+  if (sessions.size > 0) sweepOverdue();
+  let scheduleTimer: NodeJS.Timeout | undefined;
+  if (scheduleTickMs > 0) {
+    scheduleTimer = setInterval(() => { void tickSchedules(); }, scheduleTickMs);
+    // Do not keep the process (or a test runner) alive just for the timer.
+    scheduleTimer.unref?.();
+  }
+
+  /** Stop background work. Without this a "closed" scheduler keeps firing. */
+  const stop = (): void => {
+    if (scheduleTimer) clearInterval(scheduleTimer);
+    scheduleTimer = undefined;
+  };
 
   // ── Multi-step plans (kernel-owned) ───────────────────────────────────
   //
@@ -1873,7 +2026,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
   });
 
-  return { app, config };
+  return { app, config, stop };
 }
 
 // Host-lease handshake (Electron host architecture):

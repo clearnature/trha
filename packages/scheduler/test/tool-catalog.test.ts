@@ -10,6 +10,7 @@ describe('toolCatalog', () => {
     expect(toolCatalog.map(t => t.name))
       .toEqual([
         'bash', 'read', 'write', 'edit', 'glob', 'grep',
+        'ask_user_question', 'exit_plan_mode', 'present', 'run_code', 'read_image',
         'todo_write', 'create_goal', 'get_goal', 'update_goal',
         'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
         'job_list', 'job_output', 'job_kill', 'skill', 'web_fetch',

@@ -13,7 +13,7 @@
 //     reported as such rather than pretending to survive a restart.
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export interface Todo {
@@ -34,7 +34,9 @@ export interface Schedule {
   prompt: string;
   at: string;            // ISO timestamp of the next firing
   repeatMs?: number | undefined;
-  status: 'active' | 'cancelled';
+  status: 'active' | 'cancelled' | 'fired' | 'missed';
+  runs?: number;
+  lastFiredAt?: string;
 }
 
 export interface JobRecord {
@@ -47,10 +49,22 @@ export interface JobRecord {
   child?: ChildProcessWithoutNullStreams | undefined;
 }
 
+export interface PendingQuestion {
+  id: string;
+  question: string;
+  options?: string[];
+  askedAt: string;
+}
+
 export interface StandardToolHost {
   workspace: string;
   /** Mutable session slice; the caller persists it after the tool runs. */
-  state: { todos?: Todo[]; goal?: Goal | null; schedules?: Schedule[] };
+  state: {
+    todos?: Todo[];
+    goal?: Goal | null;
+    schedules?: Schedule[];
+    pendingQuestion?: PendingQuestion | null;
+  };
   /** Jobs are shared per scheduler process, keyed by session. */
   jobs: Map<string, JobRecord>;
   sessionId: string;
@@ -64,6 +78,7 @@ const clip = (s: string, cap = MAX_OUTPUT_CHARS): string =>
   s.length <= cap ? s : `${s.slice(0, cap)}\n…(${s.length - cap} more chars)`;
 
 export const STANDARD_TOOL_NAMES = [
+  'ask_user_question', 'exit_plan_mode', 'present', 'run_code', 'read_image',
   'todo_write',
   'create_goal', 'get_goal', 'update_goal',
   'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
@@ -118,6 +133,93 @@ export async function runStandardTool(
   host: StandardToolHost,
 ): Promise<string | null> {
   const now = host.now ?? (() => new Date());
+
+  if (name === 'ask_user_question') {
+    const question = args.question;
+    if (typeof question !== 'string' || !question.trim()) return 'ERROR: question is required';
+    const options = Array.isArray(args.options)
+      ? args.options.filter((o): o is string => typeof o === 'string')
+      : undefined;
+    const pending: PendingQuestion = {
+      id: `q-${Date.now().toString(36)}`,
+      question: question.trim(),
+      ...(options && options.length > 0 ? { options } : {}),
+      askedAt: now().toISOString(),
+    };
+    host.state.pendingQuestion = pending;
+    // The turn must end here: nothing can answer inside the same tool loop.
+    return `WAITING_FOR_INPUT: ${pending.question}`;
+  }
+
+  if (name === 'exit_plan_mode') {
+    // Reuses the approval gate instead of inventing a second plan mechanism.
+    const plan = typeof args.plan === 'string' ? args.plan : '';
+    return `WAITING_FOR_APPROVAL: ${plan || 'exit plan mode'}`;
+  }
+
+  if (name === 'present') {
+    const title = typeof args.title === 'string' ? args.title : '';
+    const body = typeof args.body === 'string' ? args.body : '';
+    if (!title && !body) return 'ERROR: title or body is required';
+    return `PRESENT: ${JSON.stringify({ title, body })}`;
+  }
+
+  if (name === 'run_code') {
+    const language = typeof args.language === 'string' ? args.language : '';
+    const code = typeof args.code === 'string' ? args.code : '';
+    if (!code.trim()) return 'ERROR: code is required';
+    const runners: Record<string, { ext: string; cmd: string }> = {
+      python: { ext: 'py', cmd: 'python3' },
+      python3: { ext: 'py', cmd: 'python3' },
+      javascript: { ext: 'mjs', cmd: 'node' },
+      js: { ext: 'mjs', cmd: 'node' },
+      node: { ext: 'mjs', cmd: 'node' },
+      bash: { ext: 'sh', cmd: 'bash' },
+      sh: { ext: 'sh', cmd: 'bash' },
+      lean: { ext: 'lean', cmd: 'lean' },
+    };
+    const runner = runners[language.toLowerCase()];
+    if (!runner) return `ERROR: unsupported language "${language}" (python|javascript|bash|lean)`;
+    const file = path.join(host.workspace, `.trha-run-${Date.now().toString(36)}.${runner.ext}`);
+    await writeFile(file, code, 'utf8');
+    return await new Promise<string>(resolve => {
+      const child = spawn(runner.cmd, [file], { cwd: host.workspace });
+      const out: string[] = [];
+      const cap = (b: Buffer): void => {
+        out.push(b.toString('utf8'));
+        if (out.join('').length > MAX_OUTPUT_CHARS) out.splice(0, out.length, out.join('').slice(-MAX_OUTPUT_CHARS));
+      };
+      child.stdout.on('data', cap);
+      child.stderr.on('data', cap);
+      child.on('error', e => resolve(`ERROR: ${e.message}`));
+      child.on('exit', code2 => {
+        void (async () => {
+          try { await rm(file, { force: true }); } catch { /* ignore */ }
+          resolve(clip(`exit ${code2 ?? -1}\n${out.join('')}`));
+        })();
+      });
+    });
+  }
+
+  if (name === 'read_image') {
+    const raw = args.path;
+    if (typeof raw !== 'string' || !raw.trim()) return 'ERROR: path is required';
+    const file = path.isAbsolute(raw) ? raw : path.join(host.workspace, raw);
+    try {
+      const buf = await readFile(file);
+      if (buf.byteLength > 2 * 1024 * 1024) {
+        return `ERROR: image is ${buf.byteLength} bytes; the cap is 2 MiB`;
+      }
+      const ext = path.extname(file).toLowerCase();
+      const mime = ext === '.png' ? 'image/png'
+        : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
+        : ext === '.gif' ? 'image/gif'
+        : ext === '.webp' ? 'image/webp' : 'application/octet-stream';
+      return `data:${mime};base64,${buf.toString('base64')}`;
+    } catch (e) {
+      return `ERROR: ${(e as Error).message}`;
+    }
+  }
 
   if (name === 'todo_write') {
     const raw = args.todos;

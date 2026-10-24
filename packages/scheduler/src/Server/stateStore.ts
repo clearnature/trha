@@ -21,6 +21,7 @@ export interface PersistedSession {
   todos?: unknown[];
   goal?: unknown;
   schedules?: unknown[];
+  pendingQuestion?: unknown;
 }
 
 /** Directory is created on demand. */
@@ -40,7 +41,7 @@ export async function saveSession(
   session: {
     id: string; mode: string; messages: unknown[];
     pendingApproval: { message: string } | null; createdAt: Date;
-    todos?: unknown[]; goal?: unknown; schedules?: unknown[];
+    todos?: unknown[]; goal?: unknown; schedules?: unknown[]; pendingQuestion?: unknown;
   },
 ): Promise<void> {
   await ensureDir(dir);
@@ -55,6 +56,7 @@ export async function saveSession(
     ...(session.todos ? { todos: session.todos } : {}),
     ...(session.goal !== undefined ? { goal: session.goal } : {}),
     ...(session.schedules ? { schedules: session.schedules } : {}),
+    ...(session.pendingQuestion !== undefined ? { pendingQuestion: session.pendingQuestion } : {}),
   };
   const target = fileFor(dir, session.id);
   const tmp = `${target}.tmp`;

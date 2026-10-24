@@ -292,6 +292,8 @@ cache hit/miss）透传给 scheduler，所以流式会话也能记账。
 deepseek-harness 的 `standard` 预设（`bash/read/write/edit/glob/grep`、`todo_write`、
 `create_goal/get_goal/update_goal`、`schedule_*`、`job_*`、`skill`、`web_fetch`；
 旧的 `*_file` 为别名）。工具轮数默认**不设上限**，只对「同一调用连续重复」判停。
+`schedule_*` 由 scheduler 内的驱动真正触发（到点调用同一条 `runStep`，先落盘再花钱，
+待决审批时不触发；重启补跑有 5 分钟 grace，超出记 `missed`）。
 完整清单与**有意未移植**的理由见 `docs/contracts/tool-catalog.md`。
 
 ### 3.7 LLM Adapter (`LLM.Adapter`)
