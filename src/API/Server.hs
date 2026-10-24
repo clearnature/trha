@@ -18,6 +18,9 @@ module API.Server
   , OpenAIRequest(..)
   , openaiCompletion
   , openaiToolCompletion
+  , emitOpenAI
+  , toolCallDelta
+  , toolErrorContent
   ) where
 
 import Servant
@@ -825,9 +828,7 @@ openaiToolCompletion model turn genParams = object
             -- A provider failure must reach the caller: an empty content with
             -- no tool call looks like "the model said nothing", which turns a
             -- 4xx into a silent dead end.
-            , "content" .= case LLM.ctError turn of
-                Just e  -> "[provider error] " <> e
-                Nothing -> LLM.ctContent turn
+            , "content" .= toolErrorContent (LLM.ctError turn) (LLM.ctContent turn)
             ]
               ++ [ "tool_calls" .= LLM.ctToolCalls turn | not (null (LLM.ctToolCalls turn)) ] )
       , "finish_reason" .= (if null (LLM.ctToolCalls turn) then ("stop" :: Text) else "tool_calls")
@@ -1380,6 +1381,28 @@ fromKernelEvent Stream.SEVDone           = ChunkDone (mkUsage 0 0 0)
 fromKernelEvent (Stream.SEVError e)      = ChunkError e
 
 -- | OpenAI-compatible frames (@choices[0].delta@).
+-- | What the caller sees when the provider failed.
+--
+-- An empty content with no tool call is indistinguishable from "the model said
+-- nothing", which once turned provider 4xx into silent dead ends. The error is
+-- part of the content instead of a side channel.
+toolErrorContent :: Maybe Text -> Text -> Text
+toolErrorContent (Just e) _ = "[provider error] " <> e
+toolErrorContent Nothing c  = c
+
+-- | The OpenAI @delta@ for one tool call. Pure and exported so the wire shape
+-- (index + id per call) is testable without going through a provider.
+toolCallDelta :: Int -> Text -> Text -> Text -> Value
+toolCallDelta i id0 n a = object
+  [ "tool_calls" .= [ object
+      [ "index" .= i
+      , "id"    .= (if T.null id0 then "call-" <> T.pack (show i) else id0)
+      , "type"  .= ("function" :: Text)
+      , "function" .= object [ "name" .= n, "arguments" .= a ]
+      ]
+    ]
+  ]
+
 emitOpenAI :: (Builder.Builder -> IO ()) -> StreamChunk -> IO ()
 emitOpenAI write chunk = case chunk of
   ChunkDelta t -> sse write Nothing
@@ -1404,11 +1427,7 @@ emitOpenAI write chunk = case chunk of
     ]
   ChunkToolCallAt i id0 n a -> sse write Nothing
     [ "choices" .= [object [ "index" .= (0 :: Int)
-                           , "delta" .= object [ "tool_calls" .= [ object
-                               [ "id" .= (if T.null id0 then "call-" <> T.pack (show i) else id0)
-                               , "type" .= ("function" :: Text)
-                               , "index" .= i
-                               , "function" .= object ["name" .= n, "arguments" .= a] ] ] ] ]] ]
+                           , "delta" .= toolCallDelta i id0 n a ] ] ]
   ChunkDone u -> do
     sse write Nothing
       [ "choices" .= [object [ "index" .= (0 :: Int), "delta" .= object []

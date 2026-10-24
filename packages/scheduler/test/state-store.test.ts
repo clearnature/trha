@@ -2,7 +2,7 @@
 // removal, in an isolated temp directory.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -62,5 +62,35 @@ describe('stateStore', () => {
     await saveSession(dir, session('session-atom', []));
     const names = await (await import('node:fs/promises')).readdir(dir);
     expect(names).toEqual(['session-atom.json']);
+  });
+});
+
+describe('saveSession under concurrency', () => {
+  it('survives many writers on one session (unique temp names)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'trha-conc-'));
+    const session = {
+      id: 'conc-1',
+      mode: 'standard',
+      messages: [{ role: 'user', content: 'x' }],
+      pendingApproval: null,
+      createdAt: new Date(),
+    };
+    try {
+      // Two writers used to share `<id>.json.tmp`; whichever renamed second
+      // threw ENOENT and that update was lost.
+      const writes = Array.from({ length: 20 }, (_, i) =>
+        saveSession(dir, { ...session, messages: [{ role: 'user', content: `w${i}` }] }));
+      await expect(Promise.all(writes)).resolves.toBeDefined();
+
+      const loaded = await loadSessions(dir);
+      expect(loaded).toHaveLength(1);
+      const content = (loaded[0]!.messages[0] as { content: string }).content;
+      expect(content).toMatch(/^w\d+$/);          // a whole write won, not a torn one
+      // and no temp files were left behind
+      const leftovers = (await readdir(dir)).filter(f => f.endsWith('.tmp'));
+      expect(leftovers).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

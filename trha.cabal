@@ -608,6 +608,8 @@ test-suite trha-test
   main-is:          Spec.hs
   other-modules:    PluginSpec, CoreContractSpec, SessionPersistSpec, ApprovalSpec, PlanSpec
                   , DeepSeekCacheSpec
+                  , StreamToolCallsSpec
+                  , WireGuardsSpec
   hs-source-dirs:   test
   build-depends:    base ^>=4.22
                   , directory

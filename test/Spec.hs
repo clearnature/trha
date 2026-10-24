@@ -84,6 +84,8 @@ import SessionPersistSpec (sessionPersistSpec)
 import ApprovalSpec (approvalSpec)
 import PlanSpec (planSpec)
 import DeepSeekCacheSpec (deepSeekCacheSpec)
+import StreamToolCallsSpec (streamToolCallsSpec)
+import WireGuardsSpec (wireGuardsSpec)
 
 subsetOf :: (Eq a) => [a] -> [a] -> Bool
 subsetOf xs ys = all (`elem` ys) xs
@@ -111,6 +113,8 @@ main = hspec $ do
   approvalSpec
   planSpec
   deepSeekCacheSpec
+  streamToolCallsSpec
+  wireGuardsSpec
   describe "Infrastructure.CPU.GGUF (A6/M1)" $ do
     it "reads a real GGUF: version, alignment, metadata and tensor directory" $ do
       let path = "/home/yanli/work/9060xt/llama.cpp/models/ggml-vocab-baichuan.gguf"

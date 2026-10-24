@@ -9,6 +9,7 @@ module LLM.Providers.DeepSeek
   , parseDeepSeekChatTurn
   , applyEffortEnv
   , modelFromEnv
+  , withReasoningEcho
   ) where
 
 import LLM.Adapter.Types
@@ -95,11 +96,25 @@ instance FromJSON RespToolCall where
 instance FromJSON RespToolFunction where
   parseJSON = genericParseJSON defaultOptions { fieldLabelModifier = drop 2 }
 
+-- | Thinking mode requires @reasoning_content@ back on *every* assistant turn,
+-- including synthetic notes the host appends ("exhausted", "interrupted",
+-- "[presentation]"). Attaching "" only where the chain is missing keeps the wire
+-- valid without inventing reasoning.
+withReasoningEcho :: [ChatMessage] -> [Value]
+withReasoningEcho = map (addEcho . toJSON)
+  where
+    addEcho v = case v of
+      Object o
+        | Just (String "assistant") <- KM.lookup "role" o
+        , not (KM.member "reasoning_content" o) ->
+            Object (KM.insert "reasoning_content" (String "") o)
+      _ -> v
+
 -- | Build the OpenAI-compatible chat request body (with @tools@).
 buildDeepSeekChatRequest :: Text -> [ChatMessage] -> [ToolSpec] -> Maybe GenParams -> Value
 buildDeepSeekChatRequest model msgs specs genParams = object
   ( [ "model" .= model
-    , "messages" .= msgs
+    , "messages" .= withReasoningEcho msgs
     , "tools" .= specs
     , "stream" .= False
     ] ++ gpPairs )

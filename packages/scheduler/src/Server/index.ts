@@ -17,6 +17,7 @@ import { readFileSync, rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { loadPin, loadSessionsSync, removeSessionFile, savePin, saveSession } from './stateStore.js';
 import { govern, DEFAULT_GOVERNANCE, type GovernanceConfig } from './contextGovernor.js';
+import { envCap, envInt } from './env.js';
 import { isExtraTool, runExtraTool, type ExtraHost, type Terminal } from './extraTools.js';
 import {
   isStandardTool, runStandardTool, startJob,
@@ -878,10 +879,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // that was converging. The loop ends when the model stops calling tools; a
   // repeated identical call is what actually signals a stuck agent, so that is
   // what is guarded. Set TRHA_MAX_TOOL_ROUNDS to cap it anyway.
-  const maxToolRounds = (() => {
-    const n = Number(process.env.TRHA_MAX_TOOL_ROUNDS ?? '');
-    return Number.isFinite(n) && n > 0 ? n : Number.POSITIVE_INFINITY;
-  })();
+  const maxToolRounds = envCap('TRHA_MAX_TOOL_ROUNDS');
   const STUCK_REPEATS = 3;
 
   const emitToolLifecycle = async (
@@ -1526,33 +1524,15 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // if it is younger than the grace window; older ones are marked `missed`.
   // Replaying an arbitrary backlog at boot would be a cost bomb, and silently
   // firing nothing would make the schedule look honoured when it was not.
-  const scheduleTickMs = (() => {
-    // Same trap: an empty string parses to 0, which would silently turn the
-    // driver off in every deployment that does not set the variable.
-    const raw = process.env.TRHA_SCHEDULE_TICK_MS;
-    if (raw === undefined || raw.trim() === '') return 5000;
-    const n = Number(raw);
-    return Number.isFinite(n) && n >= 0 ? n : 5000;
-  })();
-  const scheduleGraceMs = (() => {
-    const raw = process.env.TRHA_SCHEDULE_GRACE_MS;
-    if (raw === undefined || raw.trim() === '') return 5 * 60_000;
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? n : 5 * 60_000;
-  })();
+  const scheduleTickMs = envInt('TRHA_SCHEDULE_TICK_MS', 5000, { allowZero: true });
+  const scheduleGraceMs = envInt('TRHA_SCHEDULE_GRACE_MS', 5 * 60_000, { min: 1 });
   // Sessions with a turn in flight: used by interrupt_agent and by the driver
   // to avoid overlapping turns on one session.
   const inFlight = new Set<string>();
   const drivingSessions = new Set<string>();
   let subagentSeq = 0;
   let ticking = false;
-  const maxSubagentDepth = (() => {
-    // Number('') is 0: treat "unset" as unset, not as "no subagents allowed".
-    const raw = process.env.TRHA_MAX_SUBAGENT_DEPTH;
-    if (raw === undefined || raw.trim() === '') return 2;
-    const n = Number(raw);
-    return Number.isFinite(n) && n >= 0 ? n : 2;
-  })();
+  const maxSubagentDepth = envInt('TRHA_MAX_SUBAGENT_DEPTH', 2, { allowZero: true });
 
   const rootSessionOf = (session: SchedulerSession): SchedulerSession => {
     let cur = session;
