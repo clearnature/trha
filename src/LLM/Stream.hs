@@ -15,6 +15,7 @@ module LLM.Stream
   , parseNDJSONLine
   , streamPostSse
   , openAICompatStreamCall
+  , streamTimeoutMs
   ) where
 
 import Control.Exception (try, SomeException)
@@ -37,6 +38,9 @@ import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (HeaderName)
 import Network.HTTP.Types.Status (statusCode)
 import Data.Text.Encoding.Error (lenientDecode)
+import System.Environment (lookupEnv)
+import System.Timeout (timeout)
+import Text.Read (readMaybe)
 
 import LLM.Adapter.Types (Message(..), Role(..), ChatMessage, ChatTurn(..), StreamChunk(..), ToolCall(..), ToolSpec, Usage(..), mkUsage)
 
@@ -76,7 +80,8 @@ streamChatCompletion cfg onEvent = do
             ]
         , responseTimeout = responseTimeoutNone
         }
-  result <- try $ withResponse request mgr $ \response -> do
+  ms <- streamTimeoutMs
+  result <- try $ timeout (ms * 1000) $ withResponse request mgr $ \response -> do
     let status = statusCode (responseStatus response)
     if status >= 400
       then do
@@ -89,7 +94,20 @@ streamChatCompletion cfg onEvent = do
         return (Right ())
   case result of
     Left (ex :: SomeException) -> return $ Left (show ex)
-    Right r -> return r
+    Right Nothing -> return $ Left ("stream timed out after " <> show ms <> " ms")
+    Right (Just r) -> return r
+
+-- | How long a streamed call may stay silent before it is abandoned.
+--
+-- @responseTimeoutNone@ means a stalled provider hangs the whole step forever,
+-- so the read is bounded here instead. Overridable for tests and for slow
+-- deployments.
+streamTimeoutMs :: IO Int
+streamTimeoutMs = do
+  raw <- lookupEnv "TRHA_STREAM_TIMEOUT_MS"
+  pure $ case raw >>= readMaybe of
+    Just n | n > 0 -> n
+    _              -> 20000
 
 -- | DeepSeek streaming (SSE, OpenAI-compatible)
 streamDeepSeek :: String -> Text -> [Message] -> (StreamEvent -> IO ()) -> IO (Either String ())
@@ -308,7 +326,8 @@ streamPostSse url headers body onFrame = do
             ("Accept", "text/event-stream") : ("Content-Type", "application/json") : headers
         , responseTimeout = responseTimeoutNone
         }
-  result <- try $ withResponse req mgr $ \resp -> do
+  ms <- streamTimeoutMs
+  result <- try $ timeout (ms * 1000) $ withResponse req mgr $ \resp -> do
     let code = statusCode (responseStatus resp)
     if code >= 400
       then do
@@ -319,7 +338,8 @@ streamPostSse url headers body onFrame = do
         return (Right ())
   case result of
     Left (ex :: SomeException) -> return $ Left (T.pack (show ex))
-    Right r -> return r
+    Right Nothing -> return $ Left (T.pack ("stream timed out after " <> show ms <> " ms"))
+    Right (Just r) -> return r
   where
     go reader buf = do
       chunk <- brRead reader
@@ -388,7 +408,10 @@ openAICompatStreamCall url apiKey body onEvent = do
   case result of
     Left e -> do
       onEvent (ChunkError e)
-      pure (ChatTurn "" [] Nothing (Just e) Nothing)
+      -- Keep what already arrived: a timeout after three tokens is a partial
+      -- answer with a reason, not an empty one. Tool calls are dropped — a
+      -- half-streamed call would be malformed.
+      pure (ChatTurn txt [] usage (Just e) reasoning)
     Right () -> do
       onEvent (ChunkDone (fromMaybe (mkUsage 0 0 0) usage))
       pure turn

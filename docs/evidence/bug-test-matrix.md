@@ -50,9 +50,18 @@
 | MCP / LSP 真实 server | 只对**假服务器**测过协议帧 |
 | VPN / 服务器脚本 | 基础设施，不在本仓 |
 
-## 四、已知未覆盖（后续）
+## 四、边界与压力（原本未覆盖，现已补上）
 
-- provider 超时/中断：没有用例（`streamPostSse` 的 20s 超时未测）。
-- 多智能体真实并发：只测桩（父子、深度上限），无并发压力。
-- 调度跨天/时区：只测 `at` 到点。
-- `todo_write` UNCHANGED 时的"不落盘"只测了状态对象不变，没比对 mtime。
+| 项 | 修的问题 | 测试 |
+|---|---|---|
+| provider 超时 | `responseTimeoutNone` 意味着 provider 静默就**永久挂住**；现在按 `TRHA_STREAM_TIMEOUT_MS`（默认 20s）中断，并**保留已收到的部分内容**再报错 | `StreamTimeoutSpec.hs`（2 例：静默流中断带 `timed out`；默认值 20s/非法值回落） |
+| 多智能体并发 | 两个父会话同时跑、各自 spawn 子会话：子会话不串味、`parentId` 正确 | `agents-concurrent.test.ts`（2 例） |
+| 中断正在跑的智能体 | `interrupt_agent` 在目标**真的忙**时命中，目标在下一轮边界返回 `(interrupted)` | 同文件（第 2 例） |
+| 调度跨天/时区 | 带偏移的 `at`（`+08:00`）按那一刻的 UTC 实例存储；未来数月不触发；过期重复任务补跑一次并把游标推到未来 | `schedule-time.test.ts`（3 例） |
+| `UNCHANGED` 不落盘 | 工具不改状态时循环仍然 persist，白抖 mtime；现在 `UNCHANGED:` 结果不写盘 | `todo-no-write.test.ts`（内核每轮采样 mtime：重复写后不变、真改动后变大） |
+
+## 五、仍不可在本仓自动化
+
+- MCP / LSP 真实 server（只对假服务器测协议帧）。
+- 真实站点的浏览器行为（只测本地页）。
+- 真模型是否遵守提示（只有真机证据）。

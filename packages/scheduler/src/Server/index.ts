@@ -1133,7 +1133,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       if (out !== null) {
         // todos/goal/schedules belong to the session: persist them with it,
         // and wait — a crash right after the tool must not lose the update.
-        await persistSession(session);
+        // An UNCHANGED result is the exception: nothing moved, so nothing to
+        // write.
+        if (!out.startsWith('UNCHANGED:')) await persistSession(session);
         return out;
       }
     }
@@ -1363,6 +1365,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         await emitToolLifecycle(session.id, call.name, parseToolArgs(call),
           failed ? 'failed' : 'succeeded', started, failed ? output : undefined);
         session.messages.push({ role: 'tool', tool_call_id: call.id, content: output });
+        // `UNCHANGED:` means the tool declined to modify state; writing the
+        // session anyway would churn the file (and its mtime) for nothing.
+        if (!output.startsWith('UNCHANGED:')) await persistSession(session);
 
         if (output.startsWith('PRESENT:')) {
           const card = output.slice('PRESENT:'.length);
