@@ -6,6 +6,7 @@
 // Unknown/corrupt files are skipped on load, never fatal.
 
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 export interface PersistedSession {
@@ -16,6 +17,10 @@ export interface PersistedSession {
   pendingApproval: { message: string } | null;
   createdAt: string; // ISO
   updatedAt: string; // ISO
+  /** Standard-tool state (v2+; absent in v1 files). */
+  todos?: unknown[];
+  goal?: unknown;
+  schedules?: unknown[];
 }
 
 /** Directory is created on demand. */
@@ -32,17 +37,24 @@ function fileFor(dir: string, sessionId: string): string {
 /** Persist one session atomically. */
 export async function saveSession(
   dir: string,
-  session: { id: string; mode: string; messages: unknown[]; pendingApproval: { message: string } | null; createdAt: Date },
+  session: {
+    id: string; mode: string; messages: unknown[];
+    pendingApproval: { message: string } | null; createdAt: Date;
+    todos?: unknown[]; goal?: unknown; schedules?: unknown[];
+  },
 ): Promise<void> {
   await ensureDir(dir);
   const record: PersistedSession = {
-    v: 1,
+    v: 2,
     sessionId: session.id,
     mode: session.mode,
     messages: session.messages,
     pendingApproval: session.pendingApproval,
     createdAt: session.createdAt.toISOString(),
     updatedAt: new Date().toISOString(),
+    ...(session.todos ? { todos: session.todos } : {}),
+    ...(session.goal !== undefined ? { goal: session.goal } : {}),
+    ...(session.schedules ? { schedules: session.schedules } : {}),
   };
   const target = fileFor(dir, session.id);
   const tmp = `${target}.tmp`;
@@ -66,6 +78,33 @@ export async function loadSessions(dir: string): Promise<PersistedSession[]> {
       if (rec && typeof rec.sessionId === 'string' && Array.isArray(rec.messages)) {
         out.push(rec);
       }
+    } catch {
+      // corrupt/partial file: skip (never fatal)
+    }
+  }
+  return out;
+}
+
+/**
+ * Load every persisted session synchronously.
+ *
+ * The server starts listening as soon as `createServer` returns, so an async
+ * load leaves a window where a request for a restored session 404s — exactly
+ * the moment after a restart when the host reconnects. Startup files are small;
+ * paying for them here removes the race instead of racing it.
+ */
+export function loadSessionsSync(dir: string): PersistedSession[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out: PersistedSession[] = [];
+  for (const name of entries.filter(n => n.endsWith('.json'))) {
+    try {
+      const rec = JSON.parse(readFileSync(path.join(dir, name), 'utf8')) as PersistedSession;
+      if (rec && typeof rec.sessionId === 'string' && Array.isArray(rec.messages)) out.push(rec);
     } catch {
       // corrupt/partial file: skip (never fatal)
     }

@@ -81,7 +81,7 @@ describe('session persistence through the HTTP server', () => {
       };
     });
 
-    expect(record.v).toBe(1);
+    expect(record.v).toBe(2);   // v2 adds todos/goal/schedules
     expect(record.sessionId).toBe(created.sessionId);
   });
 

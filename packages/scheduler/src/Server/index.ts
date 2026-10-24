@@ -15,8 +15,12 @@ import { loadPluginsFrom } from '../Plugins/loader.js';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { loadPin, loadSessions, removeSessionFile, savePin, saveSession } from './stateStore.js';
+import { loadPin, loadSessionsSync, removeSessionFile, savePin, saveSession } from './stateStore.js';
 import { govern, DEFAULT_GOVERNANCE, type GovernanceConfig } from './contextGovernor.js';
+import {
+  isStandardTool, runStandardTool, startJob,
+  type Goal, type Schedule, type Todo, type JobRecord,
+} from './standardTools.js';
 import { startPluginWatcher } from '../Plugins/watcher.js';
 import { mkdir, readdir, readFile, writeFile, appendFile } from 'node:fs/promises';
 import { exec } from 'node:child_process';
@@ -189,6 +193,10 @@ interface SchedulerSession {
   /** How many times context maintenance rewrote the prefix (each one is a cache miss). */
   prefixResets?: number;
   lastMaintenance?: { trigger: string; savedTokens: number } | null;
+  /** Standard-tool state (ported from dsh's standard preset). */
+  todos?: Todo[];
+  goal?: Goal | null;
+  schedules?: Schedule[];
 }
 
 // ── Context governance (window / thresholds) ──────────────────────────────
@@ -313,27 +321,6 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 
   // ── Plugin runtime (Phase 3) ────────────────────────────────────────────
   // Hooks fire asynchronously; plugin failures are logged, never fatal.
-  if (config.stateDir) {
-    void loadSessions(config.stateDir).then(records => {
-      for (const r of records) {
-        sessions.set(r.sessionId, {
-          id: r.sessionId,
-          mode: r.mode,
-          messages: r.messages as SessionMessage[],
-          pendingApproval: r.pendingApproval,
-          createdAt: new Date(r.createdAt),
-        });
-        // A restarted kernel may have an empty session map; re-register so the
-        // restored conversation keeps its projections and FSM state going.
-        // `startKernelSession` is idempotent, so a kernel that already loaded
-        // this session from its state dir answers `resumed: true` and keeps
-        // the FSM it restored.
-        void bridge.startKernelSession(r.sessionId, r.mode).catch(e =>
-          console.error(`kernel session restore ${r.sessionId}:`, e));
-      }
-    }).catch(e => console.error('session restore failed:', e));
-  }
-
   const plugins = new PluginManager(events);
   plugins.registerService('events', events, ['events:listen', 'events:emit']);
   plugins.registerService('bridge', bridge, ['model:query', 'sessions:list']);
@@ -709,11 +696,44 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // ── Sessions ──────────────────────────────────────────────────────────
 
   const sessions = new Map<string, SchedulerSession>();
+
+  if (config.stateDir) {
+    // Synchronous on purpose: the server is already listening, and a restored
+    // session that is not in the map yet answers 404 to a reconnecting host.
+    try {
+      for (const r of loadSessionsSync(config.stateDir)) {
+        sessions.set(r.sessionId, {
+          id: r.sessionId,
+          mode: r.mode,
+          messages: r.messages as SessionMessage[],
+          pendingApproval: r.pendingApproval,
+          createdAt: new Date(r.createdAt),
+          // v2 fields; absent in v1 files, hence the defaults
+          ...(Array.isArray(r.todos) ? { todos: r.todos as Todo[] } : {}),
+          ...(r.goal !== undefined ? { goal: r.goal as Goal | null } : {}),
+          ...(Array.isArray(r.schedules) ? { schedules: r.schedules as Schedule[] } : {}),
+        });
+        // A restarted kernel may have an empty session map; re-register so the
+        // restored conversation keeps its projections and FSM state going.
+        // `startKernelSession` is idempotent, so a kernel that already loaded
+        // this session from its state dir answers `resumed: true` and keeps
+        // the FSM it restored.
+        void bridge.startKernelSession(r.sessionId, r.mode).catch(e =>
+          console.error(`kernel session restore ${r.sessionId}:`, e));
+      }
+    } catch (e) {
+      console.error('session restore failed:', e);
+    }
+  }
+
   // optional disk persistence (G2): no-op without stateDir
-  const persistSession = (session: SchedulerSession) => {
-    if (!config.stateDir) return;
-    void saveSession(config.stateDir, session).catch(e =>
-      console.error(`persist session ${session.id}:`, e));
+  // Returns the write so a caller that must be durable (a tool that just
+  // mutated session state) can await it; the rest fire-and-forget.
+  const persistSession = (session: SchedulerSession): Promise<void> => {
+    if (!config.stateDir) return Promise.resolve();
+    return saveSession(config.stateDir, session).catch(e => {
+      console.error(`persist session ${session.id}:`, e);
+    });
   };
 
   app.post('/api/session/start', (req, res) => {
@@ -778,6 +798,14 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // real project) can choose the root without patching code.
   const WORKSPACE = process.env.TRHA_WORKSPACE ?? '/tmp/trha-workspace';
   const runShell = promisify(exec);
+  // Background jobs cannot outlive this process, so they are process-local on
+  // purpose (the tool tells the model exactly that).
+  const jobsBySession = new Map<string, Map<string, JobRecord>>();
+  const jobsFor = (sessionId: string): Map<string, JobRecord> => {
+    let m = jobsBySession.get(sessionId);
+    if (!m) { m = new Map(); jobsBySession.set(sessionId, m); }
+    return m;
+  };
   // bash runs with the workspace as cwd, so a missing directory would fail the
   // very first command; create it once at startup.
   void mkdir(WORKSPACE, { recursive: true }).catch(() => {});
@@ -876,20 +904,31 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   const workspaceRelative = (raw: string): string =>
     path.isAbsolute(raw) ? raw : path.join(WORKSPACE, raw);
 
-  const executeTool = async (c: ToolCallData): Promise<string> => {
+  const executeTool = async (c: ToolCallData, sessionId?: string): Promise<string> => {
     let argsObj: Record<string, unknown> = {};
     try {
       argsObj = JSON.parse(c.arguments) as Record<string, unknown>;
     } catch {
       return `ERROR: malformed arguments for ${c.name}`;
     }
+    // Canonical names first, then the legacy aliases: one implementation per
+    // capability, so the schema and the executor cannot drift apart.
+    const name = canonicalToolName(c.name);
     // 权限规则引擎：deny > ask > allow（显式规则覆盖，沙箱兜底文件边界）
-    const verdict = decidePermission(c.name, argsObj);
+    const verdict = decidePermission(name, argsObj);
     if (verdict.action === 'deny') return `ERROR: ${verdict.reason}`;
     if (verdict.action === 'ask') return `REQUIRE_APPROVAL: ${verdict.reason}`;
-    if (c.name === 'bash') {
+    if (name === 'bash') {
       const cmd = typeof argsObj.command === 'string' ? argsObj.command : '';
       if (!cmd.trim()) return 'ERROR: missing command';
+      if (argsObj.background === true) {
+        if (!sessionId) return 'ERROR: background jobs need a session';
+        const id = startJob(
+          { workspace: WORKSPACE, state: {}, jobs: jobsFor(sessionId), sessionId },
+          cmd,
+        );
+        return `OK: started ${id} (use job_output to read it)`;
+      }
       try {
         const { stdout, stderr } = await runShell(cmd, {
           cwd: WORKSPACE, timeout: 120_000, maxBuffer: 4 * 1024 * 1024,
@@ -901,9 +940,6 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           + (err.stdout || err.stderr ? '' : `\n${err.message}`));
       }
     }
-    // Canonical names first, then the legacy aliases: one implementation per
-    // capability, so the schema and the executor cannot drift apart.
-    const name = canonicalToolName(c.name);
     if (name === 'read') {
       const target = resolveReadPath(argsObj.path);
       if (!target) return 'ERROR: missing/invalid path argument';
@@ -1018,6 +1054,22 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         return out.length ? out.join('\n') : '(no matches)';
       } catch (e) {
         return `ERROR: ${(e as Error).message}`;
+      }
+    }
+    if (isStandardTool(name)) {
+      const session = sessionId ? sessions.get(sessionId) : undefined;
+      if (!session) return `ERROR: ${name} needs a live session`;
+      const out = await runStandardTool(name, argsObj, {
+        workspace: WORKSPACE,
+        state: session,
+        jobs: jobsFor(sessionId!),
+        sessionId: sessionId!,
+      });
+      if (out !== null) {
+        // todos/goal/schedules belong to the session: persist them with it,
+        // and wait — a crash right after the tool must not lose the update.
+        await persistSession(session);
+        return out;
       }
     }
     return `ERROR: unknown tool: ${c.name}`;
@@ -1179,7 +1231,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       for (const call of calls) {
         const started = Date.now();
         await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'running');
-        const output = await executeTool(call);
+        const output = await executeTool(call, session.id);
         // ask 权限规则：暂停执行并发起确认（批准后重放该工具）
         if (output.startsWith('REQUIRE_APPROVAL:')) {
           await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'failed', started, output);

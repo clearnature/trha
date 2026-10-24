@@ -8,7 +8,13 @@ describe('toolCatalog', () => {
     // Names follow deepseek-harness; a coding agent needs a shell to verify
     // anything it writes, so bash comes first.
     expect(toolCatalog.map(t => t.name))
-      .toEqual(['bash', 'read', 'write', 'edit', 'glob', 'grep', 'append_file']);
+      .toEqual([
+        'bash', 'read', 'write', 'edit', 'glob', 'grep',
+        'todo_write', 'create_goal', 'get_goal', 'update_goal',
+        'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+        'job_list', 'job_output', 'job_kill', 'skill', 'web_fetch',
+        'append_file',
+      ]);
   });
 
   it('maps the legacy file-tool names onto the canonical ones', () => {

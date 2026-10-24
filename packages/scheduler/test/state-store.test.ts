@@ -2,7 +2,7 @@
 // removal, in an isolated temp directory.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -35,7 +35,8 @@ describe('stateStore', () => {
     expect(loaded).toHaveLength(1);
     expect(loaded[0].sessionId).toBe('session-1');
     expect(loaded[0].messages).toEqual([{ role: 'user', content: 'hi' }]);
-    expect(loaded[0].v).toBe(1);
+    // v2 adds the standard-tool fields (todos/goal/schedules)
+    expect(loaded[0].v).toBe(2);
   });
 
   it('loads multiple sessions and skips corrupt files', async () => {
