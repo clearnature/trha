@@ -1,6 +1,7 @@
 module Main (main) where
 
 import Test.Hspec
+import qualified Core.ArgsSpec
 import qualified Core.ReplaySpec
 import qualified Core.TranscriptSpec
 import qualified Core.SSESpec
@@ -20,6 +21,7 @@ import qualified UI.ThemeSpec
 
 main :: IO ()
 main = hspec $ do
+  Core.ArgsSpec.spec
   Core.ReplaySpec.spec
   Core.TranscriptSpec.spec
   Core.SSESpec.spec

@@ -558,6 +558,7 @@ executable trha
   other-modules:
     Bridge.Scheduler
     Config.Settings
+    Core.Args
     UI.Commands.Registry
     Core.HTTP
     Core.Transcript

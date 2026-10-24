@@ -86,6 +86,17 @@ cd packages/app/CLI
 cabal build
 ```
 
+运行方式（`trha` 无子命令直接进 TUI）：
+
+```bash
+trha                 # 默认：全屏 TUI（需要交互终端）
+trha cli             # 行式 REPL（可用于管道/脚本）
+trha serve           # 内核 OpenAI 兼容 API，默认 :3333
+trha --help          # 全局选项 + 子命令
+```
+
+TUI 直接驱动终端，stdin 不是终端时会明确报错并提示改用 `trha cli`，而不是抛 `hWaitForInput: end of file`。
+
 ## 架构
 
 详见 [docs/architecture/architecture.md](docs/architecture/architecture.md)。

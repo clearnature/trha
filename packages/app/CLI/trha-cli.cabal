@@ -15,6 +15,7 @@ executable trha
   other-modules:
     Bridge.Scheduler
     Config.Settings
+    Core.Args
     UI.Commands.Registry
     Core.HTTP
     Core.Transcript
@@ -64,6 +65,8 @@ test-suite trha-cli-test
   main-is:          Spec.hs
   hs-source-dirs:   ., test
   other-modules:
+    Core.Args
+    Core.ArgsSpec
     Core.SSE
     Core.SSESpec
     Core.TypesSpec
@@ -96,4 +99,5 @@ test-suite trha-cli-test
                   , filepath
                   , time
                   , unix
+                  , optparse-applicative >= 0.18
   default-language: Haskell2010

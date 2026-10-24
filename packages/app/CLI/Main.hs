@@ -3,6 +3,7 @@
 module Main where
 
 import Core.Types
+import Core.Args
 import Bridge.Scheduler
 import Config.Settings
 import qualified API.Server (startStubKernel)
@@ -24,104 +25,9 @@ import System.Directory (getHomeDirectory, createDirectoryIfMissing)
 import Data.Maybe (fromMaybe)
 import Control.Applicative ((<|>))
 import System.Environment (lookupEnv)
+import System.Exit (ExitCode(ExitFailure), exitWith)
 import System.FilePath ((</>))
-import System.IO (hFlush, stdout, hSetEncoding, utf8)
-
--- | Global options (shared across subcommands)
-data GlobalOpts = GlobalOpts
-  { optHost  :: Maybe Text
-  , optPort  :: Maybe Int
-  , optModel :: Maybe Text
-  , optTheme :: Maybe Text
-  , optLang  :: Maybe Text
-  } deriving (Show)
-
--- | Subcommand
-data SubCommand
-  = CmdTUI
-  | CmdCLI
-  | CmdServe Int (Maybe FilePath)
-  | CmdSettingsSchema
-  deriving (Show)
-
--- | Global options parser
-globalOptsParser :: Parser GlobalOpts
-globalOptsParser = GlobalOpts
-  <$> optional (strOption
-        ( long "host"
-        <> short 'h'
-        <> metavar "HOST"
-        <> help "Server host (default: localhost)"
-        ))
-  <*> optional (option auto
-        ( long "port"
-        <> short 'p'
-        <> metavar "PORT"
-        <> help "Server port (default: 3456)"
-        ))
-  <*> optional (strOption
-        ( long "model"
-        <> short 'm'
-        <> metavar "MODEL"
-        <> help "Model name (default: deepseek-flash)"
-        ))
-  <*> optional (strOption
-        ( long "theme"
-        <> metavar "THEME"
-        <> help "TUI theme: tokyo-night | light (default: tokyo-night)"
-        ))
-  <*> optional (strOption
-        ( long "lang"
-        <> metavar "LANG"
-        <> help "Interface language: zh | en (default: zh)"
-        ))
-
--- | TUI subcommand
-tuiParser :: Parser SubCommand
-tuiParser = pure CmdTUI
-
--- | CLI subcommand
-cliParser :: Parser SubCommand
-cliParser = pure CmdCLI
-
--- | Serve subcommand.
---
--- The kernel port is deliberately separate from @configPort@: the latter is
--- how the CLI/TUI reaches the *scheduler* (3456), while this is where the
--- kernel's OpenAI-compatible API listens. 3333 keeps the two from colliding.
-serveParser :: Parser SubCommand
-serveParser = CmdServe
-  <$> option auto
-        ( long "kernel-port"
-        <> metavar "PORT"
-        <> value 3333
-        <> showDefault
-        <> help "Kernel API port (default: 3333; the scheduler talks to this)"
-        )
-  <*> optional (strOption
-        ( long "state-dir"
-        <> metavar "DIR"
-        <> help "Persist kernel sessions to DIR (default: in-memory only)"
-        ))
-
--- | Command parser with subcommands
-commandParser :: Parser (GlobalOpts, SubCommand)
-commandParser = (,)
-  <$> globalOptsParser
-  <*> subparser
-        ( command "tui"
-            (info tuiParser
-              (progDesc "Run in TUI mode (fullscreen terminal UI)"))
-        <> command "cli"
-            (info cliParser
-              (progDesc "Run in CLI mode (interactive REPL)"))
-        <> command "serve"
-            (info serveParser
-              (progDesc "Start API server"))
-        <> command "settings-schema"
-            (info (pure CmdSettingsSchema)
-              (progDesc "Print the machine-readable settings schema (JSON)"))
-        )
+import System.IO (hFlush, hIsTerminalDevice, hPutStrLn, stderr, stdin, stdout, hSetEncoding, utf8)
 
 -- | Build CLIConfig from global options.
 -- Ensures ~/.trha/settings.yaml exists (first run writes the default),
@@ -137,14 +43,26 @@ buildConfig opts = do
     , configLang = fromMaybe (configLang baseConfig) (optLang opts)
     }
 
--- | Run TUI mode
+-- | Run TUI mode.
+--
+-- The brick UI drives the terminal directly, so a pipe (or @/dev/null@) has no
+-- meaning here: vty would fail with @hWaitForInput: end of file@ from inside
+-- the event loop. Say what is wrong instead, and point at @trha cli@, which is
+-- line-oriented and works on a pipe.
 runTUIMode :: CLIConfig -> IO ()
 runTUIMode config = do
-  let lang = parseLang (configLang config)
-  putStrLn (T.unpack (tr lang "Starting TUI mode..."))
-  putStrLn (T.unpack (tr lang "Press Ctrl+Q to quit"))
-  bridge <- createSchedulerBridge config
-  runTUI bridge config
+  tty <- hIsTerminalDevice stdin
+  if not tty
+    then do
+      hPutStrLn stderr "trha: the TUI needs an interactive terminal (stdin is not a tty)."
+      hPutStrLn stderr "      Run `trha cli` for the line-based REPL, or `trha --help`."
+      exitWith (ExitFailure 2)
+    else do
+      let lang = parseLang (configLang config)
+      putStrLn (T.unpack (tr lang "Starting TUI mode..."))
+      putStrLn (T.unpack (tr lang "Press Ctrl+Q to quit"))
+      bridge <- createSchedulerBridge config
+      runTUI bridge config
 
 -- | Run CLI mode
 runCLIMode :: CLIConfig -> IO ()
@@ -243,16 +161,10 @@ repl bridge sessionRef modelRef lang = do
 -- | Main entry point
 main :: IO ()
 main = do
-  (opts, cmd) <- execParser opts'
+  (opts, mcmd) <- execParser cliParserInfo
   config <- buildConfig opts
-  case cmd of
+  case resolveCommand mcmd of
     CmdTUI   -> runTUIMode config
     CmdCLI   -> runCLIMode config
     CmdServe kernelPort stateDir -> runServeMode kernelPort stateDir config
     CmdSettingsSchema -> putStrLn (T.unpack settingsSchemaJson)
-  where
-    opts' = info (commandParser <**> helper)
-      ( fullDesc
-      <> progDesc "trha agent harness"
-      <> header "trha - A microkernel agent harness"
-      )
