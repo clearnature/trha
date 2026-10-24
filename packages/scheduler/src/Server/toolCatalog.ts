@@ -93,6 +93,159 @@ export const toolCatalog: ToolDefinition[] = [
     },
   },
   {
+    name: 'subagent',
+    description: 'Run a task in a child agent session and return its final answer',
+    parameters: {
+      type: 'object',
+      properties: {
+        task: { type: 'string' },
+        name: { type: 'string', description: 'short label used in the child session id' },
+      },
+      required: ['task'],
+    },
+  },
+  {
+    name: 'list_agents',
+    description: 'List agent sessions (id, busy/idle, message count, parent)',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'send_message',
+    description: 'Send a message to another agent session; runs a turn if it is idle',
+    parameters: {
+      type: 'object',
+      properties: { to: { type: 'string' }, text: { type: 'string' } },
+      required: ['to', 'text'],
+    },
+  },
+  {
+    name: 'interrupt_agent',
+    description: 'Ask an agent to stop at the next round boundary',
+    parameters: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'team_task_create',
+    description: 'Add a task to the shared team list (visible to every teammate)',
+    parameters: {
+      type: 'object',
+      properties: {
+        subject: { type: 'string' },
+        description: { type: 'string' },
+        assignee: { type: 'string' },
+      },
+      required: ['subject'],
+    },
+  },
+  { name: 'team_task_list', description: 'List the shared team tasks', parameters: { type: 'object', properties: {}, required: [] } },
+  {
+    name: 'team_task_update',
+    description: 'Update a team task status / assignee / description',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
+        assignee: { type: 'string' },
+        description: { type: 'string' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'workflow',
+    description: 'Run a list of named subagent tasks in order and return their answers',
+    parameters: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { name: { type: 'string' }, task: { type: 'string' } },
+            required: ['task'],
+          },
+        },
+      },
+      required: ['steps'],
+    },
+  },
+  {
+    name: 'list_mcp_resources',
+    description: 'List MCP resources from the configured servers',
+    parameters: {
+      type: 'object',
+      properties: { server: { type: 'string' } },
+      required: [],
+    },
+  },
+  {
+    name: 'list_mcp_resource_templates',
+    description: 'List MCP resource templates from the configured servers',
+    parameters: {
+      type: 'object',
+      properties: { server: { type: 'string' } },
+      required: [],
+    },
+  },
+  {
+    name: 'read_mcp_resource',
+    description: 'Read one MCP resource by URI',
+    parameters: {
+      type: 'object',
+      properties: { uri: { type: 'string' }, server: { type: 'string' } },
+      required: ['uri'],
+    },
+  },
+  {
+    name: 'lsp',
+    description: 'Ask the language server about a file (hover/definition/references/diagnostics/symbols)',
+    parameters: {
+      type: 'object',
+      properties: {
+        file: { type: 'string' },
+        operation: {
+          type: 'string',
+          enum: ['hover', 'definition', 'references', 'diagnostics', 'symbols'],
+        },
+        line: { type: 'number', description: '1-based' },
+        character: { type: 'number', description: '1-based' },
+      },
+      required: ['file', 'operation'],
+    },
+  },
+  {
+    name: 'browser_navigate',
+    description: 'Open a URL in a headless browser and return the rendered text',
+    parameters: {
+      type: 'object',
+      properties: { url: { type: 'string' } },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'browser_extract',
+    description: 'Read text from the current page (optionally one CSS selector)',
+    parameters: {
+      type: 'object',
+      properties: { selector: { type: 'string' } },
+      required: [],
+    },
+  },
+  {
+    name: 'browser_screenshot',
+    description: 'Take a PNG screenshot of the current page into the workspace',
+    parameters: {
+      type: 'object',
+      properties: { path: { type: 'string' } },
+      required: [],
+    },
+  },
+  { name: 'browser_close', description: 'Close the headless browser', parameters: { type: 'object', properties: {}, required: [] } },
+  {
     name: 'ask_user_question',
     description: 'Ask the user a question and end this turn; the answer arrives as the next message',
     parameters: {

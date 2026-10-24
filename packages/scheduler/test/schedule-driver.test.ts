@@ -130,7 +130,10 @@ describe('schedule driver', () => {
 
     const app = await boot(dir, stateDir);
     await wait(450);
+    // stop firing before reading, otherwise an in-flight tick can bump runs
+    // between our read and the cancellation write
     app.close();
+    await wait(120);
     const mid = await readRecord(stateDir, sessionId);
     const sched = scheduleOf(mid);
     expect(Number(sched.runs)).toBeGreaterThanOrEqual(2);

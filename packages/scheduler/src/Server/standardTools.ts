@@ -15,6 +15,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { listMcpResources, listMcpResourceTemplates, readMcpResource } from './mcp.js';
+import { lspQuery } from './lsp.js';
+import { browserClose, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 
 export interface Todo {
   id: string;
@@ -56,8 +59,36 @@ export interface PendingQuestion {
   askedAt: string;
 }
 
+export interface AgentRef {
+  id: string;
+  parentId?: string;
+  busy?: boolean;
+  messages: number;
+  mode?: string;
+}
+
+export interface TeamTask {
+  id: string;
+  subject: string;
+  description?: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  assignee?: string;
+}
+
+/** Host hooks the agent-orchestration tools need; supplied by the scheduler. */
+export interface AgentHooks {
+  spawn: (task: string, name?: string) => Promise<{ id: string; reply: string }>;
+  list: () => AgentRef[];
+  send: (id: string, text: string) => Promise<{ delivered: boolean; reply?: string }>;
+  interrupt: (id: string) => boolean;
+  /** Team tasks live on the root session so every teammate sees them. */
+  teamTasks: () => TeamTask[];
+  setTeamTasks: (tasks: TeamTask[]) => void;
+}
+
 export interface StandardToolHost {
   workspace: string;
+  agents?: AgentHooks;
   /** Mutable session slice; the caller persists it after the tool runs. */
   state: {
     todos?: Todo[];
@@ -79,6 +110,10 @@ const clip = (s: string, cap = MAX_OUTPUT_CHARS): string =>
 
 export const STANDARD_TOOL_NAMES = [
   'ask_user_question', 'exit_plan_mode', 'present', 'run_code', 'read_image',
+  'subagent', 'list_agents', 'send_message', 'interrupt_agent',
+  'team_task_create', 'team_task_list', 'team_task_update', 'workflow',
+  'list_mcp_resources', 'read_mcp_resource', 'list_mcp_resource_templates', 'lsp',
+  'browser_navigate', 'browser_extract', 'browser_screenshot', 'browser_close',
   'todo_write',
   'create_goal', 'get_goal', 'update_goal',
   'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
@@ -133,6 +168,184 @@ export async function runStandardTool(
   host: StandardToolHost,
 ): Promise<string | null> {
   const now = host.now ?? (() => new Date());
+
+  if (name === 'list_mcp_resources') {
+    try {
+      const list = await listMcpResources(typeof args.server === 'string' ? args.server : undefined);
+      if (list.length === 0) return '(no resources)';
+      return list.map(r => `${r.uri}\t${r.name ?? ''}\t${r.mimeType ?? ''}`).join('\n');
+    } catch (e) {
+      return `ERROR: ${(e as Error).message}`;
+    }
+  }
+
+  if (name === 'list_mcp_resource_templates') {
+    try {
+      const list = await listMcpResourceTemplates(typeof args.server === 'string' ? args.server : undefined);
+      if (list.length === 0) return '(no resource templates)';
+      return list.map(t => `${t.uriTemplate}\t${t.name ?? ''}`).join('\n');
+    } catch (e) {
+      return `ERROR: ${(e as Error).message}`;
+    }
+  }
+
+  if (name === 'read_mcp_resource') {
+    try {
+      return clip(await readMcpResource(
+        typeof args.uri === 'string' ? args.uri : '',
+        typeof args.server === 'string' ? args.server : undefined,
+      ));
+    } catch (e) {
+      return `ERROR: ${(e as Error).message}`;
+    }
+  }
+
+  if (name === 'browser_navigate') {
+    const url = typeof args.url === 'string' ? args.url : '';
+    if (!url) return 'ERROR: url is required';
+    try {
+      const page = await browserNavigate(url);
+      return clip(`title: ${page.title}\nurl: ${page.url}\n\n${page.text}`);
+    } catch (e) {
+      return `ERROR: ${(e as Error).message}`;
+    }
+  }
+
+  if (name === 'browser_extract') {
+    try {
+      return clip(await browserExtract(typeof args.selector === 'string' ? args.selector : undefined));
+    } catch (e) {
+      return `ERROR: ${(e as Error).message}`;
+    }
+  }
+
+  if (name === 'browser_screenshot') {
+    try {
+      const file = await browserScreenshot(host.workspace, typeof args.path === 'string' ? args.path : undefined);
+      return `OK: screenshot -> ${file}`;
+    } catch (e) {
+      return `ERROR: ${(e as Error).message}`;
+    }
+  }
+
+  if (name === 'browser_close') {
+    browserClose();
+    return 'OK: browser closed';
+  }
+
+  if (name === 'lsp') {
+    const file = typeof args.file === 'string' ? args.file : '';
+    const operation = args.operation;
+    if (!file) return 'ERROR: file is required';
+    if (operation !== 'hover' && operation !== 'definition' && operation !== 'references'
+        && operation !== 'diagnostics' && operation !== 'symbols') {
+      return 'ERROR: operation must be hover|definition|references|diagnostics|symbols';
+    }
+    try {
+      const out = await lspQuery({
+        file,
+        operation,
+        ...(typeof args.line === 'number' ? { line: args.line } : {}),
+        ...(typeof args.character === 'number' ? { character: args.character } : {}),
+      });
+      return clip(out);
+    } catch (e) {
+      return `ERROR: ${(e as Error).message}`;
+    }
+  }
+
+  if (name === 'subagent') {
+    if (!host.agents) return 'ERROR: subagents are not available in this host';
+    const task = typeof args.task === 'string' ? args.task.trim() : '';
+    if (!task) return 'ERROR: task is required';
+    const nameHint = typeof args.name === 'string' ? args.name : undefined;
+    const r = await host.agents.spawn(task, nameHint);
+    return `subagent ${r.id} finished:\n${clip(r.reply)}`;
+  }
+
+  if (name === 'list_agents') {
+    if (!host.agents) return 'ERROR: subagents are not available in this host';
+    const list = host.agents.list();
+    if (list.length === 0) return '(no agents)';
+    return list.map(a =>
+      `${a.id}\t${a.busy ? 'busy' : 'idle'}\t${a.messages} msgs${a.parentId ? `\tparent=${a.parentId}` : ''}`,
+    ).join('\n');
+  }
+
+  if (name === 'send_message') {
+    if (!host.agents) return 'ERROR: subagents are not available in this host';
+    const to = typeof args.to === 'string' ? args.to : '';
+    const text = typeof args.text === 'string' ? args.text : (typeof args.message === 'string' ? args.message : '');
+    if (!to || !text.trim()) return 'ERROR: to and text are required';
+    const r = await host.agents.send(to, text.trim());
+    if (!r.delivered) return `ERROR: no agent ${to}`;
+    return r.reply !== undefined ? `reply from ${to}:\n${clip(r.reply)}` : `queued for ${to}`;
+  }
+
+  if (name === 'interrupt_agent') {
+    if (!host.agents) return 'ERROR: subagents are not available in this host';
+    const id = typeof args.id === 'string' ? args.id : '';
+    if (!id) return 'ERROR: id is required';
+    // The running loop checks this flag between rounds and between tool calls.
+    const wasBusy = host.agents.interrupt(id);
+    return wasBusy ? `OK: interrupted ${id}` : `OK: ${id} was idle`;
+  }
+
+  if (name === 'team_task_create') {
+    if (!host.agents) return 'ERROR: team tasks are not available in this host';
+    const subject = typeof args.subject === 'string' ? args.subject.trim() : '';
+    if (!subject) return 'ERROR: subject is required';
+    const tasks = host.agents.teamTasks();
+    const task: TeamTask = {
+      id: `t${tasks.length + 1}`,
+      subject,
+      ...(typeof args.description === 'string' ? { description: args.description } : {}),
+      status: 'pending',
+      ...(typeof args.assignee === 'string' ? { assignee: args.assignee } : {}),
+    };
+    host.agents.setTeamTasks([...tasks, task]);
+    return `OK: ${JSON.stringify(task)}`;
+  }
+
+  if (name === 'team_task_list') {
+    if (!host.agents) return 'ERROR: team tasks are not available in this host';
+    const tasks = host.agents.teamTasks();
+    return tasks.length ? tasks.map(t => JSON.stringify(t)).join('\n') : '(no team tasks)';
+  }
+
+  if (name === 'team_task_update') {
+    if (!host.agents) return 'ERROR: team tasks are not available in this host';
+    const id = typeof args.id === 'string' ? args.id : '';
+    const tasks = host.agents.teamTasks();
+    const t = tasks.find(x => x.id === id);
+    if (!t) return `ERROR: no team task ${id}`;
+    if (args.status === 'pending' || args.status === 'in_progress' || args.status === 'completed') {
+      t.status = args.status;
+    }
+    if (typeof args.assignee === 'string') t.assignee = args.assignee;
+    if (typeof args.description === 'string') t.description = args.description;
+    host.agents.setTeamTasks(tasks);
+    return `OK: ${JSON.stringify(t)}`;
+  }
+
+  if (name === 'workflow') {
+    if (!host.agents) return 'ERROR: workflow is not available in this host';
+    const steps = Array.isArray(args.steps) ? args.steps : [];
+    if (steps.length === 0) return 'ERROR: steps must be a non-empty array of {name, task}';
+    const out: Array<Record<string, unknown>> = [];
+    for (const raw of steps) {
+      const o = raw as { name?: unknown; task?: unknown };
+      const task = typeof o.task === 'string' ? o.task.trim() : '';
+      if (!task) { out.push({ name: String(o.name ?? ''), error: 'missing task' }); continue; }
+      try {
+        const r = await host.agents.spawn(task, typeof o.name === 'string' ? o.name : undefined);
+        out.push({ name: String(o.name ?? r.id), agent: r.id, reply: clip(r.reply, 4000) });
+      } catch (e) {
+        out.push({ name: String(o.name ?? ''), error: String(e) });
+      }
+    }
+    return clip(JSON.stringify(out, null, 2));
+  }
 
   if (name === 'ask_user_question') {
     const question = args.question;

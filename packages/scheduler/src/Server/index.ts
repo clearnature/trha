@@ -19,7 +19,8 @@ import { loadPin, loadSessionsSync, removeSessionFile, savePin, saveSession } fr
 import { govern, DEFAULT_GOVERNANCE, type GovernanceConfig } from './contextGovernor.js';
 import {
   isStandardTool, runStandardTool, startJob,
-  type Goal, type PendingQuestion, type Schedule, type Todo, type JobRecord,
+  type AgentHooks, type Goal, type PendingQuestion, type Schedule, type TeamTask,
+  type Todo, type JobRecord,
 } from './standardTools.js';
 import { startPluginWatcher } from '../Plugins/watcher.js';
 import { mkdir, readdir, readFile, writeFile, appendFile } from 'node:fs/promises';
@@ -198,6 +199,12 @@ interface SchedulerSession {
   goal?: Goal | null;
   schedules?: Schedule[];
   pendingQuestion?: PendingQuestion | null;
+  /** Subagent linkage: a child session points at the one that spawned it. */
+  parentId?: string;
+  depth?: number;
+  abortRequested?: boolean;
+  /** Team tasks are shared on the root session. */
+  teamTasks?: TeamTask[];
 }
 
 // ── Context governance (window / thresholds) ──────────────────────────────
@@ -715,6 +722,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           ...(Array.isArray(r.schedules) ? { schedules: r.schedules as Schedule[] } : {}),
           ...(r.pendingQuestion !== undefined
             ? { pendingQuestion: r.pendingQuestion as PendingQuestion | null } : {}),
+          ...(Array.isArray(r.teamTasks) ? { teamTasks: r.teamTasks as TeamTask[] } : {}),
+          ...(typeof r.parentId === 'string' ? { parentId: r.parentId } : {}),
         });
         // A restarted kernel may have an empty session map; re-register so the
         // restored conversation keeps its projections and FSM state going.
@@ -1062,12 +1071,15 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     if (isStandardTool(name)) {
       const session = sessionId ? sessions.get(sessionId) : undefined;
       if (!session) return `ERROR: ${name} needs a live session`;
+      // A tool failure is a tool *result*: letting it reject would kill the
+      // turn (and leave the model with no way to recover).
       const out = await runStandardTool(name, argsObj, {
         workspace: WORKSPACE,
         state: session,
         jobs: jobsFor(sessionId!),
         sessionId: sessionId!,
-      });
+        agents: agentHooksFor(session),
+      }).catch((e: unknown) => `ERROR: ${String(e)}`);
       if (out !== null) {
         // todos/goal/schedules belong to the session: persist them with it,
         // and wait — a crash right after the tool must not lose the update.
@@ -1127,6 +1139,14 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     let lastCallKey = '';
     let sameCallRepeats = 0;
     for (let round = 0; round < maxToolRounds; round++) {
+      if (session.abortRequested) {
+        session.abortRequested = false;
+        const stopped = '(interrupted)';
+        session.messages.push({ role: 'assistant', content: stopped });
+        events.emit('agent:message', { sessionId: session.id, role: 'assistant', content: stopped });
+        await persistSession(session);
+        return stopped;
+      }
       let response;
       // "Model-visible means logged": every model request is observable
       // before it is sent, so a transcript/plugin can reconstruct what the
@@ -1319,7 +1339,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
     session.pendingApproval = null;
     // A3: stream the answer to whoever listens on this session's SSE channel.
-    const reply = await runStep(session, message, { provider, model, genParams },
+    const reply = await runTurn(session, message, { provider, model, genParams },
       text => events.emit('agent:delta', { sessionId: session.id, text }));
     res.json({
       reply, messages: session.messages, mode: session.mode,
@@ -1364,10 +1384,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       const output = await executeTool(pendingCall);
       (session as { pendingToolCall?: ToolCallData | undefined }).pendingToolCall = undefined;
       session.messages.push({ role: 'tool', tool_call_id: pendingCall.id, content: output });
-      const reply = await runStep(session, pending.message);
+      const reply = await runTurn(session, pending.message);
       return res.json({ status: 'approved', tool: pendingCall.name, output, reply, messages: session.messages, mode: session.mode });
     }
-    const reply = await runStep(session, pending.message);
+    const reply = await runTurn(session, pending.message);
     res.json({ status: 'approved', reply, messages: session.messages, mode: session.mode });
   });
 
@@ -1384,7 +1404,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     session.pendingQuestion = null;
     events.emit('agent:answer', { sessionId: session.id, questionId: pending.id, answer });
     try {
-      const reply = await runStep(session, answer, {});
+      const reply = await runTurn(session, answer, {});
       await persistSession(session);
       return res.json({ status: 'answered', questionId: pending.id, reply, mode: session.mode });
     } catch (e) {
@@ -1404,15 +1424,128 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // Replaying an arbitrary backlog at boot would be a cost bomb, and silently
   // firing nothing would make the schedule look honoured when it was not.
   const scheduleTickMs = (() => {
-    const n = Number(process.env.TRHA_SCHEDULE_TICK_MS ?? '');
+    // Same trap: an empty string parses to 0, which would silently turn the
+    // driver off in every deployment that does not set the variable.
+    const raw = process.env.TRHA_SCHEDULE_TICK_MS;
+    if (raw === undefined || raw.trim() === '') return 5000;
+    const n = Number(raw);
     return Number.isFinite(n) && n >= 0 ? n : 5000;
   })();
   const scheduleGraceMs = (() => {
-    const n = Number(process.env.TRHA_SCHEDULE_GRACE_MS ?? '');
+    const raw = process.env.TRHA_SCHEDULE_GRACE_MS;
+    if (raw === undefined || raw.trim() === '') return 5 * 60_000;
+    const n = Number(raw);
     return Number.isFinite(n) && n > 0 ? n : 5 * 60_000;
   })();
+  // Sessions with a turn in flight: used by interrupt_agent and by the driver
+  // to avoid overlapping turns on one session.
+  const inFlight = new Set<string>();
   const drivingSessions = new Set<string>();
+  let subagentSeq = 0;
   let ticking = false;
+  const maxSubagentDepth = (() => {
+    // Number('') is 0: treat "unset" as unset, not as "no subagents allowed".
+    const raw = process.env.TRHA_MAX_SUBAGENT_DEPTH;
+    if (raw === undefined || raw.trim() === '') return 2;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : 2;
+  })();
+
+  const rootSessionOf = (session: SchedulerSession): SchedulerSession => {
+    let cur = session;
+    const seen = new Set<string>();
+    while (cur.parentId && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      const parent = sessions.get(cur.parentId);
+      if (!parent) break;
+      cur = parent;
+    }
+    return cur;
+  };
+
+  /** Wrap one turn so interrupt_agent and the driver see that it is running. */
+  const runTurn = async (
+    session: SchedulerSession,
+    message: string,
+    target: Parameters<typeof runStep>[2] = {},
+    onDelta?: Parameters<typeof runStep>[3],
+  ): Promise<string> => {
+    inFlight.add(session.id);
+    try {
+      return await runStep(session, message, target, onDelta);
+    } finally {
+      inFlight.delete(session.id);
+    }
+  };
+
+  const spawnAgent = async (
+    parent: SchedulerSession, task: string, name?: string,
+  ): Promise<{ id: string; reply: string }> => {
+    const depth = (parent.depth ?? 0) + 1;
+    if (depth > maxSubagentDepth) {
+      throw new Error(`subagent depth limit reached (${maxSubagentDepth})`);
+    }
+    const slug = (name ?? 'sub').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'sub';
+    const id = `${parent.id}#${slug}-${++subagentSeq}`;
+    const child: SchedulerSession = {
+      id,
+      mode: parent.mode,
+      messages: [],
+      pendingApproval: null,
+      createdAt: new Date(),
+      parentId: parent.id,
+      depth,
+    };
+    sessions.set(id, child);
+    await persistSession(child);
+    events.emit('agent:spawn', { sessionId: parent.id, child: id, task: task.slice(0, 160) });
+    try {
+      const reply = await runTurn(child, task);
+      await persistSession(child);
+      return { id, reply };
+    } finally {
+      events.emit('agent:exit', { sessionId: parent.id, child: id });
+    }
+  };
+
+  const agentHooksFor = (session: SchedulerSession): AgentHooks => ({
+    spawn: (task, name) => spawnAgent(session, task, name),
+    list: () => [...sessions.values()].map(s2 => ({
+      id: s2.id,
+      ...(s2.parentId ? { parentId: s2.parentId } : {}),
+      busy: inFlight.has(s2.id),
+      messages: s2.messages.length,
+      mode: s2.mode,
+    })),
+    send: async (id, text) => {
+      const target = sessions.get(id);
+      if (!target) return { delivered: false };
+      target.messages.push({ role: 'user', content: text });
+      events.emit('agent:message', { sessionId: id, role: 'user', content: text });
+      // A busy agent just queues: its loop will pick the message up next round.
+      if (inFlight.has(id)) {
+        await persistSession(target);
+        return { delivered: true };
+      }
+      const reply = await runTurn(target, text);
+      await persistSession(target);
+      return { delivered: true, reply };
+    },
+    interrupt: id => {
+      const target = sessions.get(id);
+      if (!target) return false;
+      const wasBusy = inFlight.has(id);
+      // The loop checks the flag between rounds and between tool calls; setting
+      // it on an idle agent is harmless and keeps the tool honest.
+      target.abortRequested = true;
+      return wasBusy;
+    },
+    teamTasks: () => rootSessionOf(session).teamTasks ?? [],
+    setTeamTasks: tasks => {
+      rootSessionOf(session).teamTasks = tasks;
+      void persistSession(rootSessionOf(session));
+    },
+  });
 
   const fireSchedule = async (session: SchedulerSession, s: Schedule): Promise<void> => {
     // Never step past a gate: the host owes a decision first.
@@ -1432,7 +1565,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       sessionId: session.id, id: s.id, run: s.runs, prompt: s.prompt, status: 'firing',
     });
     try {
-      const reply = await runStep(session, s.prompt, {});
+      const reply = await runTurn(session, s.prompt, {});
       events.emit('agent:schedule', {
         sessionId: session.id, id: s.id, run: s.runs, status: 'done', reply: reply.slice(0, 200),
       });

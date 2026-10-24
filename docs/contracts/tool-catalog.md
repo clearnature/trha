@@ -25,6 +25,15 @@
 | `job_list` / `job_output` / `job_kill` | 后台命令的列表/输出/终止 | 进程内（子进程不跨重启） |
 | `skill` | 列出/加载 `TRHA_SKILLS_DIR`（默认 `<workspace>/.trha/skills`）下的 markdown | 文件系统 |
 | `web_fetch` | 取 URL 文本（HTML 去标签/脚本，15s 超时，20k 字符上限） | – |
+| `subagent` | 起一个**子会话**跑任务并返回最终答复（真实 `runStep`，非拼接文本） | 子会话（持久化） |
+| `list_agents` | 列出会话：id、busy/idle、消息数、父会话 | – |
+| `send_message` | 给另一个会话发消息；空闲则立刻跑一轮，忙碌则排队 | – |
+| `interrupt_agent` | 让某个会话在**轮次边界**停下（下一轮开头检查） | – |
+| `team_task_create/list/update` | 共享任务表，挂在**根会话**上，子会话也看得到 | 会话（持久化 v2） |
+| `workflow` | 按顺序跑 `[{name, task}]`，逐个起子智能体并汇总结果 | 子会话 |
+| `list_mcp_resources` / `list_mcp_resource_templates` / `read_mcp_resource` | MCP 资源三件套（stdio JSON-RPC 客户端） | `TRHA_MCP_CONFIG` |
+| `lsp` | 语言服务器查询：hover / definition / references / diagnostics / symbols | `TRHA_LSP_COMMAND` |
+| `browser_navigate` / `browser_extract` / `browser_screenshot` / `browser_close` | 真 headless Chrome（CDP）：渲染后取文本、取选择器、截图 PNG | `TRHA_BROWSER` |
 
 配置：`TRHA_WORKSPACE`（工作区，默认 `/tmp/trha-workspace`）、`TRHA_SKILLS_DIR`、
 `TRHA_MAX_TOOL_ROUNDS`（0/未设 = 不限轮；同一调用连续重复 3 次判停）、
@@ -44,26 +53,18 @@
 - **生命周期**：`createServer` 返回 `stop()`，关闭时清定时器（否则「关了」的进程还在花钱）。
 - **可观测**：每次触发发 `agent:schedule` SSE（`firing` / `done` / `error`）。
 
-## 有意未移植（及原因）
+## 配置
 
-| 工具 | 为什么不在 |
-|---|---|
-| `subagent` / `spawn_teammate` / `team_task_*` / `send_message` / `interrupt_agent` / `list_agents` / `workflow` | 见下节「为什么没有直接装 dsh 的包」 |
-| `pwsh` | Windows 专用（本机 Linux） |
-| `lsp` / `read_image` / `stagehand_*` / `read_mcp_resource` | 依赖 LSP 客户端、视觉模型桥、浏览器、MCP 连接，属于外部集成 |
-| `run_code` | 与 `bash` 重叠，且需要多语言运行时池 |
-
-判断标准：**模型能调、宿主真能执行、结果真能回读**。缺其中任何一条，就不放进目录 ——
-否则工具调用会退化成「看起来在工作」的表演。
-
-## 测试
-
-`packages/scheduler/test/`：
-
-- `tools-fs.test.ts` —— write/edit/read 区间/grep/glob 全链，歧义 edit 拒绝，重复调用判停
-- `standard-tools.test.ts` —— todo/goal/schedule/job/skill/web_fetch 各一组，
-  以及「同 session id 跨 scheduler 重启后 goal 仍在」
-- `tool-catalog.test.ts` —— 目录顺序、必填字段、旧名别名
+| 变量 | 作用 | 默认 |
+|---|---|---|
+| `TRHA_WORKSPACE` | 工具工作区（读写边界） | `/tmp/trha-workspace` |
+| `TRHA_SKILLS_DIR` | `skill` 的 markdown 目录 | `<workspace>/.trha/skills` |
+| `TRHA_MAX_TOOL_ROUNDS` | 工具轮上限 | 不限（同一调用连续重复 3 次判停） |
+| `TRHA_MAX_SUBAGENT_DEPTH` | 子智能体嵌套深度 | 2 |
+| `TRHA_SCHEDULE_TICK_MS` / `TRHA_SCHEDULE_GRACE_MS` | 调度轮询 / 重启补跑窗口 | 5000 / 5min |
+| `TRHA_MCP_CONFIG` | MCP 服务器配置 JSON | 未设＝未配置 |
+| `TRHA_LSP_COMMAND` / `TRHA_LSP_ROOT` | 语言服务器命令 / 根目录 | `typescript-language-server --stdio` / workspace |
+| `TRHA_BROWSER` | 浏览器可执行文件 | `chromium` |
 
 ## 为什么没有直接 `npm i` dsh 的工具包
 
@@ -81,6 +82,7 @@ ctx.tools.get('read').execute(args, exec)   // exec: ToolExecution —— 要有
 `dsh-agent`/`dsh-session`/`dsh-sandbox`/`dsh-user-approval` 一整条服务链），
 而不是「拷几个文件」。那是一次架构集成，不是一次移植。
 
-当前选择：按 dsh 的**语义与 schema** 在我们自己的 host 上实现（上表），
-只在做不到的地方（MCP/LSP/浏览器/多智能体）保留缺口并写清原因。
-如果要把剩余部分也吃下来，正确做法是接入 dsh 运行时——这需要单独立项。
+因此这四类（多智能体、MCP、LSP、浏览器）是按 dsh 的**语义与 schema** 在我们自己的
+host 上实现的：子智能体复用本进程的 `runStep`，MCP 是 stdio JSON-RPC 客户端，
+LSP 是 Content-Length 帧客户端，浏览器是 CDP。工具面已与 dsh `standard` 预设对齐；
+差别在于**运行时**是 trha 的，而不是嵌入 dsh 的 agent。
