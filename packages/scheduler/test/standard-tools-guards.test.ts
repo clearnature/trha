@@ -106,3 +106,45 @@ describe('standard tool guards', () => {
     expect(await run('browser_close')).toBe('OK: browser closed');
   });
 });
+
+describe('todo_write is idempotent', () => {
+  let dir: string;
+  let host: StandardToolHost;
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'trha-todo-'));
+    host = { workspace: dir, state: {}, jobs: new Map(), sessionId: 's' };
+  });
+  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  const list = (statuses: string[]): Array<{ text: string; status: string }> =>
+    statuses.map((s, i) => ({ text: `task ${i + 1}`, status: s }));
+
+  it('rejects an identical rewrite and leaves the stored list alone', async () => {
+    const first = await runStandardTool('todo_write', { todos: list(['pending', 'completed']) }, host);
+    expect(first).toMatch(/^OK: 2 todos/);
+    const stored = host.state.todos;
+    const again = await runStandardTool('todo_write', { todos: list(['pending', 'completed']) }, host);
+    expect(again).toMatch(/^UNCHANGED: 2 todos/);
+    // no state churn at all: same object, not a rebuilt copy
+    expect(host.state.todos).toBe(stored);
+  });
+
+  it('treats reordering as unchanged but a status change as a real write', async () => {
+    await runStandardTool('todo_write', { todos: [
+      { text: 'a', status: 'pending' },
+      { text: 'b', status: 'pending' },
+    ] }, host);
+    const reordered = await runStandardTool('todo_write', { todos: [
+      { text: 'b', status: 'pending' },
+      { text: 'a', status: 'pending' },
+    ] }, host);
+    expect(reordered).toMatch(/^UNCHANGED/);
+
+    const changed = await runStandardTool('todo_write', { todos: [
+      { text: 'a', status: 'completed' },
+      { text: 'b', status: 'pending' },
+    ] }, host);
+    expect(changed).toMatch(/^OK: 2 todos/);
+    expect(changed).toContain('[x] a');
+  });
+});

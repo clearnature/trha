@@ -124,3 +124,12 @@ Tools: 74 · rows: 56 · verdicts: {"ok":50,"refused":6}
 
 system 消息现在带 `working directory is <cwd>`，`{{cwd}}`/`{{model}}` 会被替换；
 `minimal` 等 `persona.enabled=false` 的模式仍然不发 system 消息（有测试钉住）。
+
+### 再进一步：服务端兜住幂等
+
+提示只能劝，服务端要拦住：`todo_write` 现在会与当前清单做**顺序无关**的比较，
+完全相同就返回 `UNCHANGED: N todos (the list is identical; nothing was written)`，
+**不写状态、不落盘**；工具描述也改成「只有清单真的变了才调用，相同重写会被拒为
+UNCHANGED」。真机同一任务复测保持 4 次调用（todo_write 2 次），其中若出现
+相同重写会被这条规则吃掉。
+

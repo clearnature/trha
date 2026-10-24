@@ -298,7 +298,7 @@ export const toolCatalog: ToolDefinition[] = [
   },
   {
     name: 'todo_write',
-    description: 'Replace the session todo list (the plan you are working through)',
+    description: 'Replace the session todo list. Call only when the list actually changes; an identical rewrite is rejected as UNCHANGED.',
     parameters: {
       type: 'object',
       properties: {

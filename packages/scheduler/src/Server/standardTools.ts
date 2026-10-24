@@ -108,6 +108,15 @@ const MAX_JOB_OUTPUT = 200_000;
 const clip = (s: string, cap = MAX_OUTPUT_CHARS): string =>
   s.length <= cap ? s : `${s.slice(0, cap)}\n…(${s.length - cap} more chars)`;
 
+/** Order-insensitive id/text/status comparison (a rewrite must mean something). */
+function sameTodos(a: readonly Todo[], b: readonly Todo[]): boolean {
+  if (a.length !== b.length) return false;
+  const key = (t: Todo): string => `${t.text}\u0000${t.status}`;
+  const left = a.map(key).sort();
+  const right = b.map(key).sort();
+  return left.every((k, i) => k === right[i]);
+}
+
 export const STANDARD_TOOL_NAMES = [
   'ask_user_question', 'exit_plan_mode', 'present', 'run_code', 'read_image',
   'subagent', 'list_agents', 'send_message', 'interrupt_agent',
@@ -447,6 +456,11 @@ export async function runStandardTool(
           ? status : 'pending') as Todo['status'],
       };
     });
+    // A write that changes nothing is noise: no state change, no persist, and a
+    // result that tells the model not to ask again.
+    if (sameTodos(host.state.todos ?? [], todos)) {
+      return `UNCHANGED: ${todos.length} todos (the list is identical; nothing was written)`;
+    }
     host.state.todos = todos;
     const lines = todos.map(t => `- [${t.status === 'completed' ? 'x' : t.status === 'in_progress' ? '~' : ' '}] ${t.text}`);
     return `OK: ${todos.length} todos\n${lines.join('\n')}`;
