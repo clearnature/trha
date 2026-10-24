@@ -111,3 +111,55 @@ describe('contextGovernor', () => {
     expect(estimateTokens('你好世界')).toBeGreaterThan(estimateTokens('abcd'));
   });
 });
+
+describe('compaction never splits a tool block', () => {
+  /** assistant(tool_calls) + tool result, repeated. */
+  function toolRounds(n: number): GovernedMessage[] {
+    const out: GovernedMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'task' },
+    ];
+    for (let i = 0; i < n; i++) {
+      out.push({
+        role: 'assistant', content: '',
+        tool_calls: [{ id: `c${i}`, type: 'function', function: { name: 'bash', arguments: '{"command":"echo x"}' } }],
+      });
+      out.push({ role: 'tool', tool_call_id: `c${i}`, content: 'x'.repeat(400) });
+    }
+    return out;
+  }
+
+  /** Every tool result must still have its call; every call its results. */
+  function orphans(messages: readonly GovernedMessage[]): string[] {
+    const open = new Set<string>();
+    const bad: string[] = [];
+    messages.forEach((m, i) => {
+      if (m.role === 'assistant' && (m.tool_calls ?? []).length) {
+        const follow = messages.slice(i + 1, i + 1 + m.tool_calls!.length);
+        if (follow.some(f => f.role !== 'tool')) bad.push(`call block at ${i} is split`);
+        for (const c of m.tool_calls!) open.add(String((c as { id?: string }).id));
+      }
+      if (m.role === 'tool' && !open.has(String(m.tool_call_id))) {
+        bad.push(`orphan tool result at ${i} (${m.tool_call_id})`);
+      }
+    });
+    return bad;
+  }
+
+  it('walks the boundary back over a tool message', () => {
+    const msgs = toolRounds(6);
+    const cfg = { ...DEFAULT_GOVERNANCE, window: 2000, tailRatio: 0.12, minFoldTokens: 10 };
+    const r = govern(msgs, 1900, cfg);
+    expect(r.trigger).not.toBe('none');
+    expect(orphans(r.messages)).toEqual([]);
+  });
+
+  it('holds for every tail budget across the block', () => {
+    const msgs = toolRounds(8);
+    for (let ratio = 0.05; ratio <= 0.5; ratio += 0.01) {
+      const cfg = { ...DEFAULT_GOVERNANCE, window: 2000, tailRatio: ratio, minFoldTokens: 1 };
+      const r = govern(msgs, 1900, cfg);
+      expect(orphans(r.messages), `tailRatio=${ratio.toFixed(2)}`).toEqual([]);
+    }
+  });
+});

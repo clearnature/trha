@@ -59,6 +59,8 @@
 | 中断正在跑的智能体 | `interrupt_agent` 在目标**真的忙**时命中，目标在下一轮边界返回 `(interrupted)` | 同文件（第 2 例） |
 | 调度跨天/时区 | 带偏移的 `at`（`+08:00`）按那一刻的 UTC 实例存储；未来数月不触发；过期重复任务补跑一次并把游标推到未来 | `schedule-time.test.ts`（3 例） |
 | `UNCHANGED` 不落盘 | 工具不改状态时循环仍然 persist，白抖 mtime；现在 `UNCHANGED:` 结果不写盘 | `todo-no-write.test.ts`（内核每轮采样 mtime：重复写后不变、真改动后变大） |
+| **压缩切断工具块**（P0，本轮新发现） | `tailStart` 按 token 预算切，不知道 `assistant.tool_calls` + 其 `tool` 结果是一个原子块 → 孤儿 tool 消息 → provider 400。现在边界遇到 `tool` 就回退到块首 | `context-governor.test.ts`（2 例，含 46 个 tailRatio 遍历）+ `history-invariants.test.ts`（压缩后每个请求仍合法） |
+| **同一会话并发 step**（P1） | 两个 `/api/agent/step` 同时跑会交错 push `messages`；scheduler 现在按会话排队，内核按路径里的 session id 加闸 | `session-lock.test.ts`（4 例）+ `SessionGateSpec.hs`（3 例） |
 
 ## 五、仍不可在本仓自动化
 

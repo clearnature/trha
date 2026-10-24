@@ -167,6 +167,33 @@ describe('tool-loop history invariants', () => {
     expect(answer.usage?.cacheMissTokens).toBe(20);
   });
 
+  it('compaction keeps every tool block whole', async () => {
+    // A tiny window forces the governor to fold mid-conversation. The boundary
+    // must land on a block edge: a tail that starts with a `tool` message would
+    // orphan it, and the provider rejects that transcript.
+    process.env.TRHA_CONTEXT_WINDOW = '800';
+    try {
+      const big = 'x'.repeat(800);
+      const rounds: JsonRound[] = Array.from({ length: 6 }, (_, i) => ({
+        calls: [{ id: `c${i}`, name: 'bash', args: { command: `echo ${big}` } }],
+      }));
+      rounds.push({ answer: 'done' });
+      const base = await boot(rounds);
+      const sessionId = await start(base);
+      await fetch(`${base}/api/agent/step`, {
+        method: 'POST', headers: auth, body: JSON.stringify({ sessionId, message: 'grind' }),
+      });
+
+      expect(seen.length).toBeGreaterThanOrEqual(2);
+      // every request the provider saw is structurally valid ...
+      for (const history of seen) assertHistory(history);
+      // ... and at least one of them was actually compacted
+      expect(seen.some(h => h.some(m => (m.content ?? '').includes('[context')))).toBe(true);
+    } finally {
+      delete process.env.TRHA_CONTEXT_WINDOW;
+    }
+  });
+
   it('puts a presented card after the tool result, never inside the call block', async () => {
     const base = await boot([
       { calls: [{ id: 'call_p', name: 'present', args: { title: 'T', body: 'B' } }] },

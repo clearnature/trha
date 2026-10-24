@@ -18,6 +18,7 @@ import { randomBytes } from 'node:crypto';
 import { loadPin, loadSessionsSync, removeSessionFile, savePin, saveSession } from './stateStore.js';
 import { govern, DEFAULT_GOVERNANCE, type GovernanceConfig } from './contextGovernor.js';
 import { envCap, envInt } from './env.js';
+import { isSessionBusy, withSessionLock } from './sessionLock.js';
 import { isExtraTool, runExtraTool, type ExtraHost, type Terminal } from './extraTools.js';
 import {
   isStandardTool, runStandardTool, startJob,
@@ -1445,8 +1446,11 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
     session.pendingApproval = null;
     // A3: stream the answer to whoever listens on this session's SSE channel.
-    const reply = await runTurn(session, message, { provider, model, genParams },
-      text => events.emit('agent:delta', { sessionId: session.id, text }));
+    // Serialized per session: two concurrent steps would interleave their
+    // messages and produce a transcript the provider rejects.
+    const reply = await withSessionLock(session.id, () =>
+      runTurn(session, message, { provider, model, genParams },
+        text => events.emit('agent:delta', { sessionId: session.id, text })));
     res.json({
       reply, messages: session.messages, mode: session.mode,
       ...(stepConstraint ? { constraint: stepConstraint } : {}),
@@ -1510,7 +1514,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     session.pendingQuestion = null;
     events.emit('agent:answer', { sessionId: session.id, questionId: pending.id, answer });
     try {
-      const reply = await runTurn(session, answer, {});
+      const reply = await withSessionLock(session.id, () => runTurn(session, answer, {}));
       await persistSession(session);
       return res.json({ status: 'answered', questionId: pending.id, reply, mode: session.mode });
     } catch (e) {
@@ -1611,11 +1615,11 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       target.messages.push({ role: 'user', content: text });
       events.emit('agent:message', { sessionId: id, role: 'user', content: text });
       // A busy agent just queues: its loop will pick the message up next round.
-      if (inFlight.has(id)) {
+      if (inFlight.has(id) || isSessionBusy(id)) {
         await persistSession(target);
         return { delivered: true };
       }
-      const reply = await runTurn(target, text);
+      const reply = await withSessionLock(target.id, () => runTurn(target, text));
       await persistSession(target);
       return { delivered: true, reply };
     },
@@ -1653,7 +1657,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       sessionId: session.id, id: s.id, run: s.runs, prompt: s.prompt, status: 'firing',
     });
     try {
-      const reply = await runTurn(session, s.prompt, {});
+      const reply = await withSessionLock(session.id, () => runTurn(session, s.prompt, {}));
       events.emit('agent:schedule', {
         sessionId: session.id, id: s.id, run: s.runs, status: 'done', reply: reply.slice(0, 200),
       });

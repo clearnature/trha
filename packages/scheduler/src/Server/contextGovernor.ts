@@ -81,7 +81,14 @@ export function estimateMessages(messages: readonly GovernedMessage[]): number {
   return total;
 }
 
-/** Index where the verbatim tail starts, measured from the end. */
+/**
+ * Index where the verbatim tail starts, measured from the end.
+ *
+ * A tool block -- @assistant@ with @tool_calls@ plus the @tool@ messages that
+ * answer it -- is atomic: splitting it leaves a tool result whose call was
+ * elided, and a provider rejects that transcript with "insufficient tool
+ * messages". So the boundary walks back over any tool message it lands on.
+ */
 function tailStart(messages: readonly GovernedMessage[], tailTokens: number): number {
   let budget = tailTokens;
   let i = messages.length;
@@ -89,6 +96,7 @@ function tailStart(messages: readonly GovernedMessage[], tailTokens: number): nu
     i -= 1;
     budget -= 4 + estimateTokens(messages[i]?.content ?? '');
   }
+  while (i > 0 && messages[i]?.role === 'tool') i -= 1;
   return i;
 }
 

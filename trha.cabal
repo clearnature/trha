@@ -611,6 +611,7 @@ test-suite trha-test
                   , StreamToolCallsSpec
                   , WireGuardsSpec
                   , StreamTimeoutSpec
+                  , SessionGateSpec
   hs-source-dirs:   test
   build-depends:    base ^>=4.22
                   , directory

@@ -21,6 +21,7 @@ module API.Server
   , emitOpenAI
   , toolCallDelta
   , toolErrorContent
+  , withSessionGate
   ) where
 
 import Servant
@@ -30,6 +31,10 @@ import Network.Wai.Handler.Warp (run)
 import Network.HTTP.Types (ResponseHeaders, status200, status400)
 import qualified Data.ByteString.Builder as Builder
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.STM (check)
+import qualified Data.Set as Set
+import Control.Exception (bracket_)
+import Network.Wai (pathInfo)
 import Control.Applicative ((<|>))
 import Control.Monad.IO.Class (liftIO)
 import Data.Text (Text)
@@ -1510,6 +1515,34 @@ toRole _           = LLM.User
 -- @testWithApplication@ without binding a fixed port.  Everything that decides
 -- which backend answers HTTP flows through this one argument: swap the
 -- 'LLMAdapter' and every endpoint follows.
+-- | Serialize work on one session.
+--
+-- Two turns on the same session interleave their messages and produce a
+-- transcript a provider rejects; the scheduler queues callers in-process, and
+-- this is the kernel's own guard (it is also the shared resource when several
+-- hosts talk to one kernel).
+withSessionGate :: TVar (Set.Set Text) -> Text -> IO a -> IO a
+withSessionGate gates sid action = bracket_ acquire release action
+  where
+    acquire = atomically $ do
+      held <- readTVar gates
+      check (not (Set.member sid held))
+      writeTVar gates (Set.insert sid held)
+    release = atomically $ modifyTVar' gates (Set.delete sid)
+
+-- | Apply 'withSessionGate' to requests whose path names a session
+-- (@/session/\<id\>/...@). Reads are serialized too: it is cheap, and it keeps
+-- one rule instead of a per-route list.
+sessionGateMiddleware :: TVar (Set.Set Text) -> Application -> Application
+sessionGateMiddleware gates app req respond =
+  case sessionIdFromPath (pathInfo req) of
+    Nothing  -> app req respond
+    Just sid -> withSessionGate gates sid (app req respond)
+
+sessionIdFromPath :: [Text] -> Maybe Text
+sessionIdFromPath ("session" : sid : _) = Just sid
+sessionIdFromPath _ = Nothing
+
 mkApp :: LLMAdapter -> Maybe FilePath -> IO Application
 mkApp adapter stateDir = do
   sessionsVar <- newTVarIO Map.empty
@@ -1523,7 +1556,9 @@ mkApp adapter stateDir = do
         events <- SS.loadEventRecords dir (snapshotId snap)
         session <- restoreSession snap events
         atomically $ modifyTVar sessionsVar (Map.insert (T.pack (sessionId session)) session)
-  pure (serve (Proxy :: Proxy API) (server adapter sessionsVar stateDir))
+  gatesVar <- newTVarIO Set.empty
+  pure $ sessionGateMiddleware gatesVar $
+    serve (Proxy :: Proxy API) (server adapter sessionsVar stateDir)
 
 startServer :: LLMAdapter -> Int -> Maybe FilePath -> IO ()
 startServer adapter port stateDir = do
