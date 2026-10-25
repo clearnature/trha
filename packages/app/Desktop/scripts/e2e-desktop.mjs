@@ -119,7 +119,10 @@ export async function collectProtocol({ port = DEFAULT_PORT, token = DEFAULT_TOK
   const exitCode = await new Promise((resolve) => {
     child.on('exit', (code) => resolve(code));
     child.stdin.end();
-    setTimeout(() => { child.kill(); resolve('timeout'); }, 8000);
+    // unref: the safety-net kill must still fire when the child hangs, but must
+    // not hold this process open for its full 8s after a clean child exit.
+    const killTimer = setTimeout(() => { child.kill(); resolve('timeout'); }, 8000);
+    killTimer.unref?.();
   });
 
   return {
@@ -171,6 +174,9 @@ async function main() {
   assert(snap.exitCode === 0, `scheduler exits 0 after the lease is released (got ${snap.exitCode})`);
 
   log(process.exitCode ? 'RESULT: FAIL' : 'RESULT: PASS');
+  // Explicit exit: undici's fetch keep-alive pool would otherwise hold the
+  // process open for ~4s after all work is done (and blow the 5s test timeout).
+  process.exit(process.exitCode ?? 0);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

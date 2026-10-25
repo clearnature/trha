@@ -159,7 +159,8 @@
     {
       "contextSize": "number",
       "description": "string",
-      "name": "string"
+      "name": "string",
+      "maxOutputTokens": "number"
     }
   ],
   "session": {
