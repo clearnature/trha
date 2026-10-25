@@ -12,13 +12,32 @@
 
 ## 里程碑总览与验收标准
 
-| 里程碑 | 内容 | 验收标准 |
+| 里程碑 | 内容 | 验收标准 | 状态 |
+| --- | --- | --- | --- |
+| **M0 数据流地基** | 消费 SSE text delta、流式渲染、去除 drain-window hack | 对真实 scheduler 发消息：回复**逐 delta 增长**（非整段出现）；无重复渲染；spec 全绿 | 流式与终态收尾已落地；人工验收未做 |
+| **M1 核心形态** | 多行输入、markdown 增强、工具卡折叠、token/上下文统计、会话状态 spinner | 输入 1-6 行自适应；markdown 列表/标题/行内样式可见；工具卡可折叠展开；footer 显示 prompt/completion/累计/占用% | 已落地（折叠仅"最近一张"卡） |
+| **M2 对话框系统** | UI/Dialog.hs 栈 + escape 层级表；模型/会话/命令面板迁入对话框 | dialog 栈 LIFO + escape 语义表逐条通过；`/models`、`/sessions`、`ctrl+p` 均为浮层，消息流不再被文本列表污染 | 已落地；双击 esc 与真实中断已在 M3.5-2/3 补齐 |
+| **M3 审批与 diff** | 权限审批对话框 + unified diff 渲染 + once/always/reject | 审批到达时消息流锁定；diff 正确配色；once/always/reject 走 scheduler `decision` API | 主链路已落地；diff 行号/宽度阈值未做；删除类 always 已移除 |
+| **M3.5 纠偏与收口**（新增） | 移除 drain window、双击 esc 修正、真实中断、审批安全特例、文档真实性、人工验收 | 下列 8 项逐条通过；文档勾选与代码一致 | **进行中（4/8）** |
+| **M4 侧栏与高级** | 侧栏（token/成本/TODO）、@文件补全、leader 键、truecolor 主题、鼠标 | 侧栏 ≥80 列停靠、窄屏浮层；`@` 触发文件补全；主题含 truecolor 调色板 | 未开始，拆三刀 |
+| **M5 存量补齐**（新增，不承诺） | fork/timeline/recovery、审批 diff 全屏、卡片焦点折叠、toast、reject 原因、成本/TPS | 每项启动时再细化 | backlog |
+
+---
+
+## 现状快照（2026-10-25 代码核对，非记忆）
+
+| 里程碑 | 真实状态 | 证据 |
 | --- | --- | --- |
-| **M0 数据流地基** | 消费 SSE text delta、流式渲染、去除 drain-window hack | 对真实 scheduler 发消息：回复**逐 delta 增长**（非整段出现）；无重复渲染；spec 全绿 |
-| **M1 核心形态** | 多行输入、markdown 增强、工具卡折叠、token/上下文统计、会话状态 spinner | 输入 1-6 行自适应；markdown 列表/标题/行内样式可见；工具卡可 `enter` 折叠展开；footer 显示 prompt/completion/累计/占用% |
-| **M2 对话框系统** | UI/Dialog.hs 栈 + escape 层级表；模型/会话/命令面板迁入对话框 | dialog 栈 LIFO + escape 语义表逐条通过；`/models`、`/sessions`、`ctrl+p` 均为浮层，消息流不再被文本列表污染 |
-| **M3 审批与 diff** | 权限审批对话框 + unified diff 渲染 + once/always/reject | 审批到达时消息流锁定；diff 正确配色；once/always/reject 走 scheduler `decision` API |
-| **M4 侧栏与高级** | 侧栏（token/成本/TODO）、@文件补全、leader 键、truecolor 主题、鼠标 | 侧栏 ≥80 列停靠、窄屏浮层；`@` 触发文件补全；主题含 truecolor 调色板 |
+| M0 | 流式渲染可用；drain window 已由终态等待替代（M3.5-1）；**人工验收仍未做**（3.3 勾选已回退）；spinner 实为内容驱动而非 Tick 驱动 | `Core.SSE.isTerminalPayload`、`Brick.hs` 的 `timeout 250000`、`:603-608` |
+| M1 | 五项功能在；工具卡折叠只切"最近一张"，无卡片焦点 | `toggleRecentFold`（`Brick.hs`） |
+| M2 | 对话框栈与 escape 表在；`resolveEscape` 实接线只喂 `efStack`（选区/shell/联想恒 False）；双击 esc 已按 Running 布防并在触发后清 armed（M3.5-2）；真实中断已接（M3.5-3） | `UI.Dialog.escWiring`、`Brick.hs` escape 段 |
+| M3 | 审批链路（parked → 浮层三选 → decision）与 diff 分类上色在；审批是**居中浮层**而非计划原文的"底部审批条"；删除类命令已无 always（M3.5-4）；diff 无行号、无宽 <120 规则；reject 仍不能附原因 | `UI.Dialog.approvalOptions`、`UI/Render/Diff.hs` |
+| M4 | 未开始 | — |
+
+内核事实（决定 M3.5 排期）：
+- **无中断 HTTP 端点**：`interrupt: id =>` 只是 `AgentHooks` 回调（供 `interrupt_agent` 工具用）；`abortRequested` 的检查点在 tool 循环内（`packages/scheduler/src/Server/index.ts:1256`）。真中断需新增路由 + 契约登记。
+- **decision 只收 approve**：`POST /api/session/:id/decision` 仅读 `{approve}` 或计划的 `{action}`（`index.ts:1499-1530`），拒绝原因没有通道——要做就得改契约。
+- 权限规则为 `deny > ask > allow`，pattern 支持 `ToolName` / `ToolName(glob)` / `Bash(command:glob)`（`Permission/permissionRules.ts`），因此"删除类命令不给 always"可在 CLI 侧用纯分类器实现。
 
 ---
 
@@ -53,10 +72,13 @@
 - [x] **任务 3：TUI 消费流式增量 + 帧动画**
 
   - [x] 步骤 3.1：`Brick.hs` 消息区渲染改读 `pendingText` 逐 delta 增长；busy 期间输入框标签接 spinner 帧序列（`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`，`AppEvent Tick` 驱动，100ms）。
+    落地偏差：未引入 `Tick` 定时器，实为**内容长度驱动**（`spinnerFrame (T.length (pmContent pm))`，`Brick.hs:603-608`）——零线程、delta 驱动重绘即驱动动画。行为可接受，保留该简化并在此登记。
 
-  - [x] 步骤 3.2：移除 `Brick.hs:953-961` 的 `threadDelay 100_000` drain window——以 `ChunkDone`/`SseMessage` 终态事件收尾（对齐 MiMo 的 step-finish 语义）。
+  - [ ] 步骤 3.2：移除 `Brick.hs:953-961` 的 `threadDelay 100_000` drain window——以 `ChunkDone`/`SseMessage` 终态事件收尾（对齐 MiMo 的 step-finish 语义）。
+    **未完成（2026-10-25 核对）**：代码已随文件增长漂到 `Brick.hs:1349-1351`，`threadDelay 100000` 与 "drain window" 注释仍在。转 M3.5-1。
 
-  - [x] 步骤 3.3：手动验收（对真实 scheduler）：发一条长回复，确认逐字增长、无重复段落（若 `/api/agent/step` 整段 reply 与 SSE delta 重复，以 delta 流为准、step 返回仅作 finalize 信号——在 Scheduler.hs 注释记录该契约）。`git commit -m "feat(cli): streaming reply rendering with spinner"`。
+  - [ ] 步骤 3.3：手动验收（对真实 scheduler）：发一条长回复，确认逐字增长、无重复段落（若 `/api/agent/step` 整段 reply 与 SSE delta 重复，以 delta 流为准、step 返回仅作 finalize 信号——在 Scheduler.hs 注释记录该契约）。
+    **未完成（勾选已回退）**：真实模型下的人工验收尚未执行。转 M3.5-7。
 
 ## M1：核心形态（启动时细化，契约如下）——**已完成（2026-10-25）**
 
@@ -68,9 +90,11 @@
   落地：`MdHeading`/`MdListItem` 解析 + `renderBlocks` 按 span 属性渲染；brick 3.0 **删除了 widget 级 `wrap`**，新增渲染时 `spanWrap`（镜像 `txtWrapWith` 技法：context 宽度 + 渲染时重排，宽字符经 vty wcwidth 计宽，超宽词按字符硬切）。
 - [x] **工具卡折叠**：`UI/Render/ToolCard.hs` 增加 collapsed/expanded 两态 + 输出内容行；`AppEvent` 增 toggle 消息；状态存 Map 消息 id。
   落地：`msgTool` 升级为结构化 `ToolCard`（名/参/状态/时长/输出预览）；`msgId`（位置式）与 `appFolds :: Map Int ToolFold`；`ctrl+o` 或空输入 `enter` 切换最近工具卡；内核 tool:update 增 `output` 尾部预览（末 12 行 ≤2KiB，可选字段，已登记 `docs/contracts/protocol-shell-kernel.md` §3 并过 TypesSpec roundtrip + scheduler 受影响 specs）。
+  简化登记：没有卡片焦点/命中测试，只能切"最近一张"卡；逐卡折叠进 M5 backlog。
 - [x] **token/上下文统计**：`Core/Types.hs` 的 `Usage` 已有 prompt/completion——footer 增 `in/out/累计/占用%` 四段；累计值入 `Core/Transcript.hs` 会话索引。
   落地：内核 agent/step 响应补 `usage` 回显（promptTokens=in；本轮 completion/cacheHit/cacheMiss 增量；cumulativeTokens=session 累计）；Bridge 增 `sendMessageWithUsage`（旧签名保留）；TUI `appUsage`/`appCtxSize`（启动异步拉 /api/models）；footer 新 metric key `usage`（默认启用，En/Zh 各四段，无 echo 时留空）。
-- **会话状态 spinner**：idle/awaiting-approval/running 三态显示（为 M3 审批锁定做状态地基）。
+- [x] **会话状态 spinner**：idle/awaiting-approval/running 三态显示（为 M3 审批锁定做状态地基）。
+  落地：`RunState`/`runState`/`runStateLabel` 纯函数入 `UI/Event.hs`，`drawInput` 按态换标；服务端占位回复被识别后不再当错误。
 
 ## M2：对话框系统（启动时细化，契约如下）
 
@@ -80,25 +104,85 @@
 - [x] 迁移三个既有文本交互进对话框：模型选择器（`/models` 推空栈 + `EvModels` 异步填充）、会话列表（`/sessions`/`EvSessions` 走本地 `SessionSummary`，含标题与累计 token）、命令面板（现有 picker 改浮层，键位对齐 `ctrl+p` + `/`；`PickerState` 已删除）。绘制用 brick 层列表：`drawUI` 首元素 = 顶层，`centerLayer` 居中卡片。（2026-10-25 完成）
 - 验收：`escape` 层级表逐条 spec 化（纯状态机测试，不需要渲染）——✅ `UI/DialogSpec.hs`（层级表 5 行 + 双击布防 3 行 + 栈/选择/命令编辑 11 例）。
 
-## M3：审批与 diff（启动时细化，契约如下）——**已完成（2026-10-25）**
+## M3：审批与 diff（启动时细化，契约如下）——**主链路完成（2026-10-25），收口转 M3.5**
 
-> 进度：两项全部落地（spec 287/287）。链路为「内核 ask 规则 → step 回 `awaiting_approval:` → 消息流锁定 + 浮层三选 → `POST /api/session/:id/decision`」。**待人工验收**：配一条 ask 规则后 `cabal run trha -- tui`，实测 once / always / reject 三路与创可贴式的会话恢复。
+> 进度：审批链路与 diff 分类上色落地（spec 287/287）。链路为「内核 ask 规则 → step 回 `awaiting_approval:` → 消息流锁定 + 居中浮层三选 → `POST /api/session/:id/decision`」。**未兑现**：diff 行号/宽 <120 规则、删除类命令的 always 豁免、reject 附原因、真实中断。
 
-- [x] **权限审批对话框**：到达审批请求时消息流锁定、底部审批条（对齐 MiMo once/always/reject 三选 + always 二次确认）；走 scheduler `POST /api/session/:id/decision`（Bridge 已有）。
-  落地：`flushPending` 识别 parked 轮（`awaiting_approval:` 前缀）——不再当错误红字，先冲已收内容、`appBusy` 落 False、park `appApproval` 并弹 `DialogApproval`（消息/工具名/参数来自 `EvTool` 的 `REQUIRE_APPROVAL:` 失败事件）；三选项 once/always/reject，`esc` = reject（走 escape 层级表）。always 进 `DialogConfirm` 二次确认，确认后先 `allowAlways`（`GET /api/permissions` 取 rules → 追加 `{kind:"allow",pattern}` → `PUT`；bash/shell 系用 `Bash(command:<cmd>*)`，其余用工具名）再 `decidePlan True`；`EvVerdict` 收口清 `appApproval` + busy（顺带修掉 PlanDenied 卡 busy）。`SsePlan`（`agent:plan`）分类后静默，不再渲染成未知事件。
-- [x] **`UI/Render/Diff.hs`**：unified diff 解析 + added/removed 配色（纯函数 + spec，行号对齐 MiMo `<diff>` 行为：宽 <120 unified）。
+- [x] **权限审批对话框**：到达审批请求时消息流锁定、浮层三选（对齐 MiMo once/always/reject + always 二次确认）；走 scheduler `POST /api/session/:id/decision`（Bridge 已有）。
+  落地：`flushPending` 识别 parked 轮（`awaiting_approval:` 前缀）——不再当错误红字，先冲已收内容、`appBusy` 落 False、park `appApproval` 并弹 `DialogApproval`（消息/工具名/参数来自 `EvTool` 的 `REQUIRE_APPROVAL:` 失败事件）；三选项 once/always/reject，`esc` = reject（走 escape 层级表）。always 进 `DialogConfirm` 二次确认，确认后先 `allowAlways`（`GET /api/permissions` 取 rules → 追加 `{kind:"allow",pattern}` → `PUT`；bash/shell 系用 `Bash(command:<cmd>*)`，其余用工具名）再 `decidePlan True`；`EvVerdict` 收口清 `appApproval` + busy（顺带修掉 PlanDenied 卡 busy）。`SsePlan`（`agent:plan`）分类后静默。
+  形态更正：计划原文写"底部审批条"，实际实现是 `centerLayer` **居中模态浮层**（更接近 MiMo 的 dialog 形态）。
+- [x] **`UI/Render/Diff.hs`（分类部分）**：unified diff 行分类 + added/removed 配色（纯函数 + spec）。
   落地：`DiffClass`（`CAdd`/`CDel`/`CHunk`/`CMeta`/`CPlain`）分类 + `parseDiffLines`；展开态工具卡的输出行按 class 上色，主题新增四属性 `diffAdd/diffRemove/diffHunk/diffMeta`（dark/light 各一套）；DiffSpec 8 例。
+- [ ] **diff 显示规格（未做）**：行号对齐与「宽 <120 用 unified」的显示规则。当前只有分类上色，没有行号、没有宽度阈值分支。转 M3.5-8。
 
-## M4：侧栏与高级（启动时细化，契约如下）
+## M3.5：纠偏与收口（新增，先于 M4）——**进行中（4/8）**
 
-- 侧栏：≥80 列停靠 / 窄屏浮层（对齐 MiMo 42 列 + `width>120` 规则），内容三节：Context（token/成本/占用%）、TODO、会话信息。
-- `@` 文件补全（cwd 递归 + 过滤；无 extmark，降级为「选中后展开为路径文本」）。
-- leader 键（brick 自定义 modifier 链）、主题 truecolor 扩容（brick 支持 truecolor attr）、vty 鼠标事件（滚动）。
+> 依据：2026-10-25 代码核对发现的 4 处勾选不实、2 处未注记偏离、3 处 MiMo 对齐缺口。原则：**先让计划与代码一致，再往下建**；每项完成即更新勾选与证据行号。
+
+- [x] **3.5-1 移除 drain window**：删掉 `runStepWithTools` 尾部的固定 `threadDelay 100000`。
+  落地：SSE 侧新增终态判定——`Core.SSE.isTerminalPayload`（assistant 消息回声 / plan 闸门为终态）+ Bridge `subscribeSessionEventsWithTerminal`；一条连接保序，收到终态即证明此前所有 tool:update 已交付。TUI 收到 step 回复后 `timeout 250000 (takeMVar doneVar)` 有上限等待终态再 `cancel`，无 marker 的旧内核最多多等 250ms。TUI 路径已无 `threadDelay`。
+  测试：`SSESpec` 终态分类 1 例、`BridgeDeltaSpec` 终态 sink 1 例（raw-socket fixture）。
+- [x] **3.5-2 双击 esc 语义修正**。
+  落地：抽出 `UI.Dialog.escWiring :: running -> withinWindow -> armed -> (interrupt, keepArmed)`；`escapeWithoutApproval` 用 `keepArmed` 决定 `appEscLast`（fired 时清空，第三次按下重新布防），且仅 `appBusy && no parked approval` 时布防；空闲 esc 不布防。
+  测试：DialogSpec「idle 不布防 / 首按布防 / 二次触发 / 三次只触发一次」4 例。
+- [x] **3.5-3 真实中断（跨壳契约）**。
+  落地：内核 `POST /api/session/:id/interrupt`（忙则置 `abortRequested` 并回 `{aborted:true}`，空闲回 false 不置标志）；`runTurn` 的 `finally` 清标志，迟到的中断不泄漏到下一轮。Bridge `interruptSession`；CLI 在双击 esc 时异步调用、状态栏 "Interrupting…"；旧的 "cancel lands in M3" 文案已删。契约 §2 已登记端点与语义。
+  测试：`packages/scheduler/test/interrupt.test.ts` 2 例（空闲拒绝且不毒化下一轮 / 忙时置位且轮末清除）。
+  限制（已在契约写明）：检查点在**轮次之间**，不能打断正在进行的单次模型生成。
+- [x] **3.5-4 删除类命令不给 always**。
+  落地：`UI.Dialog.approvalOptions :: String -> [Text] -> [ApprovalOption]` + `isDestructiveShell`（bash/shell/run_shell 的首参数；跳过 sudo/doas/env/赋值前缀；rm/rmdir/del/erase/format/mkfs/dd/shred/truncate/mv、`git clean`、`git reset --hard`）；`dialogCount`、绘制行与 `dialogActivate` 全部改为按选项表分支。
+  测试：DialogSpec 审批选项 7 例（含 `rm -rf`、`sudo rm`、`FOO=1 mv`、git 两类、非 shell 工具、计数与夹取）。
+- [ ] **3.5-5 reject 附原因（需契约变更，启动时二选一）**：MiMo 的 reject 可填原因，当前 decision 端点只收 `{approve}`。
+  方案 A（默认）：`POST /decision` 增可选 `reason`，内核把原因拼进 tool result 供模型见；三壳契约登记。
+  方案 B：不做，把理由写进本节（若内核改动超过半天或会影响其他壳的语义）。
+- [x] **3.5-6 文档真实性**：已回退 M0-3.2/3.3 的假勾选、登记 spinner 内容驱动偏差、把 M3 形态改为浮层并把 diff 拆成"已做/未做"两项；本轮随 3.5-1…4 同步勾选与证据。
+- [ ] **3.5-7 人工验收清单（用户执行，回填本节）**：
+  - [ ] `cabal run trha -- tui` 连真实模型：长回复逐字增长、无重复段落
+  - [ ] 工具卡：`ctrl+o` / 空输入 `enter` 折叠展开，输出尾部预览正确
+  - [ ] footer：in / out / total / ctx% 数值合理
+  - [ ] 配一条 ask 规则：审批浮层弹出、消息流不可输入、once / always / reject 三路结果正确；always 后同命令不再询问
+  - [ ] diff 输出有增删配色
+- [ ] **3.5-8 diff 显示规格**：行号对齐与「宽 <120 用 unified」目前未实现（只有分类上色）。
+  做法：先定显示规则（行号取自 hunk 头还是自增；宽度用 `availWidthL` 阈值切换 unified/side-by-side 或仅隐藏行号），落成纯函数 + spec，再接渲染。
+  验收：spec 覆盖阈值两侧与 hunk 行号；窄屏不溢出。
+
+## M4：侧栏与高级（拆三刀，逐刀可交付）
+
+### M4-1 侧栏
+
+- 宽度策略抽纯模块 `UI/Layout.hs`：≥80 列停靠 / 窄屏浮层（MiMo 参考 42 列 + `width>120` 规则；最终阈值实现时定并写进 spec）。
+- 内容三节：Context（token/成本/占用%——复用 footer 已有的 `Usage`/`appCtxSize`）、TODO（数据源优先 `session.teamTasks`，无则空态）、会话信息（id/标题/模型）。
+- 验收：≥80 列停靠、窄屏浮层可开合；布局策略 spec 覆盖两侧阈值；三节均无数据时不崩。
+
+### M4-2 `@` 文件补全
+
+- 纯模块 `UI/Completion.hs`：cwd 递归索引（忽略 `.git`/`node_modules`/`dist-newstyle`，限深度与条目数）、查询过滤、选中后展开为路径文本。
+- 交互：输入 `@` 触发浮层（复用 `DialogStack` 或独立 popup），Enter 插入路径（无 extmark）。
+- 验收：`@` 弹层 + 过滤 + 插入；纯模块 spec；大仓下首次索引不阻塞输入（索引异步、结果回灌）。
+
+### M4-3 主题 / leader / 鼠标
+
+- truecolor 调色板：`Theme` 解析扩展到 RGB，保留 dark/light 两套预设；brick/vty 侧用 `Graphics.Vty.Attributes` 的 RGB color。
+- leader 键：先列键位表（避免与 `ctrl+o`、esc、`/`、`ctrl+p` 冲突），再做自定义 modifier 链，键表 spec 化。
+- 鼠标滚动：`EvMouse` → 消息区 viewport 滚动。
+- 验收：主题切换可见且两套预设完整；leader 表 spec 逐条；滚轮滚动消息区。
+
+## M5：存量补齐（新增，不承诺，启动时逐个细化）
+
+分析文档 §5 里仍判"简陋/缺失"但不在 M0–M4 承诺内的项，登记备查：
+
+- 会话管理：fork / timeline / recovery（当前只有列表 + resume 回放）
+- 审批 diff 全屏（MiMo `ctrl+f` Portal）与审批期间 diff 查阅
+- 逐卡折叠（卡片焦点/命中测试）替代"最近一张"
+- Toast 通知、成本/TPS 统计（footer 目前只有 token）
+- reject 原因（若 M3.5-5 选 B）
+- i18n 扩到多 locale（当前 zh/en）
 
 ---
 
 ## 自检记录
 
-- 覆盖度：分析文档 §5 判定表逐行有落点——硬伤→M0，简陋(输入/markdown/工具卡/token)→M1，缺失(对话框)→M2，(diff 审批)→M3，(侧栏/补全/leader/主题/鼠标)→M4；「无」项中会话管理增强并入 M2 会话对话框。
-- 占位符：无 TODO/待定；M1–M4 为显式的「另行细化」范围声明（writing-plans 跨子系统拆分规则）。
+- 覆盖度：分析文档 §5 判定表逐行有落点——硬伤→M0，简陋(输入/markdown/工具卡/token)→M1，缺失(对话框)→M2，(diff 审批)→M3，(侧栏/补全/leader/主题/鼠标)→M4，安全特例/真实中断/drain window→M3.5，会话管理与成本/TPS 等剩余「简陋」项→M5 backlog。
+- 占位符：无 TODO；M4/M5 为显式的「启动时细化」范围声明。唯一决策点：M3.5-5（reject 原因）给出 A/B 两条路径与默认值，不阻塞其余排期。
 - 类型一致：`applyChunk`/`PendingMsg`/`StreamChunk` 在任务 1 定义，任务 2/3 引用同名。
+- **状态纪律（2026-10-25 新增）**：勾选以代码核对为准，不凭记忆；完成一项须写明落地证据（文件 + 行号或模块名），未做的不勾。

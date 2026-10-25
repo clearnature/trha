@@ -20,6 +20,10 @@ module UI.Dialog
     -- * Selection
   , dialogMoveSel
   , dialogCount
+    -- * Approval options
+  , ApprovalOption(..)
+  , approvalOptions
+  , isDestructiveShell
     -- * Command-dialog editing
   , dialogCommandsAppend
   , dialogCommandsDelete
@@ -31,6 +35,7 @@ module UI.Dialog
   , EscOutcome(..)
   , resolveEscape
   , escPress
+  , escWiring
   ) where
 
 import Core.Types (ModelInfo(..))
@@ -79,8 +84,48 @@ dialogCount :: Dialog -> Int
 dialogCount (DialogModels ms _)      = length ms
 dialogCount (DialogSessions ss _)    = length ss
 dialogCount (DialogCommands all0 q _) = length (filterItems q all0)
-dialogCount (DialogApproval{})       = 3  -- once / always / reject
+dialogCount (DialogApproval _ name args _) = length (approvalOptions name args)
 dialogCount (DialogConfirm _ _)      = 2  -- yes / no
+
+-- | Options offered by an approval card, in display order.
+data ApprovalOption = ApprovalOnce | ApprovalAlways | ApprovalReject
+  deriving (Show, Eq)
+
+-- | MiMo parity: destructive shell commands get no "always" option — a
+-- permanent allow on @rm -rf@ is not a mistake the UI should make easy.
+-- Everything else gets the full three-way choice.
+approvalOptions :: String -> [Text] -> [ApprovalOption]
+approvalOptions name args
+  | isDestructiveShell name args = [ApprovalOnce, ApprovalReject]
+  | otherwise = [ApprovalOnce, ApprovalAlways, ApprovalReject]
+
+-- | Whether a shell tool call can delete data, judged from the tool name
+-- and its first argument (the command line).  Deliberately conservative:
+-- a false positive only costs one extra prompt.
+isDestructiveShell :: String -> [Text] -> Bool
+isDestructiveShell name args
+  | name `notElem` shellTools = False
+  | otherwise = case args of
+      (cmd : _) -> destructive cmd
+      []        -> False
+  where
+    shellTools = ["bash", "shell", "run_shell"]
+    destructive cmd =
+      let toks = dropWhile isPrefix (T.words (T.strip cmd))
+      in case toks of
+           (verb : rest) -> verb' verb `elem` destructiveVerbs
+                            || (verb' verb == "git" && isDestructiveGit rest)
+           [] -> False
+    isPrefix t = t `elem` ["sudo", "doas", "env"] || "=" `T.isInfixOf` t
+    verb' = T.toLower . T.takeWhile (/= '/')
+    destructiveVerbs =
+      [ "rm", "rmdir", "del", "erase", "format", "mkfs"
+      , "dd", "shred", "truncate", "mv" ]
+    isDestructiveGit (sub : more) = case T.toLower sub of
+      "clean" -> True
+      "reset" -> "--hard" `elem` more
+      _       -> False
+    isDestructiveGit [] = False
 
 -- | Move the top dialog's selection by @delta@ (clamped; a no-op on
 -- empty lists).
@@ -156,3 +201,16 @@ escPress withinWindow armed = (fired, armed')
   where
     fired = armed && withinWindow
     armed' = not (withinWindow && armed)
+
+-- | Wiring-level escape decision.  Only a running turn can be interrupted;
+-- an idle press neither fires nor leaves an arm behind.  Returns
+-- @(interrupt, keepArmed)@ — the caller maps @keepArmed@ to the new
+-- @appEscLast@ (arm with the current time, or clear it).
+--
+-- This is what keeps three presses from firing twice: 'escPress' disarms on
+-- fire, and clearing the timestamp makes the third press a fresh first
+-- press.
+escWiring :: Bool -> Bool -> Bool -> (Bool, Bool)
+escWiring running withinWindow armed
+  | not running = (False, False)
+  | otherwise   = escPress withinWindow armed

@@ -1538,6 +1538,19 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     res.json({ status: 'approved', reply, messages: session.messages, mode: session.mode });
   });
 
+  // ── Interrupt ─────────────────────────────────────────────────────────
+  // The agent loop checks abortRequested between tool rounds.  Refuse when
+  // idle: setting the flag there would abort the *next* turn instead.
+  app.post('/api/session/:id/interrupt', (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    const busy = inFlight.has(session.id) || isSessionBusy(session.id);
+    if (!busy) return res.json({ aborted: false });
+    session.abortRequested = true;
+    events.emit('agent:interrupt', { sessionId: session.id });
+    res.json({ aborted: true });
+  });
+
   // ── Human answers ─────────────────────────────────────────────────────
   // ask_user_question parks a question on the session; this is the way back.
   // Answering runs the next turn: the agent asked in order to continue.
@@ -1604,6 +1617,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       return await runStep(session, message, target, onDelta);
     } finally {
       inFlight.delete(session.id);
+      // An abort that arrived too late for the loop's round check must not
+      // leak into the next turn.
+      session.abortRequested = false;
     }
   };
 

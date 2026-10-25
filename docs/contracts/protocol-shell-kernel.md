@@ -22,6 +22,7 @@
 | DELETE /api/session/:id | – | `{ok,sessionId}` | CLI deleteSession |
 | POST /api/agent/step | `{sessionId,message,requireApproval?}` | `{reply,messages,mode}` 或 `{status:"awaiting_approval",pending:{message},mode}` | vitest; CLI sendMessage/planStep |
 | POST /api/session/:id/decision | `{approve:bool}` | `{status:"approved",reply,…}` 或 `{status:"denied",mode}`；无挂起→400 | vitest S1; CLI approve/denyPlan |
+| POST /api/session/:id/interrupt | `{}` | `{aborted:bool}`；空闲会话返回 `false` 且不置标志 | vitest interrupt; CLI interruptSession |
 | GET /api/models | – | `[{name,description,contextSize}]` | CLI listModels |
 | GET /api/plugins | – | `[{name,version,description}]`（运行时已注册插件） | vitest plugins-runtime |
 | POST /api/plugins | `{name,version,description}`（宣告型，无钩子） | 201 `{ok,name}`；重复 409 | vitest plugins-dynamic |
@@ -38,6 +39,11 @@
 > 转给内核 `/session/:id/approval` 与 `/session/:id/decision`（内核持有
 > `awaiting_approval` 状态、做屏障、并落盘跨重启）。内核不可达时编排层降级为本地
 > `pendingApproval`，上表响应形状不变。详见 `docs/architecture/architecture.md` §3.3。
+>
+> **中断语义**：`interrupt` 置会话的 `abortRequested`，工具循环在**轮次之间**检查并
+> 以 `(interrupted)` 收尾；因此它只能停在下一轮边界，不能打断正在进行的单次模型
+> 生成。空闲会话拒绝置标志（否则会中止下一轮），且每轮结束（`finally`）都会清标志，
+> 迟到的中断不会泄漏到后续轮次。三个外壳共用该语义。
 
 ## 3. SSE 事件帧（data: JSON，按 sessionId 过滤）
 | event 语义 | 载荷（字段） | CLI 类型 |

@@ -60,9 +60,15 @@ spec = do
       classifyPayload (BC.pack "{\"sessionId\":\"s1\",\"text\":\"[\"}")
         `shouldSatisfy` isDelta
 
-    it "recognises a message echo" $ do
+    it "recognises a message echo and keeps its role" $ do
       classifyPayload (BC.pack "{\"sessionId\":\"s1\",\"role\":\"assistant\",\"content\":\"hi\"}")
-        `shouldBe` SseMessage
+        `shouldBe` SseMessage "assistant"
+
+    it "marks assistant echoes and the plan gate as terminal" $ do
+      isTerminalPayload (SseMessage "assistant") `shouldBe` True
+      isTerminalPayload (SseMessage "user")      `shouldBe` False
+      isTerminalPayload SsePlan                  `shouldBe` True
+      isTerminalPayload (SseTextDelta "{}")      `shouldBe` False
 
     it "keeps unrecognised payloads for diagnostics" $ do
       case classifyPayload (BC.pack "{\"weird\":true}") of

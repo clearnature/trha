@@ -8,6 +8,7 @@
 --   GET    /api/session/:id                         -> {id, mode, messages, ...}
 --   DELETE /api/session/:id                         -> 200
 --   POST   /api/agent/step          {sessionId,message} -> {reply, messages, mode}
+--   POST   /api/session/:id/interrupt               -> {aborted}
 --   GET    /api/session/:id/messages                -> {messages: [{role, content}]}
 --   GET    /api/models                              -> [ {name, description, contextSize} ]
 --   GET    /health                                  -> {status, ...}
@@ -30,10 +31,12 @@ module Bridge.Scheduler
   , sendMessageWithUsage
   , getMessages
   , allowAlways
+  , interruptSession
 
     -- * Session Events (SSE, Phase 2 S2)
   , subscribeSessionEvents
   , subscribeSessionEventsWith
+  , subscribeSessionEventsWithTerminal
 
     -- * Plan / Approval (Phase 2 S1)
   , planStep
@@ -71,7 +74,8 @@ import Data.Aeson.Types (parseMaybe, (.:))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Control.Concurrent (forkIO, killThread, newEmptyMVar, putMVar, takeMVar)
-import Control.Monad (void)
+import Control.Monad (void, when)
+import Data.Maybe (fromMaybe)
 import System.Timeout (timeout)
 import Control.Exception (catch)
 import Data.Text (Text)
@@ -200,7 +204,21 @@ subscribeSessionEventsWith
   -> (Either CLIError ToolEvent -> IO ())
   -> (Text -> IO ())
   -> IO (IO ())
-subscribeSessionEventsWith bridge sid onEvent onDelta = do
+subscribeSessionEventsWith bridge sid onEvent onDelta =
+  subscribeSessionEventsWithTerminal bridge sid onEvent onDelta (return ())
+
+-- | Like 'subscribeSessionEventsWith', plus a third sink fired when the
+-- turn's terminal marker arrives (the assistant message echo or the plan
+-- gate).  One stream preserves order, so by then every tool update of that
+-- turn has already been delivered — callers can tear the stream down
+-- without a sleep.
+subscribeSessionEventsWithTerminal
+  :: SchedulerBridge -> SessionId
+  -> (Either CLIError ToolEvent -> IO ())
+  -> (Text -> IO ())
+  -> IO ()
+  -> IO (IO ())
+subscribeSessionEventsWithTerminal bridge sid onEvent onDelta onTerminal = do
   let client = bridgeHTTP bridge
       url    = buildUrl client ("/api/events/" ++ sid)
   request <- parseRequest url
@@ -238,8 +256,8 @@ subscribeSessionEventsWith bridge sid onEvent onDelta = do
         Right (Object o)
           | Just (String txt) <- KM.lookup "text" o -> onDelta txt
         _ -> onEvent (Left (ValidationError ("malformed text delta: " <> snippet t)))
-      SseMessage       -> return ()
-      SsePlan          -> return () -- the parked turn's reply carries the signal
+      SseMessage role  -> when (role == "assistant") onTerminal
+      SsePlan          -> onTerminal -- the parked turn ends here
       SseUnknown p     ->
         onEvent (Left (ValidationError ("unrecognised SSE payload: " <> snippet p)))
     snippet = T.take 120 . TE.decodeUtf8With (\_ _ -> Just '?')
@@ -372,6 +390,20 @@ allowAlways bridge name args = do
       | name `elem` (["bash", "shell", "run_shell"] :: [ToolName])
       , (c : _) <- args = "Bash(command:" <> T.replace "*" "\\*" c <> "*)"
       | otherwise       = T.pack name
+
+-- | Ask the scheduler to stop the session's in-flight turn.
+--
+-- The kernel checks the abort flag between tool rounds; an idle session is
+-- left untouched (the endpoint refuses rather than setting a flag that would
+-- abort the *next* turn).  @Right False@ therefore means "nothing to stop".
+interruptSession :: SchedulerBridge -> SessionId -> IO (Either CLIError Bool)
+interruptSession bridge sessionId = do
+  result <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sessionId ++ "/interrupt")
+              (object []) :: IO (Either CLIError Value)
+  return $ case result of
+    Right (Object r) -> Right (fromMaybe False (parseMaybe (.: "aborted") r))
+    Right _          -> Left $ ValidationError "Invalid interrupt response"
+    Left err         -> Left err
 
 --------------------------------------------------------------------------------
 -- Agent Operations (no counterpart in the orchestration API yet)

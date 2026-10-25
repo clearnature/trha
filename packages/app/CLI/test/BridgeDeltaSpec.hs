@@ -20,11 +20,13 @@ import Network.Socket.ByteString (send, recv, sendAll)
 import System.Timeout (timeout)
 import Test.Hspec
 
-import Bridge.Scheduler (createSchedulerBridge, subscribeSessionEventsWith)
+import Bridge.Scheduler
+    ( createSchedulerBridge, subscribeSessionEventsWith
+    , subscribeSessionEventsWithTerminal )
 import Core.Types (CLIConfig(..), ToolEvent(..), ToolRunStatus(..), defaultCLIConfig)
 
 spec :: Spec
-spec = describe "Bridge.Scheduler.subscribeSessionEventsWith" $
+spec = describe "Bridge.Scheduler.subscribeSessionEvents" $ do
   it "routes tool progress and text deltas to their own sinks" $
     withSseServer sseBody $ \port -> do
       bridge <- createSchedulerBridge testConfig { configPort = port }
@@ -37,6 +39,16 @@ spec = describe "Bridge.Scheduler.subscribeSessionEventsWith" $
       cancel `catch` \(_ :: SomeException) -> return ()
       delta `shouldBe` "Hello"
       fmap teName tool `shouldBe` Right "bash"
+
+  it "reports the assistant echo as the turn's terminal marker" $
+    withSseServer sseTerminalBody $ \port -> do
+      bridge <- createSchedulerBridge testConfig { configPort = port }
+      doneVar <- newEmptyMVar
+      cancel <- subscribeSessionEventsWithTerminal bridge "s2"
+                  (const (return ())) (const (return ())) (putMVar doneVar ())
+      _ <- getWithin 3000000 doneVar
+      cancel `catch` \(_ :: SomeException) -> return ()
+      pure ()
   where
     testConfig = defaultCLIConfig
       { configHost = "127.0.0.1", configToken = "test-token"
@@ -46,6 +58,12 @@ spec = describe "Bridge.Scheduler.subscribeSessionEventsWith" $
     sseBody = BC.concat
       [ "data: {\"name\":\"bash\",\"status\":\"succeeded\"}\n\n"
       , "data: {\"text\":\"Hello\"}\n\n" ]
+
+    -- A turn's tail: tool progress, then the assistant message echo.
+    sseTerminalBody = BC.concat
+      [ "data: {\"name\":\"bash\",\"status\":\"succeeded\"}\n\n"
+      , "data: {\"role\":\"user\",\"content\":\"go\"}\n\n"
+      , "data: {\"role\":\"assistant\",\"content\":\"done\"}\n\n" ]
 
     getWithin us var = do
       r <- timeout us (takeMVar var)

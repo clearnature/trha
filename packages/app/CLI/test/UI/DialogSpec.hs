@@ -96,3 +96,49 @@ spec = do
 
     it "press outside the window re-arms only" $ do
       escPress False True `shouldBe` (False, True)
+
+  describe "escape wiring" $ do
+    it "idle presses never fire and leave no arm behind" $ do
+      escWiring False True True `shouldBe` (False, False)
+      escWiring False False False `shouldBe` (False, False)
+
+    it "the first running press arms" $ do
+      escWiring True False False `shouldBe` (False, True)
+
+    it "the second press within the window fires and disarms" $ do
+      escWiring True True True `shouldBe` (True, False)
+
+    it "a third press after firing re-arms instead of firing again" $ do
+      -- after a fire the timestamp is cleared, so the next press sees
+      -- withinWindow = False and armed = False
+      escWiring True False False `shouldBe` (False, True)
+
+  describe "approval options" $ do
+    it "offers once/always/reject for ordinary tools" $ do
+      approvalOptions "write" ["a.txt"]
+        `shouldBe` [ApprovalOnce, ApprovalAlways, ApprovalReject]
+
+    it "offers once/always/reject for harmless shell commands" $ do
+      approvalOptions "bash" ["ls -la"]
+        `shouldBe` [ApprovalOnce, ApprovalAlways, ApprovalReject]
+
+    it "drops always for destructive shell verbs" $ do
+      approvalOptions "bash" ["rm -rf build"] `shouldBe` [ApprovalOnce, ApprovalReject]
+      approvalOptions "shell" ["sudo rm -rf /"] `shouldBe` [ApprovalOnce, ApprovalReject]
+      approvalOptions "run_shell" ["FOO=1 mv a b"] `shouldBe` [ApprovalOnce, ApprovalReject]
+
+    it "drops always for destructive git commands" $ do
+      approvalOptions "bash" ["git clean -fdx"] `shouldBe` [ApprovalOnce, ApprovalReject]
+      approvalOptions "bash" ["git reset --hard HEAD~1"] `shouldBe` [ApprovalOnce, ApprovalReject]
+
+    it "keeps always for non-destructive git commands" $ do
+      approvalOptions "bash" ["git status"] `shouldBe` [ApprovalOnce, ApprovalAlways, ApprovalReject]
+
+    it "does not treat non-shell tools as destructive" $ do
+      isDestructiveShell "write" ["rm -rf /"] `shouldBe` False
+
+    it "counts and clamps the card's options" $ do
+      dialogCount (DialogApproval "ask" "bash" ["rm -rf build"] 0) `shouldBe` 2
+      dialogCount (DialogApproval "ask" "bash" ["ls"] 0) `shouldBe` 3
+      dialogMoveSel 1 (DialogApproval "ask" "bash" ["rm -rf build"] 1)
+        `shouldBe` DialogApproval "ask" "bash" ["rm -rf build"] 1

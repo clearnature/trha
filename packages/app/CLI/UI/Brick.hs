@@ -17,12 +17,13 @@ import Brick.BChan
 import Brick.Widgets.Center (centerLayer)
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
-import Control.Concurrent (threadDelay)
+import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.Async (async)
 import Control.Monad (forM_, void, when)
 import Control.Monad.IO.Class (liftIO)
+import System.Timeout (timeout)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWith, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, allowAlways, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, allowAlways, interruptSession, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import UI.Event
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
@@ -37,7 +38,7 @@ import Config.Settings (resolveConfig)
 import Data.List (intersperse, find)
 import Data.IORef
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe, isJust, listToMaybe)
+import Data.Maybe (fromMaybe, isJust, isNothing, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -266,12 +267,13 @@ drawDialog st d =
     n = dialogCount d
     (start, end) = windowRange n sel maxVisible
     rows = case d of
-      DialogApproval msg _ _ sel ->
-        [ padLeftRight 1 $ withAttr (attrName "error") $
-            strWrap ("△ " ++ T.unpack msg)
-        ] <>
-        [ row idx sel (str (T.unpack (tr lang (approvalOption idx)))) (str "")
-        | idx <- [0 .. 2 :: Int] ]
+      DialogApproval msg name args sel ->
+        let sel' = if n > 0 then min sel (n - 1) else 0
+        in [ padLeftRight 1 $ withAttr (attrName "error") $
+               strWrap ("△ " ++ T.unpack msg)
+           ] <>
+           [ row idx sel' (str (T.unpack (tr lang (approvalOptionLabel opt)))) (str "")
+           | (idx, opt) <- zip [0 ..] (approvalOptions name args) ]
       DialogConfirm msg _ ->
         [ padLeftRight 1 $ strWrap (T.unpack msg) ] <>
         [ row idx sel (str (T.unpack (tr lang (confirmOption idx)))) (str "")
@@ -305,11 +307,11 @@ drawDialog st d =
         markerAttr | idx == cur = attrName "tool"
                    | otherwise  = attrName "timestamp"
 
-    approvalOption :: Int -> Text
-    approvalOption i = case i of
-      0 -> "Allow once"
-      1 -> "Allow always"
-      _ -> "Reject"
+    approvalOptionLabel :: ApprovalOption -> Text
+    approvalOptionLabel opt = case opt of
+      ApprovalOnce   -> "Allow once"
+      ApprovalAlways -> "Allow always"
+      ApprovalReject -> "Reject"
 
     confirmOption :: Int -> Text
     confirmOption i = case i of
@@ -734,7 +736,11 @@ escapeWithoutApproval = do
   st <- get
   now <- liftIO getCurrentTime
   let within = maybe False (\t0 -> diffUTCTime now t0 <= 5) (appEscLast st)
-      (fired, _arm) = escPress within (isJust (appEscLast st))
+      -- Only a turn that is actually running can be interrupted; an idle
+      -- press leaves no arm behind (otherwise the next press would fire).
+      running = appBusy st && isNothing (appApproval st)
+      (fired, keepArmed) = escWiring running within (isJust (appEscLast st))
+      arm = if keepArmed then Just now else Nothing
       flags = EscFlags { efSelection = False
                        , efStack = not (stackNull (appDialogs st))
                        , efShell = False
@@ -742,9 +748,13 @@ escapeWithoutApproval = do
   case resolveEscape flags of
     EscPopDialog ->
       modify $ \s -> s { appDialogs = stackPop (appDialogs s), appEscLast = Nothing }
-    _ | fired ->
-          modify $ \s -> s { appStatus = tr (appLang s) "Interrupt requested (cancel lands in M3)" }
-      | otherwise -> modify $ \s -> s { appEscLast = Just now }
+    _ | fired -> do
+          modify $ \s -> s { appEscLast = Nothing
+                           , appStatus = tr (appLang s) "Interrupting..." }
+          case appSessionId st of
+            Nothing -> return ()
+            Just sid -> void $ liftIO $ async $ void (interruptSession (appBridge st) sid)
+      | otherwise -> modify $ \s -> s { appEscLast = arm }
 
 -- | Keys while a dialog is open: the top dialog owns them all.
 handleDialogKey :: Event -> EventM ResourceName AppState ()
@@ -793,10 +803,12 @@ dialogActivate = do
         DialogCommands _ _ sel -> case drop sel (dialogCommandsItems d) of
           (item : _) -> handleSlash (piId item)
           []         -> return ()
-        DialogApproval _ name args sel -> case sel of
-          0 -> decideApprovalNow True   -- allow once
-          1 -> modifyTop $ \_ -> DialogConfirm (alwaysConfirmText (appLang st) name args) 0
-          _ -> decideApprovalNow False  -- reject
+        DialogApproval _ name args sel ->
+          case drop sel (approvalOptions name args) of
+            (ApprovalOnce : _)   -> decideApprovalNow True
+            (ApprovalAlways : _) -> modifyTop $ \_ ->
+              DialogConfirm (alwaysConfirmText (appLang st) name args) 0
+            _                    -> decideApprovalNow False
         DialogConfirm _ sel -> case sel of
           0 -> do  -- persist the rule, then approve once
             modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
@@ -1326,10 +1338,17 @@ handleChat input = do
         -- either way.
         accRef     <- liftIO (newIORef T.empty)
         deltasRef  <- liftIO (newIORef False)
-        cancel <- subscribeSessionEventsWith bridge sid (toolSink chan sid) $ \t -> do
-          liftIO $ atomicModifyIORef' deltasRef (const (True, ()))
-          liftIO $ atomicModifyIORef' accRef (\acc -> (acc <> t, ()))
-          writeBChan chan (EvResponse (Right (ChunkDelta t)))
+        -- The stream's terminal marker (assistant echo / plan gate) is
+        -- emitted after every tool update of the turn; waiting for it
+        -- replaces the old fixed drain sleep.  The wait is bounded for
+        -- kernels that do not emit a marker at all.
+        doneVar    <- liftIO newEmptyMVar
+        let onDeltaEv t = do
+              liftIO $ atomicModifyIORef' deltasRef (const (True, ()))
+              liftIO $ atomicModifyIORef' accRef (\acc -> (acc <> t, ()))
+              writeBChan chan (EvResponse (Right (ChunkDelta t)))
+        cancel <- subscribeSessionEventsWithTerminal bridge sid (toolSink chan sid)
+                    onDeltaEv (void (tryPutMVar doneVar ()))
         result <- sendMessageWithUsage bridge sid input
         let (chunk, musage) = case result of
               Right (c, u) -> (Right c, u)
@@ -1346,10 +1365,10 @@ handleChat input = do
             writeBChan chan (EvResponse c)
             forM_ musage $ \u ->
               writeBChan chan (EvResponse (Right (ChunkDone u)))
-        -- drain window: let trailing SSE events (e.g. the final tool
-        -- status) arrive before tearing the stream down
-        liftIO $ threadDelay 100000
-        cancel
+        -- Wait for the turn's terminal marker so the last tool status is
+        -- processed; bounded so a kernel without markers still tears down.
+        _ <- liftIO $ timeout 250000 (takeMVar doneVar)
+        liftIO cancel
       zero = Usage 0 0 0
   void $ liftIO $ async $ case appSessionId st of
     Just sid -> do

@@ -73,6 +73,7 @@ zhDict = M.fromList
   , ("No, back", "否，返回")
   , ("Approving...", "批准中…")
   , ("Denying...", "拒绝中…")
+  , ("Interrupting...", "中断中…")
   , ("Awaiting approval...", "等待批准…")
   , ("No session to approve", "没有会话可批准")
   , ("No session to answer", "没有会话可回答")

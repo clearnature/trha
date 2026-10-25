@@ -11,13 +11,15 @@ module Core.SSE
   , parseToolEvent
   , SsePayload(..)
   , classifyPayload
+  , isTerminalPayload
   ) where
 
 import Core.Types (ToolEvent)
-import Data.Aeson (Value(Object), decodeStrict, eitherDecodeStrict')
+import Data.Aeson (Value(Object, String), decodeStrict, eitherDecodeStrict')
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
+import Data.Text (Text)
 
 -- | Decoder state: bytes not yet forming a complete line.
 newtype SseDecoder = SseDecoder
@@ -72,7 +74,7 @@ parseToolEvent = either (const Nothing) Just . eitherDecodeStrict'
 data SsePayload
   = SseTool ToolEvent
   | SseTextDelta BS.ByteString
-  | SseMessage
+  | SseMessage Text          -- ^ role (user / assistant / ...)
   | SsePlan
   | SseUnknown BS.ByteString
   deriving (Show, Eq)
@@ -84,7 +86,7 @@ classifyPayload raw
   | Just (Object o) <- decodeStrict raw
   , Just _ <- KM.lookup "text" o = SseTextDelta raw
   | Just (Object o) <- decodeStrict raw
-  , Just _ <- KM.lookup "role" o = SseMessage
+  , Just (String role) <- KM.lookup "role" o = SseMessage role
   -- plan/approval marker: {status,message} without a tool name — the
   -- approval gate parks the turn; the synchronous reply carries the same
   -- signal, so the stream copy is only silenced here (not re-rendered).
@@ -92,3 +94,15 @@ classifyPayload raw
   , Just _ <- KM.lookup "status" o
   , Just _ <- KM.lookup "message" o = SsePlan
   | otherwise = SseUnknown raw
+
+-- | Whether a payload marks the end of a turn on the session stream.
+--
+-- The scheduler emits the assistant's message echo (or the plan gate) after
+-- every tool event of that turn, and one SSE connection preserves order, so
+-- receiving a terminal payload guarantees that all preceding tool updates
+-- were already delivered.  The TUI uses this instead of sleeping before it
+-- tears the subscription down.
+isTerminalPayload :: SsePayload -> Bool
+isTerminalPayload (SseMessage "assistant") = True
+isTerminalPayload SsePlan                  = True
+isTerminalPayload _                        = False
