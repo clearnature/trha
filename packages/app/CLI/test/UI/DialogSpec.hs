@@ -74,8 +74,18 @@ spec = do
     it "closes the autocomplete popup" $ do
       resolveEscape (EscFlags False False False True) `shouldBe` EscCloseComplete
 
-    it "is a deliberate no-op at the approval layer" $ do
-      resolveEscape (EscFlags False False False False) `shouldBe` EscApprovalNoop
+    it "rejects at the approval layer (escape binds to reject)" $ do
+      resolveEscape (EscFlags False False False False) `shouldBe` EscApprovalDeny
+
+  describe "approval dialog" $ do
+    it "moves within the three options (once/always/reject)" $ do
+      dialogMoveSel 1 (DialogApproval "ask" "bash" ["ls"] 0)
+        `shouldBe` DialogApproval "ask" "bash" ["ls"] 1
+      dialogMoveSel 1 (DialogApproval "ask" "bash" ["ls"] 2)
+        `shouldBe` DialogApproval "ask" "bash" ["ls"] 2
+    it "moves within the two confirm options and clamps" $ do
+      dialogMoveSel 1 (DialogConfirm "persist?" 0) `shouldBe` DialogConfirm "persist?" 1
+      dialogMoveSel 5 (DialogConfirm "persist?" 0) `shouldBe` DialogConfirm "persist?" 1
 
   describe "double-escape arming" $ do
     it "first press arms without firing" $ do

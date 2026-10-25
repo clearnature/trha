@@ -22,7 +22,7 @@ import Control.Concurrent.Async (async)
 import Control.Monad (forM_, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWith, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, reportStep)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWith, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, allowAlways, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import UI.Event
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
@@ -56,10 +56,11 @@ import System.IO (hFlush, stdout)
 import Control.Exception (IOException, try)
 import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
 import UI.Dialog
+import UI.Render.Diff (DiffClass(..), diffClass)
 import Data.Time.Clock (UTCTime, diffUTCTime)
 import UI.InputHistory (HistState(..), emptyHistState, histUp, histDown, histCommit, loadHistory, appendHistory)
 import UI.Render.Picker (PickerItem(..), filterItems, maxVisible, moveSelection, queryAppend, queryDelete, windowRange)
-import UI.Render.ToolCard (ToolStatus(..), ToolCard(..), ToolFold(..), toggleFold, toolCardView, toolCardLines, toolCardWithStatus)
+import UI.Render.ToolCard (ToolStatus(..), ToolCard(..), ToolFold(..), toggleFold, toolCardView, toolCardLines, toolCardWithStatus, toolCardCollapsed, toolStatusLine, cardWidth)
 import UI.Theme (ColorSpec(..), TermColor(..), TermStyle(..), Theme, resolveTheme, themeColors)
 
 -- | Application state
@@ -84,6 +85,8 @@ data AppState = AppState
   , appMetrics    :: [(Text, Text)]     -- ^ static metric values (workspace/git)
   , appPlan       :: Maybe PlanView     -- ^ live multi-step plan (kernel-owned)
   , appFolds      :: Map.Map Int ToolFold -- ^ tool-card fold states, keyed by msgId
+  , appApproval   :: Maybe Text         -- ^ parked tool-approval message (M3)
+  , appAskTool    :: Maybe (String, [Text])  -- ^ tool identity captured from the ask event
   , appUsage      :: Maybe Usage        -- ^ real usage echo of the last turn
   , appCtxSize    :: Maybe Int          -- ^ context size of the active model
   }
@@ -139,6 +142,8 @@ initialState bridge chan cfg = AppState
   , appMetrics   = []
   , appPlan      = Nothing
   , appFolds     = Map.empty
+  , appApproval  = Nothing
+  , appAskTool   = Nothing
   , appUsage     = Nothing
   , appCtxSize   = Nothing
   }
@@ -261,6 +266,16 @@ drawDialog st d =
     n = dialogCount d
     (start, end) = windowRange n sel maxVisible
     rows = case d of
+      DialogApproval msg _ _ sel ->
+        [ padLeftRight 1 $ withAttr (attrName "error") $
+            strWrap ("△ " ++ T.unpack msg)
+        ] <>
+        [ row idx sel (str (T.unpack (tr lang (approvalOption idx)))) (str "")
+        | idx <- [0 .. 2 :: Int] ]
+      DialogConfirm msg _ ->
+        [ padLeftRight 1 $ strWrap (T.unpack msg) ] <>
+        [ row idx sel (str (T.unpack (tr lang (confirmOption idx)))) (str "")
+        | idx <- [0 .. 1 :: Int] ]
       DialogModels ms _ ->
         [ row idx sel (str (T.unpack (modelName it)))
                       (str ("ctx " ++ show (modelContextSize it)))
@@ -289,6 +304,17 @@ drawDialog st d =
                | otherwise  = "  "
         markerAttr | idx == cur = attrName "tool"
                    | otherwise  = attrName "timestamp"
+
+    approvalOption :: Int -> Text
+    approvalOption i = case i of
+      0 -> "Allow once"
+      1 -> "Allow always"
+      _ -> "Reject"
+
+    confirmOption :: Int -> Text
+    confirmOption i = case i of
+      0 -> "Yes, allow always"
+      _ -> "No, back"
 
     queryRow = case d of
       DialogCommands _ q _ -> padLeftRight 1 $ hBox
@@ -394,9 +420,25 @@ messageBody :: Bool -> Text -> Text -> Maybe ToolCard -> ToolFold -> Widget Reso
 messageBody md role content tool fold =
   case tool of
     Just card ->
-      padLeft (Pad 2) $
-        withAttr (attrName "tool") $
-          vBox [ str (T.unpack l) | l <- toolCardView fold card ]
+      padLeft (Pad 2) $ withAttr (attrName "tool") $
+        case fold of
+          FoldCollapsed ->
+            vBox [ str (T.unpack l) | l <- toolCardCollapsed card ]
+          FoldExpanded ->
+            -- diff-shaped tool output gets added/removed colouring
+            let trunc t | T.length t <= cardWidth - 4 = t
+                        | otherwise                   = T.take (cardWidth - 5) t <> "…"
+                diffAttrOf c = attrName $ case c of
+                  CAdd -> "diffAdd"; CDel -> "diffRemove"
+                  CHunk -> "diffHunk"; CMeta -> "diffMeta"; CPlain -> "tool"
+            in vBox $
+              [ str (T.unpack l)
+              | l <- toolCardLines (T.pack (tcName card)) (tcArgs card) ]
+              <> [ withAttr (diffAttrOf (diffClass l)) $ str (T.unpack ("  │ " <> trunc l))
+                 | l <- tcOutput card ]
+              <> [ withAttr (attrName "status") $ str (T.unpack (toolStatusLine st (tcDur card)))
+                 | Just st <- [tcStatus card] ]
+
     Nothing
       | role == "assistant" && md ->
           padLeft (Pad 2) $
@@ -547,9 +589,10 @@ drawInput st =
     -- No timer thread: streaming deltas drive redraws, so the frame index
     -- derives from the accumulated length — it animates exactly while the
     -- reply is actually moving (a frozen spinner honestly shows a stall).
-    awaitingStep = case appPlan st of
-      Just pv -> isJust (pvPending pv)
-      Nothing -> False
+    awaitingStep = isJust (appApproval st)
+                   || case appPlan st of
+                        Just pv -> isJust (pvPending pv)
+                        Nothing -> False
     busyLabel = case runState (appBusy st) awaitingStep of
       RunIdle -> str " Input "
       RunAwaiting ->
@@ -633,8 +676,6 @@ handleEvent :: BrickEvent ResourceName AppEvent -> EventM ResourceName AppState 
 handleEvent (AppEvent ev) = handleAppEvent ev
 handleEvent (VtyEvent (EvKey (KChar 'q') [MCtrl])) = halt
 handleEvent (VtyEvent (EvKey (KChar 'c') [MCtrl])) = halt
-handleEvent (VtyEvent (EvKey (KChar 'q') [MCtrl])) = halt
-handleEvent (VtyEvent (EvKey (KChar 'c') [MCtrl])) = halt
 handleEvent (VtyEvent (EvKey KEsc _)) = do
   st <- get
   case appSettings st of
@@ -651,10 +692,45 @@ handleEvent (VtyEvent ev) = do
       Nothing -> handleChatKey ev
 handleEvent _ = return ()
 
--- | Escape resolution per MiMo's hierarchy: pop an open dialog; a second
--- press within 5 seconds requests an interrupt (M3 wires the real cancel).
+-- | Answer the parked ask: post the decision and let EvVerdict close the
+-- loop (it clears appApproval and busy).
+decideApprovalNow :: Bool -> EventM ResourceName AppState ()
+decideApprovalNow approve = do
+  st <- get
+  modify $ \s -> s { appDialogs = stackPop (appDialogs s)
+                   , appStatus = tr (appLang s)
+                       (if approve then "Approving..." else "Denying...") }
+  case appSessionId st of
+    Nothing -> do
+      -- nothing to answer: drop the parked state instead of hanging
+      modify $ \s -> s { appApproval = Nothing, appBusy = False
+                       , appStatus = tr (appLang s) "No session to approve" }
+    Just sid -> do
+      let bridge = appBridge st
+          chan   = appChan st
+      void $ liftIO $ async $ do
+        r <- decidePlan bridge sid approve
+        writeBChan chan (EvVerdict r)
+
+-- | The "always" confirmation card's message.
+alwaysConfirmText :: Lang -> String -> [Text] -> Text
+alwaysConfirmText lang name args =
+  tr lang "Always allow " <> T.pack name
+    <> case args of (c : _) -> " " <> T.replace "\n" " " c; [] -> ""
+    <> tr lang " for future runs?"
+
+-- | Escape resolution per MiMo's hierarchy.  A parked ask is rejected on
+-- escape (permission page escapeKey=reject); otherwise pop an open
+-- dialog; a second press within 5 seconds requests an interrupt (the
+-- real cancel lands with the approval lock in M3).
 escapeHierarchy :: EventM ResourceName AppState ()
 escapeHierarchy = do
+  approval <- gets appApproval
+  case approval of
+    Just _  -> decideApprovalNow False
+    Nothing -> escapeWithoutApproval
+escapeWithoutApproval :: EventM ResourceName AppState ()
+escapeWithoutApproval = do
   st <- get
   now <- liftIO getCurrentTime
   let within = maybe False (\t0 -> diffUTCTime now t0 <= 5) (appEscLast st)
@@ -677,14 +753,20 @@ handleDialogKey (EvKey KDown [])  = modifyTop (dialogMoveSel 1)
 handleDialogKey (EvKey (KChar 'p') [MCtrl]) = modifyTop (dialogMoveSel (-1))
 handleDialogKey (EvKey (KChar 'n') [MCtrl]) = modifyTop (dialogMoveSel 1)
 handleDialogKey (EvKey KEnter []) = dialogActivate
-handleDialogKey (EvKey KBS [])    = do
-  modifyTop dialogCommandsDelete
-  scrollBottom
+handleDialogKey (EvKey KBS [])    = withCommands dialogCommandsDelete >> scrollBottom
 handleDialogKey (EvKey (KChar c) [])
-  | let o = fromEnum c in o >= 32 && o < 127 = do
-      modifyTop (dialogCommandsAppend c)
-      scrollBottom
+  | let o = fromEnum c in o >= 32 && o < 127 =
+      withCommands (dialogCommandsAppend c) >> scrollBottom
 handleDialogKey _ = return ()
+
+-- | Editing keys apply only to the command dialog (approval/confirm have
+-- no query row).
+withCommands :: (Dialog -> Dialog) -> EventM ResourceName AppState ()
+withCommands f = do
+  st <- get
+  case stackTop (appDialogs st) of
+    Just DialogCommands{} -> modifyTop f
+    _                     -> return ()
 
 -- | Apply a pure transformation to the top dialog of the stack.
 modifyTop :: (Dialog -> Dialog) -> EventM ResourceName AppState ()
@@ -711,6 +793,32 @@ dialogActivate = do
         DialogCommands _ _ sel -> case drop sel (dialogCommandsItems d) of
           (item : _) -> handleSlash (piId item)
           []         -> return ()
+        DialogApproval _ name args sel -> case sel of
+          0 -> decideApprovalNow True   -- allow once
+          1 -> modifyTop $ \_ -> DialogConfirm (alwaysConfirmText (appLang st) name args) 0
+          _ -> decideApprovalNow False  -- reject
+        DialogConfirm _ sel -> case sel of
+          0 -> do  -- persist the rule, then approve once
+            modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
+            st2 <- get
+            let (name, args) = fromMaybe ("", []) (appAskTool st2)
+                bridge = appBridge st2
+                chan   = appChan st2
+            case appSessionId st2 of
+              Nothing -> decideApprovalNow True
+              Just sid -> do
+                modify $ \s2 -> s2 { appStatus = tr (appLang s2) "Approving..." }
+                void $ liftIO $ async $ do
+                  _ <- allowAlways bridge name args  -- best effort: a failed rule
+                                                     -- still allows this once
+                  r <- decidePlan bridge sid True
+                  writeBChan chan (EvVerdict r)
+          _ -> do  -- no: back to the approval card
+            st2 <- get
+            case (appApproval st2, appAskTool st2) of
+              (Just msg, Just (name, args)) ->
+                modifyTop (const (DialogApproval msg name args 0))
+              _ -> modify $ \s2 -> s2 { appDialogs = stackPop (appDialogs s2) }
 
 -- | Keys in the normal chat view.
 handleChatKey :: Event -> EventM ResourceName AppState ()
@@ -827,13 +935,30 @@ flushPending = do
           toolMsgs = [ toolMsg "tool" (ToolCard (tiName inv) (tiArgs inv) Nothing Nothing []) (pmStart pm)
                      | inv <- reverse (pmTools pm) ]
           textMsgs = [ mkMsg "assistant" (T.strip (pmContent pm)) (pmStart pm)
-                     | not (T.null (T.strip (pmContent pm))) ]
+                     | not (T.null (T.strip (pmContent pm)))
+                     , not (isAwaitReply (pmContent pm)) ]
+          -- A parked turn: the kernel's permission gate (ask rules) returned
+          -- early with "awaiting_approval: <REQUIRE_APPROVAL: reason>". The
+          -- partial stream is real content, so flush it, then lock the flow
+          -- and open the approval dialog.
+          isAwaitReply c = "awaiting_approval:" `T.isPrefixOf` c
+          awaitMsg = case drop 1 [ T.strip (T.drop 18 c) | c <- [T.strip (pmContent pm)], isAwaitReply c ] of
+            (m : _) -> m
+            []      -> ""
+          parked = isAwaitReply (T.strip (pmContent pm)) && not (T.null awaitMsg)
+          (askName, askArgs) = fromMaybe ("", []) (appAskTool st)
       modify $ \s -> s { appMessages = appMessages s
                                       ++ stampedFrom base toolMsgs
                                       ++ stampedFrom (base + length toolMsgs) textMsgs
                        , appPending = Nothing
-                       , appBusy = False
-                       , appStatus = tr (appLang s) "Ready" }
+                       , appBusy = not parked
+                       , appApproval = if parked then Just awaitMsg else appApproval s
+                       , appDialogs = if parked
+                                        then stackPush (DialogApproval awaitMsg askName askArgs 0) (appDialogs s)
+                                        else appDialogs s
+                       , appStatus = if parked
+                                       then tr (appLang s) "Awaiting approval..."
+                                       else tr (appLang s) "Ready" }
 
 -- | Async events from background workers
 handleAppEvent :: AppEvent -> EventM ResourceName AppState ()
@@ -932,9 +1057,11 @@ handleAppEvent (EvVerdict result) = do
   case result of
     Right (PlanApproved reply) -> do
       appendMsg (mkMsg "assistant" reply t)
-      modify $ \st -> st { appStatus = tr (appLang st) "Ready", appBusy = False }
-    Right PlanDenied ->
+      modify $ \st -> st { appStatus = tr (appLang st) "Ready", appBusy = False
+                         , appApproval = Nothing }
+    Right PlanDenied -> do
       appendMsg (mkMsg "system" (tr lang "Plan denied.") t)
+      modify $ \st -> st { appApproval = Nothing, appBusy = False }
     Left err -> do
       appendMsg (mkMsg "error" (T.pack (show err)) t)
       modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
@@ -951,6 +1078,12 @@ handleAppEvent (EvTool result) = do
       -- running events only update the status line; completed events
       -- become tool cards
       modify $ \st -> st { appStatus = tr (appLang st) "tool: " <> T.pack (teName ev) <> " " <> tr (appLang st) (statusTagOf (teStatus ev)) }
+      -- a permission ask parks the turn: keep the tool identity for the
+      -- approval dialog ("always" derives its rule pattern from it)
+      when (case teStatus ev of
+              ToolRunFailed err -> "REQUIRE_APPROVAL:" `T.isPrefixOf` err
+              _                 -> False) $
+        modify $ \st -> st { appAskTool = Just (teName ev, teArgs ev) }
       case teStatus ev of
         ToolRunRunning -> return ()
         _              -> appendMsg (toolCardMsg ev t)

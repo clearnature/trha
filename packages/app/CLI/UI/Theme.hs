@@ -52,6 +52,7 @@ themeAttrNames =
   [ "header", "user", "assistant", "tool", "system", "error", "input"
   , "status", "timestamp", "border", "title", "busy", "plan"
   , "codeBlock", "codeLang", "mdBold", "mdCode"
+  , "diffAdd", "diffRemove", "diffHunk", "diffMeta"
   , "selection"
   ]
 

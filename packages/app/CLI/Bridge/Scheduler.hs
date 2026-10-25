@@ -29,6 +29,7 @@ module Bridge.Scheduler
   , sendMessage
   , sendMessageWithUsage
   , getMessages
+  , allowAlways
 
     -- * Session Events (SSE, Phase 2 S2)
   , subscribeSessionEvents
@@ -43,6 +44,7 @@ module Bridge.Scheduler
   , submitPlan
   , fetchPlan
   , decideStep
+  , decidePlan
   , reportStep
 
     -- * Agent Operations
@@ -69,6 +71,7 @@ import Data.Aeson.Types (parseMaybe, (.:))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Control.Concurrent (forkIO, killThread, newEmptyMVar, putMVar, takeMVar)
+import Control.Monad (void)
 import System.Timeout (timeout)
 import Control.Exception (catch)
 import Data.Text (Text)
@@ -236,6 +239,7 @@ subscribeSessionEventsWith bridge sid onEvent onDelta = do
           | Just (String txt) <- KM.lookup "text" o -> onDelta txt
         _ -> onEvent (Left (ValidationError ("malformed text delta: " <> snippet t)))
       SseMessage       -> return ()
+      SsePlan          -> return () -- the parked turn's reply carries the signal
       SseUnknown p     ->
         onEvent (Left (ValidationError ("unrecognised SSE payload: " <> snippet p)))
     snippet = T.take 120 . TE.decodeUtf8With (\_ _ -> Just '?')
@@ -343,6 +347,31 @@ decidePlan bridge sessionId approve = do
         Nothing        -> Left $ ValidationError "Missing status"
     Right _ -> Left $ ValidationError "Invalid decision response"
     Left err -> Left err
+
+-- | "Allow always" (MiMo's permission bar): append an allow rule for the
+-- pending tool to the orchestration layer's permission set.
+--
+-- Pattern: @Bash(command:<cmd>*)@ when the call carries a command argument,
+-- otherwise the bare tool name.
+allowAlways :: SchedulerBridge -> ToolName -> [Text] -> IO (Either CLIError ())
+allowAlways bridge name args = do
+  cur <- httpGet (bridgeHTTP bridge) "/api/permissions"
+    :: IO (Either CLIError Value)
+  case cur of
+    Right (Object r) -> case parseMaybe (.: "rules") r :: Maybe [Value] of
+      Just rs -> do
+        let rule = object ["kind" .= ("allow" :: Text), "pattern" .= patternOf]
+        put <- httpPut (bridgeHTTP bridge) "/api/permissions"
+                 (object ["rules" .= (rs ++ [rule])]) :: IO (Either CLIError Value)
+        return $ void put
+      Nothing -> return $ Left $ ValidationError "Missing rules in permissions response"
+    Right _ -> return $ Left $ ValidationError "Invalid permissions response"
+    Left err -> return $ Left err
+  where
+    patternOf
+      | name `elem` (["bash", "shell", "run_shell"] :: [ToolName])
+      , (c : _) <- args = "Bash(command:" <> T.replace "*" "\\*" c <> "*)"
+      | otherwise       = T.pack name
 
 --------------------------------------------------------------------------------
 -- Agent Operations (no counterpart in the orchestration API yet)

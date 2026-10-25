@@ -46,6 +46,8 @@ data Dialog
   = DialogModels [ModelInfo] Int            -- ^ /models: filtered, selected
   | DialogSessions [SessionSummary] Int     -- ^ /sessions: filtered, selected
   | DialogCommands [PickerItem] Text Int    -- ^ full registry, query, selected
+  | DialogApproval Text String [Text] Int   -- ^ ask message, tool, args, selected
+  | DialogConfirm Text Int                  -- ^ "always" confirmation, selected (0=yes)
   deriving (Show, Eq)
 
 -- | Stack of open dialogs; the head is the topmost (owns keys).
@@ -77,6 +79,8 @@ dialogCount :: Dialog -> Int
 dialogCount (DialogModels ms _)      = length ms
 dialogCount (DialogSessions ss _)    = length ss
 dialogCount (DialogCommands all0 q _) = length (filterItems q all0)
+dialogCount (DialogApproval{})       = 3  -- once / always / reject
+dialogCount (DialogConfirm _ _)      = 2  -- yes / no
 
 -- | Move the top dialog's selection by @delta@ (clamped; a no-op on
 -- empty lists).
@@ -85,6 +89,8 @@ dialogMoveSel delta d = case d of
   DialogModels ms s      -> DialogModels ms (mv (dialogCount d) s)
   DialogSessions ss s    -> DialogSessions ss (mv (dialogCount d) s)
   DialogCommands all0 q s -> DialogCommands all0 q (mv (dialogCount d) s)
+  DialogApproval m t a s  -> DialogApproval m t a (mv (dialogCount d) s)
+  DialogConfirm m s       -> DialogConfirm m (mv (dialogCount d) s)
   where
     mv n s = moveSelection delta s n
 
@@ -125,20 +131,21 @@ data EscOutcome
   | EscPopDialog
   | EscExitShell
   | EscCloseComplete
-  | EscApprovalNoop -- ^ deliberate no-op: approval needs an explicit choice
+  | EscApprovalDeny -- ^ MiMo's permission page: escape = reject (see below)
   deriving (Show, Eq)
 
 -- | MiMo's escape hierarchy: selection → dialog stack → shell →
--- autocomplete → approval.  Interrupting a running session needs a
--- double escape within 5 seconds — see 'escPress' (wired with the
--- approval lock in M3).
+-- autocomplete → approval.  Escape on the approval page is a reject
+-- (MiMo's permission page binds escapeKey to reject); interrupting a
+-- running session needs a double escape within 5 seconds — see
+-- 'escPress'.
 resolveEscape :: EscFlags -> EscOutcome
 resolveEscape f
   | efSelection f = EscClearSelection
   | efStack f     = EscPopDialog
   | efShell f     = EscExitShell
   | efComplete f  = EscCloseComplete
-  | otherwise     = EscApprovalNoop
+  | otherwise     = EscApprovalDeny
 
 -- | One escape press over the double-press window: @(withinWindow, armed)@
 -- → @(fired, armed')@.  A press inside the 5-second window while armed is

@@ -80,10 +80,14 @@
 - [x] 迁移三个既有文本交互进对话框：模型选择器（`/models` 推空栈 + `EvModels` 异步填充）、会话列表（`/sessions`/`EvSessions` 走本地 `SessionSummary`，含标题与累计 token）、命令面板（现有 picker 改浮层，键位对齐 `ctrl+p` + `/`；`PickerState` 已删除）。绘制用 brick 层列表：`drawUI` 首元素 = 顶层，`centerLayer` 居中卡片。（2026-10-25 完成）
 - 验收：`escape` 层级表逐条 spec 化（纯状态机测试，不需要渲染）——✅ `UI/DialogSpec.hs`（层级表 5 行 + 双击布防 3 行 + 栈/选择/命令编辑 11 例）。
 
-## M3：审批与 diff（启动时细化，契约如下）
+## M3：审批与 diff（启动时细化，契约如下）——**已完成（2026-10-25）**
 
-- 权限审批对话框：到达审批请求时消息流锁定、底部审批条（对齐 MiMo once/always/reject 三选 + always 二次确认）；走 scheduler `POST /api/session/:id/decision`（Bridge 已有）。
-- `UI/Render/Diff.hs`：unified diff 解析 + added/removed 配色（纯函数 + spec，行号对齐 MiMo `<diff>` 行为：宽 <120 unified）。
+> 进度：两项全部落地（spec 287/287）。链路为「内核 ask 规则 → step 回 `awaiting_approval:` → 消息流锁定 + 浮层三选 → `POST /api/session/:id/decision`」。**待人工验收**：配一条 ask 规则后 `cabal run trha -- tui`，实测 once / always / reject 三路与创可贴式的会话恢复。
+
+- [x] **权限审批对话框**：到达审批请求时消息流锁定、底部审批条（对齐 MiMo once/always/reject 三选 + always 二次确认）；走 scheduler `POST /api/session/:id/decision`（Bridge 已有）。
+  落地：`flushPending` 识别 parked 轮（`awaiting_approval:` 前缀）——不再当错误红字，先冲已收内容、`appBusy` 落 False、park `appApproval` 并弹 `DialogApproval`（消息/工具名/参数来自 `EvTool` 的 `REQUIRE_APPROVAL:` 失败事件）；三选项 once/always/reject，`esc` = reject（走 escape 层级表）。always 进 `DialogConfirm` 二次确认，确认后先 `allowAlways`（`GET /api/permissions` 取 rules → 追加 `{kind:"allow",pattern}` → `PUT`；bash/shell 系用 `Bash(command:<cmd>*)`，其余用工具名）再 `decidePlan True`；`EvVerdict` 收口清 `appApproval` + busy（顺带修掉 PlanDenied 卡 busy）。`SsePlan`（`agent:plan`）分类后静默，不再渲染成未知事件。
+- [x] **`UI/Render/Diff.hs`**：unified diff 解析 + added/removed 配色（纯函数 + spec，行号对齐 MiMo `<diff>` 行为：宽 <120 unified）。
+  落地：`DiffClass`（`CAdd`/`CDel`/`CHunk`/`CMeta`/`CPlain`）分类 + `parseDiffLines`；展开态工具卡的输出行按 class 上色，主题新增四属性 `diffAdd/diffRemove/diffHunk/diffMeta`（dark/light 各一套）；DiffSpec 8 例。
 
 ## M4：侧栏与高级（启动时细化，契约如下）
 

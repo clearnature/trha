@@ -73,6 +73,7 @@ data SsePayload
   = SseTool ToolEvent
   | SseTextDelta BS.ByteString
   | SseMessage
+  | SsePlan
   | SseUnknown BS.ByteString
   deriving (Show, Eq)
 
@@ -84,4 +85,10 @@ classifyPayload raw
   , Just _ <- KM.lookup "text" o = SseTextDelta raw
   | Just (Object o) <- decodeStrict raw
   , Just _ <- KM.lookup "role" o = SseMessage
+  -- plan/approval marker: {status,message} without a tool name — the
+  -- approval gate parks the turn; the synchronous reply carries the same
+  -- signal, so the stream copy is only silenced here (not re-rendered).
+  | Just (Object o) <- decodeStrict raw
+  , Just _ <- KM.lookup "status" o
+  , Just _ <- KM.lookup "message" o = SsePlan
   | otherwise = SseUnknown raw

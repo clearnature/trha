@@ -54,3 +54,14 @@ spec = describe "UI.Event" $ do
     it "yields no assistant message for whitespace-only content" $ do
       let pm = reduceChunk (ChunkDelta "   ") (newPending "t")
       flushParts pm `shouldBe` ([], "")
+
+  describe "runState" $ do
+    it "idle when not busy" $ do
+      runState False False `shouldBe` RunIdle
+      runState False True `shouldBe` RunIdle
+
+    it "awaiting approval wins over running while busy" $ do
+      runState True True `shouldBe` RunAwaiting
+
+    it "running while busy without a pending step" $ do
+      runState True False `shouldBe` RunRunning
