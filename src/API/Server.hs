@@ -1117,6 +1117,7 @@ providerEvents (entry, key) msgs specs onEvent = do
     ChunkToolCall n a -> onEvent (Stream.SEVToolCall n a)
     ChunkToolCallAt i id0 n a -> onEvent (Stream.SEVToolCallAt i id0 n a)
     ChunkReasoning t -> onEvent (Stream.SEVReasoning t)
+    ChunkReasoningSignature s -> onEvent (Stream.SEVReasoningSignature s)
     ChunkDone u     -> onEvent (Stream.SEVUsageFull u)
     ChunkError e    -> onEvent (Stream.SEVError e)
   pure ()
@@ -1406,6 +1407,7 @@ fromKernelEvent (Stream.SEVDelta t)      = ChunkDelta t
 fromKernelEvent (Stream.SEVToolCall n a) = ChunkToolCall n a
 fromKernelEvent (Stream.SEVToolCallAt i id0 n a) = ChunkToolCallAt i id0 n a
 fromKernelEvent (Stream.SEVReasoning t)   = ChunkReasoning t
+fromKernelEvent (Stream.SEVReasoningSignature s) = ChunkReasoningSignature s
 fromKernelEvent (Stream.SEVUsage p c t)  = ChunkDone (mkUsage p c t)
 fromKernelEvent (Stream.SEVUsageFull u)  = ChunkDone u
 fromKernelEvent Stream.SEVDone           = ChunkDone (mkUsage 0 0 0)
@@ -1442,6 +1444,8 @@ emitOpenAI write chunk = case chunk of
   -- cannot be dropped at the kernel boundary.
   ChunkReasoning t -> sse write Nothing
     [ "choices" .= [object ["index" .= (0 :: Int), "delta" .= object ["reasoning_content" .= t]]] ]
+  ChunkReasoningSignature s -> sse write Nothing
+    [ "choices" .= [object ["index" .= (0 :: Int), "delta" .= object ["reasoning_signature" .= s]]] ]
   ChunkToolCall n a -> sse write Nothing
     [ "choices" .= [ object
         [ "index" .= (0 :: Int)
@@ -1474,6 +1478,10 @@ emitAnthropic write chunk = case chunk of
     [ "type" .= ("content_block_delta" :: Text)
     , "index" .= (0 :: Int)
     , "delta" .= object [ "type" .= ("thinking_delta" :: Text), "thinking" .= t ] ]
+  ChunkReasoningSignature s -> sse write (Just "content_block_delta")
+    [ "type" .= ("content_block_delta" :: Text)
+    , "index" .= (0 :: Int)
+    , "delta" .= object [ "type" .= ("signature_delta" :: Text), "signature" .= s ] ]
   ChunkDelta t -> sse write (Just "content_block_delta")
     [ "type" .= ("content_block_delta" :: Text)
     , "index" .= (0 :: Int)
@@ -1501,6 +1509,7 @@ emitResponses :: (Builder.Builder -> IO ()) -> StreamChunk -> IO ()
 emitResponses write chunk = case chunk of
   ChunkDelta t -> sse write (Just "response.output_text.delta")
     [ "type" .= ("response.output_text.delta" :: Text), "delta" .= t ]
+  ChunkReasoningSignature _ -> pure ()
   ChunkToolCall n a -> sse write (Just "response.output_item.added")
     [ "type" .= ("response.output_item.added" :: Text)
     , "item" .= object
@@ -1661,9 +1670,9 @@ stubTools msgs _specs = do
   if null toolResults
     then return $ LLM.ChatTurn ""
              [ LLM.ToolCall "call-stub" "read_file" "{\"path\":\"/etc/hostname\"}" ]
-             (Just (LLM.mkUsage 1 1 2)) Nothing Nothing
+             (Just (LLM.mkUsage 1 1 2)) Nothing Nothing Nothing
     else return $ LLM.ChatTurn ("[stub] tool said: " <> last toolResults)
-             [] (Just (LLM.mkUsage 1 1 2)) Nothing Nothing
+             [] (Just (LLM.mkUsage 1 1 2)) Nothing Nothing Nothing
 
 -- | Start the stub kernel on the given port.
 startStubKernel :: Int -> Maybe FilePath -> IO ()

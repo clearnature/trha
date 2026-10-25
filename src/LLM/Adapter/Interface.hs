@@ -82,10 +82,10 @@ cpuStream engine msgs _specs onEvent = do
   case result of
     Left err -> do
       onEvent (ChunkError (T.pack err))
-      pure (ChatTurn "" [] Nothing (Just (T.pack err)) Nothing)
+      pure (ChatTurn "" [] Nothing (Just (T.pack err)) Nothing Nothing)
     Right text -> do
       onEvent (ChunkDone (mkUsage 100 200 300))
-      pure (ChatTurn text [] (Just (mkUsage 100 200 300)) Nothing Nothing)
+      pure (ChatTurn text [] (Just (mkUsage 100 200 300)) Nothing Nothing Nothing)
 
 -- | 每轮生成的最大 token 数。占位引擎（无 Brain）保持历史值 100；
 -- 真实 CPU 大脑（每 token 跑 60 层，约几分钟）用小值做「接线演示」。
@@ -101,21 +101,21 @@ cpuTools :: InferenceEngine -> [ChatMessage] -> [ToolSpec] -> IO ChatTurn
 cpuTools engine msgs _specs = do
   result <- generate engine (T.unwords (map chatText msgs)) (engineMaxTokens engine)
   pure $ case result of
-    Left err   -> ChatTurn "" [] Nothing (Just (T.pack err)) Nothing
-    Right text -> ChatTurn text [] (Just (mkUsage 100 200 300)) Nothing Nothing
+    Left err   -> ChatTurn "" [] Nothing (Just (T.pack err)) Nothing Nothing
+    Right text -> ChatTurn text [] (Just (mkUsage 100 200 300)) Nothing Nothing Nothing
 
 -- | One chat turn as plain text (the engine works on text, not roles).
 chatText :: ChatMessage -> Text
 chatText (ChatSystem t)      = t
 chatText (ChatUser t)        = t
 chatText (ChatAssistant t _) = t
-chatText (ChatAssistantThought t _ _) = t
+chatText (ChatAssistantThought t _ _ _) = t
 chatText (ChatTool _ out)    = out
 
 -- | Honest default for backends without function-calling support.
 unsupportedTools :: [ChatMessage] -> [ToolSpec] -> IO ChatTurn
 unsupportedTools _ _ =
-  return $ ChatTurn "" [] Nothing (Just "tools not supported by this adapter") Nothing
+  return $ ChatTurn "" [] Nothing (Just "tools not supported by this adapter") Nothing Nothing
 
 -- | Create a generic adapter (echo fallback)
 createAdapter :: Text -> IO LLMAdapter
@@ -135,14 +135,14 @@ echoStream msgs _specs onEvent = do
   let lastMsg = case reverse msgs of
         (ChatUser t : _)         -> t
         (ChatAssistant t _ : _)  -> t
-        (ChatAssistantThought t _ _ : _) -> t
+        (ChatAssistantThought t _ _ _ : _) -> t
         (ChatSystem t : _)       -> t
         (ChatTool _ out : _)     -> out
         []                       -> ""
       txt = "Echo: " <> lastMsg
   onEvent (ChunkDelta txt)
   onEvent (ChunkDone (mkUsage 10 20 30))
-  pure (ChatTurn txt [] (Just (mkUsage 10 20 30)) Nothing Nothing)
+  pure (ChatTurn txt [] (Just (mkUsage 10 20 30)) Nothing Nothing Nothing)
 
 -- | Create a CPU adapter (local inference)。返回 (engine, adapter)，
 -- 上层可用 'setEngineGPU' 注入 WebGPU 前端后重建 adapter。

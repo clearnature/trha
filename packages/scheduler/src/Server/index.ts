@@ -1368,6 +1368,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         // Thinking mode requires the chain back on the next request; without it
         // the provider answers 400 and the whole loop dies mid-task.
         ...(response.reasoningContent ? { reasoning_content: response.reasoningContent } : {}),
+        ...(response.reasoningSignature ? { reasoning_signature: response.reasoningSignature } : {}),
         tool_calls: calls.map(c => ({
           id: c.id, type: 'function',
           function: { name: c.name, arguments: normaliseArgs(c.arguments) },

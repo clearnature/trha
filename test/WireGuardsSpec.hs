@@ -34,7 +34,7 @@ wireGuardsSpec = describe "wire guards" $ do
           [ ChatSystem "sys"
           , ChatUser "hi"
           , ChatAssistant "plain answer" []
-          , ChatAssistantThought "with tools" [ToolCall "c1" "bash" "{}"] "I thought about it"
+          , ChatAssistantThought "with tools" [ToolCall "c1" "bash" "{}"] "I thought about it" Nothing
           , ChatAssistant "synthetic note" []
           ]
 

@@ -136,7 +136,7 @@ parseDeepSeekChatTurn v =
     go = withObject "ChatResponse" $ \resp -> do
       choices <- resp .: "choices"
       case choices of
-        [] -> return (ChatTurn "" [] Nothing (Just "no choices") Nothing)
+        [] -> return (ChatTurn "" [] Nothing (Just "no choices") Nothing Nothing)
         (c : _) -> do
           msg <- c .: "message"
           content <- msg .:? "content" .!= ""
@@ -145,7 +145,7 @@ parseDeepSeekChatTurn v =
           usageV <- resp .:? "usage"
           usage <- traverse parseUsage usageV
           reasoning <- msg .:? "reasoning_content"
-          return $ ChatTurn content calls usage Nothing reasoning
+          return $ ChatTurn content calls usage Nothing reasoning Nothing
     parseCall = withObject "ToolCall" $ \o -> do
       fn <- o .: "function"
       args <- fn .: "arguments" >>= argsText
@@ -292,11 +292,11 @@ deepSeekTools apiKey model manager msgs specs gp = do
     then case decode (responseBody response) :: Maybe Value of
       Just v -> case parseDeepSeekChatTurn v of
         Right turn -> return turn
-        Left err -> return (ChatTurn "" [] Nothing (Just err) Nothing)
-      Nothing -> return (ChatTurn "" [] Nothing (Just "Failed to parse DeepSeek response") Nothing)
+        Left err -> return (ChatTurn "" [] Nothing (Just err) Nothing Nothing)
+      Nothing -> return (ChatTurn "" [] Nothing (Just "Failed to parse DeepSeek response") Nothing Nothing)
     else return (ChatTurn "" [] Nothing (Just
       ("DeepSeek API error " <> T.pack (show (statusCode (responseStatus response)))
-        <> ": " <> T.take 500 (TE.decodeUtf8 (BSL.toStrict (responseBody response))))) Nothing)
+        <> ": " <> T.take 500 (TE.decodeUtf8 (BSL.toStrict (responseBody response))))) Nothing Nothing)
 
 -- | Streaming tool-calling call: the very body the blocking path builds, fed
 -- through the shared SSE engine, so increments reach the caller as produced

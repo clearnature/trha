@@ -139,6 +139,7 @@ keepNonBlank :: CLIConfig -> CLIConfig -> CLIConfig
 keepNonBlank base cfg = cfg
   { configHost  = keep (configHost cfg)  (configHost base)
   , configModel = keep (configModel cfg) (configModel base)
+  , configProvider = keep (configProvider cfg) (configProvider base)
   , configToken = keep (configToken cfg) (configToken base)
   , configTheme = keep (configTheme cfg) (configTheme base)
   , configLang  = keep (configLang cfg)  (configLang base)

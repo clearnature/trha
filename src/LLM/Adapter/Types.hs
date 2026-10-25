@@ -57,6 +57,9 @@ instance FromJSON Message where
 data StreamChunk
   = ChunkDelta Text           -- ^ Partial text content
   | ChunkReasoning Text       -- ^ Partial thinking-mode content
+  | ChunkReasoningSignature Text
+      -- ^ Thinking-block signature (Anthropic wire): must be replayed with
+      -- the thinking block on the next tool round.
   | ChunkToolCall Text Text   -- ^ Tool call (name, arguments JSON)
   | ChunkToolCallAt Int Text Text Text
       -- ^ Tool call with its stream index and provider id. Parallel calls need
@@ -145,6 +148,8 @@ data ChatTurn = ChatTurn
   , ctUsage     :: Maybe Usage
   , ctError     :: Maybe Text
   , ctReasoning :: Maybe Text  -- ^ thinking-mode chain, echoed back on tool turns
+  , ctReasoningSignature :: Maybe Text
+      -- ^ provider signature of the thinking block (Anthropic wire)
   } deriving (Show, Eq)
 
 -- | A tool invocation emitted by the model (assistant @tool_calls@).
@@ -159,9 +164,9 @@ data ChatMessage
   = ChatSystem Text
   | ChatUser Text
   | ChatAssistant Text [ToolCall] -- ^ content may be empty when tools are called
-  | ChatAssistantThought Text [ToolCall] Text
+  | ChatAssistantThought Text [ToolCall] Text (Maybe Text)
       -- ^ assistant turn that carries the provider's @reasoning_content@
-      -- (thinking mode requires it back on the next request)
+      -- (and, on the Anthropic wire, the thinking block's signature)
   | ChatTool Text Text             -- ^ tool_call_id, result content
   deriving (Show, Eq)
 
@@ -217,12 +222,13 @@ instance ToJSON ChatMessage where
       -- retained the thought variant is used instead; this branch only fires
       -- for turns whose reasoning was never captured.
       ++ [ "reasoning_content" .= ("" :: Text) | not (null calls) ]
-  toJSON (ChatAssistantThought content calls reasoning) = object $
+  toJSON (ChatAssistantThought content calls reasoning sig) = object $
     [ "role" .= ("assistant" :: Text)
     , "content" .= content
     , "reasoning_content" .= reasoning
     ]
       ++ [ "tool_calls" .= calls | not (null calls) ]
+      ++ [ "reasoning_signature" .= s | Just s <- [sig] ]
   toJSON (ChatTool callId content) = object
     [ "role" .= ("tool" :: Text)
     , "tool_call_id" .= callId
@@ -239,11 +245,14 @@ instance FromJSON ChatMessage where
         content <- v .: "content"
         calls <- v .:? "tool_calls" .!= []
         reasoning <- v .:? "reasoning_content"
+        sig <- v .:? "reasoning_signature"
         -- An empty string means "no chain was captured" (older callers, or a
         -- model without thinking): keep it as a plain assistant turn so a
-        -- decode/encode round-trip does not change the constructor.
-        pure $ case reasoning of
-          Just r | not (T.null r) -> ChatAssistantThought content calls r
-          _                       -> ChatAssistant content calls
+        -- decode/encode round-trip does not change the constructor.  A
+        -- signature alone is enough to require the thought variant.
+        pure $ case (reasoning, sig) of
+          (Just r, s) | not (T.null r) -> ChatAssistantThought content calls r s
+          (_, Just s)                  -> ChatAssistantThought content calls "" (Just s)
+          _                            -> ChatAssistant content calls
       "tool"      -> ChatTool <$> v .: "tool_call_id" <*> v .: "content"
       _           -> fail "Invalid chat role"

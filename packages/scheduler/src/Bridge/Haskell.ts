@@ -46,6 +46,8 @@ export interface QueryResponse {
   reply: string;
   /** Thinking-mode chain, echoed back on the next tool turn. */
   reasoningContent?: string;
+  /** Anthropic thinking-block signature, replayed with the block. */
+  reasoningSignature?: string;
   toolCalls?: ToolCallData[];
   usage?: {
     promptTokens?: number | undefined;
@@ -245,6 +247,7 @@ export class HaskellBridge {
     let buf = '';
     let reply = '';
     let reasoning = '';
+    let reasoningSignature = '';
     let usage: QueryResponse['usage'];
     let constraint: Record<string, unknown> | undefined;
     const calls = new Map<number, ToolCallData>();
@@ -286,11 +289,13 @@ export class HaskellBridge {
           const delta = (parsed.choices as { delta?: {
             content?: string;
             reasoning_content?: string;
+            reasoning_signature?: string;
             tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
           } }[] | undefined)?.[0]?.delta;
           if (!delta) continue;
           if (delta.content) { reply += delta.content; onDelta(delta.content); }
           if (delta.reasoning_content) reasoning += delta.reasoning_content;
+          if (delta.reasoning_signature) reasoningSignature += delta.reasoning_signature;
           for (const tc of delta.tool_calls ?? []) {
             const idx = tc.index ?? 0;
             const cur = calls.get(idx) ?? { id: '', name: '', arguments: '' };
@@ -307,6 +312,7 @@ export class HaskellBridge {
     const base: QueryResponse = {
       reply,
       ...(reasoning ? { reasoningContent: reasoning } : {}),
+      ...(reasoningSignature ? { reasoningSignature } : {}),
       ...(usage ? { usage } : {}),
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
     };

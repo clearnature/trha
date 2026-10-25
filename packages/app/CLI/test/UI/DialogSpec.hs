@@ -114,8 +114,8 @@ spec = do
       escWiring True False False `shouldBe` (False, True)
 
   describe "provider dialog" $ do
-    let ps = [ ProviderInfo "deepseek" "openai" ["deepseek-flash"] "deepseek-flash" True True Nothing
-             , ProviderInfo "deepseek-anthropic" "anthropic" ["deepseek-flash"] "deepseek-flash" False True Nothing ]
+    let ps = [ ProviderInfo "deepseek" "openai" "https://api.deepseek.com" ["deepseek-flash"] "deepseek-flash" True True Nothing
+             , ProviderInfo "deepseek-anthropic" "anthropic" "https://api.deepseek.com/anthropic" ["deepseek-flash"] "deepseek-flash" False True Nothing ]
     it "counts and clamps the provider selection" $ do
       dialogCount (DialogProviders ps 0) `shouldBe` 2
       dialogMoveSel 1 (DialogProviders ps 0) `shouldBe` DialogProviders ps 1

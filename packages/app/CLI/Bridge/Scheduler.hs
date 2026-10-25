@@ -35,6 +35,8 @@ module Bridge.Scheduler
   , interruptSession
   , fetchTeamTasks
   , listProviders
+  , saveProvider
+  , removeProvider
 
     -- * Session Events (SSE, Phase 2 S2)
   , subscribeSessionEvents
@@ -189,6 +191,35 @@ listProviders :: SchedulerBridge -> IO (Either CLIError [ProviderInfo])
 listProviders bridge = do
   result <- httpGet (bridgeHTTP bridge) "/api/providers"
     :: IO (Either CLIError Value)
+  return (result >>= providerStoreToList)
+
+-- | Save (or overwrite) one provider.  An empty @apiKey@ keeps the stored
+-- key (the kernel treats a blank key as "unchanged").
+saveProvider
+  :: SchedulerBridge -> Text -> Text -> Text -> Text -> [Text] -> Text
+  -> IO (Either CLIError [ProviderInfo])
+saveProvider bridge name kind baseUrl apiKey models def = do
+  let body = object
+        [ "name" .= name
+        , "kind" .= kind
+        , "baseUrl" .= baseUrl
+        , "apiKey" .= apiKey
+        , "models" .= models
+        , "default" .= def
+        , "authHeader" .= True
+        , "noProxy" .= False
+        , "effort" .= ("" :: Text)
+        , "vision" .= ([] :: [Text])
+        ]
+  result <- httpPost (bridgeHTTP bridge) "/api/providers" body
+    :: IO (Either CLIError Value)
+  return (result >>= providerStoreToList)
+
+-- | Remove one provider by name.
+removeProvider :: SchedulerBridge -> Text -> IO (Either CLIError [ProviderInfo])
+removeProvider bridge name = do
+  result <- httpPost (bridgeHTTP bridge) "/api/providers/remove"
+              (object ["name" .= name]) :: IO (Either CLIError Value)
   return (result >>= providerStoreToList)
 
 -- | Fetch the stored message list of a session.

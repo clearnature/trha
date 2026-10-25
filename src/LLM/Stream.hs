@@ -48,6 +48,7 @@ import LLM.Adapter.Types (Message(..), Role(..), ChatMessage, ChatTurn(..), Stre
 data StreamEvent
   = SEVDelta Text
   | SEVReasoning Text        -- ^ thinking-mode delta (echoed back on tool turns)
+  | SEVReasoningSignature Text -- ^ thinking-block signature (Anthropic wire)
   | SEVToolCall Text Text
   | SEVToolCallAt Int Text Text Text   -- ^ index, id, name, args
   | SEVUsage Int Int Int
@@ -405,14 +406,14 @@ openAICompatStreamCall url apiKey body onEvent = do
       turn = ChatTurn txt
                [ ToolCall (if T.null id0 then "call-" <> T.pack (show i) else id0) nm args
                | (i, id0, nm, args) <- sortOn (\(i, _, _, _) -> i) (reverse done) ]
-               usage Nothing reasoning
+               usage Nothing reasoning Nothing
   case result of
     Left e -> do
       onEvent (ChunkError e)
       -- Keep what already arrived: a timeout after three tokens is a partial
       -- answer with a reason, not an empty one. Tool calls are dropped — a
       -- half-streamed call would be malformed.
-      pure (ChatTurn txt [] usage (Just e) reasoning)
+      pure (ChatTurn txt [] usage (Just e) reasoning Nothing)
     Right () -> do
       onEvent (ChunkDone (fromMaybe (mkUsage 0 0 0) usage))
       pure turn

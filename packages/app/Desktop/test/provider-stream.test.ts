@@ -111,6 +111,15 @@ describe('provider streaming dispatch (A2/A3)', () => {
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
 
         if (req.url === '/v1/messages') {
+          // A thinking block with its signature: the next tool round must
+          // replay both verbatim.
+          res.write('event: content_block_start\n');
+          res.write(`data: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } })}\n\n`);
+          res.write('event: content_block_delta\n');
+          res.write(`data: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'weighing' } })}\n\n`);
+          res.write('event: content_block_delta\n');
+          res.write(`data: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig_stub' } })}\n\n`);
+          res.write('event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n');
           res.write('event: content_block_delta\n');
           res.write(`data: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hi from anth' } })}\n\n`);
           await sleep(STUB_GAP_MS);
@@ -236,14 +245,18 @@ describe('provider streaming dispatch (A2/A3)', () => {
       // The provider's tool_use id must survive: the next round's tool_result
       // needs it (DeepSeek rejects an empty tool_use_id with 400).
       expect(anthTool?.id).toBe('toolu_1');
+      const anthDeltas = payloads(f2, 'content_block_delta')
+        .map(p => p.delta as { type?: string; thinking?: string; signature?: string } | undefined);
+      expect(anthDeltas.find(d => d?.type === 'thinking_delta')?.thinking).toBe('weighing');
+      expect(anthDeltas.find(d => d?.type === 'signature_delta')?.signature).toBe('sig_stub');
       expect(seenUrls.at(-1)).toBe('/v1/messages');
       expect(seenBodies.at(-1)?.max_tokens).toBeGreaterThan(0);
       // Regression: without stream:true the endpoint answers one JSON body and
       // the SSE parser sees nothing (the reply silently disappeared).
       expect(seenBodies.at(-1)?.stream).toBe(true);
-      // Thinking blocks cannot be replayed before a tool round yet, so the
-      // wire is asked not to enable thinking when tools are present.
-      expect((seenBodies.at(-1)?.thinking as { type?: string } | undefined)?.type).toBe('disabled');
+      // A fresh request has no tool turn to replay, so thinking stays at the
+      // provider default (enabled).
+      expect(seenBodies.at(-1)?.thinking).toBeUndefined();
 
       // The scheduler consumes the OpenAI-shaped view of every wire; the
       // tool-call id has to survive that translation too.
@@ -259,6 +272,10 @@ describe('provider streaming dispatch (A2/A3)', () => {
         ((p.choices as { delta?: { tool_calls?: { id?: string }[] } }[] | undefined)?.[0]?.delta?.tool_calls) ?? [])
         .map(c => c.id);
       expect(anthIds).toContain('toolu_1');
+      const anthReasoning = payloads(f2b)
+        .map(p => ((p.choices as { delta?: { reasoning_content?: string; reasoning_signature?: string } }[] | undefined)?.[0]?.delta));
+      expect(anthReasoning.map(d => d?.reasoning_content ?? '').join('')).toBe('weighing');
+      expect(anthReasoning.map(d => d?.reasoning_signature ?? '').join('')).toBe('sig_stub');
 
       // A tool round must send the id back (anthropic: tool_use_id).
       const toolRound = [
@@ -274,6 +291,29 @@ describe('provider streaming dispatch (A2/A3)', () => {
       const anthBlocks = ((seenBodies.at(-1)?.messages as { content?: unknown }[] | undefined) ?? [])
         .flatMap(m => (Array.isArray(m.content) ? m.content : []) as { type?: string; tool_use_id?: string }[]);
       expect(anthBlocks.find(b => b.type === 'tool_result')?.tool_use_id).toBe('call_x');
+      // A legacy tool turn has no signature to replay: disable thinking for
+      // that request rather than sending an empty thinking block.
+      expect((seenBodies.at(-1)?.thinking as { type?: string } | undefined)?.type).toBe('disabled');
+
+      // A signed tool turn replays the thinking block and keeps thinking on.
+      const signedRound = [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: '', reasoning_content: 'plan', reasoning_signature: 'sig_1',
+          tool_calls: [{ id: 'call_x', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.txt"}' } }] },
+        { role: 'tool', tool_call_id: 'call_x', content: 'ok' },
+      ];
+      const r2d = await fetch(`http://127.0.0.1:${KERNEL_PORT}/v1/chat/completions/stream`, {
+        method: 'POST', headers: json,
+        body: JSON.stringify({ model: 'claude', provider: 'anth', messages: signedRound }),
+      });
+      await readSse(r2d);
+      const signedBody = seenBodies.at(-1);
+      expect(signedBody?.thinking).toBeUndefined();
+      const signedBlocks = ((signedBody?.messages as { content?: unknown }[] | undefined) ?? [])
+        .flatMap(m => (Array.isArray(m.content) ? m.content : []) as { type?: string; thinking?: string; signature?: string }[]);
+      const think = signedBlocks.find(b => b.type === 'thinking');
+      expect(think?.thinking).toBe('plan');
+      expect(think?.signature).toBe('sig_1');
 
       // ── Responses wire: typed events, arguments reassembled ─────────
       await fetch(`http://127.0.0.1:${KERNEL_PORT}/providers`, {

@@ -313,6 +313,7 @@ instance ToJSON TodoItem where
 data ProviderInfo = ProviderInfo
   { piName          :: Text
   , piKind          :: Text        -- ^ openai / anthropic / responses / …
+  , piBaseUrl       :: Text
   , piModels        :: [Text]
   , piDefault       :: Text
   , piInUse         :: Bool        -- ^ the kernel's default when no provider is named
@@ -325,6 +326,7 @@ instance FromJSON ProviderInfo where
     ProviderInfo
       <$> o .: "name"
       <*> (o .:? "kind" .!= "openai")
+      <*> (o .:? "baseUrl" .!= "")
       <*> (o .:? "models" .!= [])
       <*> (o .:? "default" .!= "")
       <*> (o .:? "inUse" .!= False)
@@ -372,6 +374,7 @@ data CLIConfig = CLIConfig
   { configHost       :: Text
   , configPort       :: Int
   , configModel      :: Text
+  , configProvider   :: Text -- ^ preferred provider name ("" = kernel inUse)
   , configToken      :: Text
   , configMaxTokens  :: Int
   , configTimeout    :: Int
@@ -396,6 +399,7 @@ instance FromJSON CLIConfig where
     <$> v .: "configHost"
     <*> v .: "configPort"
     <*> v .: "configModel"
+    <*> v .:? "configProvider" .!= ""
     <*> v .:? "configToken" .!= "dev-token"
     <*> v .: "configMaxTokens"
     <*> v .: "configTimeout"
@@ -416,6 +420,7 @@ defaultCLIConfig = CLIConfig
   { configHost      = "localhost"
   , configPort      = 3456
   , configModel     = "deepseek-chat"
+  , configProvider  = ""
   , configToken     = "dev-token"
   , configMaxTokens = 4096
   , configTimeout   = 120000

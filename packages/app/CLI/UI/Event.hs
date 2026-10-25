@@ -100,5 +100,6 @@ data AppEvent
   | EvCompletionIndex [Completion]       -- ^ @\@@-file index (startup scan)
   | EvProviders (Either CLIError [ProviderInfo]) -- ^ provider registry (TUI switching)
   | EvSkills [Skill]                     -- ^ discovered SKILL.md files
+  | EvProviderSaved (Either CLIError [ProviderInfo]) -- ^ add/edit result
   | EvFinalReply Text                    -- ^ authoritative reply from the step
   deriving (Show)

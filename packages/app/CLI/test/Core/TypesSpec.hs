@@ -127,6 +127,7 @@ spec = do
               [ object
                   [ "name" .= ("deepseek" :: Text)
                   , "kind" .= ("openai" :: Text)
+                  , "baseUrl" .= ("https://api.deepseek.com" :: Text)
                   , "models" .= (["deepseek-flash", "deepseek-v4-pro"] :: [Text])
                   , "default" .= ("deepseek-flash" :: Text)
                   , "inUse" .= True
@@ -141,6 +142,7 @@ spec = do
         Right [p] -> do
           piName p `shouldBe` "deepseek"
           piKind p `shouldBe` "openai"
+          piBaseUrl p `shouldBe` "https://api.deepseek.com"
           piModels p `shouldBe` ["deepseek-flash", "deepseek-v4-pro"]
           piDefault p `shouldBe` "deepseek-flash"
           piInUse p `shouldBe` True
@@ -153,6 +155,7 @@ spec = do
       case providerStoreToList minimal of
         Right [p] -> do
           piKind p `shouldBe` "openai"
+          piBaseUrl p `shouldBe` ""
           piModels p `shouldBe` []
           piInUse p `shouldBe` False
           piHasKey p `shouldBe` False
@@ -164,12 +167,12 @@ spec = do
       providerStoreToList (String "x") `shouldSatisfy` isLeft
 
     it "turns a provider's models into picker rows with its context window" $ do
-      let p = ProviderInfo "deepseek" "openai" ["a", "b"] "a" True True (Just 4096)
+      let p = ProviderInfo "deepseek" "openai" "https://x" ["a", "b"] "a" True True (Just 4096)
       map modelName (providerModelInfos p) `shouldBe` ["a", "b"]
       map modelContextSize (providerModelInfos p) `shouldBe` [4096, 4096]
 
     it "keeps a model the provider offers, else falls back to its default" $ do
-      let p = ProviderInfo "deepseek" "openai" ["deepseek-flash", "deepseek-v4-pro"]
+      let p = ProviderInfo "deepseek" "openai" "https://x" ["deepseek-flash", "deepseek-v4-pro"]
                                 "deepseek-flash" True True Nothing
       modelForProvider p "deepseek-v4-pro" `shouldBe` "deepseek-v4-pro"
       modelForProvider p "gpt-4" `shouldBe` "deepseek-flash"

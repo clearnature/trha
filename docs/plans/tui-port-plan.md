@@ -233,8 +233,10 @@
   `packages/app/Desktop/test/provider-stream.test.ts`）：
   1. Anthropic 流式漏 `stream:true`（内容全丢）。
   2. Anthropic 工具轮 400：DeepSeek thinking 模式要求把 `thinking` 块（含签名）回传。
-     本轮**在带 tools 的请求里关闭 thinking**（`thinking.type=disabled`）——签名回放
-     需要给 `ChatMessage` 增加不透明字段，列入 M5；不带 tools 的轮次仍保留 thinking。
+     **已实现完整回放**：`signature_delta`/`thinking` 块被捕获为
+     `ChunkReasoningSignature`，经内核 OpenAI 形帧的 `reasoning_signature`、
+     scheduler 的 assistant 消息字段一路带回，下一轮由 `toAnthropicMessages`
+     原样拼回 thinking 块；thinking 只在“工具轮缺签名”的历史会话里禁用。
   3. Anthropic/Responses 流式 tool 轮丢失供应商 id → 回传 `tool_use_id`/`call_id` 为空，
      上游 400。现在两个解析器都保留 index + id（`ChunkToolCallAt`），聚合与 SSE
      发射器也不再合成/丢弃 id。
@@ -260,9 +262,17 @@
 - [x] **审批重放保留目标**：scheduler 的 `pendingApproval` 现在存
   `provider/model/genParams`，批准后重放同一目标（否则会悄悄回落到 inUse 默认）。
   测试：`approval-gate` 新增 1 例（批准后内核收到 `deepseek-anthropic`/`deepseek-flash`）。
-- [ ] **仍未做（对照 MiMo）**：新增/编辑供应商的表单与密钥录入、provider 选择持久化
-  （重启后记住）、settings 面板里的 Provider 页签、模型能力/思考开关。当前只做到
-  “读取已有注册表 + 会话内切换”。
+- [x] **新增 / 编辑 / 持久化（2026-10-25）**：
+  - `/provider` 列表内 `a` 打开新增向导、`e` 编辑当前行；6 步向导（name / kind /
+    baseUrl / models / default / apiKey），提交走 `POST /api/providers`（Bridge
+    `saveProvider`），内核返回新注册表后刷新列表。空 apiKey 表示保留原密钥。
+  - 选择持久化：`configProvider`/`configModel` 写入 `~/.trha/settings.yaml`
+    （`/provider` 选择与 `/model` 都会保存），重启后按保存值初始化。
+  - 验证：pty 实测新增向导保存出 `zz-test`、编辑向导预填、选中后 footer 显示
+    `deepseek/deepseek-flash` 且 settings 落盘 `configProvider: deepseek`；
+    (测试 provider 已通过 `/providers/remove` 清理)。
+- [ ] **仍未做（对照 MiMo）**：设置面板里的独立 Provider 页签、删除确认、模型能力/
+  思考开关。
 
 
 

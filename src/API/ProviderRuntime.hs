@@ -27,7 +27,7 @@ import Data.Aeson (Object, Value(..), decode, encode, object, toJSON, (.=))
 import Data.Aeson.Key (fromText)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy as BL
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -164,7 +164,7 @@ providerStream entry key = case peKind entry of
       Right a   -> blockingStream a
       Left why  -> \_ _ onEvent -> do
         onEvent (ChunkError why)
-        pure (ChatTurn "" [] Nothing (Just why) Nothing)
+        pure (ChatTurn "" [] Nothing (Just why) Nothing Nothing)
   where
     -- The blocking call, announced as one delta: a wire with no streaming
     -- path still gives the caller events it can forward.
@@ -200,9 +200,19 @@ anthropicRequestBody model msgs specs streaming =
        , "messages"   .= turns
        , "stream"     .= streaming
        ] ++ [ "system" .= systemText | not (T.null systemText) ]
+         -- Thinking is the provider default.  It is disabled only when a
+         -- tool-bearing assistant turn has no signature to replay (legacy
+         -- transcripts): DeepSeek rejects a tool round without its thinking
+         -- block, and an empty block cannot be fabricated.
          ++ [ "thinking" .= object [ "type" .= ("disabled" :: Text) ]
-            | not (null specs) ]
+            | needsThinkingDisabled ]
          ++ [ "tools"  .= map anthropicTool specs | not (null specs) ]
+  where
+    needsThinkingDisabled = any legacyToolTurn msgs
+    legacyToolTurn m = case m of
+      ChatAssistant _ calls            -> not (null calls)
+      ChatAssistantThought _ calls _ s -> not (null calls) && isNothing s
+      _                                -> False
 
 -- | The Responses API body, shared by the blocking and the streaming caller.
 responsesRequestBody :: Text -> [ChatMessage] -> [ToolSpec] -> Bool -> Value
@@ -222,16 +232,48 @@ anthropicStream baseUrl apiKey model = do
                 ++ [("x-api-key", TE.encodeUtf8 apiKey) | not (T.null (T.strip apiKey))]
   pure $ \msgs specs onEvent -> do
     pending <- newIORef (Nothing :: Maybe (Int, Text, Text, Text))
+    thinkingRef <- newIORef T.empty
+    sigRef <- newIORef (Nothing :: Maybe Text)
     result <- LStream.streamPostSse url headers (anthropicRequestBody model msgs specs True) $ \v -> do
       case anthropicEvent v of
         Just (Left txt) -> onEvent (ChunkDelta txt)
         Just (Right u)  -> onEvent (ChunkDone u)
         Nothing         -> pure ()
+      case anthropicThinking v of
+        Just (Left txt) -> do
+          modifyIORef' thinkingRef (<> txt)
+          onEvent (ChunkReasoning txt)
+        Just (Right sig) -> do
+          writeIORef sigRef (Just sig)
+          onEvent (ChunkReasoningSignature sig)
+        Nothing -> pure ()
       done <- anthropicToolStep pending v
       mapM_ (\(idx, tid, nm, args) -> onEvent (ChunkToolCallAt idx tid nm args)) done
+    reasoning <- readIORef thinkingRef
+    sig <- readIORef sigRef
+    let mreasoning = if T.null reasoning then Nothing else Just reasoning
     case result of
-      Left e   -> do onEvent (ChunkError e); pure (ChatTurn "" [] Nothing (Just e) Nothing)
-      Right () -> pure (ChatTurn "" [] Nothing Nothing Nothing)
+      Left e   -> do onEvent (ChunkError e)
+                     pure (ChatTurn "" [] Nothing (Just e) mreasoning sig)
+      Right () -> pure (ChatTurn "" [] Nothing Nothing mreasoning sig)
+
+-- | Thinking blocks on the Anthropic wire: @thinking_delta.delta.thinking@
+-- is the chain text, @signature_delta.delta.signature@ is the block's
+-- signature (must be replayed with the block on the next tool round).
+anthropicThinking :: Value -> Maybe (Either Text Text)
+anthropicThinking v = case v of
+  Object o -> case field "type" o of
+    Just (String "content_block_delta") -> case field "delta" o of
+      Just (Object d) -> case field "type" d of
+        Just (String "thinking_delta")  -> Left  <$> asTextOpt (field "thinking" d)
+        Just (String "signature_delta") -> Right <$> asTextOpt (field "signature" d)
+        _                               -> Nothing
+      _ -> Nothing
+    _ -> Nothing
+  _ -> Nothing
+  where
+    asTextOpt (Just (String t)) = Just t
+    asTextOpt _                 = Nothing
 
 -- | @content_block_delta.delta.text@ is a text increment; @message_delta@
 -- closes the run and carries its usage.
@@ -263,8 +305,8 @@ responsesStream baseUrl apiKey model = do
       done <- responsesToolStep pending v
       mapM_ (\(idx, cid, nm, args) -> onEvent (ChunkToolCallAt idx cid nm args)) done
     case result of
-      Left e   -> do onEvent (ChunkError e); pure (ChatTurn "" [] Nothing (Just e) Nothing)
-      Right () -> pure (ChatTurn "" [] Nothing Nothing Nothing)
+      Left e   -> do onEvent (ChunkError e); pure (ChatTurn "" [] Nothing (Just e) Nothing Nothing)
+      Right () -> pure (ChatTurn "" [] Nothing Nothing Nothing Nothing)
 
 -- | @response.output_text.delta.delta@ from a streaming frame.
 responsesDelta :: Value -> Maybe Text
@@ -379,10 +421,10 @@ openAICompatAdapter baseUrl apiKey model = do
         if not ok
           then pure (ChatTurn "" [] Nothing (Just
                  ("HTTP " <> T.pack (show code) <> ": "
-                   <> T.take 500 (TE.decodeUtf8 (BL.toStrict body)))) Nothing)
+                   <> T.take 500 (TE.decodeUtf8 (BL.toStrict body)))) Nothing Nothing)
           else case decode body of
-                 Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response") Nothing)
-                 Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e) Nothing) id (parseDeepSeekChatTurn v))
+                 Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response") Nothing Nothing)
+                 Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e) Nothing Nothing) id (parseDeepSeekChatTurn v))
     , llmEmbed = \_ -> pure []
     , llmModels = pure [ModelInfo model "endpoint model" 32768]
     , llmChatToolsStream = stream
@@ -425,10 +467,10 @@ anthropicAdapter baseUrl apiKey model = do
         (code, body, ok) <- call msgs specs
         if not ok
           then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code) <> ": "
-                   <> T.take 500 (TE.decodeUtf8 (BL.toStrict body)))) Nothing)
+                   <> T.take 500 (TE.decodeUtf8 (BL.toStrict body)))) Nothing Nothing)
           else case decode body of
-                 Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response") Nothing)
-                 Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e) Nothing) id (parseAnthropicTurn v))
+                 Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response") Nothing Nothing)
+                 Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e) Nothing Nothing) id (parseAnthropicTurn v))
     , llmEmbed = \_ -> pure []
     , llmModels = pure [ModelInfo model "endpoint model" 32768]
     , llmChatToolsStream = stream
@@ -450,7 +492,10 @@ toAnthropicMessages msgs = (T.intercalate "\n\n" systems, go msgs)
       ChatSystem _ -> go rest
       ChatUser t   -> object [ "role" .= ("user" :: Text), "content" .= t ] : go rest
       ChatAssistant t calls ->
-        object [ "role" .= ("assistant" :: Text), "content" .= assistantBlocks t calls ] : go rest
+        object [ "role" .= ("assistant" :: Text), "content" .= assistantBlocks t calls Nothing ] : go rest
+      ChatAssistantThought t calls reasoning sig ->
+        object [ "role" .= ("assistant" :: Text)
+               , "content" .= assistantBlocks t calls (Just (reasoning, sig)) ] : go rest
       ChatTool callId out ->
         let content = if T.null (T.strip out) then "(no output)" else out
         in object
@@ -461,8 +506,10 @@ toAnthropicMessages msgs = (T.intercalate "\n\n" systems, go msgs)
                  , "content" .= content
                  ] ]
              ] : go rest
-    assistantBlocks t calls =
-      [ object [ "type" .= ("text" :: Text), "text" .= t ] | not (T.null (T.strip t)) ]
+    assistantBlocks :: Text -> [ToolCall] -> Maybe (Text, Maybe Text) -> [Value]
+    assistantBlocks t calls thinking =
+      thinkingBlock thinking
+      ++ [ object [ "type" .= ("text" :: Text), "text" .= t ] | not (T.null (T.strip t)) ]
       ++ [ object
              [ "type" .= ("tool_use" :: Text)
              , "id"   .= tcId c
@@ -470,6 +517,11 @@ toAnthropicMessages msgs = (T.intercalate "\n\n" systems, go msgs)
              , "input" .= decodeInput (tcArguments c)
              ]
          | c <- calls ]
+
+    -- A signed thinking block must come back verbatim on a tool round.
+    thinkingBlock (Just (txt, Just sig)) =
+      [ object [ "type" .= ("thinking" :: Text), "thinking" .= txt, "signature" .= sig ] ]
+    thinkingBlock _ = []
 
 -- | A tool as Anthropic declares it.
 anthropicTool :: ToolSpec -> Value
@@ -501,13 +553,21 @@ parseAnthropicTurn v = case v of
         calls = [ ToolCall (str "id" b) (str "name" b) (jsonText (fromMaybe Null (field "input" b)))
                 | Object b <- blocks
                 , Just (String ty) <- [field "type" b], ty == "tool_use" ]
+        thinking = [ (str "thinking" b, str "signature" b)
+                   | Object b <- blocks
+                   , Just (String ty) <- [field "type" b], ty == "thinking" ]
+        reasoning = T.concat [ t | (t, _) <- thinking ]
+        signature = case [ sig | (_, sig) <- thinking, not (T.null sig) ] of
+          (sig : _) -> Just sig
+          []        -> Nothing
         (mi, mo) = case field "usage" o of
           Just (Object u) -> (int "input_tokens" u, int "output_tokens" u)
           _               -> (Nothing, Nothing)
         stop = case field "stop_reason" o of
           Just (String s) -> Just s
           _               -> Nothing
-    Right (ChatTurn (T.concat texts) calls (Just (usageOf mi mo)) stop Nothing)
+    Right (ChatTurn (T.concat texts) calls (Just (usageOf mi mo)) stop
+                    (if T.null reasoning then Nothing else Just reasoning) signature)
   _ -> Left "malformed Anthropic response"
   where
     str k o = case field k o of
@@ -548,10 +608,10 @@ responsesAdapter baseUrl apiKey model = do
         (code, body, ok) <- call msgs specs
         if not ok
           then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code) <> ": "
-                   <> T.take 500 (TE.decodeUtf8 (BL.toStrict body)))) Nothing)
+                   <> T.take 500 (TE.decodeUtf8 (BL.toStrict body)))) Nothing Nothing)
           else case decode body of
-                 Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response") Nothing)
-                 Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e) Nothing) id (parseResponsesTurn v))
+                 Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response") Nothing Nothing)
+                 Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e) Nothing Nothing) id (parseResponsesTurn v))
     , llmEmbed = \_ -> pure []
     , llmModels = pure [ModelInfo model "endpoint model" 32768]
     , llmChatToolsStream = stream
@@ -570,6 +630,16 @@ toResponsesInput msgs = (T.intercalate "\n\n" systems, concatMap one msgs)
       ChatSystem _ -> []
       ChatUser t   -> [ object [ "role" .= ("user" :: Text), "content" .= t ] ]
       ChatAssistant t calls ->
+        [ object [ "role" .= ("assistant" :: Text), "content" .= t ]
+          | not (T.null (T.strip t)) ]
+        ++ [ object
+               [ "type"      .= ("function_call" :: Text)
+               , "call_id"   .= tcId c
+               , "name"      .= tcName c
+               , "arguments" .= tcArguments c
+               ]
+           | c <- calls ]
+      ChatAssistantThought t calls _ _ ->
         [ object [ "role" .= ("assistant" :: Text), "content" .= t ]
           | not (T.null (T.strip t)) ]
         ++ [ object
@@ -609,7 +679,7 @@ parseResponsesTurn v = case v of
         (mi, mo) = case field "usage" o of
           Just (Object u) -> (int "input_tokens" u, int "output_tokens" u)
           _               -> (Nothing, Nothing)
-    Right (ChatTurn (T.concat texts) calls (Just (usageOf mi mo)) Nothing Nothing)
+    Right (ChatTurn (T.concat texts) calls (Just (usageOf mi mo)) Nothing Nothing Nothing)
   _ -> Left "malformed Responses response"
   where
     str k o = case field k o of

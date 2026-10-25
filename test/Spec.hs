@@ -2053,9 +2053,13 @@ main = hspec $ do
     it "omits tool_calls when the assistant has none" $ do
       -- a thought-carrying turn keeps the chain: thinking mode requires it
       -- back on the next request, and dropping it costs the model its plan.
-      let thought = LLM.ChatAssistantThought "" [LLM.ToolCall "c2" "bash" "{}"] "因为需要先看文件"
+      let thought = LLM.ChatAssistantThought "" [LLM.ToolCall "c2" "bash" "{}"] "因为需要先看文件" Nothing
       decode (encode thought) `shouldBe` Just thought
       (BLC.unpack (encode thought)) `shouldSatisfy` ("reasoning_content" `isInfixOf`)
+      -- the Anthropic thinking-block signature rides the same assistant turn
+      let signed = LLM.ChatAssistantThought "" [LLM.ToolCall "c3" "bash" "{}"] "plan" (Just "sig-1")
+      decode (encode signed) `shouldBe` Just signed
+      (BLC.unpack (encode signed)) `shouldSatisfy` ("reasoning_signature" `isInfixOf`)
       -- an empty chain is not a thought turn (keeps round-trips stable)
       decode (encode (LLM.ChatAssistant "" [LLM.ToolCall "c2" "bash" "{}"]))
         `shouldBe` Just (LLM.ChatAssistant "" [LLM.ToolCall "c2" "bash" "{}"])
@@ -2095,7 +2099,7 @@ main = hspec $ do
             ]
       parseDeepSeekChatTurn resp `shouldBe`
         Right (LLM.ChatTurn "" [LLM.ToolCall "call_1" "bash" "{\"command\":\"ls\"}"]
-                  (Just (LLM.mkUsage 0 0 7)) Nothing Nothing)
+                  (Just (LLM.mkUsage 0 0 7)) Nothing Nothing Nothing)
 
     it "parses a plain (tool-less) response" $ do
       let resp = object
@@ -2107,7 +2111,7 @@ main = hspec $ do
                 ]
               ]
             ]
-      parseDeepSeekChatTurn resp `shouldBe` Right (LLM.ChatTurn "hello" [] Nothing Nothing Nothing)
+      parseDeepSeekChatTurn resp `shouldBe` Right (LLM.ChatTurn "hello" [] Nothing Nothing Nothing Nothing)
 
   -- Phase 3 K3: API server OpenAI tools passthrough (pure builders)
   describe "API.OpenAITools" $ do

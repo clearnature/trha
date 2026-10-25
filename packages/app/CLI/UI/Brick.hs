@@ -23,7 +23,7 @@ import Control.Monad (forM_, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import System.Timeout (timeout)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, allowAlways, interruptSession, fetchTeamTasks, listProviders, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, allowAlways, interruptSession, fetchTeamTasks, listProviders, saveProvider, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import UI.Event
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
@@ -34,7 +34,7 @@ import UI.SettingsView (SettingsEntry(..), settingsEntries, filterEntries, isOve
 import UI.StatusInfo (StatusRow(..), collectStatusInfo)
 import UI.StatsView (StatsBlock(..), buildStatsBlocks)
 import UI.I18n (Lang(..), parseLang, tr)
-import Config.Settings (resolveConfig)
+import Config.Settings (resolveConfig, saveConfig)
 import Data.List (intersperse, find)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust, isNothing, listToMaybe)
@@ -77,6 +77,46 @@ import UI.Theme
     ( ColorSpec(..), TermColor(..), TermStyle(..), Theme, themeColors
     , themeFor, supportsTrueColor )
 
+-- | Provider add/edit wizard: one field per step; the editor holds the
+-- current value.  Editing starts from an existing provider, adding from a
+-- blank one.
+data ProviderWizard = ProviderWizard
+  { pwStep    :: Int
+  , pwName    :: Text
+  , pwKind    :: Text
+  , pwBaseUrl :: Text
+  , pwModels  :: Text
+  , pwDefault :: Text
+  , pwKey     :: Text
+  } deriving (Show, Eq)
+
+wizardPrompts :: [Text]
+wizardPrompts =
+  [ "Provider name"
+  , "Kind (openai / anthropic / responses)"
+  , "Base URL"
+  , "Models (comma separated)"
+  , "Default model"
+  , "API key (blank = keep existing)" ]
+
+wizardValue :: ProviderWizard -> Int -> Text
+wizardValue w n = case n of
+  0 -> pwName w
+  1 -> pwKind w
+  2 -> pwBaseUrl w
+  3 -> pwModels w
+  4 -> pwDefault w
+  _ -> pwKey w
+
+wizardSet :: Int -> Text -> ProviderWizard -> ProviderWizard
+wizardSet n v w = case n of
+  0 -> w { pwName = v }
+  1 -> w { pwKind = v }
+  2 -> w { pwBaseUrl = v }
+  3 -> w { pwModels = v }
+  4 -> w { pwDefault = v }
+  _ -> w { pwKey = v }
+
 -- | Application state
 data AppState = AppState
   { appMessages  :: [ChatMessage]
@@ -113,6 +153,7 @@ data AppState = AppState
   , appProvider   :: Maybe Text         -- ^ selected provider (Nothing = kernel inUse)
   , appProviders  :: [ProviderInfo]     -- ^ provider registry from the kernel
   , appSkills     :: [Skill]            -- ^ discovered SKILL.md files (.agents/.trha)
+  , appWizard     :: Maybe ProviderWizard -- ^ provider add/edit in progress
   }
 
 -- | Chat message with timestamp
@@ -177,9 +218,11 @@ initialState bridge chan cfg = AppState
   , appComp      = Nothing
   , appPalette   = Nothing
   , appLeader    = False
-  , appProvider  = Nothing
+  , appProvider  = if T.null (T.strip (configProvider cfg))
+                     then Nothing else Just (T.strip (configProvider cfg))
   , appProviders = []
   , appSkills    = []
+  , appWizard    = Nothing
   }
   where lang = parseLang (configLang cfg)
 
@@ -299,6 +342,7 @@ drawUI st =
       [ drawHeader (appLang st)
       , drawMessages st
       , maybe emptyWidget drawPlanCard (appPlan st)
+      , maybe emptyWidget drawWizard (appWizard st)
       , maybe emptyWidget drawPalette (appPalette st)
       , maybe emptyWidget (drawCompletion st) (appComp st)
       , drawInput st
@@ -347,6 +391,29 @@ drawPalette d =
     items = dialogCommandsItems d
     sel = dialogCommandsSelected d
     (start, end) = windowRange (length items) sel 10
+
+-- | Provider wizard card: progress, the current prompt and what is collected.
+drawWizard :: ProviderWizard -> Widget ResourceName
+drawWizard w =
+  withAttr (attrName "border") $
+    hLimit 72 $
+      borderWithLabel (withAttr (attrName "title") $
+        str (" Provider " <> show (pwStep w + 1) <> "/6 ")) $
+        vBox
+          [ padLeftRight 1 $ withAttr (attrName "title") $
+              str (T.unpack (wizardPrompts !! pwStep w))
+          , padLeftRight 1 $ withAttr (attrName "timestamp") $
+              str (T.unpack (wizardSummary w))
+          ]
+
+wizardSummary :: ProviderWizard -> Text
+wizardSummary w = T.intercalate "  ·  "
+  [ "name " <> shown (pwName w)
+  , "kind " <> shown (pwKind w)
+  , "url " <> shown (pwBaseUrl w)
+  , "models " <> shown (pwModels w)
+  ]
+  where shown t = if T.null (T.strip t) then "—" else T.strip t
 
 -- | The @-file popup shown above the input (up to eight candidates).
 drawCompletion :: AppState -> CompletionState -> Widget ResourceName
@@ -443,6 +510,8 @@ drawDialog st d =
                         (str (T.unpack (piKind p <> " · " <> piDefault p
                                         <> (if piInUse p then " · in use" else ""))))
                | (idx, p) <- zip [start ..] (drop start (take (end + 1) ps)) ]
+               ++ [ padLeftRight 1 $ withAttr (attrName "timestamp") $
+                      str "a add · e edit · enter select" ]
 
     -- One selectable row: marker + label + dim right-hand detail.
     row :: Int -> Int -> Widget ResourceName -> Widget ResourceName -> Widget ResourceName
@@ -871,6 +940,10 @@ handleEvent (VtyEvent (EvKey KEsc _)) = do
   st <- get
   case appSettings st of
     Just _  -> handleSettingsKey (EvKey KEsc [])
+    Nothing | isJust (appWizard st) ->
+      modify $ \s -> s { appWizard = Nothing
+                       , appInput = editorText InputArea (Just 6) ""
+                       , appStatus = tr (appLang s) "Ready" }
     Nothing -> case appComp st of
       -- MiMo's hierarchy: the autocomplete popup closes before anything
       -- else, and closing it must not arm the interrupt double-press.
@@ -995,8 +1068,13 @@ handleDialogKey (EvKey (KChar 'n') [MCtrl]) = modifyTop (dialogMoveSel 1)
 handleDialogKey (EvKey KEnter []) = dialogActivate
 handleDialogKey (EvKey KBS [])    = withCommands dialogCommandsDelete >> scrollBottom
 handleDialogKey (EvKey (KChar c) [])
-  | let o = fromEnum c in o >= 32 && o < 127 =
-      withCommands (dialogCommandsAppend c) >> scrollBottom
+  | let o = fromEnum c in o >= 32 && o < 127 = do
+      st <- get
+      case stackTop (appDialogs st) of
+        Just (DialogProviders ps sel) | c == 'a' -> startWizard Nothing
+        Just (DialogProviders ps sel) | c == 'e'
+          , (p : _) <- drop sel ps -> startWizard (Just p)
+        _ -> withCommands (dialogCommandsAppend c) >> scrollBottom
 handleDialogKey _ = return ()
 
 -- | Editing keys apply only to the command dialog (approval/confirm have
@@ -1027,6 +1105,8 @@ chooseProvider p = do
     in s { appProvider = Just (piName p)
          , appModel = model
          , appStatus = tr lang "Provider: " <> piName p <> " · " <> model }
+  st2 <- get
+  persistSelection (piName p) (appModel st2)
   scrollBottom
 
 dialogActivate :: EventM ResourceName AppState ()
@@ -1106,28 +1186,10 @@ handleChatKey (EvKey (KChar 'G') []) =
   scrollBottom
 handleChatKey (EvKey KEnter []) = do
   st <- get
-  case appComp st of
-    -- The @-file popup owns Enter while it is open.
-    Just cs -> case applySelected (editorValue st) cs of
-      Just newText -> do
-        modify $ \s -> s { appInput = editorText InputArea (Just 6) newText
-                         , appComp = Nothing }
-        refreshCompletion
-      Nothing -> modify $ \s -> s { appComp = Nothing }
-    Nothing -> case appPalette st of
-      -- The inline command palette owns Enter while it has a match.
-      Just d | not (null (dialogCommandsItems d)) -> runPaletteItem
-      _ -> do
-        let input = T.strip (editorValue st)
-        if not (T.null input) && not (appBusy st)
-          then do
-            liftIO (appendHistory input)
-            modify $ \s -> s { appInput = editorText InputArea (Just 6) ""
-                             , appHist = histCommit input (appHist s)
-                             , appComp = Nothing
-                             , appPalette = Nothing }
-            handleSubmit input
-          else when (T.null input && not (appBusy st)) toggleRecentFold
+  case appWizard st of
+    Just _ -> commitWizard
+    Nothing -> handleChatEnter st
+
 -- | alt+enter inserts a newline: the editor only breaks lines on a plain
 -- KEnter, so feed it one directly (this skips the submit intercept).
 handleChatKey (EvKey KEnter [MAlt]) =
@@ -1165,8 +1227,37 @@ handleChatKey (EvKey KDown []) = do
           else editDefaultKey (EvKey KDown [])
 -- | A leading @/@ on an empty input opens the quick-picker (command menu);
 -- any other @/@ is typed into the editor as plain text.
-handleChatKey ev = editDefaultKey ev >> refreshCompletion >> refreshPalette
+handleChatKey ev = do
+  st <- get
+  if isJust (appWizard st)
+    then editDefaultKey ev
+    else editDefaultKey ev >> refreshCompletion >> refreshPalette
 
+-- | Enter outside the wizard: popups, palette, then submit.
+handleChatEnter :: AppState -> EventM ResourceName AppState ()
+handleChatEnter st =
+  case appComp st of
+    -- The @-file popup owns Enter while it is open.
+    Just cs -> case applySelected (editorValue st) cs of
+      Just newText -> do
+        modify $ \s -> s { appInput = editorText InputArea (Just 6) newText
+                         , appComp = Nothing }
+        refreshCompletion
+      Nothing -> modify $ \s -> s { appComp = Nothing }
+    Nothing -> case appPalette st of
+      -- The inline command palette owns Enter while it has a match.
+      Just d | not (null (dialogCommandsItems d)) -> runPaletteItem
+      _ -> do
+        let input = T.strip (editorValue st)
+        if not (T.null input) && not (appBusy st)
+          then do
+            liftIO (appendHistory input)
+            modify $ \s -> s { appInput = editorText InputArea (Just 6) ""
+                             , appHist = histCommit input (appHist s)
+                             , appComp = Nothing
+                             , appPalette = Nothing }
+            handleSubmit input
+          else when (T.null input && not (appBusy st)) toggleRecentFold
 -- | Full editor text: lines joined with newlines (no trailing newline).
 editorValue :: AppState -> Text
 editorValue st = T.intercalate "\n" (getEditContents (appInput st))
@@ -1227,6 +1318,80 @@ runPaletteItem = do
           then useSkill (T.drop 7 (piId item))
           else handleSlash (piId item)
       [] -> modify $ \s -> s { appPalette = Nothing }
+
+-- | Persist the active provider/model so the next launch starts there.
+persistSelection :: Text -> Text -> EventM ResourceName AppState ()
+persistSelection providerName model = do
+  st <- get
+  let cfg = (appEffCfg st) { configProvider = providerName, configModel = model }
+  liftIO $ saveConfig cfg
+  modify $ \s -> s { appEffCfg = cfg }
+
+-- | Begin adding (Nothing) or editing (Just provider) a provider.
+startWizard :: Maybe ProviderInfo -> EventM ResourceName AppState ()
+startWizard existing = do
+  let w = case existing of
+        Nothing -> ProviderWizard 0 "" "openai" "" "" "" ""
+        Just p  -> ProviderWizard 0 (piName p) (piKind p) (piBaseUrl p)
+                     (T.intercalate "," (piModels p)) (piDefault p) ""
+  modify $ \s -> s { appWizard = Just w
+                   , appDialogs = stackPop (appDialogs s)
+                   , appPalette = Nothing
+                   , appInput = editorText InputArea (Just 6) ""
+                   , appStatus = tr (appLang s) "Provider wizard 1/6: "
+                       <> head wizardPrompts }
+  refreshWizardInput w
+
+-- | Put the current field's value in the editor so the user can edit it.
+refreshWizardInput :: ProviderWizard -> EventM ResourceName AppState ()
+refreshWizardInput w = do
+  modify $ \s -> s { appWizard = Just w
+                   , appInput = editorText InputArea (Just 6) (wizardValue w (pwStep w)) }
+
+-- | Take the editor's text as the current field and advance (or save).
+commitWizard :: EventM ResourceName AppState ()
+commitWizard = do
+  st <- get
+  case appWizard st of
+    Nothing -> return ()
+    Just w -> do
+      let value = T.strip (editorValue st)
+          w' = wizardSet (pwStep w) value w
+      if pwStep w >= 5
+        then finishWizard w'
+        else do
+          let n = pwStep w + 1
+          modify $ \s -> s { appStatus = tr (appLang s) "Provider wizard "
+                                 <> T.pack (show (n + 1)) <> "/6: "
+                                 <> wizardPrompts !! n }
+          refreshWizardInput w' { pwStep = n }
+
+-- | Validate and POST the draft; the kernel answers with the new store.
+finishWizard :: ProviderWizard -> EventM ResourceName AppState ()
+finishWizard w = do
+  st <- get
+  let name = T.strip (pwName w)
+      base = T.strip (pwBaseUrl w)
+      kind0 = T.toLower (T.strip (pwKind w))
+      kind = if kind0 `elem` ["openai", "anthropic", "responses"] then kind0 else "openai"
+      models = [ T.strip m | m <- T.splitOn "," (pwModels w)
+               , not (T.null (T.strip m)) ]
+      def = if T.null (T.strip (pwDefault w))
+              then fromMaybe "" (listToMaybe models)
+              else T.strip (pwDefault w)
+  if T.null name || T.null base
+    then modify $ \s -> s { appWizard = Nothing
+                           , appInput = editorText InputArea (Just 6) ""
+                           , appStatus = tr (appLang s) "Provider needs a name and a base URL" }
+    else do
+      modify $ \s -> s { appWizard = Nothing
+                       , appInput = editorText InputArea (Just 6) ""
+                       , appStatus = tr (appLang s) "Saving provider..." }
+      let bridge = appBridge st
+          chan = appChan st
+      void $ liftIO $ async $ do
+        r <- saveProvider bridge name kind base (T.strip (pwKey w)) models def
+        writeBChan chan (EvProviderSaved r)
 
 -- | Load a discovered skill into the conversation: its instructions become
 -- the user turn (the same contract as a slash-invoked skill in MiMo).
@@ -1488,6 +1653,11 @@ handleAppEvent (EvProviders (Right ps)) = do
 handleAppEvent (EvProviders (Left _)) = return ()
 handleAppEvent (EvSkills skills) = do
   modify $ \s -> s { appSkills = skills }
+handleAppEvent (EvProviderSaved (Right ps)) = do
+  modify $ \s -> s { appProviders = ps
+                   , appStatus = tr (appLang s) "Provider saved" }
+handleAppEvent (EvProviderSaved (Left e)) = do
+  modify $ \s -> s { appStatus = "Provider save failed: " <> T.pack (show e) }
 handleAppEvent (EvFinalReply text) = do
   -- The step reply is authoritative: replace whatever the preview has
   -- accumulated (a dropped delta must not truncate the answer).
@@ -1686,7 +1856,9 @@ handleSlash input = do
       | "/model " `T.isPrefixOf` cmd -> do
           let model = T.strip (T.drop 7 input)
           modify $ \s -> s { appModel = model }
-          appendMsg (mkMsg "system" ("Model set: " <> modelLabel (st { appModel = model })) t)
+          st2 <- get
+          persistSelection (fromMaybe "" (appProvider st2)) model
+          appendMsg (mkMsg "system" ("Model set: " <> modelLabel (st2 { appModel = model })) t)
       | "/delete " `T.isPrefixOf` cmd -> do
           let sid = T.unpack (T.strip (T.drop 8 input))
           if null sid
