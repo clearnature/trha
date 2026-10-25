@@ -285,6 +285,7 @@ data CLIConfig = CLIConfig
   , configTimestamps :: Bool -- ^ show message timestamps
   , configHints      :: Bool -- ^ show the footer key hints
   , configBell       :: Bool -- ^ ring the terminal bell when a reply completes
+  , configProxy      :: Text -- ^ "" (default: env proxy for remote, direct for loopback) | "none" | "http://host:port"
   } deriving (Show, Eq, Generic)
 
 instance ToJSON CLIConfig
@@ -308,6 +309,7 @@ instance FromJSON CLIConfig where
     <*> v .:? "configTimestamps" .!= True
     <*> v .:? "configHints" .!= True
     <*> v .:? "configBell" .!= False
+    <*> v .:? "configProxy" .!= ""
 
 -- | Default CLI configuration
 defaultCLIConfig :: CLIConfig
@@ -327,6 +329,7 @@ defaultCLIConfig = CLIConfig
   , configTimestamps = True
   , configHints     = True
   , configBell      = False
+  , configProxy     = ""
   }
 
 -- | CLI errors

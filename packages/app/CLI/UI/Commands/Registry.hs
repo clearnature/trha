@@ -180,6 +180,7 @@ settingKeyDocs =
   , ("port",      "int",  "Port of the orchestration scheduler")
   , ("model",     "text", "Default model name for new sessions")
   , ("token",     "text", "Bearer token used against the scheduler")
+  , ("proxy",     "text", "Proxy for remote targets: unset = env | none | http://host:port (loopback is always direct)")
   , ("maxTokens", "int",  "Maximum tokens per completion")
   , ("timeout",   "int",  "HTTP request timeout in milliseconds")
   , ("retries",   "int",  "Retry count for failed requests")
@@ -210,6 +211,7 @@ parseSettingValue lang cfg key raw =
     "port"      -> fmap (\p -> cfg { configPort = p }) (parseInt raw)
     "model"     -> Right cfg { configModel = T.strip raw }
     "token"     -> Right cfg { configToken = T.strip raw }
+    "proxy"     -> Right cfg { configProxy = T.strip raw }
     "maxtokens" -> fmap (\n -> cfg { configMaxTokens = n }) (parseInt raw)
     "timeout"   -> fmap (\n -> cfg { configTimeout = n }) (parseInt raw)
     "retries"   -> fmap (\n -> cfg { configRetries = n }) (parseInt raw)
@@ -288,6 +290,7 @@ defaultFor k = case k of
   "host"      -> configHost def
   "port"      -> T.pack (show (configPort def))
   "token"     -> configToken def
+  "proxy"     -> configProxy def
   "model"     -> configModel def
   "maxTokens" -> T.pack (show (configMaxTokens def))
   "timeout"   -> T.pack (show (configTimeout def))

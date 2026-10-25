@@ -221,6 +221,8 @@ zhDict = M.fromList
   , ("Retries", "重试")
   , ("Verbose logging", "详细日志")
   , ("Theme", "主题")
+  , ("Proxy", "代理")
+  , ("Proxy for remote targets: unset = env | none | http://host:port", "远程目标代理：留空 = 跟随环境 | none | http://host:port（本机回环始终直连）")
   , ("Interface language", "界面语言")
   , ("↑ tabs · ↓ list · type to filter", "↑ 页栏 · ↓ 列表 · 键入过滤")
   , ("Model: ", "模型：")

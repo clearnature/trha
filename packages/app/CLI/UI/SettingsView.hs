@@ -44,6 +44,7 @@ settingsEntries lang cfg = map mk ordered
           , ("model", "text", tr lang "Default model name for new sessions", configModel cfg, configModel def)
           , ("maxTokens", "int", tr lang "Maximum tokens per completion", T.pack (show (configMaxTokens cfg)), T.pack (show (configMaxTokens def)))
           , ("timeout", "int", tr lang "HTTP request timeout in milliseconds", T.pack (show (configTimeout cfg)), T.pack (show (configTimeout def)))
+          , ("proxy", "text", tr lang "Proxy for remote targets: unset = env | none | http://host:port", configProxy cfg, configProxy def)
           , ("retries", "int", tr lang "Retry count for failed requests", T.pack (show (configRetries cfg)), T.pack (show (configRetries def)))
           , ("theme", "text", tr lang "TUI theme: tokyo-night | light", configTheme cfg, configTheme def)
           , ("lang", "text", tr lang "Interface language: zh | en", configLang cfg, configLang def)
@@ -57,7 +58,7 @@ settingsEntries lang cfg = map mk ordered
     boolT True = "true"
     boolT False = "false"
     groupKeys :: [[Text]]
-    groupKeys = [ ["host", "port", "token"]            -- connection
+    groupKeys = [ ["host", "port", "token", "proxy"]   -- connection
                 , ["model", "maxTokens", "timeout", "retries"]  -- model
                 , ["theme", "lang", "verbose", "metrics", "markdown", "timestamps", "hints", "bell"]
                 ]
@@ -73,6 +74,7 @@ settingsEntries lang cfg = map mk ordered
       "maxTokens" -> "Max Tokens"
       "timeout"   -> "Timeout"
       "retries"   -> "Retries"
+      "proxy"     -> "Proxy"
       "verbose"   -> "Verbose logging"
       "theme"     -> "Theme"
       "metrics"   -> "Status-line metrics"

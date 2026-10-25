@@ -11,9 +11,9 @@ import qualified Data.Text as T
 spec :: Spec
 spec = do
   describe "settingsEntries" $ do
-    it "exposes all ten canonical keys in order" $ do
+    it "exposes all canonical keys in order" $ do
       map seKey (settingsEntries En defaultCLIConfig)
-        `shouldBe` ["host", "port", "token", "model", "maxTokens", "timeout", "retries", "theme", "lang", "verbose", "metrics", "markdown", "timestamps", "hints", "bell"]
+        `shouldBe` ["host", "port", "token", "proxy", "model", "maxTokens", "timeout", "retries", "theme", "lang", "verbose", "metrics", "markdown", "timestamps", "hints", "bell"]
     it "carries kind metadata for each row" $ do
       let byKey k = head [ e | e <- settingsEntries En defaultCLIConfig, seKey e == k ]
       seKind (byKey "port") `shouldBe` "int"
@@ -42,7 +42,7 @@ spec = do
 
   describe "filterEntries" $ do
     it "returns everything for an empty query" $ do
-      length (filterEntries "" (settingsEntries En defaultCLIConfig)) `shouldBe` 15
+      length (filterEntries "" (settingsEntries En defaultCLIConfig)) `shouldBe` 16
     it "filters by key substring (case-insensitive)" $ do
       map seKey (filterEntries "max" (settingsEntries En defaultCLIConfig))
         `shouldBe` ["maxTokens"]
