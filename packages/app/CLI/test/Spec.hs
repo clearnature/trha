@@ -19,6 +19,7 @@ import qualified UI.StatsViewSpec
 import qualified UI.StatusInfoSpec
 import qualified UI.SettingsViewSpec
 import qualified UI.Render.ToolCardSpec
+import qualified BridgeDeltaSpec
 import qualified UI.EventSpec
 import qualified UI.ThemeSpec
 
@@ -42,5 +43,6 @@ main = hspec $ do
   UI.StatusInfoSpec.spec
   UI.SettingsViewSpec.spec
   UI.Render.ToolCardSpec.spec
+  BridgeDeltaSpec.spec
   UI.EventSpec.spec
   UI.ThemeSpec.spec

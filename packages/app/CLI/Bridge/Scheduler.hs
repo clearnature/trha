@@ -31,6 +31,7 @@ module Bridge.Scheduler
 
     -- * Session Events (SSE, Phase 2 S2)
   , subscribeSessionEvents
+  , subscribeSessionEventsWith
 
     -- * Plan / Approval (Phase 2 S1)
   , planStep
@@ -62,7 +63,8 @@ import Core.Types
 import Core.HTTP
 import Core.SSE (SseDecoder, SsePayload(..), classifyPayload, feed, newDecoder)
 import Data.Aeson
-import Data.Aeson.Types (parseMaybe)
+import qualified Data.Aeson.KeyMap as KM
+import Data.Aeson.Types (parseMaybe, (.:))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Control.Concurrent (forkIO, killThread, newEmptyMVar, putMVar, takeMVar)
@@ -170,7 +172,19 @@ subscribeSessionEvents
   :: SchedulerBridge -> SessionId
   -> (Either CLIError ToolEvent -> IO ())
   -> IO (IO ())
-subscribeSessionEvents bridge sid onEvent = do
+subscribeSessionEvents bridge sid onEvent =
+  subscribeSessionEventsWith bridge sid onEvent (const (return ()))
+
+-- | Like 'subscribeSessionEvents' with a second sink for assistant text
+-- deltas.  Deltas stream the answer while it is generated; the synchronous
+-- @/api/agent/step@ reply remains the terminal signal — a caller that consumes
+-- deltas must not also render the full reply (it would duplicate the text).
+subscribeSessionEventsWith
+  :: SchedulerBridge -> SessionId
+  -> (Either CLIError ToolEvent -> IO ())
+  -> (Text -> IO ())
+  -> IO (IO ())
+subscribeSessionEventsWith bridge sid onEvent onDelta = do
   let client = bridgeHTTP bridge
       url    = buildUrl client ("/api/events/" ++ sid)
   request <- parseRequest url
@@ -200,13 +214,16 @@ subscribeSessionEvents bridge sid onEvent = do
           mapM_ deliver payloads
           readLoop dec' br
     -- One stream carries tool progress, assistant text deltas and message
-    -- echoes. Only tool progress fits the callback's type; the answer text
-    -- arrives as the synchronous reply from /api/agent/step.
+    -- echoes. Tool progress and text deltas go to their own sinks; the
+    -- message echo is redundant with the synchronous step reply.
     deliver raw = case classifyPayload raw of
-      SseTool ev     -> onEvent (Right ev)
-      SseTextDelta _ -> return ()
-      SseMessage     -> return ()
-      SseUnknown p   ->
+      SseTool ev       -> onEvent (Right ev)
+      SseTextDelta t   -> case eitherDecodeStrict' t of
+        Right (Object o)
+          | Just (String txt) <- KM.lookup "text" o -> onDelta txt
+        _ -> onEvent (Left (ValidationError ("malformed text delta: " <> snippet t)))
+      SseMessage       -> return ()
+      SseUnknown p     ->
         onEvent (Left (ValidationError ("unrecognised SSE payload: " <> snippet p)))
     snippet = T.take 120 . TE.decodeUtf8With (\_ _ -> Just '?')
 

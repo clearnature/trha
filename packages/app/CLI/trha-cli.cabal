@@ -72,6 +72,8 @@ test-suite trha-cli-test
     Core.ArgsSpec
     Core.HTTP
     Core.HTTPSpec
+    Bridge.Scheduler
+    BridgeDeltaSpec
     Core.SSE
     Core.SSESpec
     Core.TypesSpec
@@ -108,4 +110,5 @@ test-suite trha-cli-test
                   , http-client
                   , http-client-tls
                   , http-types
+                  , network
   default-language: Haskell2010
