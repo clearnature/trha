@@ -4,8 +4,18 @@
 >
 > - `src/Presentation/**`（8 个文件）**不在任何 cabal 组件**，全仓**无 `import Presentation.*`** → 该层**从未参与编译**。
 > - 本文的**文件清单与现状不符**：下文列出的 `Web/{API,WebSocket,Static}.hs` 与 `TUI/{Render,Input,Theme}.hs` **共 6 个文件并不存在**（`[ -f ]` 逐项实测缺失）；`src/Presentation/Web/` 实际只有 `Main.hs`，`src/Presentation/TUI/` 实际只有 `Main.hs`。
-> - **TUI 的真实实现不在本层**，而在外壳包 `packages/app/CLI/UI/**`（`UI.Render.*` / `UI.Theme` / `UI.Commands.Registry` / `UI.Brick`，由 `trha-cli-test` 182 用例覆盖）。
+> - **TUI 的真实实现不在本层**，而在外壳包 `packages/app/CLI/UI/**`（`UI.Render.*` / `UI.Theme` / `UI.Commands.Registry` / `UI.Brick`，由 `trha-cli-test` 覆盖；流式契约见 `Bridge.Scheduler.subscribeSessionEventsWith` 与 `packages/scheduler/README.md`）。
 > - **Desktop 的真实实现也不在本层**，而在 `packages/app/Desktop`（Electron + React）。
+> - **Web 的真实实现同样不在本层**：源码 `packages/app/Web`（React + Vite），构建产物经 `export:studio` 落到 `packages/scheduler/studio-public`、由调度器 `/studio` 路由服务。
+>
+> **三壳权威指针表**（2026-10-25 补）：本层目录仅为设计稿；三壳共享的是**调度器与配置**（`/api/events` 流、step 协议、settings），不是本目录。
+>
+> | 壳 | 源码 | 产物 |
+> | --- | --- | --- |
+> | TUI/CLI | `packages/app/CLI/UI/**` | `packages/app/CLI`（`trha` 可执行） |
+> | Desktop | `packages/app/Desktop`（`src/main` + `src`） | `release/` 打包物 |
+> | Web | `packages/app/Web` | `packages/scheduler/studio-public` |
+>
 >
 > **结论**：本层是早期分层构想，其职责已被三个真实外壳各自实现。处置：**显式标注为未接线**（2026-09-13 所有者裁定）—— 不归档、不删除。状态分档见 `docs/plans/code-docs-reconciliation.md` §2 与 `docs/architecture/architecture-intended-vs-actual.md` §5（C 档）。
 
