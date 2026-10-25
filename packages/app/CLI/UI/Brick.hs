@@ -23,6 +23,7 @@ import Control.Monad.IO.Class (liftIO)
 import Core.Types
 import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, listSessions, createSession, deleteSession, sendMessage, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, reportStep)
 import Core.Replay (ReplayBlock(..), renderReplay)
+import UI.Event
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import Core.Transcript (listLocalSessions, loadTranscript, recordChunk, recordSession, recordToolEvent, recordUser)
 import UI.Commands (runSettingsCommand)
@@ -80,12 +81,6 @@ data PickerState = PickerState
   , pSelected :: Int
   } deriving (Show)
 
--- | A tool invocation captured for display as a card.
-data ToolInv = ToolInv
-  { tiName :: ToolName
-  , tiArgs :: [Text]
-  } deriving (Show, Eq)
-
 -- | Chat message with timestamp
 data ChatMessage = ChatMessage
   { msgRole    :: Text
@@ -103,33 +98,7 @@ toolMsg :: Text -> ToolInv -> Text -> ChatMessage
 toolMsg role inv t =
   ChatMessage role (T.unlines (toolCardLines (T.pack (tiName inv)) (tiArgs inv))) t (Just inv)
 
--- | Streaming accumulation state for one assistant reply.
---
--- A reply arrives as a sequence of chunks (one `EvResponse` per chunk:
--- `ChunkDelta` appends text, `ChunkToolCall` records a tool invocation,
--- `ChunkDone` flushes the block).  Chunks may arrive individually today
--- (synchronous endpoint, kernel aggregates) or incrementally later
--- (standard SSE stream) -- the UI treats both uniformly.
-data PendingMsg = PendingMsg
-  { pmContent :: Text        -- ^ Accumulated delta text
-  , pmTools   :: [ToolInv]   -- ^ Tool invocations seen so far (reverse order)
-  , pmStart   :: Text        -- ^ Timestamp of the first delta
-  } deriving (Show)
-
--- | Async events pushed by background threads
-data AppEvent
-  = EvResponse (Either CLIError StreamChunk)
-  | EvSession (Either CLIError SessionId)
-  | EvSessions (Either CLIError [SessionId])
-  | EvModels (Either CLIError [ModelInfo])
-  | EvDeleted SessionId
-  | EvPlan (Either CLIError PlanSubmit)
-  | EvVerdict (Either CLIError PlanVerdict)
-  | EvPlanState (Either CLIError (PlanView, Maybe Text))
-  | EvTool (Either CLIError ToolEvent)
-  | EvStatusInfo [StatusRow]
-  | EvMetrics [(Text, Text)]
-  deriving (Show)
+-- PendingMsg / ToolInv / AppEvent live in UI.Event (pure, unit-tested).
 
 -- | Resource names
 data ResourceName

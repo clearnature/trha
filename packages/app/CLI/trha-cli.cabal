@@ -24,6 +24,7 @@ executable trha
     Core.SSE
     Core.Types
     UI.Brick
+    UI.Event
     UI.Commands
     UI.I18n
     UI.SettingsView
