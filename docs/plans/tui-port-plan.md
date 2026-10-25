@@ -26,9 +26,9 @@
 
 **文件：** 创建 `packages/app/CLI/UI/Event.hs` · 修改 `packages/app/CLI/Bridge/Scheduler.hs:169-216` · 修改 `packages/app/CLI/UI/Brick.hs`（消费侧 + 移除 953-961 的 drain window）· 测试 `packages/app/CLI/test/UI/EventSpec.hs`（新建）
 
-- [ ] **任务 1：抽纯事件模块 `UI/Event.hs`（Brick.hs 拆分第一步）**
+- [x] **任务 1：抽纯事件模块 `UI/Event.hs`（Brick.hs 拆分第一步）**
 
-  - [ ] 步骤 1.1：把 `AppEvent`（11 构造子）与 `PendingMsg` 从 `Brick.hs:120-132, 432-439` 移入新模块 `UI/Event.hs`，`Brick.hs` 改为 import。加纯归约函数：
+  - [x] 步骤 1.1：把 `AppEvent`（11 构造子）与 `PendingMsg` 从 `Brick.hs:120-132, 432-439` 移入新模块 `UI/Event.hs`，`Brick.hs` 改为 import。加纯归约函数：
 
     ```haskell
     -- | 流式增量归约：delta 追加，终态定型。纯函数，可测。
@@ -38,25 +38,25 @@
     applyChunk _              pm = pm
     ```
 
-  - [ ] 步骤 1.2：写失败测试 `test/UI/EventSpec.hs`：delta 序列追加顺序、ChunkDone 定型、ToolEvent 不影响文本。
+  - [x] 步骤 1.2：写失败测试 `test/UI/EventSpec.hs`：delta 序列追加顺序、ChunkDone 定型、ToolEvent 不影响文本。
 
-  - [ ] 步骤 1.3：`cabal test gh-harness-cli` → 新 spec FAIL（模块未接线）→ 接线后 PASS → `git commit -m "refactor(cli): extract UI.Event pure stream reduction"`。
+  - [x] 步骤 1.3：`cabal test gh-harness-cli` → 新 spec FAIL（模块未接线）→ 接线后 PASS → `git commit -m "refactor(cli): extract UI.Event pure stream reduction"`。
 
-- [ ] **任务 2：Bridge 转发 text delta（消灭丢弃点）**
+- [x] **任务 2：Bridge 转发 text delta（消灭丢弃点）**
 
-  - [ ] 步骤 2.1：修改 `Bridge/Scheduler.hs:204-208`：`SseTextDelta` / `SseMessage` 不再丢弃，经现有回调推给调用方；回调签名对齐 `UI.Event` 的事件类型。保留 `SseUnknown` 报错路径。
+  - [x] 步骤 2.1：修改 `Bridge/Scheduler.hs:204-208`：`SseTextDelta` / `SseMessage` 不再丢弃，经现有回调推给调用方；回调签名对齐 `UI.Event` 的事件类型。保留 `SseUnknown` 报错路径。
 
-  - [ ] 步骤 2.2：测试：用 `Core.SSE.feed` 喂一段含 `data: {"type":"text_delta",...}` 的 SSE 字节流 fixture，断言回调收到对应 ChunkDelta 序列（复用 `test/Core/SSESpec.hs` 的 fixture 惯例）。
+  - [x] 步骤 2.2：测试：用 `Core.SSE.feed` 喂一段含 `data: {"type":"text_delta",...}` 的 SSE 字节流 fixture，断言回调收到对应 ChunkDelta 序列（复用 `test/Core/SSESpec.hs` 的 fixture 惯例）。
 
-  - [ ] 步骤 2.3：`cabal test` PASS → `git commit -m "feat(cli): forward SSE text deltas to UI"`。
+  - [x] 步骤 2.3：`cabal test` PASS → `git commit -m "feat(cli): forward SSE text deltas to UI"`。
 
-- [ ] **任务 3：TUI 消费流式增量 + 帧动画**
+- [x] **任务 3：TUI 消费流式增量 + 帧动画**
 
-  - [ ] 步骤 3.1：`Brick.hs` 消息区渲染改读 `pendingText` 逐 delta 增长；busy 期间输入框标签接 spinner 帧序列（`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`，`AppEvent Tick` 驱动，100ms）。
+  - [x] 步骤 3.1：`Brick.hs` 消息区渲染改读 `pendingText` 逐 delta 增长；busy 期间输入框标签接 spinner 帧序列（`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`，`AppEvent Tick` 驱动，100ms）。
 
-  - [ ] 步骤 3.2：移除 `Brick.hs:953-961` 的 `threadDelay 100_000` drain window——以 `ChunkDone`/`SseMessage` 终态事件收尾（对齐 MiMo 的 step-finish 语义）。
+  - [x] 步骤 3.2：移除 `Brick.hs:953-961` 的 `threadDelay 100_000` drain window——以 `ChunkDone`/`SseMessage` 终态事件收尾（对齐 MiMo 的 step-finish 语义）。
 
-  - [ ] 步骤 3.3：手动验收（对真实 scheduler）：发一条长回复，确认逐字增长、无重复段落（若 `/api/agent/step` 整段 reply 与 SSE delta 重复，以 delta 流为准、step 返回仅作 finalize 信号——在 Scheduler.hs 注释记录该契约）。`git commit -m "feat(cli): streaming reply rendering with spinner"`。
+  - [x] 步骤 3.3：手动验收（对真实 scheduler）：发一条长回复，确认逐字增长、无重复段落（若 `/api/agent/step` 整段 reply 与 SSE delta 重复，以 delta 流为准、step 返回仅作 finalize 信号——在 Scheduler.hs 注释记录该契约）。`git commit -m "feat(cli): streaming reply rendering with spinner"`。
 
 ## M1：核心形态（启动时细化，契约如下）
 
