@@ -27,6 +27,7 @@ import {
   type Todo, type JobRecord,
 } from './standardTools.js';
 import { startPluginWatcher } from '../Plugins/watcher.js';
+import { resolveWorkspace } from './workspace.js';
 import { mkdir, readdir, readFile, writeFile, appendFile } from 'node:fs/promises';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -874,9 +875,14 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // emits assistant tool_calls; we execute them and feed results back as
   // tool messages until the model answers without tool calls.
   // Host-side tools live under the orchestration workspace so file mutations
-  // cannot escape it. Overridable so a test (or the desktop app pointing at a
-  // real project) can choose the root without patching code.
-  const WORKSPACE = process.env.TRHA_WORKSPACE ?? '/tmp/trha-workspace';
+  // cannot escape it.  Resolution order: TRHA_WORKSPACE, a `.trha/workspace`
+  // marker (cwd, then $HOME), then the directory the scheduler was started in
+  // — i.e. the shell's cwd, not a hard-coded /tmp path.
+  const WORKSPACE = resolveWorkspace({
+    env: process.env.TRHA_WORKSPACE,
+    cwd: process.cwd(),
+    home: process.env.HOME,
+  });
   // `exec` picks the platform shell itself (`/bin/sh -c` on POSIX,
   // `cmd.exe /d /s /c` on win32) — that platform behaviour is the contract; the
   // explicit bash spawns elsewhere go through Server/shell.ts instead.

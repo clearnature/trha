@@ -27,6 +27,9 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Text.Read (decimal)
+import Data.Maybe (fromMaybe)
+import System.Directory (getCurrentDirectory)
+import System.Environment (lookupEnv)
 import System.Info (arch, compilerName, compilerVersion, os)
 import Data.Version (showVersion)
 
@@ -54,7 +57,7 @@ osLine = do
   where
     readFirstLine fp = do
       content <- tryRead fp
-      return (fmap T.strip (fmap (T.takeWhile (/= '\n')) content))
+      return (fmap (T.strip . T.takeWhile (/= '\n')) content)
 
 -- | Base URL of the orchestration scheduler: @http://host:port@.
 baseUrlLine :: CLIConfig -> Text
@@ -89,7 +92,8 @@ collectStatusInfo :: CLIConfig -> Maybe String -> Text -> IO [StatusRow]
 collectStatusInfo cfg mSid model = do
   osStr <- osLine
   mem <- memoryLine
-  return $
+  ws <- workspaceLine
+  return
     [ StatusRow "Name" versionLine
     , StatusRow "Runtime" runtimeLine
     , StatusRow "OS" osStr
@@ -97,9 +101,18 @@ collectStatusInfo cfg mSid model = do
     , StatusRow "Base URL" (baseUrlLine cfg)
     , StatusRow "Model" model
     , StatusRow "Session ID" (maybe "—" T.pack mSid)
-    , StatusRow "Sandbox" "/tmp/trha-workspace"
-    , StatusRow "Memory" (maybe "—" id mem)
+    , StatusRow "Sandbox" ws
+    , StatusRow "Memory" (fromMaybe "—" mem)
     ]
+
+-- | The workspace the tools use: the explicit override, else the shell's
+-- current directory (the scheduler follows the same rule).
+workspaceLine :: IO Text
+workspaceLine = do
+  override <- lookupEnv "TRHA_WORKSPACE"
+  case override of
+    Just p | not (null p) -> pure (T.pack p)
+    _                     -> T.pack <$> getCurrentDirectory
 
 -- | Auth summary: mask the token, noting the well-known dev default.
 authLine :: CLIConfig -> Text

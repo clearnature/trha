@@ -52,7 +52,8 @@
 | `stagehand_navigate/extract/screenshot/tabs/act/observe` | stagehand 语义的别名 + `act`（click/type）与 `observe`（交互动元素） | 共用 CDP 浏览器 |
 | `ralph` | Ralph 循环：每轮**全新子会话**，共享工作区，直到 DONE/BLOCKED | 子会话 |
 
-配置：`TRHA_WORKSPACE`（工作区，默认 `/tmp/trha-workspace`）、`TRHA_SKILLS_DIR`、
+配置：`TRHA_WORKSPACE`（工作区，默认读 `.trha/workspace`（cwd → `$HOME`），
+没有则用启动时的 shell cwd）、`TRHA_SKILLS_DIR`、
 `TRHA_MAX_TOOL_ROUNDS`（0/未设 = 不限轮；同一调用连续重复 3 次判停）、
 `TRHA_SCHEDULE_TICK_MS`（驱动轮询，默认 5000，0 = 关闭）、
 `TRHA_SCHEDULE_GRACE_MS`（重启补跑窗口，默认 5 分钟）。
@@ -74,7 +75,7 @@
 
 | 变量 | 作用 | 默认 |
 |---|---|---|
-| `TRHA_WORKSPACE` | 工具工作区（读写边界） | `/tmp/trha-workspace` |
+| `TRHA_WORKSPACE` | 工具工作区（读写边界） | `.trha/workspace` 或启动时的 shell cwd |
 | `TRHA_SKILLS_DIR` | `skill` 的 markdown 目录 | `<workspace>/.trha/skills` |
 | `TRHA_MAX_TOOL_ROUNDS` | 工具轮上限 | 不限（同一调用连续重复 3 次判停） |
 | `TRHA_MAX_SUBAGENT_DEPTH` | 子智能体嵌套深度 | 2 |
