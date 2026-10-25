@@ -195,11 +195,21 @@ interface SessionMessage {
   [key: string]: unknown;
 }
 
+/** The per-turn provider/model choice forwarded to the kernel. */
+interface TurnTarget {
+  provider?: string | undefined;
+  model?: string | undefined;
+  genParams?: { temperature?: number | undefined; topP?: number | undefined; maxTokens?: number | undefined } | undefined;
+}
+
 interface SchedulerSession {
   id: string;
   mode: string;
   messages: SessionMessage[];
-  pendingApproval: { message: string } | null;
+  // A parked approval keeps the turn's target so the replay after "approve"
+  // uses the same provider/model the user had selected (otherwise it would
+  // silently fall back to the kernel's in-use provider).
+  pendingApproval: ({ message: string } & TurnTarget) | null;
   createdAt: Date;
   /** Provider-reported prompt tokens of the previous request (ground truth). */
   lastPromptTokens?: number;
@@ -1228,7 +1238,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   const runStep = async (
     session: SchedulerSession,
     message: string,
-    target: { provider?: string | undefined; model?: string | undefined; genParams?: { temperature?: number | undefined; topP?: number | undefined; maxTokens?: number | undefined } | undefined } = {},
+    target: TurnTarget = {},
     onDelta?: (text: string) => void,
   ): Promise<string> => {
     const mode = MODES[session.mode] ?? MODES.standard;
@@ -1374,7 +1384,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         // ask 权限规则：暂停执行并发起确认（批准后重放该工具）
         if (output.startsWith('REQUIRE_APPROVAL:')) {
           await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'failed', started, output);
-          session.pendingApproval = { message: output };
+          session.pendingApproval = { message: output, ...target };
           (session as { pendingToolCall?: ToolCallData | undefined }).pendingToolCall = call;
           events.emit('agent:plan', { sessionId: session.id, status: 'awaiting_approval', message: output });
           return `awaiting_approval: ${output}`;
@@ -1412,7 +1422,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         }
         if (output.startsWith('WAITING_FOR_APPROVAL:')) {
           const plan = output.slice('WAITING_FOR_APPROVAL:'.length).trim();
-          session.pendingApproval = { message: plan };
+          session.pendingApproval = { message: plan, ...target };
           void bridge.requestApproval(session.id, plan).catch(e =>
             console.error(`kernel approval request ${session.id}:`, e));
           events.emit('agent:plan', { sessionId: session.id, status: 'awaiting_approval', message: plan });
@@ -1451,7 +1461,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // tell it first. A kernel that is down must not break the shell, hence the
     // local `pendingApproval` stays authoritative for the response shape.
     if (requireApproval) {
-      session.pendingApproval = { message };
+      session.pendingApproval = { message, provider, model, genParams };
       void bridge.requestApproval(sessionId, message).catch(e =>
         console.error(`kernel approval request ${sessionId}:`, e));
       events.emit('agent:plan', { sessionId, status: 'awaiting_approval', message });
@@ -1531,10 +1541,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       const output = await executeTool(pendingCall);
       (session as { pendingToolCall?: ToolCallData | undefined }).pendingToolCall = undefined;
       session.messages.push({ role: 'tool', tool_call_id: pendingCall.id, content: output });
-      const reply = await runTurn(session, pending.message);
+      const reply = await runTurn(session, pending.message, pending);
       return res.json({ status: 'approved', tool: pendingCall.name, output, reply, messages: session.messages, mode: session.mode });
     }
-    const reply = await runTurn(session, pending.message);
+    const reply = await runTurn(session, pending.message, pending);
     res.json({ status: 'approved', reply, messages: session.messages, mode: session.mode });
   });
 

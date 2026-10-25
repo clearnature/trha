@@ -25,7 +25,7 @@ const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer dev-to
 interface GateCall { kind: 'approval' | 'decision'; body: Record<string, unknown> }
 
 /** A fake kernel that records the gate calls it receives. */
-function fakeKernel(gate: GateCall[]) {
+function fakeKernel(gate: GateCall[], chats: Record<string, unknown>[] = []) {
   const kernel = express();
   kernel.use(express.json());
   kernel.post('/session/start', (_req, res) => { res.json({ sessionId: 'x', resumed: false }); });
@@ -37,7 +37,8 @@ function fakeKernel(gate: GateCall[]) {
     gate.push({ kind: 'decision', body: req.body as Record<string, unknown> });
     res.json({ status: (req.body as { approve?: boolean }).approve ? 'approved' : 'denied' });
   });
-  kernel.post('/v1/chat/completions', (_req, res) => {
+  kernel.post('/v1/chat/completions', (req, res) => {
+    chats.push(req.body as Record<string, unknown>);
     res.json({ choices: [{ message: { role: 'assistant', content: 'done', finish_reason: 'stop' } }] });
   });
   return kernel;
@@ -120,6 +121,42 @@ describe('approval gate delegation to the kernel', () => {
     });
     expect(((await approve.json()) as { status?: string }).status).toBe('approved');
     await waitFor(() => gate.some(c => c.kind === 'decision' && c.body.approve === true));
+
+    kernelServer.server.close();
+    schedulerServer.server.close();
+  });
+
+  it('replays an approved turn with the provider/model that parked it', async () => {
+    const gate: GateCall[] = [];
+    const chats: Record<string, unknown>[] = [];
+    const kernelServer = await listen(fakeKernel(gate, chats));
+    const { app } = createServer({
+      port: 0, token: 'dev-token',
+      haskellHost: '127.0.0.1', haskellPort: kernelServer.port,
+    });
+    const schedulerServer = await listen(app);
+    const base = `http://127.0.0.1:${schedulerServer.port}`;
+
+    const start = await fetch(`${base}/api/session/start`, { method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard' }) });
+    const { sessionId } = (await start.json()) as { sessionId: string };
+
+    await fetch(`${base}/api/agent/step`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({
+        sessionId, message: 'gated', requireApproval: true,
+        provider: 'deepseek-anthropic', model: 'deepseek-flash',
+      }),
+    });
+    await waitFor(() => gate.some(c => c.kind === 'approval'));
+
+    await fetch(`${base}/api/session/${sessionId}/decision`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ approve: true }),
+    });
+    await waitFor(() => chats.length > 0);
+
+    // The replay must not fall back to the kernel's in-use provider.
+    expect(chats[0]?.provider).toBe('deepseek-anthropic');
+    expect(chats[0]?.model).toBe('deepseek-flash');
 
     kernelServer.server.close();
     schedulerServer.server.close();

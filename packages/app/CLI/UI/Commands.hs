@@ -13,7 +13,7 @@ module UI.Commands
   ) where
 
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, listModels, planStep, approvePlan, denyPlan, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, reportStep)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, listModels, listProviders, planStep, approvePlan, denyPlan, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, reportStep)
 import Core.Replay (renderReplay, renderReplayText)
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import Core.Transcript (listLocalSessions, loadTranscript, recordChunk, recordModelRequest, recordSession, recordToolEvent, recordUser)
@@ -112,6 +112,18 @@ executeCommand lang _ sessionRef modelRef Status = do
     ]
 
 executeCommand lang _ _ _ ShowSettings = runSettingsCommand lang ""
+
+executeCommand lang bridge _ _ Providers = do
+  result <- listProviders bridge
+  return $ Just $ case result of
+    Right [] -> tr lang "No providers configured (see ~/.trha/providers.json)."
+    Right ps -> (tr lang "Providers:" <> "\n") <> T.unlines
+      [ "  - " <> piName p <> " (" <> piKind p <> ")"
+          <> " · " <> piDefault p
+          <> (if piInUse p then " · in use" else "")
+      | p <- ps ]
+      <> tr lang "Switch providers in the TUI (/provider or ctrl+x p)."
+    Left err -> tr lang "Error: " <> T.pack (show err)
 
 executeCommand lang _ _ _ (SetSetting "" _) =
   return $ Just (tr lang "Usage: /settings <key> <value>")

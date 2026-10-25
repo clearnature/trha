@@ -74,8 +74,8 @@ zhDict = M.fromList
   , ("Approving...", "批准中…")
   , ("Denying...", "拒绝中…")
   , ("Interrupting...", "中断中…")
-  , ("Leader: b sidebar · m models · s sessions · , settings · ? help · i interrupt · esc cancel"
-    , "Leader：b 侧栏 · m 模型 · s 会话 · , 设置 · ? 帮助 · i 中断 · esc 取消")
+  , ("Leader: b sidebar · p provider · m models · s sessions · , settings · ? help · i interrupt · esc cancel"
+    , "Leader：b 侧栏 · p 供应商 · m 模型 · s 会话 · , 设置 · ? 帮助 · i 中断 · esc 取消")
   , ("Unknown leader key", "未知的 leader 键")
   , ("Awaiting approval...", "等待批准…")
   , ("No session to approve", "没有会话可批准")
@@ -83,6 +83,7 @@ zhDict = M.fromList
   , ("Show this help", "显示本帮助")
   , ("Show or set the current model", "显示或设置当前模型")
   , ("List available models", "列出可用模型")
+  , ("Choose the model provider", "选择模型供应商")
   , ("Create a new session", "新建会话")
   , ("List all sessions", "列出全部会话")
   , ("Show current session/model status", "显示当前会话与模型状态")

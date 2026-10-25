@@ -38,7 +38,7 @@ module UI.Dialog
   , escWiring
   ) where
 
-import Core.Types (ModelInfo(..))
+import Core.Types (ModelInfo(..), ProviderInfo(..))
 import Core.SessionSummary (SessionSummary(..))
 import UI.Render.Picker (PickerItem(..), filterItems, moveSelection, queryAppend, queryDelete)
 import Data.Text (Text)
@@ -51,6 +51,7 @@ data Dialog
   = DialogModels [ModelInfo] Int            -- ^ /models: filtered, selected
   | DialogSessions [SessionSummary] Int     -- ^ /sessions: filtered, selected
   | DialogCommands [PickerItem] Text Int    -- ^ full registry, query, selected
+  | DialogProviders [ProviderInfo] Int      -- ^ /provider: providers, selected
   | DialogApproval Text String [Text] Int   -- ^ ask message, tool, args, selected
   | DialogConfirm Text Int                  -- ^ "always" confirmation, selected (0=yes)
   deriving (Show, Eq)
@@ -84,6 +85,7 @@ dialogCount :: Dialog -> Int
 dialogCount (DialogModels ms _)      = length ms
 dialogCount (DialogSessions ss _)    = length ss
 dialogCount (DialogCommands all0 q _) = length (filterItems q all0)
+dialogCount (DialogProviders ps _)   = length ps
 dialogCount (DialogApproval _ name args _) = length (approvalOptions name args)
 dialogCount (DialogConfirm _ _)      = 2  -- yes / no
 
@@ -134,6 +136,7 @@ dialogMoveSel delta d = case d of
   DialogModels ms s      -> DialogModels ms (mv (dialogCount d) s)
   DialogSessions ss s    -> DialogSessions ss (mv (dialogCount d) s)
   DialogCommands all0 q s -> DialogCommands all0 q (mv (dialogCount d) s)
+  DialogProviders ps s     -> DialogProviders ps (mv (dialogCount d) s)
   DialogApproval m t a s  -> DialogApproval m t a (mv (dialogCount d) s)
   DialogConfirm m s       -> DialogConfirm m (mv (dialogCount d) s)
   where

@@ -25,6 +25,10 @@ module Core.Types
   , ToolEvent(..)
   , TodoStatus(..)
   , TodoItem(..)
+  , ProviderInfo(..)
+  , providerStoreToList
+  , providerModelInfos
+  , modelForProvider
   , PluginInfo(..)
   
     -- * Configuration
@@ -35,10 +39,11 @@ module Core.Types
   , CLIError(..)
   ) where
 
+import Control.Applicative ((<|>))
 import Data.Aeson
 import Data.Aeson.Key (fromText)
 import qualified Data.Aeson.KeyMap as KM
-import Data.Aeson.Types (Parser, (.:), (.:?), (.!=), withObject)
+import Data.Aeson.Types (Parser, parseMaybe, (.:), (.:?), (.!=), withObject)
 import Data.Foldable (toList)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text)
@@ -128,7 +133,18 @@ data Usage = Usage
   } deriving (Show, Eq, Generic)
 
 instance ToJSON Usage
-instance FromJSON Usage
+-- The scheduler echoes provider numbers as promptTokens/completionTokens
+-- plus cache deltas and a cumulative total; older kernels send totalTokens.
+-- Requiring all three fields made the whole usage value unparsable, which in
+-- turn meant the TUI never received its terminal ChunkDone (busy stuck on
+-- "Thinking..."). Derive what is missing instead.
+instance FromJSON Usage where
+  parseJSON = withObject "Usage" $ \o -> do
+    p <- o .:? "promptTokens" .!= 0
+    c <- o .:? "completionTokens" .!= 0
+    t <- o .:? "totalTokens"
+    cum <- o .:? "cumulativeTokens"
+    pure $ Usage p c (fromMaybe (p + c) (t <|> cum))
 
 -- | Stream chunks from the LLM
 data StreamChunk
@@ -291,6 +307,50 @@ instance ToJSON TodoItem where
     , "subject" .= todoSubject t
     , "status" .= todoStatus t
     ]
+
+-- | One entry of the kernel's provider registry (@GET /api/providers@ via
+-- the scheduler).  The key itself never crosses this boundary.
+data ProviderInfo = ProviderInfo
+  { piName          :: Text
+  , piKind          :: Text        -- ^ openai / anthropic / responses / …
+  , piModels        :: [Text]
+  , piDefault       :: Text
+  , piInUse         :: Bool        -- ^ the kernel's default when no provider is named
+  , piHasKey        :: Bool
+  , piContextWindow :: Maybe Int
+  } deriving (Show, Eq)
+
+instance FromJSON ProviderInfo where
+  parseJSON = withObject "ProviderInfo" $ \o ->
+    ProviderInfo
+      <$> o .: "name"
+      <*> (o .:? "kind" .!= "openai")
+      <*> (o .:? "models" .!= [])
+      <*> (o .:? "default" .!= "")
+      <*> (o .:? "inUse" .!= False)
+      <*> (o .:? "hasKey" .!= False)
+      <*> o .:? "contextWindow"
+
+-- | Parse the @{"providers":[…]}}@ envelope the registry endpoints return.
+providerStoreToList :: Value -> Either CLIError [ProviderInfo]
+providerStoreToList (Object o) = case parseMaybe (.: "providers") o of
+  Just ps -> Right ps
+  Nothing -> Left $ ValidationError "Missing providers in response"
+providerStoreToList _ = Left $ ValidationError "Invalid providers response"
+
+-- | Model-picker rows for one provider (context size is the provider's
+-- window when it declares one).
+providerModelInfos :: ProviderInfo -> [ModelInfo]
+providerModelInfos p =
+  [ ModelInfo m "" (fromMaybe 0 (piContextWindow p)) | m <- piModels p ]
+
+-- | Keep the current model when the provider offers it; otherwise take the
+-- provider's default (and leave the current name alone if it has none).
+modelForProvider :: ProviderInfo -> Text -> Text
+modelForProvider p current
+  | current `elem` piModels p = current
+  | not (T.null (piDefault p)) = piDefault p
+  | otherwise                  = current
 
 instance ToJSON ToolEvent where
   toJSON (ToolEvent name args st dur out) =

@@ -23,7 +23,7 @@ import Control.Monad (forM_, void, when)
 import Control.Monad.IO.Class (liftIO)
 import System.Timeout (timeout)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, allowAlways, interruptSession, fetchTeamTasks, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, allowAlways, interruptSession, fetchTeamTasks, listProviders, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import UI.Event
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
@@ -36,7 +36,6 @@ import UI.StatsView (StatsBlock(..), buildStatsBlocks)
 import UI.I18n (Lang(..), parseLang, tr)
 import Config.Settings (resolveConfig)
 import Data.List (intersperse, find)
-import Data.IORef
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust, isNothing, listToMaybe)
 import Data.Text (Text)
@@ -109,6 +108,8 @@ data AppState = AppState
   , appIndex      :: [Completion]       -- ^ @\@@-file index (M4-2)
   , appComp       :: Maybe CompletionState -- ^ open completion popup
   , appLeader     :: Bool               -- ^ leader key armed (M4-3)
+  , appProvider   :: Maybe Text         -- ^ selected provider (Nothing = kernel inUse)
+  , appProviders  :: [ProviderInfo]     -- ^ provider registry from the kernel
   }
 
 -- | Chat message with timestamp
@@ -172,6 +173,8 @@ initialState bridge chan cfg = AppState
   , appIndex     = []
   , appComp      = Nothing
   , appLeader    = False
+  , appProvider  = Nothing
+  , appProviders = []
   }
   where lang = parseLang (configLang cfg)
 
@@ -322,6 +325,12 @@ drawCompletion _ cs =
                  , withAttr (attrName "title") $ str (T.unpack (compPath c)) ]
           | (idx, c) <- zip [0 ..] (take 8 (csItems cs)) ]
 
+-- | Display form of the active target: @provider/model@ once a provider is
+-- selected, otherwise the bare model name (kernel chooses the provider).
+modelLabel :: AppState -> Text
+modelLabel st =
+  maybe (appModel st) (\p -> p <> "/" <> appModel st) (appProvider st)
+
 -- | Sidebar content assembled from the live state.
 sidebarDataFor :: AppState -> SidebarData
 sidebarDataFor st = SidebarData
@@ -330,7 +339,7 @@ sidebarDataFor st = SidebarData
   , sdTodos     = appTodos st
   , sdSessionId = T.pack <$> appSessionId st
   , sdTitle     = appSessionTitle st
-  , sdModel     = appModel st
+  , sdModel     = modelLabel st
   }
 
 drawHeader :: Lang -> Widget ResourceName
@@ -352,7 +361,16 @@ drawDialog st d =
       DialogModels{}     -> tr lang " Models "
       DialogSessions{}   -> tr lang " Sessions "
       DialogCommands{}   -> tr lang " Commands "
-    sel = case d of DialogModels _ s -> s; DialogSessions _ s -> s; DialogCommands _ _ s -> s
+      DialogProviders{}  -> tr lang " Providers "
+      DialogApproval{}   -> tr lang " Approval "
+      DialogConfirm{}    -> tr lang " Confirm "
+    sel = case d of
+      DialogModels _ s -> s
+      DialogSessions _ s -> s
+      DialogCommands _ _ s -> s
+      DialogProviders _ s -> s
+      DialogApproval _ _ _ s -> s
+      DialogConfirm _ s -> s
     n = dialogCount d
     (start, end) = windowRange n sel maxVisible
     rows = case d of
@@ -379,6 +397,14 @@ drawDialog st d =
         [ row idx sel (str (T.unpack (piId it)))
                       (str (T.unpack (T.take 44 (piDesc it))))
         | (idx, it) <- zip [start ..] (drop start (take (end + 1) (dialogCommandsItems d))) ]
+      DialogProviders ps _ ->
+        if null ps
+          then [ padLeftRight 1 $ withAttr (attrName "timestamp") $
+                   str " no providers (configure ~/.trha/providers.json)" ]
+          else [ row idx sel (str (T.unpack (piName p)))
+                        (str (T.unpack (piKind p <> " · " <> piDefault p
+                                        <> (if piInUse p then " · in use" else ""))))
+               | (idx, p) <- zip [start ..] (drop start (take (end + 1) ps)) ]
 
     -- One selectable row: marker + label + dim right-hand detail.
     row :: Int -> Int -> Widget ResourceName -> Widget ResourceName -> Widget ResourceName
@@ -418,7 +444,7 @@ statusLine :: AppState -> Text
 statusLine st = T.unlines
   [ tr lang "Status:"
   , tr lang "  Session: " <> maybe (tr lang "none") T.pack (appSessionId st)
-  , tr lang "  Model: " <> appModel st
+  , tr lang "  Model: " <> modelLabel st
   , "  " <> appStatus st
   ]
   where lang = appLang st
@@ -706,8 +732,13 @@ drawInput st =
   withAttr (attrName "border") $
     borderWithLabel busyLabel $
       withAttr (attrName "input") $
-        renderEditor (str . T.unpack . T.unlines) True (appInput st)
+        -- The editor's line limit is also its *fixed* height in brick, so a
+        -- 6-line limit reserved six rows even when empty.  MiMo's textarea
+        -- is minHeight=1 / maxHeight=6: grow with the content, never more.
+        vLimit visibleRows $
+          renderEditor (str . T.unpack . T.unlines) True (appInput st)
   where
+    visibleRows = max 1 (min 6 (length (getEditContents (appInput st))))
     -- No timer thread: streaming deltas drive redraws, so the frame index
     -- derives from the accumulated length — it animates exactly while the
     -- reply is actually moving (a frozen spinner honestly shows a stall).
@@ -773,7 +804,7 @@ drawStatus st =
         (map (str . T.unpack) metricSegs
           ++ [str (T.unpack footerHints) | configHints (appEffCfg st)]))
   where
-    live = FooterLive (appModel st) (fmap T.pack (appSessionId st)) (appStatus st)
+    live = FooterLive (modelLabel st) (fmap T.pack (appSessionId st)) (appStatus st)
                       (appLastUsage st) (messageChars st)
                       (appUsage st) (appCtxSize st)
     metricSegs = footerMetrics (appLang st) (parseMetrics (configMetrics (appEffCfg st))) live (appMetrics st)
@@ -832,6 +863,7 @@ handleLeaderKey (EvKey (KChar c) []) = do
   modify $ \s -> s { appLeader = False }
   case leaderResolve c of
     Just LeaderSidebar   -> modify $ \s -> s { appSidebar = toggleSidebar (appSidebar s) }
+    Just LeaderProvider  -> handleSlash "/provider"
     Just LeaderModels    -> handleSlash "/models"
     Just LeaderSessions  -> handleSlash "/sessions"
     Just LeaderSettings  -> handleSlash "/settings"
@@ -943,6 +975,19 @@ modifyTop f = modify $ \s -> s { appDialogs =
     Nothing -> appDialogs s }
 
 -- | Activate the entry under the top dialog's cursor.
+-- | Adopt a provider: remember it and make sure the current model belongs
+-- to it (otherwise fall back to the provider's default).  The dialog has
+-- already been popped by 'dialogActivate'.
+chooseProvider :: ProviderInfo -> EventM ResourceName AppState ()
+chooseProvider p = do
+  lang <- gets appLang
+  modify $ \s ->
+    let model = modelForProvider p (appModel s)
+    in s { appProvider = Just (piName p)
+         , appModel = model
+         , appStatus = tr lang "Provider: " <> piName p <> " · " <> model }
+  scrollBottom
+
 dialogActivate :: EventM ResourceName AppState ()
 dialogActivate = do
   st <- get
@@ -960,6 +1005,9 @@ dialogActivate = do
         DialogCommands _ _ sel -> case drop sel (dialogCommandsItems d) of
           (item : _) -> handleSlash (piId item)
           []         -> return ()
+        DialogProviders ps sel -> case drop sel ps of
+          (p : _) -> chooseProvider p
+          []      -> return ()
         DialogApproval _ name args sel ->
           case drop sel (approvalOptions name args) of
             (ApprovalOnce : _)   -> decideApprovalNow True
@@ -1126,8 +1174,14 @@ ensurePending = do
 -- | Append a text delta to the open assistant block.
 appendDelta :: Text -> EventM ResourceName AppState ()
 appendDelta text = do
-  ensurePending
-  modify $ \s -> s { appPending = (\pm -> pm { pmContent = pmContent pm <> text }) <$> appPending s }
+  -- Deltas are a live preview only.  Once the authoritative reply has
+  -- closed the turn (busy = False), a late stream event must not reopen a
+  -- pending block that nothing will ever flush.
+  busy <- gets appBusy
+  when busy $ do
+    ensurePending
+    modify $ \s -> s { appPending =
+      (\pm -> pm { pmContent = pmContent pm <> text }) <$> appPending s }
 
 -- | Record a tool invocation in the open block.
 addToolLine :: ToolName -> [Text] -> EventM ResourceName AppState ()
@@ -1141,7 +1195,9 @@ flushPending :: EventM ResourceName AppState ()
 flushPending = do
   st <- get
   case appPending st of
-    Nothing -> return ()
+    -- The turn is over even if no block was open (e.g. a duplicate terminal
+    -- event): never leave the spinner running.
+    Nothing -> modify $ \s -> s { appBusy = False }
     Just pm -> do
       let base = length (appMessages st)
           stampedFrom base0 ms = zipWith (\i m -> m { msgId = base0 + i }) [0 ..] ms
@@ -1164,7 +1220,10 @@ flushPending = do
                                       ++ stampedFrom base toolMsgs
                                       ++ stampedFrom (base + length toolMsgs) textMsgs
                        , appPending = Nothing
-                       , appBusy = not parked
+                       -- A finished turn is never busy: parked approvals
+                       -- clear the spinner too, otherwise the input stays
+                       -- locked on "Thinking..." after every normal reply.
+                       , appBusy = False
                        , appApproval = if parked then Just awaitMsg else appApproval s
                        , appDialogs = if parked
                                         then stackPush (DialogApproval awaitMsg askName askArgs 0) (appDialogs s)
@@ -1318,6 +1377,23 @@ handleAppEvent (EvSessionTitle mt) = do
   modify $ \s -> s { appSessionTitle = mt }
 handleAppEvent (EvCompletionIndex ix) = do
   modify $ \s -> s { appIndex = ix }
+handleAppEvent (EvProviders (Right ps)) = do
+  modify $ \s -> s { appProviders = ps }
+  -- The dialog is pushed empty while the fetch is in flight; fill it in
+  -- place so the user does not have to reopen it.
+  st <- get
+  case stackTop (appDialogs st) of
+    Just (DialogProviders _ _) -> modifyTop (const (DialogProviders ps 0))
+    _                          -> return ()
+handleAppEvent (EvProviders (Left _)) = return ()
+handleAppEvent (EvFinalReply text) = do
+  -- The step reply is authoritative: replace whatever the preview has
+  -- accumulated (a dropped delta must not truncate the answer).
+  st <- get
+  t <- liftIO now
+  let pm = fromMaybe (PendingMsg text [] t) (appPending st)
+  modify $ \s -> s { appPending = Just pm { pmContent = text } }
+  scrollBottom
 
 -- | Tool-card message from a completed lifecycle event (with output
 -- preview lines from the kernel tail).
@@ -1416,9 +1492,20 @@ handleSlash input = do
         then appendMsg (mkMsg "system" (tr lang "No local sessions found. Run a conversation first.") t)
         else modify $ \s -> s { appDialogs = stackPush (DialogSessions local 0) (appDialogs s) }
     "/models" -> do
-      modify $ \s -> s { appDialogs = stackPush (DialogModels [] 0) (appDialogs s) }
+      st2 <- get
+      case appProvider st2 >>= \n -> find ((== n) . piName) (appProviders st2) of
+        Just p | not (null (piModels p)) ->
+          -- The picker is scoped to the selected provider; no round trip.
+          modify $ \s -> s { appDialogs =
+            stackPush (DialogModels (providerModelInfos p) 0) (appDialogs s) }
+        _ -> do
+          modify $ \s -> s { appDialogs = stackPush (DialogModels [] 0) (appDialogs s) }
+          void $ liftIO $ async $
+            listModels bridge >>= writeBChan chan . EvModels
+    "/provider" -> do
+      modify $ \s -> s { appDialogs = stackPush (DialogProviders [] 0) (appDialogs s) }
       void $ liftIO $ async $
-        listModels bridge >>= writeBChan chan . EvModels
+        listProviders bridge >>= writeBChan chan . EvProviders
     "/quit" -> halt
     "/exit" -> halt
     "/status" ->
@@ -1493,11 +1580,11 @@ handleSlash input = do
                 r <- planStep bridge sid planText
                 writeBChan chan (EvPlan r)
       | cmd == "/model" ->
-          appendMsg (mkMsg "system" ("Current model: " <> appModel st) t)
+          appendMsg (mkMsg "system" ("Current model: " <> modelLabel st) t)
       | "/model " `T.isPrefixOf` cmd -> do
           let model = T.strip (T.drop 7 input)
           modify $ \s -> s { appModel = model }
-          appendMsg (mkMsg "system" ("Model set: " <> model) t)
+          appendMsg (mkMsg "system" ("Model set: " <> modelLabel (st { appModel = model })) t)
       | "/delete " `T.isPrefixOf` cmd -> do
           let sid = T.unpack (T.strip (T.drop 8 input))
           if null sid
@@ -1547,46 +1634,30 @@ handleChat input = do
   let bridge = appBridge st
       chan   = appChan st
       model  = appModel st
+      provider = appProvider st
       runStepWithTools sid = do
-        -- Streaming contract (M0): when the scheduler emits text deltas the
-        -- deltas are authoritative and the synchronous reply is only the
-        -- terminal signal — emitting its text too would duplicate the stream.
-        -- Kernels without SSE deltas fall back to the whole reply in one chunk
-        -- (the pre-M0 behaviour). The transcript keeps one accumulated row
-        -- either way.
-        accRef     <- liftIO (newIORef T.empty)
-        deltasRef  <- liftIO (newIORef False)
-        -- The stream's terminal marker (assistant echo / plan gate) is
-        -- emitted after every tool update of the turn; waiting for it
-        -- replaces the old fixed drain sleep.  The wait is bounded for
-        -- kernels that do not emit a marker at all.
-        doneVar    <- liftIO newEmptyMVar
-        let onDeltaEv t = do
-              liftIO $ atomicModifyIORef' deltasRef (const (True, ()))
-              liftIO $ atomicModifyIORef' accRef (\acc -> (acc <> t, ()))
-              writeBChan chan (EvResponse (Right (ChunkDelta t)))
+        -- The step reply is the authoritative text; SSE deltas are a live
+        -- preview.  Finalizing therefore does not depend on the stream — a
+        -- flaky or blocked SSE connection cannot leave the turn busy.
+        doneVar <- liftIO newEmptyMVar
         cancel <- subscribeSessionEventsWithTerminal bridge sid (toolSink chan sid)
-                    onDeltaEv (void (tryPutMVar doneVar ()))
-        result <- sendMessageWithUsage bridge sid input
-        let (chunk, musage) = case result of
-              Right (c, u) -> (Right c, u)
-              Left e       -> (Left e, Nothing)
-        sawDeltas <- liftIO (readIORef deltasRef)
-        case (sawDeltas, chunk) of
-          (True, _) -> do
-            acc <- liftIO (readIORef accRef)
-            recordChunk sid (Right (ChunkDelta acc))
-            -- real usage when the kernel echoes it (turn out + cumulative)
-            writeBChan chan (EvResponse (Right (ChunkDone (fromMaybe zero musage))))
-          (False, c) -> do
-            recordChunk sid c
-            writeBChan chan (EvResponse c)
-            forM_ musage $ \u ->
-              writeBChan chan (EvResponse (Right (ChunkDone u)))
-        -- Wait for the turn's terminal marker so the last tool status is
-        -- processed; bounded so a kernel without markers still tears down.
+                    (\t -> writeBChan chan (EvResponse (Right (ChunkDelta t))))
+                    (void (tryPutMVar doneVar ()))
+        result <- sendMessageWithTarget bridge sid provider (Just model) input
+        -- Give the stream a bounded moment to deliver trailing tool events,
+        -- then stop it.  The reply itself is already in hand.
         _ <- liftIO $ timeout 250000 (takeMVar doneVar)
         liftIO cancel
+        case result of
+          Right (c, musage) -> do
+            recordChunk sid (Right c)
+            case c of
+              ChunkDelta reply -> writeBChan chan (EvFinalReply reply)
+              _                -> return ()
+            -- Always finalize: a missing usage echo must not leave the
+            -- spinner running.
+            writeBChan chan (EvResponse (Right (ChunkDone (fromMaybe zero musage))))
+          Left err -> writeBChan chan (EvResponse (Left err))
         refreshSidebar bridge chan sid
       zero = Usage 0 0 0
   void $ liftIO $ async $ case appSessionId st of
@@ -1627,7 +1698,7 @@ helpTextFor lang = T.unlines $
        , tr lang "  PgUp / PgDn       Scroll messages"
        , tr lang "  g / G             Jump to top / bottom"
        , tr lang "  Ctrl+B            Show / hide the sidebar"
-       , tr lang "  Ctrl+X            Leader (b/m/s/,/?/i)"
+       , tr lang "  Ctrl+X            Leader (b/p/m/s/,/?/i)"
        , tr lang "  Ctrl+Q            Quit"
        ]
 

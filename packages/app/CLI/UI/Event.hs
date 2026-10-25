@@ -97,4 +97,6 @@ data AppEvent
   | EvTodos (Either CLIError [TodoItem]) -- ^ sidebar TODO refresh
   | EvSessionTitle (Maybe Text)          -- ^ sidebar title refresh
   | EvCompletionIndex [Completion]       -- ^ @\@@-file index (startup scan)
+  | EvProviders (Either CLIError [ProviderInfo]) -- ^ provider registry (TUI switching)
+  | EvFinalReply Text                    -- ^ authoritative reply from the step
   deriving (Show)

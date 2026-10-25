@@ -14,6 +14,7 @@ import Data.Text (Text)
 -- | What a leader keystroke can do.
 data LeaderAction
   = LeaderSidebar    -- ^ b: dock/undock (or show/hide) the sidebar
+  | LeaderProvider   -- ^ p: provider picker
   | LeaderModels     -- ^ m: model picker
   | LeaderSessions   -- ^ s: session picker
   | LeaderSettings   -- ^ ,: settings panel
@@ -27,6 +28,7 @@ leaderResolve c = lookup c table
   where
     table =
       [ ('b', LeaderSidebar)
+      , ('p', LeaderProvider)
       , ('m', LeaderModels)
       , ('s', LeaderSessions)
       , (',', LeaderSettings)
@@ -37,4 +39,4 @@ leaderResolve c = lookup c table
 -- | Status-bar hint shown while the leader is armed.
 leaderHelp :: Text
 leaderHelp =
-  "Leader: b sidebar · m models · s sessions · , settings · ? help · i interrupt · esc cancel"
+  "Leader: b sidebar · p provider · m models · s sessions · , settings · ? help · i interrupt · esc cancel"

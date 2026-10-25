@@ -3,7 +3,7 @@
 module UI.DialogSpec (spec) where
 
 import Test.Hspec
-import Core.Types (ModelInfo(..))
+import Core.Types (ModelInfo(..), ProviderInfo(..))
 import Core.SessionSummary (SessionSummary(..))
 import UI.Dialog
 
@@ -112,6 +112,18 @@ spec = do
       -- after a fire the timestamp is cleared, so the next press sees
       -- withinWindow = False and armed = False
       escWiring True False False `shouldBe` (False, True)
+
+  describe "provider dialog" $ do
+    let ps = [ ProviderInfo "deepseek" "openai" ["deepseek-flash"] "deepseek-flash" True True Nothing
+             , ProviderInfo "deepseek-anthropic" "anthropic" ["deepseek-flash"] "deepseek-flash" False True Nothing ]
+    it "counts and clamps the provider selection" $ do
+      dialogCount (DialogProviders ps 0) `shouldBe` 2
+      dialogMoveSel 1 (DialogProviders ps 0) `shouldBe` DialogProviders ps 1
+      dialogMoveSel 5 (DialogProviders ps 1) `shouldBe` DialogProviders ps 1
+      dialogMoveSel (-5) (DialogProviders ps 0) `shouldBe` DialogProviders ps 0
+
+    it "does not move in an empty registry" $ do
+      dialogMoveSel 1 (DialogProviders [] 0) `shouldBe` DialogProviders [] 0
 
   describe "approval options" $ do
     it "offers once/always/reject for ordinary tools" $ do

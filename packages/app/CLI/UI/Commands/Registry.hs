@@ -52,6 +52,7 @@ data Command
   | Models
   | SelectModel Text
   | ShowModel
+  | Providers
   | Plan Text
   | Approve
   | Deny
@@ -82,6 +83,7 @@ slashRegistry =
   [ SlashCommand "/help"     False True  "Show this help"
   , SlashCommand "/model"    True  True  "Show or set the current model"
   , SlashCommand "/models"   False True  "List available models"
+  , SlashCommand "/provider" False True  "Choose the model provider"
   , SlashCommand "/new"      False True  "Create a new session"
   , SlashCommand "/sessions" False True  "List all sessions"
   , SlashCommand "/status"   False True  "Show current session/model status"
@@ -113,6 +115,7 @@ parseCommand input = case T.words (T.strip input) of
   ("/delete" : [])   -> DeleteSession ""
   ("/delete" : sid : _) -> DeleteSession (T.unpack sid)
   ("/models" : _) -> Models
+  ("/provider" : _) -> Providers
   ("/model" : [])  -> ShowModel
   ("/model" : name : _) | not (T.null name) -> SelectModel name
   ("/plan" : []) -> Plan ""

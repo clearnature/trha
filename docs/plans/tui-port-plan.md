@@ -186,6 +186,47 @@
   测试：`KeysSpec` 3 例、`ThemeSpec` 新增 8 例（完整性 2 / truecolor 4 / diff 角色 2），总计 362/362。
   待人工：真实终端 `COLORTERM=truecolor` 下颜色、`ctrl+x` 各键位、滚轮滚动。
 
+## 热修（2026-10-25）：卡 Thinking / 无法连续对话 / 输入框过高
+
+真实模型 + pty 驱动 TUI 复现并修复（用户报告）：
+
+- **每轮结束被重新置忙**：`flushPending` 写的是 `appBusy = not parked`——正常回复时
+  `parked=False`，于是 `busy=True`，输入框永远停在 "Thinking…"。改为始终 `False`。
+- **收尾与 SSE 竞态**：终态 `ChunkDone` 曾在等待 SSE 终态之前发出，晚到的 delta
+  又新建 pending 块，再也没有事件收尾。改为 **step 的整段 reply 是权威文本**：
+  SSE delta 只做实时预览，step 返回后写 `EvFinalReply` 覆盖 pending 再 `ChunkDone`；
+  `appendDelta` 在 `busy=False` 时直接丢弃迟到 delta。
+- **取消 SSE 污染共享连接池**：`killThread` 打死读线程时它可能正处在 http-client 的
+  连接记账中，导致下一轮 step 永久等待（服务端已答、客户端收不到）。SSE 订阅改用
+  **私有 Manager**；POST 统一加 `Connection: close`（POST 不可安全重试，不复用陈旧连接）。
+- **输入框固定 6 行**：brick 的 editor line-limit 同时是**固定高度**（`vLimit 6`），
+  空输入也占 6 行。对照 MiMo prompt `textarea minHeight=1 maxHeight=6`、codex
+  `Constraint::Length(input_height)`、gemini Composer 后，改为按当前行数
+  `vLimit (max 1 (min 6 lines))`，空输入恢复 1 行。
+- 证据：pty 驱动真实 TUI 连发两轮，transcript 记录 2 条 assistant 回复；`/provider`
+  切换后 footer 显示 `deepseek/deepseek-flash`；最终输入框标签回到 ` Input `。
+  cabal 372/372；scheduler typecheck + approval/interrupt 7/7。
+
+## M4-4 供应商 / 模型切换（2026-10-25）——**已落地，设置面待补齐**
+
+- [x] **请求下发**：`sendMessageWithTarget` 在 `/api/agent/step` 里带 `provider`/`model`
+  （scheduler 早已接受并透传）；旧 `sendMessageWithUsage` 保留委托。
+- [x] **供应商选择面**：`Core.Types.ProviderInfo` + `providerStoreToList`（解析
+  `{"providers":[…]}`）；Bridge `listProviders`（经 scheduler 转发内核
+  `/api/providers`）；`DialogProviders` 弹层（`/provider` 或 leader `p`），选中后
+  `modelForProvider` 保留当前模型或回落到 provider 默认值；footer/侧栏显示
+  `provider/model`。
+- [x] **模型选择按供应商收敛**：选中 provider 后 `/models` 直接用它的 `models`
+  与 `contextWindow`，不再发 `/api/models`；未选 provider 时保持原静态列表。
+- [x] **审批重放保留目标**：scheduler 的 `pendingApproval` 现在存
+  `provider/model/genParams`，批准后重放同一目标（否则会悄悄回落到 inUse 默认）。
+  测试：`approval-gate` 新增 1 例（批准后内核收到 `deepseek-anthropic`/`deepseek-flash`）。
+- [ ] **仍未做（对照 MiMo）**：新增/编辑供应商的表单与密钥录入、provider 选择持久化
+  （重启后记住）、settings 面板里的 Provider 页签、模型能力/思考开关。当前只做到
+  “读取已有注册表 + 会话内切换”。
+
+
+
 ## M5：存量补齐（新增，不承诺，启动时逐个细化）
 
 分析文档 §5 里仍判"简陋/缺失"但不在 M0–M4 承诺内的项，登记备查：

@@ -24,7 +24,7 @@ spec = do
       map scCommand slashRegistry `shouldSatisfy` unique
     it "contains the core command set" $ do
       map scCommand slashRegistry
-        `shouldSatisfy` all (`elem` [ "/help", "/model", "/models", "/new"
+        `shouldSatisfy` all (`elem` [ "/help", "/model", "/models", "/provider", "/new"
                                     , "/sessions", "/delete", "/clear", "/status", "/settings"
                                     , "/plan", "/plugins", "/resume", "/approve", "/deny"
                                     , "/skip", "/reject", "/abandon"

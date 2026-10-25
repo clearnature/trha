@@ -11,6 +11,7 @@ spec = do
   describe "leaderResolve" $ do
     it "maps every documented key" $ do
       leaderResolve 'b' `shouldBe` Just LeaderSidebar
+      leaderResolve 'p' `shouldBe` Just LeaderProvider
       leaderResolve 'm' `shouldBe` Just LeaderModels
       leaderResolve 's' `shouldBe` Just LeaderSessions
       leaderResolve ',' `shouldBe` Just LeaderSettings
@@ -22,6 +23,6 @@ spec = do
 
   describe "leaderHelp" $ do
     it "names every binding" $ do
-      let keys = [ "b sidebar", "m models", "s sessions", ", settings"
+      let keys = [ "b sidebar", "p provider", "m models", "s sessions", ", settings"
                  , "? help", "i interrupt", "esc cancel" ] :: [T.Text]
       mapM_ (\k -> leaderHelp `shouldSatisfy` T.isInfixOf k) keys

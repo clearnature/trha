@@ -5,9 +5,12 @@ module Core.TypesSpec (spec) where
 import Test.Hspec
 import Core.Types
   ( ToolEvent(..), ToolRunStatus(..), PlanView(..), PlanStepView(..)
+  , ProviderInfo(..), ModelInfo(..), Usage(..)
+  , providerStoreToList, providerModelInfos, modelForProvider
   , splitPlanSteps, parsePlanView, planStepOut, renderPlanBrief )
 import Data.Aeson (Result(..), Value(..), object, toJSON, (.=), fromJSON)
 import Data.Aeson.Types (Pair)
+import Data.Either (isLeft)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -117,3 +120,83 @@ spec = do
     it "rejects nonsense instead of fabricating a plan" $ do
       parsePlanView (String "nope") `shouldBe` Nothing
       parsePlanView (object []) `shouldBe` Nothing
+
+  describe "provider registry" $ do
+    let wire = object
+          [ "providers" .=
+              [ object
+                  [ "name" .= ("deepseek" :: Text)
+                  , "kind" .= ("openai" :: Text)
+                  , "models" .= (["deepseek-flash", "deepseek-v4-pro"] :: [Text])
+                  , "default" .= ("deepseek-flash" :: Text)
+                  , "inUse" .= True
+                  , "hasKey" .= True
+                  , "contextWindow" .= (1000000 :: Int)
+                  ]
+              ]
+          ]
+
+    it "parses the providers envelope" $ do
+      case providerStoreToList wire of
+        Right [p] -> do
+          piName p `shouldBe` "deepseek"
+          piKind p `shouldBe` "openai"
+          piModels p `shouldBe` ["deepseek-flash", "deepseek-v4-pro"]
+          piDefault p `shouldBe` "deepseek-flash"
+          piInUse p `shouldBe` True
+          piHasKey p `shouldBe` True
+          piContextWindow p `shouldBe` Just 1000000
+        other -> expectationFailure ("expected one provider, got " <> show other)
+
+    it "defaults the optional fields" $ do
+      let minimal = object ["providers" .= [object ["name" .= ("p" :: Text)]]]
+      case providerStoreToList minimal of
+        Right [p] -> do
+          piKind p `shouldBe` "openai"
+          piModels p `shouldBe` []
+          piInUse p `shouldBe` False
+          piHasKey p `shouldBe` False
+          piContextWindow p `shouldBe` Nothing
+        other -> expectationFailure ("expected a provider, got " <> show other)
+
+    it "reports a malformed envelope instead of an empty registry" $ do
+      providerStoreToList (object []) `shouldSatisfy` isLeft
+      providerStoreToList (String "x") `shouldSatisfy` isLeft
+
+    it "turns a provider's models into picker rows with its context window" $ do
+      let p = ProviderInfo "deepseek" "openai" ["a", "b"] "a" True True (Just 4096)
+      map modelName (providerModelInfos p) `shouldBe` ["a", "b"]
+      map modelContextSize (providerModelInfos p) `shouldBe` [4096, 4096]
+
+    it "keeps a model the provider offers, else falls back to its default" $ do
+      let p = ProviderInfo "deepseek" "openai" ["deepseek-flash", "deepseek-v4-pro"]
+                                "deepseek-flash" True True Nothing
+      modelForProvider p "deepseek-v4-pro" `shouldBe` "deepseek-v4-pro"
+      modelForProvider p "gpt-4" `shouldBe` "deepseek-flash"
+
+  describe "Usage FromJSON" $ do
+    it "uses cumulativeTokens when the scheduler omits totalTokens" $ do
+      let v = object
+            [ "promptTokens" .= (10 :: Int)
+            , "completionTokens" .= (5 :: Int)
+            , "cacheHitTokens" .= (0 :: Int)
+            , "cacheMissTokens" .= (10 :: Int)
+            , "cumulativeTokens" .= (99 :: Int) ]
+      case fromJSON v of
+        Success u -> u `shouldBe` Usage 10 5 99
+        Error e -> expectationFailure e
+
+    it "derives prompt+completion when no total is present" $ do
+      let v = object [ "promptTokens" .= (10 :: Int), "completionTokens" .= (5 :: Int) ]
+      case fromJSON v of
+        Success u -> u `shouldBe` Usage 10 5 15
+        Error e -> expectationFailure e
+
+    it "still accepts the full shape" $ do
+      let v = object
+            [ "promptTokens" .= (1 :: Int), "completionTokens" .= (2 :: Int)
+            , "totalTokens" .= (3 :: Int) ]
+      case fromJSON v of
+        Success u -> u `shouldBe` Usage 1 2 3
+        Error e -> expectationFailure e
+

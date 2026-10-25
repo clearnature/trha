@@ -29,10 +29,12 @@ module Bridge.Scheduler
     -- * Message Operations
   , sendMessage
   , sendMessageWithUsage
+  , sendMessageWithTarget
   , getMessages
   , allowAlways
   , interruptSession
   , fetchTeamTasks
+  , listProviders
 
     -- * Session Events (SSE, Phase 2 S2)
   , subscribeSessionEvents
@@ -83,8 +85,10 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Network.HTTP.Client
-    ( BodyReader, parseRequest, requestHeaders, responseBody, withResponse, brRead
+    ( BodyReader, managerResponseTimeout, managerSetProxy, newManager, noProxy
+    , parseRequest, requestHeaders, responseBody, responseTimeoutNone, withResponse, brRead
     )
+import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (HeaderName)
 
 -- | Scheduler bridge
@@ -152,9 +156,22 @@ sendMessage bridge sessionId content =
 sendMessageWithUsage
   :: SchedulerBridge -> SessionId -> Text
   -> IO (Either CLIError (StreamChunk, Maybe Usage))
-sendMessageWithUsage bridge sessionId content = do
-  result <- httpPost (bridgeHTTP bridge) "/api/agent/step"
-    (object ["sessionId" .= sessionId, "message" .= content])
+sendMessageWithUsage bridge sessionId content =
+  sendMessageWithTarget bridge sessionId Nothing Nothing content
+
+-- | 'sendMessageWithUsage' with an explicit provider/model target.  The
+-- scheduler forwards both to the kernel, which picks that provider's
+-- adapter for this turn (an unknown provider is a coded kernel refusal).
+-- Omitting them leaves the kernel's in-use provider in charge.
+sendMessageWithTarget
+  :: SchedulerBridge -> SessionId -> Maybe Text -> Maybe Text -> Text
+  -> IO (Either CLIError (StreamChunk, Maybe Usage))
+sendMessageWithTarget bridge sessionId mprovider mmodel content = do
+  let body = object $
+        [ "sessionId" .= sessionId, "message" .= content ]
+        ++ [ "provider" .= p | Just p <- [mprovider] ]
+        ++ [ "model" .= m | Just m <- [mmodel] ]
+  result <- httpPost (bridgeHTTP bridge) "/api/agent/step" body
     :: IO (Either CLIError Value)
   return $ case result of
     Right (Object r) -> case parseMaybe (.: "reply") r of
@@ -166,6 +183,13 @@ sendMessageWithUsage bridge sessionId content = do
     usageOf r = case parseMaybe (.: "usage") r of
       Just v  -> case fromJSON v of Success u -> Just u; _ -> Nothing
       Nothing -> Nothing
+
+-- | The kernel's provider registry (through the scheduler's forward).
+listProviders :: SchedulerBridge -> IO (Either CLIError [ProviderInfo])
+listProviders bridge = do
+  result <- httpGet (bridgeHTTP bridge) "/api/providers"
+    :: IO (Either CLIError Value)
+  return (result >>= providerStoreToList)
 
 -- | Fetch the stored message list of a session.
 getMessages :: SchedulerBridge -> SessionId -> IO (Either CLIError [Message])
@@ -236,10 +260,17 @@ subscribeSessionEventsWithTerminal bridge sid onEvent onDelta onTerminal = do
   request <- parseRequest url
   let headers = ("Accept", "text/event-stream") : authHeaders (httpClientToken client)
       request' = request { requestHeaders = headers }
+  -- A private manager per subscription.  Cancelling the reader kills a
+  -- thread that may be inside the manager's connection accounting; doing
+  -- that on the shared manager left the next turn's step request waiting
+  -- forever (the server had answered, the client never woke up).  The
+  -- stream targets the loopback scheduler, so no proxy and no timeout.
+  mgr <- newManager (managerSetProxy noProxy
+          (tlsManagerSettings { managerResponseTimeout = responseTimeoutNone }))
   ready <- newEmptyMVar
   tid <- forkIO $
     catch
-      (withResponse request' (httpClientManager client) $ \resp -> do
+      (withResponse request' mgr $ \resp -> do
          -- headers received: the server has registered our stream, so
          -- events emitted from this point on will reach us
          putMVar ready ()

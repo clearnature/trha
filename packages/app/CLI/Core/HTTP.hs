@@ -184,7 +184,12 @@ httpPost client path body = do
   let request' = request
         { method = "POST"
         , requestBody = RequestBodyLBS (encode body)
-        , requestHeaders = ("Content-Type", "application/json") : authHeader client
+        -- A POST cannot be retried safely, so do not risk reusing an idle
+        -- keep-alive connection a proxy may have half-closed: a stale
+        -- socket made the next turn's step wait until its timeout.
+        , requestHeaders =
+            [ ("Content-Type", "application/json"), ("Connection", "close") ]
+            ++ authHeader client
         }
   result <- sendRequest client (httpLbs request' (httpClientManager client))
   return $ result >>= parseResponse
