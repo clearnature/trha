@@ -4,6 +4,7 @@ module UI.ThemeSpec (spec) where
 
 import Test.Hspec
 import UI.Theme
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -49,6 +50,42 @@ spec = do
       "header" `elem` themeAttrNames `shouldBe` True
       "assistant" `elem` themeAttrNames `shouldBe` True
       "codeBlock" `elem` themeAttrNames `shouldBe` True
+      "diffAdd" `elem` themeAttrNames `shouldBe` True
+
+  describe "palette completeness" $ do
+    it "defines every documented role in both themes" $ do
+      mapM_ (\th -> mapM_
+              (\r -> lookup r (themeColors th) `shouldSatisfy` isJust)
+              themeAttrNames)
+            [defaultTheme, (resolveTheme "light")]
+
+    it "gives the diff roles real colours (not the White fallback)" $ do
+      roleColor defaultTheme "diffAdd" `shouldBe` ColorSpec BrightGreen []
+      roleColor defaultTheme "diffRemove" `shouldBe` ColorSpec BrightRed []
+      roleColor (resolveTheme "light") "diffAdd" `shouldBe` ColorSpec Green []
+      roleColor (resolveTheme "light") "diffRemove" `shouldBe` ColorSpec Red []
+
+  describe "truecolor" $ do
+    it "detects COLORTERM=truecolor and 24bit" $ do
+      supportsTrueColor [("COLORTERM", "truecolor")] `shouldBe` True
+      supportsTrueColor [("COLORTERM", "24bit")] `shouldBe` True
+      supportsTrueColor [("COLORTERM", "TRUECOLOR")] `shouldBe` True
+
+    it "rejects 256-colour and missing COLORTERM" $ do
+      supportsTrueColor [("COLORTERM", "256")] `shouldBe` False
+      supportsTrueColor [] `shouldBe` False
+
+    it "keeps the ANSI palette when unsupported" $ do
+      themeColors (themeFor "light" False) `shouldBe` themeColors (resolveTheme "light")
+
+    it "upgrades every documented role to RGB for both palettes" $ do
+      mapM_ (\name -> mapM_
+              (\r -> case roleColor (themeFor name True) r of
+                       ColorSpec RGB{} _ -> pure ()
+                       other -> expectationFailure
+                         (T.unpack name <> "/" <> T.unpack r <> ": " <> show other))
+              themeAttrNames)
+            ["tokyo-night", "light"]
 
 roles :: [Text]
 roles =

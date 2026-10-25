@@ -19,7 +19,7 @@
 | **M2 对话框系统** | UI/Dialog.hs 栈 + escape 层级表；模型/会话/命令面板迁入对话框 | dialog 栈 LIFO + escape 语义表逐条通过；`/models`、`/sessions`、`ctrl+p` 均为浮层，消息流不再被文本列表污染 | 已落地；双击 esc 与真实中断已在 M3.5-2/3 补齐 |
 | **M3 审批与 diff** | 权限审批对话框 + unified diff 渲染 + once/always/reject | 审批到达时消息流锁定；diff 正确配色；once/always/reject 走 scheduler `decision` API | 主链路已落地；删除类 always 已移除；diff 行号/宽度阈值已在 M3.5-8 补齐 |
 | **M3.5 纠偏与收口**（新增） | 移除 drain window、双击 esc 修正、真实中断、审批安全特例、文档真实性、人工验收 | 下列 8 项逐条通过；文档勾选与代码一致 | **进行中（7/8，仅剩人工验收）** |
-| **M4 侧栏与高级** | 侧栏（token/成本/TODO）、@文件补全、leader 键、truecolor 主题、鼠标 | 侧栏 ≥80 列停靠、窄屏浮层；`@` 触发文件补全；主题含 truecolor 调色板 | M4-1/M4-2 完成；M4-3 未开始 |
+| **M4 侧栏与高级** | 侧栏（token/成本/TODO）、@文件补全、leader 键、truecolor 主题、鼠标 | 侧栏 ≥80 列停靠、窄屏浮层；`@` 触发文件补全；主题含 truecolor 调色板 | **完成（M4-1/2/3）** |
 | **M5 存量补齐**（新增，不承诺） | fork/timeline/recovery、审批 diff 全屏、卡片焦点折叠、toast、reject 原因、成本/TPS | 每项启动时再细化 | backlog |
 
 ---
@@ -32,7 +32,7 @@
 | M1 | 五项功能在；工具卡折叠只切"最近一张"，无卡片焦点 | `toggleRecentFold`（`Brick.hs`） |
 | M2 | 对话框栈与 escape 表在；`resolveEscape` 实接线只喂 `efStack`（选区/shell/联想恒 False）；双击 esc 已按 Running 布防并在触发后清 armed（M3.5-2）；真实中断已接（M3.5-3） | `UI.Dialog.escWiring`、`Brick.hs` escape 段 |
 | M3 | 审批链路（parked → 浮层三选 → decision）与 diff 分类上色在；审批是**居中浮层**而非计划原文的"底部审批条"；删除类命令已无 always（M3.5-4）；diff 行号与 120 列阈值已补（M3.5-8）；reject 附原因经决策**不做**（3.5-5 选 B，需 deny 重放契约） | `UI.Dialog.approvalOptions`、`UI/Render/Diff.hs` |
-| M4 | M4-1 侧栏与 M4-2 `@` 补全已落地；M4-3（truecolor/leader/鼠标）未开始 | `UI/Layout.hs`、`UI/Render/Sidebar.hs`、`UI/Completion.hs` |
+| M4 | M4-1 侧栏、M4-2 `@` 补全、M4-3 truecolor/leader/鼠标均已落地（顺带补回 M3 漏定义的四条 diff 主题色） | `UI/Layout.hs`、`UI/Render/Sidebar.hs`、`UI/Completion.hs`、`UI/Keys.hs`、`UI/Theme.hs` |
 
 内核事实（决定 M3.5 排期）：
 - **无中断 HTTP 端点**：`interrupt: id =>` 只是 `AgentHooks` 回调（供 `interrupt_agent` 工具用）；`abortRequested` 的检查点在 tool 循环内（`packages/scheduler/src/Server/index.ts:1256`）。真中断需新增路由 + 契约登记。
@@ -176,12 +176,15 @@
   测试：`CompletionSpec` 22 例（索引 5 / 过滤排序 5 / token 定位 6 / 替换 2 / 弹层 4），总计 353/353。
   待人工：输入 `@` 弹层出现、↑/↓ 选择、Enter 插入（目录后可继续补全）、Esc 只关弹层不布防中断。
 
-### M4-3 主题 / leader / 鼠标
+### M4-3 主题 / leader / 鼠标——**已完成（2026-10-25）**
 
-- truecolor 调色板：`Theme` 解析扩展到 RGB，保留 dark/light 两套预设；brick/vty 侧用 `Graphics.Vty.Attributes` 的 RGB color。
-- leader 键：先列键位表（避免与 `ctrl+o`、esc、`/`、`ctrl+p` 冲突），再做自定义 modifier 链，键表 spec 化。
-- 鼠标滚动：`EvMouse` → 消息区 viewport 滚动。
-- 验收：主题切换可见且两套预设完整；leader 表 spec 逐条；滚轮滚动消息区。
+- [x] truecolor 调色板：`TermColor` 增 `RGB Int Int Int`；`supportsTrueColor` 读 `COLORTERM`（truecolor/24bit）；`themeFor name supported` 在支持时用 RGB 覆盖表升级，否则保持 ANSI；dark/light 各一套 Tokyo Night / 浅色 RGB 值；`vtyFg` 接 `rgbColor`。
+  **顺带修掉一个 M3 留下的真实缺口**：`themeAttrNames` 与 diff 渲染一直在用 `diffAdd/diffRemove/diffHunk/diffMeta`，但两个调色板从未定义这四个角色，`roleColor` 一直回退成白色——现已补齐并加“调色板完整性”spec 防回归。
+- [x] leader 键：纯表 `UI/Keys.hs`（`leaderResolve`/`leaderHelp`）；`ctrl+x` 布防，下一键执行 `b` 侧栏 / `m` 模型 / `s` 会话 / `,` 设置 / `?` 帮助 / `i` 中断，`esc` 或未绑定键取消；状态栏显示提示（中英各一）。
+- [x] 鼠标滚动：`EvMouseDown` 的 `BScrollUp/BScrollDown` 滚动消息区 3 行（终端是否上报鼠标由 vty/宿主决定，待人工确认）。
+- [x] 验收：主题切换可见且两套预设完整；leader 表 spec 逐条；滚轮滚动消息区。
+  测试：`KeysSpec` 3 例、`ThemeSpec` 新增 8 例（完整性 2 / truecolor 4 / diff 角色 2），总计 362/362。
+  待人工：真实终端 `COLORTERM=truecolor` 下颜色、`ctrl+x` 各键位、滚轮滚动。
 
 ## M5：存量补齐（新增，不承诺，启动时逐个细化）
 

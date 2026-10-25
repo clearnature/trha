@@ -17,18 +17,24 @@ module UI.Theme
     -- * Resolution
   , resolveTheme
   , roleColor
+    -- * Truecolor
+  , supportsTrueColor
+  , themeFor
   ) where
 
+import Data.Char (toLower)
+import Data.List (isInfixOf)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 
--- | ANSI-ish terminal colours.
+-- | ANSI-ish terminal colours, plus exact RGB for truecolor terminals.
 data TermColor
   = Black | Red | Green | Yellow | Blue | Magenta | Cyan | White
   | BrightBlack | BrightRed | BrightGreen | BrightYellow
   | BrightBlue | BrightMagenta | BrightCyan | BrightWhite
-  deriving (Show, Eq, Ord, Enum, Bounded)
+  | RGB Int Int Int
+  deriving (Show, Eq, Ord)
 
 -- | Text styles applied on top of the foreground colour.
 data TermStyle = StyleBold | StyleDim | StyleReverse
@@ -76,6 +82,10 @@ defaultTheme = Theme "tokyo-night"
   , ("codeLang",  ColorSpec BrightYellow [StyleBold])
   , ("mdBold",     ColorSpec BrightWhite [StyleBold])
   , ("mdCode",     ColorSpec BrightCyan [])
+  , ("diffAdd",    ColorSpec BrightGreen [])
+  , ("diffRemove", ColorSpec BrightRed [])
+  , ("diffHunk",   ColorSpec BrightCyan [])
+  , ("diffMeta",   ColorSpec BrightBlack [])
   , ("selection", ColorSpec BrightWhite [StyleReverse])
   ]
 
@@ -99,6 +109,10 @@ lightTheme = Theme "light"
   , ("codeLang",  ColorSpec Yellow [StyleBold])
   , ("mdBold",     ColorSpec Black [StyleBold])
   , ("mdCode",     ColorSpec Blue [])
+  , ("diffAdd",    ColorSpec Green [])
+  , ("diffRemove", ColorSpec Red [])
+  , ("diffHunk",   ColorSpec Blue [])
+  , ("diffMeta",   ColorSpec BrightBlack [])
   , ("selection", ColorSpec Black [StyleReverse])
   ]
 
@@ -119,3 +133,83 @@ roleColor th role =
   case lookup role (themeColors th) of
     Just cs -> cs
     Nothing -> ColorSpec White []
+
+-- | Whether the environment advertises a truecolor (24-bit) terminal.
+supportsTrueColor :: [(String, String)] -> Bool
+supportsTrueColor env = case lookup "COLORTERM" env of
+  Just v  -> let lv = map toLower v
+             in "truecolor" `isInfixOf` lv || "24bit" `isInfixOf` lv
+  Nothing -> False
+
+-- | Theme for a name, upgraded to exact RGB when the terminal can show it.
+-- Roles missing from the RGB table keep their ANSI colour.
+themeFor :: Text -> Bool -> Theme
+themeFor name truecolor
+  | truecolor = upgradeToTrueColor (resolveTheme name)
+  | otherwise = resolveTheme name
+
+upgradeToTrueColor :: Theme -> Theme
+upgradeToTrueColor th =
+  th { themeColors =
+         [ (role, case lookup role table of
+                    Just rgb -> cs { csFg = rgb }
+                    Nothing  -> cs)
+         | (role, cs) <- themeColors th ] }
+  where
+    table
+      | T.toLower (themeName th) == "light" = lightTrueColor
+      | otherwise                           = darkTrueColor
+
+-- | Tokyo Night RGB values (the dark palette).
+darkTrueColor :: [(Text, TermColor)]
+darkTrueColor =
+  [ ("header",    RGB 125 207 255)
+  , ("user",      RGB 158 206 106)
+  , ("assistant", RGB 122 162 247)
+  , ("tool",      RGB 187 154 247)
+  , ("system",    RGB 224 175 104)
+  , ("error",     RGB 247 118 142)
+  , ("input",     RGB 125 207 255)
+  , ("status",    RGB 86 95 137)
+  , ("timestamp", RGB 86 95 137)
+  , ("border",    RGB 86 95 137)
+  , ("title",     RGB 187 154 247)
+  , ("busy",      RGB 224 175 104)
+  , ("plan",      RGB 125 207 255)
+  , ("codeBlock", RGB 86 95 137)
+  , ("codeLang",  RGB 224 175 104)
+  , ("mdBold",    RGB 192 202 245)
+  , ("mdCode",    RGB 125 207 255)
+  , ("diffAdd",   RGB 158 206 106)
+  , ("diffRemove",RGB 247 118 142)
+  , ("diffHunk",  RGB 125 207 255)
+  , ("diffMeta",  RGB 86 95 137)
+  , ("selection", RGB 192 202 245)
+  ]
+
+-- | RGB values for light terminals (dark text on light backgrounds).
+lightTrueColor :: [(Text, TermColor)]
+lightTrueColor =
+  [ ("header",    RGB 46 92 184)
+  , ("user",      RGB 47 125 50)
+  , ("assistant", RGB 31 95 191)
+  , ("tool",      RGB 123 47 190)
+  , ("system",    RGB 138 109 0)
+  , ("error",     RGB 179 38 30)
+  , ("input",     RGB 46 92 184)
+  , ("status",    RGB 95 99 104)
+  , ("timestamp", RGB 95 99 104)
+  , ("border",    RGB 32 33 36)
+  , ("title",     RGB 123 47 190)
+  , ("busy",      RGB 138 109 0)
+  , ("plan",      RGB 46 92 184)
+  , ("codeBlock", RGB 95 99 104)
+  , ("codeLang",  RGB 138 109 0)
+  , ("mdBold",    RGB 32 33 36)
+  , ("mdCode",    RGB 46 92 184)
+  , ("diffAdd",   RGB 47 125 50)
+  , ("diffRemove",RGB 179 38 30)
+  , ("diffHunk",  RGB 46 92 184)
+  , ("diffMeta",  RGB 95 99 104)
+  , ("selection", RGB 32 33 36)
+  ]

@@ -53,6 +53,7 @@ import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics)
 import UI.Render.Footer (footerHints)
 import System.Directory (getCurrentDirectory)
+import System.Environment (getEnvironment)
 import System.IO (hFlush, stdout)
 import Control.Exception (IOException, try)
 import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
@@ -67,11 +68,14 @@ import UI.Render.Sidebar
 import UI.Completion
     ( Completion(..), CompletionState(..), completionPopup, moveCompletion
     , applySelected, scanProject, defaultIndexOptions )
+import UI.Keys (LeaderAction(..), leaderResolve, leaderHelp)
 import Data.Time.Clock (UTCTime, diffUTCTime)
 import UI.InputHistory (HistState(..), emptyHistState, histUp, histDown, histCommit, loadHistory, appendHistory)
 import UI.Render.Picker (PickerItem(..), filterItems, maxVisible, moveSelection, queryAppend, queryDelete, windowRange)
 import UI.Render.ToolCard (ToolStatus(..), ToolCard(..), ToolFold(..), toggleFold, toolCardView, toolCardLines, toolCardWithStatus, toolCardCollapsed, toolStatusLine, cardWidth)
-import UI.Theme (ColorSpec(..), TermColor(..), TermStyle(..), Theme, resolveTheme, themeColors)
+import UI.Theme
+    ( ColorSpec(..), TermColor(..), TermStyle(..), Theme, themeColors
+    , themeFor, supportsTrueColor )
 
 -- | Application state
 data AppState = AppState
@@ -104,6 +108,7 @@ data AppState = AppState
   , appSessionTitle :: Maybe Text       -- ^ local transcript title of the session
   , appIndex      :: [Completion]       -- ^ @\@@-file index (M4-2)
   , appComp       :: Maybe CompletionState -- ^ open completion popup
+  , appLeader     :: Bool               -- ^ leader key armed (M4-3)
   }
 
 -- | Chat message with timestamp
@@ -166,6 +171,7 @@ initialState bridge chan cfg = AppState
   , appSessionTitle = Nothing
   , appIndex     = []
   , appComp      = Nothing
+  , appLeader    = False
   }
   where lang = parseLang (configLang cfg)
 
@@ -215,6 +221,7 @@ vtyFg c = fg $ case c of
   BrightMagenta-> brightMagenta
   BrightCyan   -> brightCyan
   BrightWhite  -> brightWhite
+  RGB r g b    -> rgbColor r g b
 
 -- | Run the TUI with the named theme (unknown names fall back to default).
 runTUI :: SchedulerBridge -> CLIConfig -> IO ()
@@ -233,7 +240,8 @@ runTUI bridge cfg = do
     -- @-file completion index: scanned once at startup, off the UI thread.
     index <- scanProject defaultIndexOptions ws
     writeBChan chan (EvCompletionIndex index)
-  let theme = resolveTheme (configTheme cfg)
+  env <- getEnvironment
+  let theme = themeFor (configTheme cfg) (supportsTrueColor env)
       mkVty' = mkVty defaultConfig
   vty <- mkVty'
   hist <- loadHistory
@@ -799,6 +807,10 @@ handleEvent (VtyEvent (EvKey KEsc _)) = do
       -- else, and closing it must not arm the interrupt double-press.
       Just _  -> modify $ \s -> s { appComp = Nothing, appEscLast = Nothing }
       Nothing -> escapeHierarchy
+handleEvent (VtyEvent (EvMouseDown _ _ BScrollUp _)) =
+  vScrollBy (viewportScroll MessageArea) (-3)
+handleEvent (VtyEvent (EvMouseDown _ _ BScrollDown _)) =
+  vScrollBy (viewportScroll MessageArea) 3
 -- A dialog is modal: while one is open the top dialog owns every key and
 -- the editor gets nothing until it closes.
 handleEvent (VtyEvent ev) = do
@@ -807,8 +819,40 @@ handleEvent (VtyEvent ev) = do
     Just _  -> handleSettingsKey ev
     Nothing -> case stackTop (appDialogs st) of
       Just _  -> handleDialogKey ev
-      Nothing -> handleChatKey ev
+      Nothing
+        | appLeader st -> handleLeaderKey ev
+        | otherwise    -> handleChatKey ev
 handleEvent _ = return ()
+
+-- | One keystroke after the leader (ctrl+x).  Executes one action, then
+-- disarms; anything unbound cancels.
+handleLeaderKey :: Event -> EventM ResourceName AppState ()
+handleLeaderKey (EvKey KEsc _) = disarmLeader "Ready"
+handleLeaderKey (EvKey (KChar c) []) = do
+  modify $ \s -> s { appLeader = False }
+  case leaderResolve c of
+    Just LeaderSidebar   -> modify $ \s -> s { appSidebar = toggleSidebar (appSidebar s) }
+    Just LeaderModels    -> handleSlash "/models"
+    Just LeaderSessions  -> handleSlash "/sessions"
+    Just LeaderSettings  -> handleSlash "/settings"
+    Just LeaderHelp      -> handleSlash "/help"
+    Just LeaderInterrupt -> requestInterrupt
+    Nothing              -> disarmLeader "Unknown leader key"
+handleLeaderKey _ = disarmLeader "Ready"
+
+disarmLeader :: Text -> EventM ResourceName AppState ()
+disarmLeader msg = modify $ \s -> s
+  { appLeader = False, appStatus = tr (appLang s) msg }
+
+-- | Ask the host to stop the running turn (shared by the leader and the
+-- double-escape path).
+requestInterrupt :: EventM ResourceName AppState ()
+requestInterrupt = do
+  st <- get
+  modify $ \s -> s { appStatus = tr (appLang s) "Interrupting..." }
+  case appSessionId st of
+    Nothing -> return ()
+    Just sid -> void $ liftIO $ async $ void (interruptSession (appBridge st) sid)
 
 -- | Answer the parked ask: post the decision and let EvVerdict close the
 -- loop (it clears appApproval and busy).
@@ -865,11 +909,8 @@ escapeWithoutApproval = do
     EscPopDialog ->
       modify $ \s -> s { appDialogs = stackPop (appDialogs s), appEscLast = Nothing }
     _ | fired -> do
-          modify $ \s -> s { appEscLast = Nothing
-                           , appStatus = tr (appLang s) "Interrupting..." }
-          case appSessionId st of
-            Nothing -> return ()
-            Just sid -> void $ liftIO $ async $ void (interruptSession (appBridge st) sid)
+          modify $ \s -> s { appEscLast = Nothing }
+          requestInterrupt
       | otherwise -> modify $ \s -> s { appEscLast = arm }
 
 -- | Keys while a dialog is open: the top dialog owns them all.
@@ -959,6 +1000,9 @@ handleChatKey (EvKey (KChar 'o') [MCtrl]) = toggleRecentFold
 -- | ctrl+b docks/undocks (or opens/closes) the sidebar.
 handleChatKey (EvKey (KChar 'b') [MCtrl]) =
   modify $ \s -> s { appSidebar = toggleSidebar (appSidebar s) }
+-- | ctrl+x arms the leader for one keystroke.
+handleChatKey (EvKey (KChar 'x') [MCtrl]) =
+  modify $ \s -> s { appLeader = True, appStatus = tr (appLang s) leaderHelp }
 handleChatKey (EvKey (KChar 'g') []) =
   vScrollToBeginning (viewportScroll MessageArea)
 handleChatKey (EvKey (KChar 'G') []) =
@@ -1583,6 +1627,7 @@ helpTextFor lang = T.unlines $
        , tr lang "  PgUp / PgDn       Scroll messages"
        , tr lang "  g / G             Jump to top / bottom"
        , tr lang "  Ctrl+B            Show / hide the sidebar"
+       , tr lang "  Ctrl+X            Leader (b/m/s/,/?/i)"
        , tr lang "  Ctrl+Q            Quit"
        ]
 
