@@ -65,6 +65,14 @@ describe('browser tools', () => {
     expect(bytes.byteLength).toBeGreaterThan(1000);
   });
 
+  it('refuses a screenshot path that escapes the workspace', async () => {
+    await runStandardTool('browser_navigate', { url: base }, host());
+    const outside = path.join(path.dirname(dir), 'escaped-shot.png');
+    const out = await runStandardTool('browser_screenshot', { path: '../escaped-shot.png' }, host());
+    expect(out).toMatch(/^ERROR: screenshot path escapes/);
+    await expect(readFile(outside)).rejects.toThrow();
+  });
+
   it('rejects a non-http url instead of launching a browser', async () => {
     const out = await runStandardTool('browser_navigate', { url: 'file:///etc/passwd' }, host());
     expect(out).toMatch(/^ERROR: url must be http/);

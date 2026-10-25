@@ -12,6 +12,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { confineWritePath } from './toolGuard.js';
 
 interface Page {
   targetId: string;
@@ -193,13 +194,15 @@ export async function browserExtract(scope: string, selector?: string): Promise<
   return browserEvaluate(scope, expression);
 }
 
-/** Screenshot this session's tab into the workspace. */
+/** Screenshot this session's tab into the workspace (writes stay confined). */
 export async function browserScreenshot(scope: string, workspace: string, relPath?: string): Promise<string> {
   const { b, page } = await pageFor(scope);
   const shot = (await send(b, 'Page.captureScreenshot', { format: 'png' }, page.cdpSession)) as { data?: string };
   const data = shot.data ?? '';
   if (!data) throw new Error('screenshot returned no data');
-  const target = path.resolve(workspace, relPath ?? `.trha-shot-${Date.now()}.png`);
+  const requested = path.resolve(workspace, relPath ?? `.trha-shot-${Date.now()}.png`);
+  const target = await confineWritePath(workspace, requested);
+  if (!target) throw new Error('screenshot path escapes the workspace');
   await writeFile(target, Buffer.from(data, 'base64'));
   return target;
 }

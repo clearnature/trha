@@ -33,10 +33,10 @@ describe('standard tool guards', () => {
 
   const run = (name: string, args: Record<string, unknown> = {}) => runStandardTool(name, args, host);
 
-  it('knows exactly the declared names', () => {
+  it('knows exactly the declared names', async () => {
     for (const n of STANDARD_TOOL_NAMES) expect(isStandardTool(n)).toBe(true);
     expect(isStandardTool('nope')).toBe(false);
-    expect(runStandardTool('not_a_tool', {}, host)).resolves.toBeNull();
+    await expect(runStandardTool('not_a_tool', {}, host)).resolves.toBeNull();
   });
 
   it('validates required arguments instead of throwing', async () => {
