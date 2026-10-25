@@ -226,6 +226,7 @@ data ToolEvent = ToolEvent
   , teArgs       :: [Text]
   , teStatus     :: ToolRunStatus
   , teDurationMs :: Maybe Int
+  , teOutput     :: Maybe Text -- ^ tail output preview (kernel, succeeded only)
   } deriving (Show, Eq)
 
 instance FromJSON ToolRunStatus where
@@ -252,10 +253,11 @@ instance FromJSON ToolEvent where
       "succeeded" -> pure ToolRunSucceeded
       "failed"    -> ToolRunFailed <$> o .:? "error" .!= ""
       _           -> fail "unknown tool status"
-    pure $ ToolEvent name args status dur
+    out <- o .:? "output"
+    pure $ ToolEvent name args status dur out
 
 instance ToJSON ToolEvent where
-  toJSON (ToolEvent name args st dur) =
+  toJSON (ToolEvent name args st dur out) =
     object $
       [ "name" .= name
       , "args" .= args
@@ -263,6 +265,7 @@ instance ToJSON ToolEvent where
       , "durationMs" .= dur
       ]
       ++ [ "error" .= err | ToolRunFailed err <- [st], err /= "" ]
+      ++ [ "output" .= o | Just o <- [out] ]
     where
       statusTag ToolRunRunning   = ("running" :: Text)
       statusTag ToolRunSucceeded = "succeeded"

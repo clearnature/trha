@@ -45,7 +45,7 @@
 | 消息 | `{sessionId,role:"user"\|"assistant",content}` | –（回放/日志用） |
 | 计划挂起 | `{sessionId,status:"awaiting_approval",message}` | PlanSubmit |
 | 决策 | `{sessionId,approve:bool}` | PlanVerdict |
-| 工具生命周期 | `{sessionId,name,args?,status:"running"\|"succeeded"\|"failed",error?,durationMs?}` | ToolEvent（Core.Types From/ToJSON roundtrip 测试） |
+| 工具生命周期 | `{sessionId,name,args?,status:"running"\|"succeeded"\|"failed",error?,durationMs?,output?}`（`output` 仅 succeeded 携带，内核尾部预览：末 12 行 ≤2KiB，供 TUI 工具卡展开态；可选字段，旧外壳忽略） | ToolEvent（Core.Types From/ToJSON roundtrip 测试） |
 
 ## 4. 本地外壳数据（~/.trha）
 | 项 | 说明 |

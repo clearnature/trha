@@ -35,6 +35,8 @@ import UI.I18n (Lang(..), parseLang, tr)
 import Config.Settings (resolveConfig)
 import Data.List (intersperse)
 import Data.IORef
+import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe, isJust, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -54,7 +56,7 @@ import Control.Exception (IOException, try)
 import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
 import UI.InputHistory (HistState(..), emptyHistState, histUp, histDown, histCommit, loadHistory, appendHistory)
 import UI.Render.Picker (PickerItem(..), filterItems, maxVisible, moveSelection, queryAppend, queryDelete, windowRange)
-import UI.Render.ToolCard (ToolStatus(..), toolCardLines, toolCardWithStatus)
+import UI.Render.ToolCard (ToolStatus(..), ToolCard(..), ToolFold(..), toggleFold, toolCardView, toolCardLines, toolCardWithStatus)
 import UI.Theme (ColorSpec(..), TermColor(..), TermStyle(..), Theme, resolveTheme, themeColors)
 
 -- | Application state
@@ -77,6 +79,7 @@ data AppState = AppState
   , appSysRows   :: [StatusRow]         -- ^ cached /settings Status rows
   , appMetrics    :: [(Text, Text)]     -- ^ static metric values (workspace/git)
   , appPlan       :: Maybe PlanView     -- ^ live multi-step plan (kernel-owned)
+  , appFolds      :: Map.Map Int ToolFold -- ^ tool-card fold states, keyed by msgId
   }
 
 -- | Quick-picker state.  The candidate list is the shared registry
@@ -91,17 +94,20 @@ data ChatMessage = ChatMessage
   { msgRole    :: Text
   , msgContent :: Text
   , msgTime    :: Text
-  , msgTool    :: Maybe ToolInv -- ^ present for tool-card messages
+  , msgTool    :: Maybe ToolCard -- ^ structured tool-card payload
+  , msgId      :: Int            -- ^ position-based id (stable: append-only)
   } deriving (Show)
 
 -- | Plain message (no tool payload).
 mkMsg :: Text -> Text -> Text -> ChatMessage
-mkMsg role content t = ChatMessage role content t Nothing
+mkMsg role content t = ChatMessage role content t Nothing 0
 
--- | Tool-card message (content holds the pre-rendered card text).
-toolMsg :: Text -> ToolInv -> Text -> ChatMessage
-toolMsg role inv t =
-  ChatMessage role (T.unlines (toolCardLines (T.pack (tiName inv)) (tiArgs inv))) t (Just inv)
+-- | Tool-card message (content holds the pre-rendered collapsed card text
+-- for transcript replay; the UI renders the foldable card from the payload).
+toolMsg :: Text -> ToolCard -> Text -> ChatMessage
+toolMsg role card t =
+  ChatMessage role
+    (T.unlines (toolCardView FoldCollapsed card)) t (Just card) 0
 
 -- PendingMsg / ToolInv / AppEvent live in UI.Event (pure, unit-tested).
 
@@ -132,6 +138,7 @@ initialState bridge chan cfg = AppState
   , appSysRows   = []
   , appMetrics   = []
   , appPlan      = Nothing
+  , appFolds     = Map.empty
   }
   where lang = parseLang (configLang cfg)
 
@@ -304,10 +311,12 @@ localSessionLines lang sessions =
 
 -- | Turn replay blocks into chat messages for the message area.
 blocksToMessages :: [ReplayBlock] -> [ChatMessage]
-blocksToMessages = map toMsg
+blocksToMessages blocks =
+  zipWith (\i m -> m { msgId = i }) [0 ..] (map toMsg blocks)
   where
     toMsg b = case rbTool b of
-      Just (name, args) -> toolMsg "tool" (ToolInv name args) (maybe "" id (rbTime b))
+      Just (name, args) ->
+        toolMsg "tool" (ToolCard name args Nothing Nothing []) (maybe "" id (rbTime b))
       Nothing           -> mkMsg (rbRole b) (rbContent b) (maybe "" id (rbTime b))
 
 drawMessages :: AppState -> Widget ResourceName
@@ -320,9 +329,11 @@ drawMessages st =
             ([], Nothing) ->
               [ padAll 1 $ withAttr (attrName "timestamp") $
                   strWrap "No messages yet. Type something and press Enter, or /help for commands." ]
-            _ -> map (drawMessage cfg) (appMessages st)
-              ++ maybe [] (pure . drawPending cfg) (appPending st)
-  where cfg = appEffCfg st
+            _ -> [ drawMessage cfg (foldOf m) m | m <- appMessages st ]
+                   ++ maybe [] (pure . drawPending cfg) (appPending st)
+  where
+    cfg = appEffCfg st
+    foldOf m = fromMaybe FoldCollapsed (Map.lookup (msgId m) (appFolds st))
 
 -- | Display style for a message role: (attribute, bracket label).
 roleDisplay :: Text -> (AttrName, Text)
@@ -347,14 +358,13 @@ messageHeader showTs role time =
 
 -- | Body of a message: a tool-invocation card, an assistant reply run
 -- through the Markdown renderer, or plain wrapped text.
-messageBody :: Bool -> Text -> Text -> Maybe ToolInv -> Widget ResourceName
-messageBody md role content tool =
+messageBody :: Bool -> Text -> Text -> Maybe ToolCard -> ToolFold -> Widget ResourceName
+messageBody md role content tool fold =
   case tool of
-    Just inv ->
+    Just card ->
       padLeft (Pad 2) $
         withAttr (attrName "tool") $
-          vBox [ str (T.unpack l)
-               | l <- toolCardLines (T.pack (tiName inv)) (tiArgs inv) ]
+          vBox [ str (T.unpack l) | l <- toolCardView fold card ]
     Nothing
       | role == "assistant" && md ->
           padLeft (Pad 2) $
@@ -376,13 +386,13 @@ messageBody md role content tool =
       | otherwise ->
           padLeft (Pad 2) $ strWrap (T.unpack content)
 
-drawMessage :: CLIConfig -> ChatMessage -> Widget ResourceName
-drawMessage cfg msg =
+drawMessage :: CLIConfig -> ToolFold -> ChatMessage -> Widget ResourceName
+drawMessage cfg fold msg =
   padLeftRight 1 $
     padTopBottom 1 $
       vBox
         [ messageHeader (configTimestamps cfg) (msgRole msg) (msgTime msg)
-        , messageBody (configMarkdown cfg) (msgRole msg) (msgContent msg) (msgTool msg)
+        , messageBody (configMarkdown cfg) (msgRole msg) (msgContent msg) (msgTool msg) fold
         ]
 
 -- | Render a parsed Markdown document as widgets.
@@ -492,7 +502,7 @@ drawPending cfg pm =
     padTopBottom 1 $
       vBox
         [ messageHeader (configTimestamps cfg) "assistant" (pmStart pm)
-        , messageBody (configMarkdown cfg) "assistant" (pmContent pm <> "▍") Nothing
+        , messageBody (configMarkdown cfg) "assistant" (pmContent pm <> "▍") Nothing FoldCollapsed
         ]
 
 drawInput :: AppState -> Widget ResourceName
@@ -573,8 +583,10 @@ drawStatus st =
 now :: IO Text
 now = T.pack . formatTime defaultTimeLocale "%H:%M:%S" <$> getCurrentTime
 
+-- | Append a message, stamping it with the next position-based id.
 appendMsg :: ChatMessage -> EventM ResourceName AppState ()
-appendMsg msg = modify $ \st -> st { appMessages = appMessages st ++ [msg] }
+appendMsg msg = modify $ \st ->
+  st { appMessages = appMessages st ++ [msg { msgId = length (appMessages st) }] }
 
 scrollBottom :: EventM ResourceName AppState ()
 scrollBottom = vScrollToEnd (viewportScroll MessageArea)
@@ -638,6 +650,8 @@ handleChatKey (EvKey KPageUp []) =
   vScrollBy (viewportScroll MessageArea) (-10)
 handleChatKey (EvKey KPageDown []) =
   vScrollBy (viewportScroll MessageArea) 10
+-- | ctrl+o expands/collapses the most recent tool card.
+handleChatKey (EvKey (KChar 'o') [MCtrl]) = toggleRecentFold
 handleChatKey (EvKey (KChar 'g') []) =
   vScrollToBeginning (viewportScroll MessageArea)
 handleChatKey (EvKey (KChar 'G') []) =
@@ -645,13 +659,13 @@ handleChatKey (EvKey (KChar 'G') []) =
 handleChatKey (EvKey KEnter []) = do
   st <- get
   let input = T.strip $ T.unlines $ getEditContents $ appInput st
-  if T.null input || appBusy st
-    then return ()
-    else do
+  if not (T.null input) && not (appBusy st)
+    then do
       liftIO (appendHistory input)
       modify $ \s -> s { appInput = editorText InputArea (Just 6) ""
                        , appHist = histCommit input (appHist s) }
       handleSubmit input
+    else when (T.null input && not (appBusy st)) toggleRecentFold
 -- | alt+enter inserts a newline: the editor only breaks lines on a plain
 -- KEnter, so feed it one directly (this skips the submit intercept).
 handleChatKey (EvKey KEnter [MAlt]) = editDefaultKey (EvKey KEnter [])
@@ -700,6 +714,15 @@ editDefaultKey ev = do
 cursorRow :: Editor Text ResourceName -> Int
 cursorRow ed = fst (getCursorPosition ed)
 
+-- | Toggle the most recent tool card (ctrl+o, or enter on empty input).
+toggleRecentFold :: EventM ResourceName AppState ()
+toggleRecentFold = do
+  st <- get
+  let mid = listToMaybe [msgId m | m <- reverse (appMessages st), isJust (msgTool m)]
+  forM_ mid $ \i -> modify $ \s ->
+    s { appFolds = Map.alter (Just . toggleFold . fromMaybe FoldCollapsed) i (appFolds s) }
+  scrollBottom
+
 -- | Ensure a streaming block is open for the current assistant reply.
 ensurePending :: EventM ResourceName AppState ()
 ensurePending = do
@@ -730,11 +753,15 @@ flushPending = do
   case appPending st of
     Nothing -> return ()
     Just pm -> do
-      let toolMsgs = [ toolMsg "tool" inv (pmStart pm)
+      let base = length (appMessages st)
+          stampedFrom base0 ms = zipWith (\i m -> m { msgId = base0 + i }) [0 ..] ms
+          toolMsgs = [ toolMsg "tool" (ToolCard (tiName inv) (tiArgs inv) Nothing Nothing []) (pmStart pm)
                      | inv <- reverse (pmTools pm) ]
           textMsgs = [ mkMsg "assistant" (T.strip (pmContent pm)) (pmStart pm)
                      | not (T.null (T.strip (pmContent pm))) ]
-      modify $ \s -> s { appMessages = appMessages s ++ toolMsgs ++ textMsgs
+      modify $ \s -> s { appMessages = appMessages s
+                                      ++ stampedFrom base toolMsgs
+                                      ++ stampedFrom (base + length toolMsgs) textMsgs
                        , appPending = Nothing
                        , appBusy = False
                        , appStatus = tr (appLang s) "Ready" }
@@ -843,11 +870,25 @@ handleAppEvent (EvTool result) = do
       modify $ \st -> st { appStatus = tr (appLang st) "tool: " <> T.pack (teName ev) <> " " <> tr (appLang st) (statusTagOf (teStatus ev)) }
       case teStatus ev of
         ToolRunRunning -> return ()
-        _              -> appendMsg (mkMsg "tool" (renderToolEvent ev) t)
+        _              -> appendMsg (toolCardMsg ev t)
     Left err -> do
       appendMsg (mkMsg "error" (tr lang "SSE: " <> T.pack (show err)) t)
       modify $ \st -> st { appStatus = tr (appLang st) "Error" }
   scrollBottom
+handleAppEvent (EvToggleToolFold mid) = do
+  -- Flip the fold state of the tool message with the given id.
+  modify $ \s -> s { appFolds =
+    Map.alter (Just . toggleFold . fromMaybe FoldCollapsed) mid (appFolds s) }
+  scrollBottom
+
+-- | Tool-card message from a completed lifecycle event (with output
+-- preview lines from the kernel tail).
+toolCardMsg :: ToolEvent -> Text -> ChatMessage
+toolCardMsg ev t = toolMsg "tool" card t
+  where
+    card = ToolCard (teName ev) (teArgs ev)
+                    (Just (toCardStatus (teStatus ev))) (teDurationMs ev)
+                    (maybe [] T.lines (teOutput ev))
 
 -- | Approve the pending step, run it as an ordinary agent turn, then report the
 -- result.
@@ -918,7 +959,7 @@ handleSlash input = do
     "/help" ->
       appendMsg (mkMsg "system" (helpTextFor (appLang st)) t)
     "/clear" ->
-      modify $ \s -> s { appMessages = [] }
+      modify $ \s -> s { appMessages = [], appFolds = Map.empty }
     "/new" -> do
       modify $ \s -> s { appBusy = True, appStatus = "Creating session..." }
       void $ liftIO $ async $

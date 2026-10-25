@@ -13,7 +13,7 @@ spec = do
     it "starts with the model and ends with the key hints" $ do
       let segs = footerSegments "deepseek-chat" (Just "s1") "Ready" Nothing
       head segs `shouldBe` "Model: deepseek-chat"
-      last segs `shouldBe` "PgUp/PgDn scroll · g/G top/bottom · Ctrl+Q quit"
+      last segs `shouldBe` "PgUp/PgDn scroll · g/G top/bottom · Ctrl+O expand tool output · Ctrl+Q quit"
 
     it "shows the session when present" $ do
       let segs = footerSegments "m" (Just "abc") "Ready" Nothing
@@ -33,7 +33,7 @@ spec = do
 
     it "places usage before the hints" $ do
       let segs = footerSegments "m" Nothing "Ready" (Just 1)
-      takeWhile (/= "PgUp/PgDn scroll · g/G top/bottom · Ctrl+Q quit") segs
+      takeWhile (/= "PgUp/PgDn scroll · g/G top/bottom · Ctrl+O expand tool output · Ctrl+Q quit") segs
         `shouldSatisfy` ("last: 1 tokens" `elem`)
   describe "parseMetrics / footerMetrics" $ do
     it "keeps only supported keys, in order, unique" $ do

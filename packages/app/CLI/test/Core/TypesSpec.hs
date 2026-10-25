@@ -23,21 +23,28 @@ spec = do
                        , "args" .= (["ls", "-la"] :: [Text])
                        , "status" .= ("running" :: Text)
                        ]) `shouldBe`
-        Success (ToolEvent "bash" ["ls", "-la"] ToolRunRunning Nothing)
+        Success (ToolEvent "bash" ["ls", "-la"] ToolRunRunning Nothing Nothing)
 
     it "decodes a succeeded event with duration" $ do
       fromJSON (toolEv [ "name" .= ("bash" :: String)
                        , "status" .= ("succeeded" :: Text)
                        , "durationMs" .= (12 :: Int)
                        ]) `shouldBe`
-        Success (ToolEvent "bash" [] ToolRunSucceeded (Just 12))
+        Success (ToolEvent "bash" [] ToolRunSucceeded (Just 12) Nothing)
+
+    it "decodes an output preview" $ do
+      fromJSON (toolEv [ "name" .= ("bash" :: String)
+                       , "status" .= ("succeeded" :: Text)
+                       , "output" .= ("line1\nline2" :: Text)
+                       ]) `shouldBe`
+        Success (ToolEvent "bash" [] ToolRunSucceeded Nothing (Just "line1\nline2"))
 
     it "decodes a failed event with an error detail" $ do
       fromJSON (toolEv [ "name" .= ("bash" :: String)
                        , "status" .= ("failed" :: Text)
                        , "error" .= ("exit 1" :: Text)
                        ]) `shouldBe`
-        Success (ToolEvent "bash" [] (ToolRunFailed "exit 1") Nothing)
+        Success (ToolEvent "bash" [] (ToolRunFailed "exit 1") Nothing Nothing)
 
     it "rejects unknown statuses" $ do
       (fromJSON (toolEv [ "name" .= ("bash" :: String)
@@ -49,15 +56,15 @@ spec = do
 
     it "defaults missing args to an empty list" $ do
       fromJSON (toolEv [ "name" .= ("x" :: String), "status" .= ("running" :: Text) ])
-        `shouldBe` Success (ToolEvent "x" [] ToolRunRunning Nothing)
+        `shouldBe` Success (ToolEvent "x" [] ToolRunRunning Nothing Nothing)
 
   describe "ToolEvent ToJSON/FromJSON roundtrip" $ do
     it "survives a roundtrip for a failed event with error" $ do
-      let ev = ToolEvent "bash" ["ls"] (ToolRunFailed "exit 1") (Just 3)
+      let ev = ToolEvent "bash" ["ls"] (ToolRunFailed "exit 1") (Just 3) (Just "boom\nmore")
       fromJSON (toJSON ev) `shouldBe` Success ev
 
     it "survives a roundtrip for a succeeded event" $ do
-      let ev = ToolEvent "bash" [] ToolRunSucceeded (Just 12)
+      let ev = ToolEvent "bash" [] ToolRunSucceeded (Just 12) (Just "out")
       fromJSON (toJSON ev) `shouldBe` Success ev
 
   describe "plan input" $ do

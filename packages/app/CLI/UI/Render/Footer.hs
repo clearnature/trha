@@ -14,13 +14,14 @@ module UI.Render.Footer
   , footerMetrics
   ) where
 
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import UI.I18n (Lang(..), tr)
 
 -- | Key hints shown at the end of the footer.
 footerHints :: Text
-footerHints = "PgUp/PgDn scroll · g/G top/bottom · Ctrl+Q quit"
+footerHints = "PgUp/PgDn scroll · g/G top/bottom · Ctrl+O expand tool output · Ctrl+Q quit"
 
 -- | Status line segments, in display order: model, session, status,
 -- optional last-run usage, then the fixed key hints.
@@ -71,6 +72,6 @@ footerMetrics lang order live statics = map render order
     render "workspace" = tr lang "Workspace: " <> lookupVal "workspace"
     render "context"   = tr lang "Context: " <> T.pack (show (flChars live)) <> tr lang " chars"
     render "tokens"    = tr lang "Tokens: " <> maybe "—" (T.pack . show) (flUsage live)
-    render "session"   = tr lang "Session: " <> maybe (tr lang "none") id (flSession live)
+    render "session"   = tr lang "Session: " <> fromMaybe (tr lang "none") (flSession live)
     render _           = ""
-    lookupVal k = maybe "—" id (lookup k statics)
+    lookupVal k = fromMaybe "—" (lookup k statics)

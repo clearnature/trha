@@ -170,7 +170,18 @@ interface ToolEvent {
   status: 'running' | 'succeeded' | 'failed';
   error?: string;
   durationMs?: number;
+  /** Tail preview of the tool output (only on `succeeded`), for the TUI's
+   * expandable tool card.  Optional so older shells ignore it. */
+  output?: string;
 }
+
+/** Tail-capped output preview for tool cards: last 12 lines, at most 2 KiB. */
+const OUTPUT_PREVIEW_LINES = 12;
+const OUTPUT_PREVIEW_BYTES = 2048;
+const outputPreview = (output: string): string => {
+  const tail = output.split('\n').slice(-OUTPUT_PREVIEW_LINES).join('\n');
+  return tail.length > OUTPUT_PREVIEW_BYTES ? '…' + tail.slice(-OUTPUT_PREVIEW_BYTES) : tail;
+};
 
 // ── Session shape ───────────────────────────────────────────────────────
 // One server-side session.  `pendingApproval` holds a plan request waiting
@@ -893,11 +904,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   const emitToolLifecycle = async (
     sessionId: string, name: string, args: string[],
     status: 'running' | 'succeeded' | 'failed', startedAt?: number, error?: string,
+    output?: string,
   ): Promise<void> => {
     const ev: ToolEvent = {
       name, args, status,
       ...(error !== undefined ? { error } : {}),
       ...(startedAt !== undefined ? { durationMs: Date.now() - startedAt } : {}),
+      ...(output !== undefined ? { output } : {}),
     };
     events.emit('tool:update', { sessionId, ...ev });
     if (status === 'running') {
@@ -1371,7 +1384,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         // first, and *then* any marker-derived message (a card, a question).
         const failed = output.startsWith('ERROR');
         await emitToolLifecycle(session.id, call.name, parseToolArgs(call),
-          failed ? 'failed' : 'succeeded', started, failed ? output : undefined);
+          failed ? 'failed' : 'succeeded', started, failed ? output : undefined,
+          failed ? undefined : outputPreview(output));
         session.messages.push({ role: 'tool', tool_call_id: call.id, content: output });
         // `UNCHANGED:` means the tool declined to modify state; writing the
         // session anyway would churn the file (and its mtime) for nothing.

@@ -60,13 +60,14 @@
 
 ## M1：核心形态（启动时细化，契约如下）
 
-> 进度（2026-10-25）：**多行输入、markdown 增强 已完成**（spec 242/242），待人工验收；工具卡折叠、token 统计、spinner 三态待做。
+> 进度（2026-10-25）：**多行输入、markdown 增强、工具卡折叠 已完成**（spec 252/252），待人工验收；token 统计、spinner 三态待做。
 
 - [x] **多行输入**：brick editor `Just 1 → 动态高度`，1-6 行自适应（对齐 MiMo `maxHeight=6`）；`alt+enter` 换行、enter 提交；光标在首行时 ↑ 翻输入历史（复用 REPL 历史文件）。
   落地：editor 限 6 行（brick line-limit 同时是编辑上限与显示上限，`vLimit` 天然自适应）；alt+enter 直投 `handleEditorEvent`（brick 只对纯 `KEnter []` 换行）；↑/↓ 在首/末行翻历史，新增纯模块 `UI/InputHistory.hs`（草稿暂存 + `~/.trha/history` 共享读写，多行条目以换行→反斜杠 n 转义存行）。
 - [x] **markdown 增强**：`UI/Render/Markdown.hs` 增列表/标题/行内样式渲染（bold/code 现已解析、只差渲染），纯函数 + spec。
   落地：`MdHeading`/`MdListItem` 解析 + `renderBlocks` 按 span 属性渲染；brick 3.0 **删除了 widget 级 `wrap`**，新增渲染时 `spanWrap`（镜像 `txtWrapWith` 技法：context 宽度 + 渲染时重排，宽字符经 vty wcwidth 计宽，超宽词按字符硬切）。
-- **工具卡折叠**：`UI/Render/ToolCard.hs` 增加 collapsed/expanded 两态 + 输出内容行；`AppEvent` 增 toggle 消息；状态存 Map 消息 id。
+- [x] **工具卡折叠**：`UI/Render/ToolCard.hs` 增加 collapsed/expanded 两态 + 输出内容行；`AppEvent` 增 toggle 消息；状态存 Map 消息 id。
+  落地：`msgTool` 升级为结构化 `ToolCard`（名/参/状态/时长/输出预览）；`msgId`（位置式）与 `appFolds :: Map Int ToolFold`；`ctrl+o` 或空输入 `enter` 切换最近工具卡；内核 tool:update 增 `output` 尾部预览（末 12 行 ≤2KiB，可选字段，已登记 `docs/contracts/protocol-shell-kernel.md` §3 并过 TypesSpec roundtrip + scheduler 受影响 specs）。
 - **token/上下文统计**：`Core/Types.hs` 的 `Usage` 已有 prompt/completion——footer 增 `in/out/累计/占用%` 四段；累计值入 `Core/Transcript.hs` 会话索引。
 - **会话状态 spinner**：idle/awaiting-approval/running 三态显示（为 M3 审批锁定做状态地基）。
 

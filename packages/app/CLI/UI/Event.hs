@@ -67,4 +67,5 @@ data AppEvent
   | EvTool (Either CLIError ToolEvent)
   | EvStatusInfo [StatusRow]
   | EvMetrics [(Text, Text)]
+  | EvToggleToolFold Int -- ^ flip the fold state of tool message @id@
   deriving (Show)
