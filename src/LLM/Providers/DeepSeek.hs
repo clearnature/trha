@@ -12,6 +12,7 @@ module LLM.Providers.DeepSeek
   , withReasoningEcho
   ) where
 
+import Core.HTTPProxy
 import LLM.Adapter.Types
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -198,9 +199,9 @@ modelFromEnv = maybe "deepseek-flash" T.pack <$> lookupEnv "TRHA_LLM_MODEL"
 -- | Create a DeepSeek provider with real API calls
 createDeepSeekProvider :: Text -> IO LLMAdapter
 createDeepSeekProvider apiKey = do
-  manager <- newManager tlsManagerSettings
   model <- modelFromEnv
   let baseUrl = "https://api.deepseek.com"
+  manager <- newManager =<< proxyAwareSettings (T.unpack baseUrl) tlsManagerSettings
 
   return $ LLMAdapter
     { llmChat = \messages -> do

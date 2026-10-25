@@ -36,6 +36,7 @@ library trha-core
 -- LLM Adapters + CPU Backend (merged to avoid GHC 9.14 internal-lib linking bug)
 library trha-llm
   exposed-modules:  
+    Core.HTTPProxy
     LLM.Adapter.Types
     LLM.Adapter.Interface
     LLM.Providers.DeepSeek
@@ -143,6 +144,7 @@ library trha-api
   other-modules:
     Core.Agent.Modes
     Core.Agent.StateMachine
+    Core.HTTPProxy
     Core.Agent.Types
     Core.Session.Manager
     Core.Session.Types
@@ -610,6 +612,7 @@ test-suite trha-test
   other-modules:    PluginSpec, CoreContractSpec, SessionPersistSpec, ApprovalSpec, PlanSpec
                   , DeepSeekCacheSpec
                   , StreamToolCallsSpec
+                  , HTTPProxySpec
                   , WireGuardsSpec
                   , StreamTimeoutSpec
                   , SessionGateSpec

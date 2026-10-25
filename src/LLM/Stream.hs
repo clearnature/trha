@@ -33,6 +33,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Vector as V
+import Core.HTTPProxy
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (HeaderName)
@@ -68,7 +69,7 @@ data StreamFormat = SSEFormat | NDJSONFormat
 -- | Stream a chat completion with callback per event
 streamChatCompletion :: StreamConfig -> (StreamEvent -> IO ()) -> IO (Either String ())
 streamChatCompletion cfg onEvent = do
-  mgr <- newManager tlsManagerSettings
+  mgr <- newManager =<< proxyAwareSettings (scUrl cfg) tlsManagerSettings
   initialRequest <- parseRequest (scUrl cfg)
   let request = initialRequest
         { method = "POST"
@@ -317,7 +318,7 @@ streamPostSse
   -> (Value -> IO ())                  -- ^ per-frame callback
   -> IO (Either Text ())
 streamPostSse url headers body onFrame = do
-  mgr <- newManager tlsManagerSettings
+  mgr <- newManager =<< proxyAwareSettings url tlsManagerSettings
   req0 <- parseRequest url
   let req = req0
         { method = "POST"

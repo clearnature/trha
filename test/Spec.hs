@@ -85,6 +85,7 @@ import ApprovalSpec (approvalSpec)
 import PlanSpec (planSpec)
 import DeepSeekCacheSpec (deepSeekCacheSpec)
 import StreamToolCallsSpec (streamToolCallsSpec)
+import HTTPProxySpec (spec)
 import WireGuardsSpec (wireGuardsSpec)
 import StreamTimeoutSpec (streamTimeoutSpec)
 import SessionGateSpec (sessionGateSpec)
@@ -116,6 +117,7 @@ main = hspec $ do
   planSpec
   deepSeekCacheSpec
   streamToolCallsSpec
+  HTTPProxySpec.spec
   wireGuardsSpec
   streamTimeoutSpec
   sessionGateSpec

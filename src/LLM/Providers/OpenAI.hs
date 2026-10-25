@@ -6,6 +6,7 @@ module LLM.Providers.OpenAI
   ( createOpenAIProvider
   ) where
 
+import Core.HTTPProxy
 import LLM.Adapter.Types
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -59,8 +60,8 @@ instance FromJSON RespUsage where
 -- | Create an OpenAI provider with real API calls
 createOpenAIProvider :: Text -> IO LLMAdapter
 createOpenAIProvider apiKey = do
-  manager <- newManager tlsManagerSettings
   let baseUrl = "https://api.openai.com"
+  manager <- newManager =<< proxyAwareSettings (T.unpack baseUrl) tlsManagerSettings
 
   return $ LLMAdapter
     { llmChat = \messages -> do
