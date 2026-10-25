@@ -10,6 +10,7 @@ module UI.Render.Markdown
   , renderMarkdownText
   ) where
 
+import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -23,14 +24,19 @@ data MdSpan
 -- | Block-level structure.
 data MdBlock
   = MdParagraph [MdSpan]
+  | MdHeading Int [MdSpan]      -- ^ ATX heading (level 1-6), inline spans
+  | MdListItem Text [MdSpan]    -- ^ list item: exact bullet marker
+                                --   (@-@, @*@, @+@, @1.@, @2)@) + inline spans
   | MdCodeBlock Text Text -- ^ language, code body
   deriving (Show, Eq)
 
 -- | Parse a subset of Markdown used in assistant replies:
--- paragraphs, @**bold**@, @`code`@ and fenced code blocks (@```lang@).
+-- paragraphs, ATX headings, list items, @**bold**@, @`code`@ and fenced code
+-- blocks (@```lang@).
 --
 -- * paragraphs are separated by blank lines; line breaks inside a
 --   paragraph become single spaces (soft wrap);
+-- * each list line is its own item (continuation lines are not joined);
 -- * an unterminated fence runs to the end of the input.
 parseMarkdown :: Text -> [MdBlock]
 parseMarkdown doc = go (T.lines doc)
@@ -42,6 +48,10 @@ parseMarkdown doc = go (T.lines doc)
           -- body runs until the closing fence; blank lines inside are kept
           let (body, rest) = break isFenceStart ls
           in MdCodeBlock lang (T.intercalate "\n" body) : go (drop 1 rest)
+      | Just (level, txt) <- headingOf l =
+          MdHeading level (parseParagraph txt) : go ls
+      | Just (marker, txt) <- itemOf l =
+          MdListItem marker (parseParagraph txt) : go ls
       | T.null (T.strip l) = go ls
       | otherwise =
           let (paraLines, rest) = break isBoundary (l : ls)
@@ -64,13 +74,42 @@ fenceLang l =
             in if T.null lang then Just "" else Just lang
        else Nothing
 
+-- | ATX heading: 1-6 @#@ characters followed by a space.  @#hashtag@ is a
+-- paragraph, not a heading.
+headingOf :: Text -> Maybe (Int, Text)
+headingOf l =
+  let stripped = T.stripStart l
+      hashes = T.length (T.takeWhile (== '#') stripped)
+      rest = T.strip (T.drop hashes stripped)
+  in if hashes >= 1 && hashes <= 6
+         && " " `T.isPrefixOf` T.drop hashes stripped
+         && not (T.null rest)
+       then Just (hashes, rest)
+       else Nothing
+
+-- | List item: a @-@/@*@/@+@ bullet or an ordered @N.@/@N)@ marker, both
+-- followed by a space.  Bare @-@ and bare numbers are paragraphs.
+itemOf :: Text -> Maybe (Text, Text)
+itemOf l =
+  let stripped = T.stripStart l
+  in case T.uncons stripped of
+       Just (c, rest)
+         | c `elem` ("-*+" :: String), " " `T.isPrefixOf` rest ->
+             Just (T.singleton c, T.strip rest)
+       _ ->
+         let (digits, rest) = T.span isDigit stripped
+         in if not (T.null digits)
+                && (". " `T.isPrefixOf` rest || ") " `T.isPrefixOf` rest)
+              then Just (digits <> T.take 1 rest, T.strip (T.drop 2 rest))
+              else Nothing
+
 -- | Parse inline spans of a paragraph.
 parseParagraph :: Text -> [MdSpan]
 parseParagraph t = concatMap splitBold (zip [0 :: Int ..] (chop "`" t))
   where
     -- odd segments are inline code; even segments may contain bold
     splitBold (i, seg)
-      | odd i = if T.null seg then [] else [MdCode seg]
+      | odd i = [ MdCode seg | not (T.null seg) ]
       | otherwise =
           [ if odd j then MdBold s else MdPlain s
           | (j, s) <- zip [0 :: Int ..] (chop "**" seg)
@@ -93,6 +132,8 @@ renderMarkdownText = T.intercalate "\n\n" . map blockText . parseMarkdown
 
 blockText :: MdBlock -> Text
 blockText (MdParagraph spans) = T.concat (map spanText spans)
+blockText (MdHeading _ spans) = T.concat (map spanText spans)
+blockText (MdListItem marker spans) = marker <> " " <> T.concat (map spanText spans)
 blockText (MdCodeBlock _ code) = code
 
 spanText :: MdSpan -> Text

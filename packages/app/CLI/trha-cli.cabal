@@ -31,6 +31,7 @@ executable trha
     UI.StatsView
     UI.StatusInfo
     UI.Render.Markdown
+    UI.InputHistory
     UI.Render.Picker
     UI.Render.ToolCard
     UI.Theme
@@ -49,6 +50,7 @@ executable trha
                   , ansi-terminal
                   , process
                   , brick >= 3.0
+                  , microlens
                   , vty >= 6.1
                   , vty-crossplatform >= 0.4
                   , optparse-applicative >= 0.18
@@ -95,6 +97,8 @@ test-suite trha-cli-test
     UI.CommandsSpec
     UI.Commands.RegistrySpec
     UI.Commands.Registry
+    UI.InputHistory
+    UI.InputHistorySpec
   build-depends:    base ^>=4.22
                   , hspec >= 2.10
                   , text

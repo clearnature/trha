@@ -19,6 +19,7 @@ module UI.Theme
   , roleColor
   ) where
 
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -50,13 +51,13 @@ themeAttrNames :: [Text]
 themeAttrNames =
   [ "header", "user", "assistant", "tool", "system", "error", "input"
   , "status", "timestamp", "border", "title", "busy", "plan"
-  , "codeBlock", "codeLang"
+  , "codeBlock", "codeLang", "mdBold", "mdCode"
   , "selection"
   ]
 
 -- | The default dark palette (Tokyo Night inspired, as before).
 defaultTheme :: Theme
-defaultTheme = Theme "tokyo-night" $
+defaultTheme = Theme "tokyo-night"
   [ ("header",    ColorSpec BrightCyan [StyleBold])
   , ("user",      ColorSpec BrightGreen [StyleBold])
   , ("assistant", ColorSpec BrightBlue [])
@@ -72,12 +73,14 @@ defaultTheme = Theme "tokyo-night" $
   , ("plan",      ColorSpec BrightCyan [StyleBold])
   , ("codeBlock", ColorSpec BrightBlack [])
   , ("codeLang",  ColorSpec BrightYellow [StyleBold])
+  , ("mdBold",     ColorSpec BrightWhite [StyleBold])
+  , ("mdCode",     ColorSpec BrightCyan [])
   , ("selection", ColorSpec BrightWhite [StyleReverse])
   ]
 
 -- | A light-terminal palette (dark text on light backgrounds).
 lightTheme :: Theme
-lightTheme = Theme "light" $
+lightTheme = Theme "light"
   [ ("header",    ColorSpec Blue [StyleBold])
   , ("user",      ColorSpec Green [StyleBold])
   , ("assistant", ColorSpec Blue [])
@@ -93,6 +96,8 @@ lightTheme = Theme "light" $
   , ("plan",      ColorSpec Blue [StyleBold])
   , ("codeBlock", ColorSpec BrightBlack [])
   , ("codeLang",  ColorSpec Yellow [StyleBold])
+  , ("mdBold",     ColorSpec Black [StyleBold])
+  , ("mdCode",     ColorSpec Blue [])
   , ("selection", ColorSpec Black [StyleReverse])
   ]
 
@@ -104,9 +109,8 @@ themes = [defaultTheme, lightTheme]
 -- back to 'defaultTheme'.
 resolveTheme :: Text -> Theme
 resolveTheme name =
-  case lookup (T.toLower name) [(T.toLower (themeName t), t) | t <- themes] of
-    Just t  -> t
-    Nothing -> defaultTheme
+  fromMaybe defaultTheme
+    (lookup (T.toLower name) [(T.toLower (themeName t), t) | t <- themes])
 
 -- | Colour for a role; unknown roles get the neutral fallback.
 roleColor :: Theme -> Text -> ColorSpec

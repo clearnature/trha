@@ -22,6 +22,7 @@ import qualified UI.Render.ToolCardSpec
 import qualified BridgeDeltaSpec
 import qualified UI.EventSpec
 import qualified UI.ThemeSpec
+import qualified UI.InputHistorySpec
 
 main :: IO ()
 main = hspec $ do
@@ -46,3 +47,4 @@ main = hspec $ do
   BridgeDeltaSpec.spec
   UI.EventSpec.spec
   UI.ThemeSpec.spec
+  UI.InputHistorySpec.spec

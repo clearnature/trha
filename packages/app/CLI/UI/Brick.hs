@@ -44,12 +44,15 @@ import Graphics.Vty.Attributes
 import Graphics.Vty.Config (defaultConfig)
 import Graphics.Vty.CrossPlatform (mkVty)
 import Graphics.Vty.Input.Events
+import qualified Graphics.Vty as V
+import Lens.Micro ((&), (.~), (^.))
 import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics)
 import UI.Render.Footer (footerHints)
 import System.Directory (getCurrentDirectory)
 import System.IO (hFlush, stdout)
 import Control.Exception (IOException, try)
 import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
+import UI.InputHistory (HistState(..), emptyHistState, histUp, histDown, histCommit, loadHistory, appendHistory)
 import UI.Render.Picker (PickerItem(..), filterItems, maxVisible, moveSelection, queryAppend, queryDelete, windowRange)
 import UI.Render.ToolCard (ToolStatus(..), toolCardLines, toolCardWithStatus)
 import UI.Theme (ColorSpec(..), TermColor(..), TermStyle(..), Theme, resolveTheme, themeColors)
@@ -64,6 +67,7 @@ data AppState = AppState
   , appBusy      :: Bool          -- ^ True while awaiting a response
   , appPending   :: Maybe PendingMsg -- ^ Assistant reply being accumulated (streaming)
   , appLastUsage :: Maybe Int     -- ^ Token usage of the last completed reply
+  , appHist      :: HistState     -- ^ Input history navigation (REPL-shared file)
   , appPicker    :: Maybe PickerState -- ^ Quick-picker overlay (command menu)
   , appBridge    :: SchedulerBridge
   , appChan      :: BChan AppEvent
@@ -111,13 +115,14 @@ data ResourceName
 initialState :: SchedulerBridge -> BChan AppEvent -> CLIConfig -> AppState
 initialState bridge chan cfg = AppState
   { appMessages  = []
-  , appInput     = editorText InputArea (Just 1) ""
+  , appInput     = editorText InputArea (Just 6) ""
   , appSessionId = Nothing
   , appModel     = configModel cfg
   , appStatus    = tr lang "Ready"
   , appBusy      = False
   , appPending   = Nothing
   , appLastUsage = Nothing
+  , appHist      = emptyHistState
   , appPicker    = Nothing
   , appBridge    = bridge
   , appChan      = chan
@@ -189,7 +194,9 @@ runTUI bridge cfg = do
   let theme = resolveTheme (configTheme cfg)
       mkVty' = mkVty defaultConfig
   vty <- mkVty'
-  void $ customMain vty mkVty' (Just chan) (appFor theme) (initialState bridge chan cfg)
+  hist <- loadHistory
+  void $ customMain vty mkVty' (Just chan) (appFor theme)
+        (initialState bridge chan cfg) { appHist = hist }
 
 --------------------------------------------------------------------------------
 -- Drawing
@@ -379,9 +386,9 @@ drawMessage cfg msg =
         ]
 
 -- | Render a parsed Markdown document as widgets.
--- Paragraphs are wrapped as plain text for now; fenced code blocks get a
--- bordered card labelled with their language.  Rich inline styling
--- (bold/code colours) lands with the theme phase (P1.5).
+-- Paragraph spans re-wrap at the context width with styling preserved
+-- (see 'spanWrap'); fenced code blocks get a bordered card labelled with
+-- their language; headings and list items render on one line.
 renderBlocks :: [MdBlock] -> [Widget ResourceName]
 renderBlocks = map renderBlock
   where
@@ -390,12 +397,92 @@ renderBlocks = map renderBlock
         withAttr (attrName "codeBlock") $
           borderWithLabel (withAttr (attrName "codeLang") $ str (" " ++ T.unpack lang ++ " ")) $
             vBox [ strWrap (T.unpack l) | l <- T.lines code ]
-    renderBlock (MdParagraph spans) =
-      strWrap (T.unpack (T.concat (map spanText spans)))
+    renderBlock (MdParagraph spans) = spanWrap spans
+    renderBlock (MdHeading level spans) =
+      padTop (if level <= 2 then Pad 1 else Pad 0) $
+        withAttr (attrName "header") $
+          str (T.unpack (T.replicate level "#" <> " ")) <+> spanLine spans
+    renderBlock (MdListItem marker spans) =
+      padLeft (Pad 2) $ str (T.unpack marker <> " ") <+> spanLine spans
 
-    spanText (MdPlain t) = t
-    spanText (MdBold t)  = t
-    spanText (MdCode t)  = t
+    -- markers are stripped; the styling lives in the attribute
+    spanWidget (MdPlain t) = str (T.unpack t)
+    spanWidget (MdBold t)  = withAttr (attrName "mdBold") $ str (T.unpack t)
+    spanWidget (MdCode t)  = withAttr (attrName "mdCode") $ str (T.unpack t)
+    spanLine spans = hBox (map spanWidget spans)
+
+-- | Word-wrap a paragraph of styled inline spans at the available width,
+-- preserving each span's attribute on every wrapped line.
+--
+-- brick 3.0 removed the widget-level 'wrap'; this mirrors the render-time
+-- reflow technique of 'txtWrapWith' (measure against the context width,
+-- then emit re-flowed images) but re-flows attributed fragments instead
+-- of plain text.
+spanWrap :: [MdSpan] -> Widget ResourceName
+spanWrap spans = Widget Greedy Fixed $ do
+  c <- getContext
+  let width = max 1 (c ^. availWidthL)
+      resolve n = attrMapLookup (attrName n) (c ^. ctxAttrMapL)
+      imgs =
+        [ V.horizCat [ V.text' (resolve (tokAttr t)) (tokText t) | t <- ts ]
+        | ts <- fillLines width (concatMap spanToks spans)
+        ]
+  return $ emptyResult & imageL .~ V.vertCat imgs
+
+-- | A word-wrapping token: one word or space-run, carrying the attribute
+-- name of the span it came from.
+data SpanTok = SpanTok { tokAttr :: String, tokText :: Text }
+
+spanToks :: MdSpan -> [SpanTok]
+spanToks (MdPlain t)   = spanToksWith "" t
+spanToks (MdBold t)    = spanToksWith "mdBold" t
+spanToks (MdCode t)    = spanToksWith "mdCode" t
+
+spanToksWith :: String -> Text -> [SpanTok]
+spanToksWith attr tt = [ SpanTok attr u | u <- runs tt ]
+  where
+    runs t
+      | T.null t = []
+      | otherwise =
+          let (gap, rest) = T.span (== ' ') t
+          in if T.null gap
+               then let (w, rest') = T.span (/= ' ') t
+                    in w : runs rest'
+               else gap : runs rest
+
+-- | Greedy word fill at @width@ columns (measured the same way vty
+-- measures: per-character wcwidth).  Space runs are held pending and only
+-- committed when a word follows, so line breaks never carry trailing
+-- spaces; words wider than a whole line are hard-split by character.
+fillLines :: Int -> [SpanTok] -> [[SpanTok]]
+fillLines width = go [] [] 0
+  where
+    tokW = V.wctwidth . tokText
+
+    go line pends used [] = [ reverse line | not (null line) ]
+    go line pends used (t : rest)
+      | T.all (== ' ') (tokText t) = go line (pends ++ [t]) used rest
+      | used + pendingW + tokW t <= width =
+          go (reverse pends ++ t : line) [] (used + pendingW + tokW t) rest
+      | null line && null pends && tokW t > width =
+          let (chunk, rest') = splitAtWidth width (tokText t)
+          in  [ t { tokText = chunk } ]
+                : fillLines width
+                    ([ t { tokText = rest' } | not (T.null rest') ] ++ rest)
+      | otherwise = go [] [] 0 (t : rest)
+      where pendingW = sum (map tokW pends)
+
+-- | Split the longest prefix whose display width fits @w@ columns.  The
+-- first character is always taken (degenerate 1-column terminals), so the
+-- result always makes progress.
+splitAtWidth :: Int -> Text -> (Text, Text)
+splitAtWidth w = go 0 ""
+  where
+    go used acc tt = case T.uncons tt of
+      Nothing -> (T.reverse acc, "")
+      Just (ch, rest)
+        | used > 0 && used + V.safeWcwidth ch > w -> (T.reverse acc, tt)
+        | otherwise -> go (used + V.safeWcwidth ch) (T.cons ch acc) rest
 
 -- | Render the assistant reply currently being accumulated.
 -- A blinking cursor suffix signals that the stream is still open.
@@ -561,8 +648,33 @@ handleChatKey (EvKey KEnter []) = do
   if T.null input || appBusy st
     then return ()
     else do
-      modify $ \s -> s { appInput = editorText InputArea (Just 1) "" }
+      liftIO (appendHistory input)
+      modify $ \s -> s { appInput = editorText InputArea (Just 6) ""
+                       , appHist = histCommit input (appHist s) }
       handleSubmit input
+-- | alt+enter inserts a newline: the editor only breaks lines on a plain
+-- KEnter, so feed it one directly (this skips the submit intercept).
+handleChatKey (EvKey KEnter [MAlt]) = editDefaultKey (EvKey KEnter [])
+-- | ↑ recalls history when the cursor is on the first line; inside the
+-- input it moves the cursor up one line.
+handleChatKey (EvKey KUp []) = do
+  st <- get
+  let cur = T.unlines (getEditContents (appInput st))
+  case histUp cur (appHist st) of
+    Just (h', entry) | cursorRow (appInput st) == 0 ->
+      put st { appHist = h', appInput = editorText InputArea (Just 6) entry }
+    _ -> editDefaultKey (EvKey KUp [])
+-- | ↓ walks history forward (or restores the draft) when the cursor is on
+-- the last line; inside the input it moves the cursor down one line.
+handleChatKey (EvKey KDown []) = do
+  st <- get
+  let rows = max 1 (length (getEditContents (appInput st)))
+  if cursorRow (appInput st) == rows - 1
+    then case histDown (appHist st) of
+      Just (h', entry) ->
+        put st { appHist = h', appInput = editorText InputArea (Just 6) entry }
+      Nothing -> editDefaultKey (EvKey KDown [])
+    else editDefaultKey (EvKey KDown [])
 -- | A leading @/@ on an empty input opens the quick-picker (command menu);
 -- any other @/@ is typed into the editor as plain text.
 handleChatKey (EvKey (KChar '/') []) = do
@@ -573,10 +685,20 @@ handleChatKey (EvKey (KChar '/') []) = do
     else do
       newInput <- nestEventM' (appInput st) $ handleEditorEvent (VtyEvent (EvKey (KChar '/') []))
       put st { appInput = newInput }
-handleChatKey ev = do
+handleChatKey ev = editDefaultKey ev
+
+-- | Pass an event through to the brick editor (default editing keys:
+-- alt+enter inserts a newline; cursor movement; pastes).
+editDefaultKey :: Event -> EventM ResourceName AppState ()
+editDefaultKey ev = do
   st <- get
   newInput <- nestEventM' (appInput st) $ handleEditorEvent (VtyEvent ev)
   put st { appInput = newInput }
+
+-- | The editor's cursor row (0 = first line of a multi-line input).
+-- brick 3.0's getCursorPosition returns the zipper's @(row, col)@.
+cursorRow :: Editor Text ResourceName -> Int
+cursorRow ed = fst (getCursorPosition ed)
 
 -- | Ensure a streaming block is open for the current assistant reply.
 ensurePending :: EventM ResourceName AppState ()

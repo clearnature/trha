@@ -60,10 +60,45 @@ spec = do
     it "treats whitespace-only input as empty" $ do
       parseMarkdown "  \n\n " `shouldBe` []
 
+  describe "headings" $ do
+    it "parses ATX headings with their level" $ do
+      parseMarkdown "## Steps" `shouldBe` [MdHeading 2 [MdPlain "Steps"]]
+
+    it "caps the level at 6 and requires a space" $ do
+      parseMarkdown "####### seven" `shouldBe` [MdParagraph [MdPlain "####### seven"]]
+      parseMarkdown "#hashtag" `shouldBe` [MdParagraph [MdPlain "#hashtag"]]
+
+    it "parses heading inline formatting" $ do
+      parseMarkdown "# Run **build**" `shouldBe` [MdHeading 1 [MdPlain "Run ", MdBold "build"]]
+
+  describe "list items" $ do
+    it "parses bullet items preserving the marker" $ do
+      parseMarkdown "- one\n- two" `shouldBe`
+        [ MdListItem "-" [MdPlain "one"], MdListItem "-" [MdPlain "two"] ]
+
+    it "accepts * and + bullets" $ do
+      parseMarkdown "* star\n+ plus" `shouldBe`
+        [ MdListItem "*" [MdPlain "star"], MdListItem "+" [MdPlain "plus"] ]
+
+    it "parses ordered items keeping their number" $ do
+      parseMarkdown "1. first\n2) second" `shouldBe`
+        [ MdListItem "1." [MdPlain "first"], MdListItem "2)" [MdPlain "second"] ]
+
+    it "keeps inline formatting inside items" $ do
+      parseMarkdown "- run `make`" `shouldBe` [MdListItem "-" [MdPlain "run ", MdCode "make"]]
+
+    it "does not treat a bare dash or a number without a dot as an item" $ do
+      -- adjacent non-item lines soft-wrap into one paragraph
+      parseMarkdown "-\n42" `shouldBe` [ MdParagraph [MdPlain "- 42"] ]
+
   describe "renderMarkdownText" $ do
     it "strips bold and inline-code markers" $ do
       renderMarkdownText "run **build** with `x`"
         `shouldBe` "run build with x"
+
+    it "flattens headings and list items back to text" $ do
+      renderMarkdownText "## Steps\n- run `make`\n2) then"
+        `shouldBe` "Steps\n\n- run make\n\n2) then"
 
     it "keeps code block bodies" $ do
       renderMarkdownText "```hs\nmain = pure ()\n```"
