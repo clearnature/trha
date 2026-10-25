@@ -64,6 +64,9 @@ import UI.Layout
     ( SidebarState(..), SidebarRender(..), sidebarRender, messageWidth, toggleSidebar )
 import UI.Render.Sidebar
     ( SidebarData(..), SidebarLine(..), sidebarLines )
+import UI.Completion
+    ( Completion(..), CompletionState(..), completionPopup, moveCompletion
+    , applySelected, scanProject, defaultIndexOptions )
 import Data.Time.Clock (UTCTime, diffUTCTime)
 import UI.InputHistory (HistState(..), emptyHistState, histUp, histDown, histCommit, loadHistory, appendHistory)
 import UI.Render.Picker (PickerItem(..), filterItems, maxVisible, moveSelection, queryAppend, queryDelete, windowRange)
@@ -99,6 +102,8 @@ data AppState = AppState
   , appSidebar    :: SidebarState       -- ^ sidebar open/closed/auto (M4-1)
   , appTodos      :: [TodoItem]         -- ^ team tasks shown in the sidebar
   , appSessionTitle :: Maybe Text       -- ^ local transcript title of the session
+  , appIndex      :: [Completion]       -- ^ @\@@-file index (M4-2)
+  , appComp       :: Maybe CompletionState -- ^ open completion popup
   }
 
 -- | Chat message with timestamp
@@ -159,6 +164,8 @@ initialState bridge chan cfg = AppState
   , appSidebar   = SidebarAuto
   , appTodos     = []
   , appSessionTitle = Nothing
+  , appIndex     = []
+  , appComp      = Nothing
   }
   where lang = parseLang (configLang cfg)
 
@@ -223,6 +230,9 @@ runTUI bridge cfg = do
     forM_ models $ \ms ->
       forM_ (find (\m -> modelName m == configModel cfg) ms) $ \m ->
         writeBChan chan (EvCtxSize (modelContextSize m))
+    -- @-file completion index: scanned once at startup, off the UI thread.
+    index <- scanProject defaultIndexOptions ws
+    writeBChan chan (EvCompletionIndex index)
   let theme = resolveTheme (configTheme cfg)
       mkVty' = mkVty defaultConfig
   vty <- mkVty'
@@ -269,6 +279,7 @@ drawUI st =
       [ drawHeader (appLang st)
       , drawMessages st
       , maybe emptyWidget drawPlanCard (appPlan st)
+      , maybe emptyWidget (drawCompletion st) (appComp st)
       , drawInput st
       , drawStatus st
       ]
@@ -287,6 +298,21 @@ drawSidebar st sw =
       borderWithLabel (withAttr (attrName "title") $ str " Sidebar ") $
         vBox [ withAttr (attrName (slAttr l)) $ str (T.unpack (slText l))
              | l <- sidebarLines (max 1 (sw - 2)) (sidebarDataFor st) ]
+
+-- | The @-file popup shown above the input (up to eight candidates).
+drawCompletion :: AppState -> CompletionState -> Widget ResourceName
+drawCompletion _ cs =
+  withAttr (attrName "tool") $
+    hLimit 60 $
+      borderWithLabel (withAttr (attrName "title") $ str " @ files ") $
+        vBox
+          [ let selected = idx == csSel cs
+                marker = if selected then "▸ " else "  "
+                attr = if selected then "tool" else "timestamp"
+            in padLeftRight 1 $ hBox
+                 [ withAttr (attrName attr) $ str marker
+                 , withAttr (attrName "title") $ str (T.unpack (compPath c)) ]
+          | (idx, c) <- zip [0 ..] (take 8 (csItems cs)) ]
 
 -- | Sidebar content assembled from the live state.
 sidebarDataFor :: AppState -> SidebarData
@@ -768,7 +794,11 @@ handleEvent (VtyEvent (EvKey KEsc _)) = do
   st <- get
   case appSettings st of
     Just _  -> handleSettingsKey (EvKey KEsc [])
-    Nothing -> escapeHierarchy
+    Nothing -> case appComp st of
+      -- MiMo's hierarchy: the autocomplete popup closes before anything
+      -- else, and closing it must not arm the interrupt double-press.
+      Just _  -> modify $ \s -> s { appComp = Nothing, appEscLast = Nothing }
+      Nothing -> escapeHierarchy
 -- A dialog is modal: while one is open the top dialog owns every key and
 -- the editor gets nothing until it closes.
 handleEvent (VtyEvent ev) = do
@@ -830,7 +860,7 @@ escapeWithoutApproval = do
       flags = EscFlags { efSelection = False
                        , efStack = not (stackNull (appDialogs st))
                        , efShell = False
-                       , efComplete = False }
+                       , efComplete = isJust (appComp st) }
   case resolveEscape flags of
     EscPopDialog ->
       modify $ \s -> s { appDialogs = stackPop (appDialogs s), appEscLast = Nothing }
@@ -935,37 +965,55 @@ handleChatKey (EvKey (KChar 'G') []) =
   scrollBottom
 handleChatKey (EvKey KEnter []) = do
   st <- get
-  let input = T.strip $ T.unlines $ getEditContents $ appInput st
-  if not (T.null input) && not (appBusy st)
-    then do
-      liftIO (appendHistory input)
-      modify $ \s -> s { appInput = editorText InputArea (Just 6) ""
-                       , appHist = histCommit input (appHist s) }
-      handleSubmit input
-    else when (T.null input && not (appBusy st)) toggleRecentFold
+  case appComp st of
+    -- The @-file popup owns Enter while it is open.
+    Just cs -> case applySelected (editorValue st) cs of
+      Just newText -> do
+        modify $ \s -> s { appInput = editorText InputArea (Just 6) newText
+                         , appComp = Nothing }
+        refreshCompletion
+      Nothing -> modify $ \s -> s { appComp = Nothing }
+    Nothing -> do
+      let input = T.strip (editorValue st)
+      if not (T.null input) && not (appBusy st)
+        then do
+          liftIO (appendHistory input)
+          modify $ \s -> s { appInput = editorText InputArea (Just 6) ""
+                           , appHist = histCommit input (appHist s)
+                           , appComp = Nothing }
+          handleSubmit input
+        else when (T.null input && not (appBusy st)) toggleRecentFold
 -- | alt+enter inserts a newline: the editor only breaks lines on a plain
 -- KEnter, so feed it one directly (this skips the submit intercept).
-handleChatKey (EvKey KEnter [MAlt]) = editDefaultKey (EvKey KEnter [])
+handleChatKey (EvKey KEnter [MAlt]) =
+  editDefaultKey (EvKey KEnter []) >> refreshCompletion
 -- | ↑ recalls history when the cursor is on the first line; inside the
--- input it moves the cursor up one line.
+-- input it moves the cursor up one line.  With the @-file popup open it
+-- moves the popup selection instead.
 handleChatKey (EvKey KUp []) = do
   st <- get
-  let cur = T.unlines (getEditContents (appInput st))
-  case histUp cur (appHist st) of
-    Just (h', entry) | cursorRow (appInput st) == 0 ->
-      put st { appHist = h', appInput = editorText InputArea (Just 6) entry }
-    _ -> editDefaultKey (EvKey KUp [])
+  case appComp st of
+    Just cs -> modify $ \s -> s { appComp = Just (moveCompletion (-1) cs) }
+    Nothing -> do
+      let cur = T.unlines (getEditContents (appInput st))
+      case histUp cur (appHist st) of
+        Just (h', entry) | cursorRow (appInput st) == 0 ->
+          put st { appHist = h', appInput = editorText InputArea (Just 6) entry }
+        _ -> editDefaultKey (EvKey KUp [])
 -- | ↓ walks history forward (or restores the draft) when the cursor is on
 -- the last line; inside the input it moves the cursor down one line.
 handleChatKey (EvKey KDown []) = do
   st <- get
-  let rows = max 1 (length (getEditContents (appInput st)))
-  if cursorRow (appInput st) == rows - 1
-    then case histDown (appHist st) of
-      Just (h', entry) ->
-        put st { appHist = h', appInput = editorText InputArea (Just 6) entry }
-      Nothing -> editDefaultKey (EvKey KDown [])
-    else editDefaultKey (EvKey KDown [])
+  case appComp st of
+    Just cs -> modify $ \s -> s { appComp = Just (moveCompletion 1 cs) }
+    Nothing -> do
+      let rows = max 1 (length (getEditContents (appInput st)))
+      if cursorRow (appInput st) == rows - 1
+        then case histDown (appHist st) of
+          Just (h', entry) ->
+            put st { appHist = h', appInput = editorText InputArea (Just 6) entry }
+          Nothing -> editDefaultKey (EvKey KDown [])
+        else editDefaultKey (EvKey KDown [])
 -- | A leading @/@ on an empty input opens the quick-picker (command menu);
 -- any other @/@ is typed into the editor as plain text.
 handleChatKey (EvKey (KChar '/') []) = do
@@ -977,7 +1025,27 @@ handleChatKey (EvKey (KChar '/') []) = do
     else do
       newInput <- nestEventM' (appInput st) $ handleEditorEvent (VtyEvent (EvKey (KChar '/') []))
       put st { appInput = newInput }
-handleChatKey ev = editDefaultKey ev
+      refreshCompletion
+handleChatKey ev = editDefaultKey ev >> refreshCompletion
+
+-- | Full editor text: lines joined with newlines (no trailing newline).
+editorValue :: AppState -> Text
+editorValue st = T.intercalate "\n" (getEditContents (appInput st))
+
+-- | Cursor offset in 'editorValue' units.
+editorCursor :: AppState -> Int
+editorCursor st =
+  sum (map T.length (take row ls)) + row + col
+  where
+    ls = getEditContents (appInput st)
+    (row, col) = getCursorPosition (appInput st)
+
+-- | Recompute the @\@@-file popup from the current text and cursor.
+refreshCompletion :: EventM ResourceName AppState ()
+refreshCompletion = do
+  st <- get
+  let popup = completionPopup 8 (appIndex st) (editorValue st) (editorCursor st)
+  modify $ \s -> s { appComp = popup }
 
 -- | Pass an event through to the brick editor (default editing keys:
 -- alt+enter inserts a newline; cursor movement; pastes).
@@ -1204,6 +1272,8 @@ handleAppEvent (EvTodos (Right ts)) = do
 handleAppEvent (EvTodos (Left _)) = return ()
 handleAppEvent (EvSessionTitle mt) = do
   modify $ \s -> s { appSessionTitle = mt }
+handleAppEvent (EvCompletionIndex ix) = do
+  modify $ \s -> s { appIndex = ix }
 
 -- | Tool-card message from a completed lifecycle event (with output
 -- preview lines from the kernel tail).

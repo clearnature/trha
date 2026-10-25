@@ -34,6 +34,7 @@ executable trha
     UI.InputHistory
     UI.Dialog
     UI.Layout
+    UI.Completion
     UI.Render.Diff
     UI.Render.Sidebar
     UI.Render.Picker
@@ -107,6 +108,8 @@ test-suite trha-cli-test
     UI.DialogSpec
     UI.Layout
     UI.LayoutSpec
+    UI.Completion
+    UI.CompletionSpec
     UI.Render.Diff
     UI.Render.DiffSpec
     UI.Render.Sidebar

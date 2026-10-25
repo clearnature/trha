@@ -19,7 +19,7 @@
 | **M2 对话框系统** | UI/Dialog.hs 栈 + escape 层级表；模型/会话/命令面板迁入对话框 | dialog 栈 LIFO + escape 语义表逐条通过；`/models`、`/sessions`、`ctrl+p` 均为浮层，消息流不再被文本列表污染 | 已落地；双击 esc 与真实中断已在 M3.5-2/3 补齐 |
 | **M3 审批与 diff** | 权限审批对话框 + unified diff 渲染 + once/always/reject | 审批到达时消息流锁定；diff 正确配色；once/always/reject 走 scheduler `decision` API | 主链路已落地；删除类 always 已移除；diff 行号/宽度阈值已在 M3.5-8 补齐 |
 | **M3.5 纠偏与收口**（新增） | 移除 drain window、双击 esc 修正、真实中断、审批安全特例、文档真实性、人工验收 | 下列 8 项逐条通过；文档勾选与代码一致 | **进行中（7/8，仅剩人工验收）** |
-| **M4 侧栏与高级** | 侧栏（token/成本/TODO）、@文件补全、leader 键、truecolor 主题、鼠标 | 侧栏 ≥80 列停靠、窄屏浮层；`@` 触发文件补全；主题含 truecolor 调色板 | M4-1 完成；M4-2/M4-3 未开始 |
+| **M4 侧栏与高级** | 侧栏（token/成本/TODO）、@文件补全、leader 键、truecolor 主题、鼠标 | 侧栏 ≥80 列停靠、窄屏浮层；`@` 触发文件补全；主题含 truecolor 调色板 | M4-1/M4-2 完成；M4-3 未开始 |
 | **M5 存量补齐**（新增，不承诺） | fork/timeline/recovery、审批 diff 全屏、卡片焦点折叠、toast、reject 原因、成本/TPS | 每项启动时再细化 | backlog |
 
 ---
@@ -32,7 +32,7 @@
 | M1 | 五项功能在；工具卡折叠只切"最近一张"，无卡片焦点 | `toggleRecentFold`（`Brick.hs`） |
 | M2 | 对话框栈与 escape 表在；`resolveEscape` 实接线只喂 `efStack`（选区/shell/联想恒 False）；双击 esc 已按 Running 布防并在触发后清 armed（M3.5-2）；真实中断已接（M3.5-3） | `UI.Dialog.escWiring`、`Brick.hs` escape 段 |
 | M3 | 审批链路（parked → 浮层三选 → decision）与 diff 分类上色在；审批是**居中浮层**而非计划原文的"底部审批条"；删除类命令已无 always（M3.5-4）；diff 行号与 120 列阈值已补（M3.5-8）；reject 附原因经决策**不做**（3.5-5 选 B，需 deny 重放契约） | `UI.Dialog.approvalOptions`、`UI/Render/Diff.hs` |
-| M4 | M4-1 侧栏已落地（布局策略 + 三节 + teamTasks 接线 + ctrl+b）；M4-2/M4-3 未开始 | `UI/Layout.hs`、`UI/Render/Sidebar.hs` |
+| M4 | M4-1 侧栏与 M4-2 `@` 补全已落地；M4-3（truecolor/leader/鼠标）未开始 | `UI/Layout.hs`、`UI/Render/Sidebar.hs`、`UI/Completion.hs` |
 
 内核事实（决定 M3.5 排期）：
 - **无中断 HTTP 端点**：`interrupt: id =>` 只是 `AgentHooks` 回调（供 `interrupt_agent` 工具用）；`abortRequested` 的检查点在 tool 循环内（`packages/scheduler/src/Server/index.ts:1256`）。真中断需新增路由 + 契约登记。
@@ -165,11 +165,16 @@
 - [x] 验收：≥80 列停靠、窄屏浮层可开合；布局 spec 覆盖两侧阈值；三节无数据时显示空态（`no usage yet` / `No tasks` / `no session`）且不崩。
   测试：`LayoutSpec` 11 例、`SidebarSpec` 7 例；总计 331/331。
 
-### M4-2 `@` 文件补全
+### M4-2 `@` 文件补全——**已完成（2026-10-25）**
 
-- 纯模块 `UI/Completion.hs`：cwd 递归索引（忽略 `.git`/`node_modules`/`dist-newstyle`，限深度与条目数）、查询过滤、选中后展开为路径文本。
-- 交互：输入 `@` 触发浮层（复用 `DialogStack` 或独立 popup），Enter 插入路径（无 extmark）。
-- 验收：`@` 弹层 + 过滤 + 插入；纯模块 spec；大仓下首次索引不阻塞输入（索引异步、结果回灌）。
+- [x] 纯模块 `UI/Completion.hs`：cwd 递归索引（忽略 `.git`/`node_modules`/`dist-newstyle`/`.stack-work`/`__pycache__`/`.venv`/`target`，深度 6、条目 4000 上限）、查询过滤与排序、token 定位与替换。
+  落地：`buildIndex`（规范化分隔符、任意层级忽略、深度/条目预算、去重排序）；`completeIndex`（大小写不敏感；路径前缀 > 基名前缀 > 子串，同档按长度再按字典序）；`completionQuery`（光标所在 `@token`，要求 `@` 在行首或空白后）；`applyCompletion`；弹层态 `completionPopup`/`moveCompletion`/`selectedCompletion`/`applySelected`。
+- [x] 交互：输入 `@` 触发浮层，↑/↓ 选择，Enter 插入路径，Esc 关闭（按 MiMo 层级表先于中断布防）。
+  落地：索引启动时异步扫描（`EvCompletionIndex`，不阻塞输入）；浮层渲染在输入框上方（`drawCompletion`，最多 8 条，带选中标记）；任何编辑键后按光标位置重算弹层；插入目录保留尾部 `/`，可继续补全下一级。
+  简化登记（计划允许的降级）：无 extmark，插入后光标落到文本末尾；弹层是普通 widget 而非 `DialogStack` 浮层。
+- [x] 验收：`@` 弹层 + 过滤 + 插入；纯模块 spec。
+  测试：`CompletionSpec` 22 例（索引 5 / 过滤排序 5 / token 定位 6 / 替换 2 / 弹层 4），总计 353/353。
+  待人工：输入 `@` 弹层出现、↑/↓ 选择、Enter 插入（目录后可继续补全）、Esc 只关弹层不布防中断。
 
 ### M4-3 主题 / leader / 鼠标
 

@@ -25,6 +25,7 @@ import qualified UI.ThemeSpec
 import qualified UI.InputHistorySpec
 import qualified UI.DialogSpec
 import qualified UI.LayoutSpec
+import qualified UI.CompletionSpec
 import qualified UI.Render.DiffSpec
 import qualified UI.Render.SidebarSpec
 
@@ -54,5 +55,6 @@ main = hspec $ do
   UI.InputHistorySpec.spec
   UI.DialogSpec.spec
   UI.LayoutSpec.spec
+  UI.CompletionSpec.spec
   UI.Render.DiffSpec.spec
   UI.Render.SidebarSpec.spec

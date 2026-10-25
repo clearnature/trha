@@ -27,6 +27,7 @@ module UI.Event
 import Core.Types
 import Data.Text (Text)
 import qualified Data.Text as T
+import UI.Completion (Completion)
 import UI.I18n (Lang(..), tr)
 import UI.StatusInfo (StatusRow(..))
 
@@ -95,4 +96,5 @@ data AppEvent
   | EvCtxSize Int        -- ^ context size of the active model (startup fetch)
   | EvTodos (Either CLIError [TodoItem]) -- ^ sidebar TODO refresh
   | EvSessionTitle (Maybe Text)          -- ^ sidebar title refresh
+  | EvCompletionIndex [Completion]       -- ^ @\@@-file index (startup scan)
   deriving (Show)
