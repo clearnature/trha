@@ -27,6 +27,7 @@ module Bridge.Scheduler
 
     -- * Message Operations
   , sendMessage
+  , sendMessageWithUsage
   , getMessages
 
     -- * Session Events (SSE, Phase 2 S2)
@@ -135,16 +136,28 @@ deleteSession bridge sessionId = do
 -- The orchestration layer performs the full step and returns aggregated
 -- text; delta events will come over SSE later.
 sendMessage :: SchedulerBridge -> SessionId -> Text -> IO (Either CLIError StreamChunk)
-sendMessage bridge sessionId content = do
+sendMessage bridge sessionId content =
+  fmap (fmap fst) (sendMessageWithUsage bridge sessionId content)
+
+-- | 'sendMessage' plus the orchestration layer's usage echo, when it
+-- provides one (turn out + cumulative totals; absent from older kernels).
+sendMessageWithUsage
+  :: SchedulerBridge -> SessionId -> Text
+  -> IO (Either CLIError (StreamChunk, Maybe Usage))
+sendMessageWithUsage bridge sessionId content = do
   result <- httpPost (bridgeHTTP bridge) "/api/agent/step"
     (object ["sessionId" .= sessionId, "message" .= content])
     :: IO (Either CLIError Value)
   return $ case result of
     Right (Object r) -> case parseMaybe (.: "reply") r of
-      Just reply -> Right (ChunkDelta reply)
+      Just reply -> Right (ChunkDelta reply, usageOf r)
       Nothing    -> Left $ ValidationError "Missing reply in response"
     Right _ -> Left $ ValidationError "Invalid agent/step response"
     Left err -> Left err
+  where
+    usageOf r = case parseMaybe (.: "usage") r of
+      Just v  -> case fromJSON v of Success u -> Just u; _ -> Nothing
+      Nothing -> Nothing
 
 -- | Fetch the stored message list of a session.
 getMessages :: SchedulerBridge -> SessionId -> IO (Either CLIError [Message])

@@ -3,6 +3,7 @@
 module UI.Render.FooterSpec (spec) where
 
 import Test.Hspec
+import Core.Types (Usage(..))
 import UI.Render.Footer
 import UI.I18n (Lang(..))
 import qualified Data.Text as T
@@ -38,11 +39,21 @@ spec = do
   describe "parseMetrics / footerMetrics" $ do
     it "keeps only supported keys, in order, unique" $ do
       parseMetrics "session,tokens,context,bogus,git" `shouldBe` ["session", "tokens", "context", "git"]
-      parseMetrics defaultMetrics `shouldBe` ["model", "git", "context", "session"]
+      parseMetrics defaultMetrics `shouldBe` ["model", "usage", "context", "session"]
     it "renders a localised metric segment set" $ do
-      let live = FooterLive "m" (Just "s1") "Ready" (Just 42) 100
+      let live = FooterLive "m" (Just "s1") "Ready" (Just 42) 100 Nothing Nothing
           segs = footerMetrics Zh ["model", "context", "session"] live [("git", "main")]
       segs `shouldBe` ["模型：m", "上下文：100 字符", "会话：s1"]
-    it "falls back to dash for a missing static value" $ do
+    it "renders the usage segment with in/out/total and occupancy" $ do
+      let live = FooterLive "m" Nothing "Ready" Nothing 100
+                    (Just (Usage 200 50 250)) (Just 1000)
+          segs = footerMetrics Zh ["usage"] live []
+      segs `shouldBe` ["输入 200 · 输出 50 · 累计 250 · 占用 20%"]
+
+    it "omits occupancy without a context size" $ do
       let live = FooterLive "m" Nothing "Ready" Nothing 0
+                    (Just (Usage 200 50 250)) Nothing
+      footerMetrics En ["usage"] live [] `shouldBe` ["in 200 · out 50 · total 250"]
+    it "falls back to dash for a missing static value" $ do
+      let live = FooterLive "m" Nothing "Ready" Nothing 0 Nothing Nothing
       footerMetrics En ["git", "tokens"] live [] `shouldBe` ["Git branch: —", "Tokens: —"]

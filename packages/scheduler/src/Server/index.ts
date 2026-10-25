@@ -1469,11 +1469,27 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // A3: stream the answer to whoever listens on this session's SSE channel.
     // Serialized per session: two concurrent steps would interleave their
     // messages and produce a transcript the provider rejects.
+    const beforeTokens = {
+      hit: session.cacheHitTokens ?? 0,
+      miss: session.cacheMissTokens ?? 0,
+      comp: session.completionTokens ?? 0,
+    };
     const reply = await withSessionLock(session.id, () =>
       runTurn(session, message, { provider, model, genParams },
         text => events.emit('agent:delta', { sessionId: session.id, text })));
+    // Usage echo for shell footers: `promptTokens` is the provider's own
+    // last prompt size (in, incl. cache), the deltas are this turn's out,
+    // `cumulativeTokens` is the session total (cacheHit+cacheMiss+completion).
+    const usage = {
+      promptTokens: session.lastPromptTokens ?? 0,
+      completionTokens: (session.completionTokens ?? 0) - beforeTokens.comp,
+      cacheHitTokens: (session.cacheHitTokens ?? 0) - beforeTokens.hit,
+      cacheMissTokens: (session.cacheMissTokens ?? 0) - beforeTokens.miss,
+      cumulativeTokens: (session.cacheHitTokens ?? 0) + (session.cacheMissTokens ?? 0)
+        + (session.completionTokens ?? 0),
+    };
     res.json({
-      reply, messages: session.messages, mode: session.mode,
+      reply, messages: session.messages, mode: session.mode, usage,
       ...(stepConstraint ? { constraint: stepConstraint } : {}),
     });
   });

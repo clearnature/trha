@@ -525,13 +525,18 @@ drawInput st =
     -- No timer thread: streaming deltas drive redraws, so the frame index
     -- derives from the accumulated length — it animates exactly while the
     -- reply is actually moving (a frozen spinner honestly shows a stall).
-    busyLabel
-      | appBusy st =
-          withAttr (attrName "busy") $ str $
-            case appPending st of
-              Just pm -> " " <> T.unpack (spinnerFrame (T.length (pmContent pm))) <> " Streaming… "
-              Nothing -> " ⏳ Thinking… "
-      | otherwise  = str " Input "
+    awaitingStep = case appPlan st of
+      Just pv -> isJust (pvPending pv)
+      Nothing -> False
+    busyLabel = case runState (appBusy st) awaitingStep of
+      RunIdle -> str " Input "
+      RunAwaiting ->
+        withAttr (attrName "plan") $ str " ⏸ Awaiting approval… "
+      RunRunning ->
+        withAttr (attrName "busy") $ str $
+          case appPending st of
+            Just pm -> " " <> T.unpack (spinnerFrame (T.length (pmContent pm))) <> " Streaming… "
+            Nothing -> " ⏳ Thinking… "
 
 -- | Braille spinner frames (10-step cycle). Pure so it is trivially testable.
 spinnerFrame :: Int -> Text

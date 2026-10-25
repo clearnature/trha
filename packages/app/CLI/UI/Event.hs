@@ -16,6 +16,10 @@ module UI.Event
   , flushParts
     -- * Tool invocation record (moved with 'PendingMsg': it is part of it)
   , ToolInv(..)
+    -- * Harness run state
+  , RunState(..)
+  , runState
+  , runStateLabel
     -- * Async events pushed by background threads
   , AppEvent(..)
   ) where
@@ -23,6 +27,7 @@ module UI.Event
 import Core.Types
 import Data.Text (Text)
 import qualified Data.Text as T
+import UI.I18n (Lang(..), tr)
 import UI.StatusInfo (StatusRow(..))
 
 -- | Tool invocation record.
@@ -53,6 +58,25 @@ reduceChunk _                    pm = pm
 -- chronological order, and the accumulated text (stripped).
 flushParts :: PendingMsg -> ([ToolInv], Text)
 flushParts pm = (reverse (pmTools pm), T.strip (pmContent pm))
+
+-- | Harness run state: the boolean busy flag becomes a three-state ladder
+-- here so M3's approval lock has a state to live in.
+data RunState = RunIdle | RunRunning | RunAwaiting
+  deriving (Show, Eq)
+
+-- | From the busy flag and whether a step is currently out with the host.
+runState :: Bool -> Bool -> RunState
+runState busy stepOut
+  | not busy  = RunIdle
+  | stepOut   = RunAwaiting
+  | otherwise = RunRunning
+
+-- | Localised status label per state (status bar + spinner label).
+runStateLabel :: Lang -> RunState -> Text
+runStateLabel lang st = case st of
+  RunIdle     -> tr lang "Ready"
+  RunRunning  -> tr lang "Thinking..."
+  RunAwaiting -> tr lang "Awaiting approval..."
 
 -- | Async events pushed by background threads.
 data AppEvent

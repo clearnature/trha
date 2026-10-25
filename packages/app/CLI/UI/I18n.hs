@@ -58,6 +58,11 @@ zhDict :: M.Map Text Text
 zhDict = M.fromList
   [ -- Registry command descriptions (UI.Commands.Registry)
     ("Commands:", "命令：")
+    -- footer usage segment (M1-4)
+  , ("in", "输入")
+  , ("out", "输出")
+  , ("total", "累计")
+  , (" · ctx ", " · 占用 ")
   , ("Show this help", "显示本帮助")
   , ("Show or set the current model", "显示或设置当前模型")
   , ("List available models", "列出可用模型")
