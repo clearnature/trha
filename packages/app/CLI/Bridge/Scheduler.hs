@@ -60,7 +60,7 @@ module Bridge.Scheduler
 
 import Core.Types
 import Core.HTTP
-import Core.SSE (SseDecoder, feed, newDecoder, parseToolEvent)
+import Core.SSE (SseDecoder, SsePayload(..), classifyPayload, feed, newDecoder)
 import Data.Aeson
 import Data.Aeson.Types (parseMaybe)
 import Data.ByteString (ByteString)
@@ -85,7 +85,7 @@ data SchedulerBridge = SchedulerBridge
 -- | Create a new scheduler bridge
 createSchedulerBridge :: CLIConfig -> IO SchedulerBridge
 createSchedulerBridge config = do
-  http <- createHTTPClient (configHost config) (configPort config) (configToken config) (configTimeout config)
+  http <- createHTTPClient (configHost config) (configPort config) (configToken config) (configTimeout config) (configProxy config)
   return $ SchedulerBridge config http
 
 --------------------------------------------------------------------------------
@@ -197,11 +197,18 @@ subscribeSessionEvents bridge sid onEvent = do
         then return ()
         else do
           let (payloads, dec') = feed dec chunk
-          mapM_ (deliver . parseToolEvent) payloads
+          mapM_ deliver payloads
           readLoop dec' br
-    deliver Nothing =
-      onEvent (Left (ValidationError "Invalid tool event payload"))
-    deliver (Just ev) = onEvent (Right ev)
+    -- One stream carries tool progress, assistant text deltas and message
+    -- echoes. Only tool progress fits the callback's type; the answer text
+    -- arrives as the synchronous reply from /api/agent/step.
+    deliver raw = case classifyPayload raw of
+      SseTool ev     -> onEvent (Right ev)
+      SseTextDelta _ -> return ()
+      SseMessage     -> return ()
+      SseUnknown p   ->
+        onEvent (Left (ValidationError ("unrecognised SSE payload: " <> snippet p)))
+    snippet = T.take 120 . TE.decodeUtf8With (\_ _ -> Just '?')
 
     authHeaders :: Text -> [(HeaderName, ByteString)]
     authHeaders t

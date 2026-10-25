@@ -26,11 +26,12 @@ module Config.Settings
   , getProjectConfigPath
   ) where
 
-import Core.Types (CLIConfig, defaultCLIConfig)
+import Core.Types (CLIConfig(..), defaultCLIConfig)
 import Control.Monad (unless)
 import Data.Aeson (Result(..), Value(..), fromJSON, toJSON)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
+import qualified Data.Text as T
 import Data.Yaml (ParseException, decodeFileEither, encode)
 import System.Directory
     ( createDirectoryIfMissing
@@ -117,16 +118,35 @@ readSettings path = do
 -- | Merge defaults < home settings < project settings and decode.
 resolveConfig :: CLIConfig -> IO CLIConfig
 resolveConfig fallback = do
-  defV   <- toJSON <$> pure fallback
+  defV   <- pure (toJSON fallback)
   homeV  <- readSettings =<< getHomeConfigPath
   projV  <- readSettings =<< getProjectConfigPath
   let merged  = maybe defV (mergeValues defV) homeV
       merged2 = maybe merged (mergeValues merged) projV
   case fromJSON merged2 :: Result CLIConfig of
-    Success cfg -> return cfg
+    Success cfg -> return (keepNonBlank fallback cfg)
     Error err   -> do
       putStrLn $ "Warning: invalid settings (using defaults): " ++ err
       return fallback
+
+-- | A blank text field means "unset", not "empty".
+--
+-- Older builds wrote @configModel: ''@ into @~/.trha/settings.yaml@. The file
+-- already exists, so it is never rewritten, and the empty value outlived the
+-- bug: the footer showed @模型：@ with nothing after it and requests carried
+-- @model: ""@. Blank fields now fall back to the built-in default.
+keepNonBlank :: CLIConfig -> CLIConfig -> CLIConfig
+keepNonBlank base cfg = cfg
+  { configHost  = keep (configHost cfg)  (configHost base)
+  , configModel = keep (configModel cfg) (configModel base)
+  , configToken = keep (configToken cfg) (configToken base)
+  , configTheme = keep (configTheme cfg) (configTheme base)
+  , configLang  = keep (configLang cfg)  (configLang base)
+  }
+  where
+    keep value fallbackValue
+      | T.null (T.strip value) = fallbackValue
+      | otherwise = value
 
 --------------------------------------------------------------------------------
 -- Private helpers

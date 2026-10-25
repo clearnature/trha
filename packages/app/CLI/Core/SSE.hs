@@ -9,15 +9,18 @@ module Core.SSE
   , newDecoder
   , feed
   , parseToolEvent
+  , SsePayload(..)
+  , classifyPayload
   ) where
 
 import Core.Types (ToolEvent)
-import Data.Aeson (eitherDecodeStrict')
+import Data.Aeson (Value(Object), decodeStrict, eitherDecodeStrict')
+import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
 
 -- | Decoder state: bytes not yet forming a complete line.
-data SseDecoder = SseDecoder
+newtype SseDecoder = SseDecoder
   { pendingBytes :: BS.ByteString
   } deriving (Show, Eq)
 
@@ -58,3 +61,27 @@ mapMaybeData = foldr step []
 -- | Decode one payload line into a 'ToolEvent'.
 parseToolEvent :: BS.ByteString -> Maybe ToolEvent
 parseToolEvent = either (const Nothing) Just . eitherDecodeStrict'
+
+-- | What one @data:@ payload on @/api/events/:id@ actually is.
+--
+-- The scheduler interleaves three shapes on one stream: tool progress
+-- (@name@ + @status@), assistant text deltas (@text@), and message echoes
+-- (@role@ + @content@). Treating every payload as a tool event turned each
+-- text delta into @ValidationError \"Invalid tool event payload\"@, which the
+-- TUI painted as a red error row on every answer.
+data SsePayload
+  = SseTool ToolEvent
+  | SseTextDelta BS.ByteString
+  | SseMessage
+  | SseUnknown BS.ByteString
+  deriving (Show, Eq)
+
+-- | Classify one payload, keeping the raw bytes for diagnostics.
+classifyPayload :: BS.ByteString -> SsePayload
+classifyPayload raw
+  | Just ev <- parseToolEvent raw = SseTool ev
+  | Just (Object o) <- decodeStrict raw
+  , Just _ <- KM.lookup "text" o = SseTextDelta raw
+  | Just (Object o) <- decodeStrict raw
+  , Just _ <- KM.lookup "role" o = SseMessage
+  | otherwise = SseUnknown raw

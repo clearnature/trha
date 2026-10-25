@@ -4,7 +4,7 @@ module Core.SSESpec (spec) where
 
 import Test.Hspec
 import Core.SSE
-import Core.Types (ToolEvent(..))
+import Core.Types (ToolEvent(..), ToolRunStatus(..))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
 import Data.Text (Text)
@@ -44,3 +44,30 @@ spec = do
 
     it "rejects unknown statuses" $ do
       parseToolEvent (BC.pack "{\"name\":\"x\",\"status\":\"??\"}") `shouldBe` Nothing
+
+  -- Shapes taken from a live /api/events/:id stream: the scheduler puts tool
+  -- progress, text deltas and message echoes on the same connection.
+  describe "classifyPayload" $ do
+    it "calls the tool payload a tool event" $ do
+      let raw = BC.pack "{\"sessionId\":\"s1\",\"name\":\"read_file\",\"args\":[\"path=/etc/hostname\"],\"status\":\"succeeded\",\"durationMs\":1}"
+      case classifyPayload raw of
+        SseTool ev -> do
+          teName ev `shouldBe` "read_file"
+          teStatus ev `shouldBe` ToolRunSucceeded
+        other -> expectationFailure ("expected a tool event, got " <> show other)
+
+    it "does not mistake a text delta for a tool event" $ do
+      classifyPayload (BC.pack "{\"sessionId\":\"s1\",\"text\":\"[\"}")
+        `shouldSatisfy` isDelta
+
+    it "recognises a message echo" $ do
+      classifyPayload (BC.pack "{\"sessionId\":\"s1\",\"role\":\"assistant\",\"content\":\"hi\"}")
+        `shouldBe` SseMessage
+
+    it "keeps unrecognised payloads for diagnostics" $ do
+      case classifyPayload (BC.pack "{\"weird\":true}") of
+        SseUnknown raw -> raw `shouldBe` "{\"weird\":true}"
+        other -> expectationFailure ("expected unknown, got " <> show other)
+  where
+    isDelta (SseTextDelta _) = True
+    isDelta _                = False
