@@ -32,6 +32,7 @@ module Bridge.Scheduler
   , getMessages
   , allowAlways
   , interruptSession
+  , fetchTeamTasks
 
     -- * Session Events (SSE, Phase 2 S2)
   , subscribeSessionEvents
@@ -179,6 +180,17 @@ getMessages bridge sessionId = do
   where
     parseStored :: Object -> Maybe Message
     parseStored o = Message <$> parseMaybe (.: "role") o <*> parseMaybe (.: "content") o
+
+-- | The session's team tasks (the agent's TODO list).  Older schedulers do
+-- not include the field; that is an empty list, not an error.
+fetchTeamTasks :: SchedulerBridge -> SessionId -> IO (Either CLIError [TodoItem])
+fetchTeamTasks bridge sessionId = do
+  result <- httpGet (bridgeHTTP bridge) ("/api/session/" ++ sessionId)
+              :: IO (Either CLIError Value)
+  return $ case result of
+    Right (Object r) -> Right (fromMaybe [] (parseMaybe (.: "teamTasks") r))
+    Right _          -> Left $ ValidationError "Invalid session response"
+    Left err         -> Left err
 
 --------------------------------------------------------------------------------
 -- Session Events (SSE)

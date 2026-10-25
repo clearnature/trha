@@ -35,6 +35,7 @@ executable trha
     UI.Dialog
     UI.Layout
     UI.Render.Diff
+    UI.Render.Sidebar
     UI.Render.Picker
     UI.Render.ToolCard
     UI.Theme
@@ -108,6 +109,8 @@ test-suite trha-cli-test
     UI.LayoutSpec
     UI.Render.Diff
     UI.Render.DiffSpec
+    UI.Render.Sidebar
+    UI.Render.SidebarSpec
   build-depends:    base ^>=4.22
                   , hspec >= 2.10
                   , text

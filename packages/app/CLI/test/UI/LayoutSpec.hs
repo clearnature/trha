@@ -35,24 +35,36 @@ spec = do
     it "draws nothing when closed" $ do
       sidebarRender 120 SidebarClosed `shouldBe` RenderNone
 
-    it "docks on wide terminals and overlays on narrow ones" $ do
+    it "docks automatically where there is room, hides where there is not" $ do
+      sidebarRender 120 SidebarAuto `shouldBe` RenderDocked 40
+      sidebarRender 60 SidebarAuto `shouldBe` RenderNone
+
+    it "docks on wide terminals and overlays on narrow ones when opened" $ do
       sidebarRender 100 SidebarOpen `shouldBe` RenderDocked 33
       sidebarRender 60 SidebarOpen `shouldBe` RenderOverlay 42
 
+    it "reports only the explicit narrow case as an overlay" $ do
+      isOverlay (RenderOverlay 42) `shouldBe` True
+      isOverlay (RenderDocked 40) `shouldBe` False
+      isOverlay RenderNone `shouldBe` False
+
   describe "messageWidth" $ do
-    it "keeps the full width when closed or overlaying" $ do
+    it "keeps the full width when closed, auto on a narrow screen, or overlaying" $ do
       messageWidth 120 SidebarClosed `shouldBe` 120
+      messageWidth 60 SidebarAuto `shouldBe` 60
       messageWidth 60 SidebarOpen `shouldBe` 60
 
     it "subtracts the docked sidebar, its borders and the gap" $ do
       messageWidth 100 SidebarOpen `shouldBe` 64
       messageWidth 80 SidebarOpen `shouldBe` 51
+      messageWidth 120 SidebarAuto `shouldBe` 77
 
     it "never goes non-positive on a tiny terminal" $ do
       messageWidth 1 SidebarOpen `shouldBe` 1
       messageWidth 1 SidebarClosed `shouldBe` 1
 
   describe "toggleSidebar" $ do
-    it "round-trips" $ do
+    it "opens on the first press and then alternates" $ do
+      toggleSidebar SidebarAuto `shouldBe` SidebarOpen
       toggleSidebar SidebarOpen `shouldBe` SidebarClosed
-      toggleSidebar (toggleSidebar SidebarOpen) `shouldBe` SidebarOpen
+      toggleSidebar SidebarClosed `shouldBe` SidebarOpen

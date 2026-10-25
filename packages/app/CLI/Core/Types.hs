@@ -23,6 +23,8 @@ module Core.Types
   , renderPlanBrief
   , ToolRunStatus(..)
   , ToolEvent(..)
+  , TodoStatus(..)
+  , TodoItem(..)
   , PluginInfo(..)
   
     -- * Configuration
@@ -255,6 +257,40 @@ instance FromJSON ToolEvent where
       _           -> fail "unknown tool status"
     out <- o .:? "output"
     pure $ ToolEvent name args status dur out
+
+-- | Status of one team task (the agent's TODO list).
+data TodoStatus = TodoPending | TodoInProgress | TodoDone
+  deriving (Show, Eq)
+
+-- | One entry of the scheduler's @teamTasks@ array.
+data TodoItem = TodoItem
+  { todoId      :: Text
+  , todoSubject :: Text
+  , todoStatus  :: TodoStatus
+  } deriving (Show, Eq)
+
+instance FromJSON TodoStatus where
+  parseJSON = withText "TodoStatus" $ \t -> case t of
+    "pending"     -> pure TodoPending
+    "in_progress" -> pure TodoInProgress
+    "completed"   -> pure TodoDone
+    _             -> fail "unknown todo status"
+
+instance FromJSON TodoItem where
+  parseJSON = withObject "TodoItem" $ \o ->
+    TodoItem <$> o .: "id" <*> o .: "subject" <*> o .: "status"
+
+instance ToJSON TodoStatus where
+  toJSON TodoPending    = String "pending"
+  toJSON TodoInProgress = String "in_progress"
+  toJSON TodoDone       = String "completed"
+
+instance ToJSON TodoItem where
+  toJSON t = object
+    [ "id" .= todoId t
+    , "subject" .= todoSubject t
+    , "status" .= todoStatus t
+    ]
 
 instance ToJSON ToolEvent where
   toJSON (ToolEvent name args st dur out) =

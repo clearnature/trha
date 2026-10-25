@@ -19,7 +19,7 @@
 | **M2 对话框系统** | UI/Dialog.hs 栈 + escape 层级表；模型/会话/命令面板迁入对话框 | dialog 栈 LIFO + escape 语义表逐条通过；`/models`、`/sessions`、`ctrl+p` 均为浮层，消息流不再被文本列表污染 | 已落地；双击 esc 与真实中断已在 M3.5-2/3 补齐 |
 | **M3 审批与 diff** | 权限审批对话框 + unified diff 渲染 + once/always/reject | 审批到达时消息流锁定；diff 正确配色；once/always/reject 走 scheduler `decision` API | 主链路已落地；删除类 always 已移除；diff 行号/宽度阈值已在 M3.5-8 补齐 |
 | **M3.5 纠偏与收口**（新增） | 移除 drain window、双击 esc 修正、真实中断、审批安全特例、文档真实性、人工验收 | 下列 8 项逐条通过；文档勾选与代码一致 | **进行中（7/8，仅剩人工验收）** |
-| **M4 侧栏与高级** | 侧栏（token/成本/TODO）、@文件补全、leader 键、truecolor 主题、鼠标 | 侧栏 ≥80 列停靠、窄屏浮层；`@` 触发文件补全；主题含 truecolor 调色板 | 未开始，拆三刀 |
+| **M4 侧栏与高级** | 侧栏（token/成本/TODO）、@文件补全、leader 键、truecolor 主题、鼠标 | 侧栏 ≥80 列停靠、窄屏浮层；`@` 触发文件补全；主题含 truecolor 调色板 | M4-1 完成；M4-2/M4-3 未开始 |
 | **M5 存量补齐**（新增，不承诺） | fork/timeline/recovery、审批 diff 全屏、卡片焦点折叠、toast、reject 原因、成本/TPS | 每项启动时再细化 | backlog |
 
 ---
@@ -32,7 +32,7 @@
 | M1 | 五项功能在；工具卡折叠只切"最近一张"，无卡片焦点 | `toggleRecentFold`（`Brick.hs`） |
 | M2 | 对话框栈与 escape 表在；`resolveEscape` 实接线只喂 `efStack`（选区/shell/联想恒 False）；双击 esc 已按 Running 布防并在触发后清 armed（M3.5-2）；真实中断已接（M3.5-3） | `UI.Dialog.escWiring`、`Brick.hs` escape 段 |
 | M3 | 审批链路（parked → 浮层三选 → decision）与 diff 分类上色在；审批是**居中浮层**而非计划原文的"底部审批条"；删除类命令已无 always（M3.5-4）；diff 行号与 120 列阈值已补（M3.5-8）；reject 附原因经决策**不做**（3.5-5 选 B，需 deny 重放契约） | `UI.Dialog.approvalOptions`、`UI/Render/Diff.hs` |
-| M4 | 未开始 | — |
+| M4 | M4-1 侧栏已落地（布局策略 + 三节 + teamTasks 接线 + ctrl+b）；M4-2/M4-3 未开始 | `UI/Layout.hs`、`UI/Render/Sidebar.hs` |
 
 内核事实（决定 M3.5 排期）：
 - **无中断 HTTP 端点**：`interrupt: id =>` 只是 `AgentHooks` 回调（供 `interrupt_agent` 工具用）；`abortRequested` 的检查点在 tool 循环内（`packages/scheduler/src/Server/index.ts:1256`）。真中断需新增路由 + 契约登记。
@@ -141,6 +141,7 @@
   `runTurn` 续跑；契约 §2 同步。
 - [x] **3.5-6 文档真实性**：已回退 M0-3.2/3.3 的假勾选、登记 spinner 内容驱动偏差、把 M3 形态改为浮层并把 diff 拆成"已做/未做"两项；本轮随 3.5-1…4 同步勾选与证据。
 - [ ] **3.5-7 人工验收清单（用户执行，回填本节）**：
+  > 与 M4-1 开发并行执行（运行时指示）；未通过前 M3.5 不算收口。
   - [ ] `cabal run trha -- tui` 连真实模型：长回复逐字增长、无重复段落
   - [ ] 工具卡：`ctrl+o` / 空输入 `enter` 折叠展开，输出尾部预览正确；diff 类输出有增删配色（宽屏 ≥120 列带行号栏）
   - [ ] footer：in / out / total / ctx% 数值合理
@@ -154,11 +155,15 @@
 
 ## M4：侧栏与高级（拆三刀，逐刀可交付）
 
-### M4-1 侧栏
+### M4-1 侧栏——**已完成（2026-10-25）**
 
-- 宽度策略抽纯模块 `UI/Layout.hs`：≥80 列停靠 / 窄屏浮层（MiMo 参考 42 列 + `width>120` 规则；最终阈值实现时定并写进 spec）。
-- 内容三节：Context（token/成本/占用%——复用 footer 已有的 `Usage`/`appCtxSize`）、TODO（数据源优先 `session.teamTasks`，无则空态）、会话信息（id/标题/模型）。
-- 验收：≥80 列停靠、窄屏浮层可开合；布局策略 spec 覆盖两侧阈值；三节均无数据时不崩。
+- [x] 宽度策略抽纯模块 `UI/Layout.hs`：≥80 列停靠 / 窄屏浮层（MiMo 参考 42 列）。
+  落地：`SidebarState` 为 **Auto/Open/Closed**（Auto = 宽屏停靠、窄屏隐藏，避免一进来就被浮层遮住；`ctrl+b` 第一次打开、之后开合）。`sidebarPlacement` 80 列为界；停靠宽 = 屏宽 1/3 夹在 24..42（80 列时消息区仍有 51 列），浮层宽 ≤42 且永不为 0；`sidebarRender` 产出 `RenderDocked/RenderOverlay/RenderNone`，`messageWidth` 只对停靠扣减。布局 spec 覆盖 79/80 两侧、宽度夹取、极窄终端与开合语义。
+- [x] 内容三节：Context、TODO、会话信息。
+  落地：纯渲染模块 `UI/Render/Sidebar.hs`（`sidebarLines`）——Context 显示 in/out/total 与 `ctx %`（复用 `Usage`/`appCtxSize`；**成本/TPS 暂无数据源，未显示**），TODO 来自 `session.teamTasks`（`○/◐/●` 三态，空则 "No tasks"），Session 显示 id + 本地转写标题 + 模型。Brick 侧 `drawSidebar` 加边框标题；停靠走 `hBox`，浮层走独立层 + `V.translate` 右对齐（未覆盖区域透明）。
+- [x] TODO 数据接线：Bridge `fetchTeamTasks`（GET `/api/session/:id` 的 `teamTasks`，缺字段按空列表），新增 `EvTodos`/`EvSessionTitle`；每轮结束与 resume 时刷新（标题取自本地转写 `listLocalSessions`）。
+- [x] 验收：≥80 列停靠、窄屏浮层可开合；布局 spec 覆盖两侧阈值；三节无数据时显示空态（`no usage yet` / `No tasks` / `no session`）且不崩。
+  测试：`LayoutSpec` 11 例、`SidebarSpec` 7 例；总计 331/331。
 
 ### M4-2 `@` 文件补全
 

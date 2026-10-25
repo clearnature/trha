@@ -19,6 +19,7 @@ module UI.Layout
   , toggleSidebar
   , SidebarRender(..)
   , sidebarRender
+  , isOverlay
     -- * Conversation width
   , messageWidth
   ) where
@@ -53,29 +54,42 @@ sidebarWidth width = case sidebarPlacement width of
   SidebarDocked  -> max 24 (min sidebarMaxWidth (width `div` 3))
   SidebarOverlay -> max 1 (min sidebarMaxWidth (width - 2))
 
--- | Whether the user has the sidebar open.
-data SidebarState = SidebarOpen | SidebarClosed
+-- | Whether the user wants the sidebar shown.  'SidebarAuto' is the
+-- startup state: dock where there is room, stay hidden where there is not
+-- (so a narrow terminal is not covered by an overlay the user never asked
+-- for).
+data SidebarState = SidebarAuto | SidebarOpen | SidebarClosed
   deriving (Show, Eq)
 
--- | Toggle the sidebar (wide terminals dock/undock, narrow ones show/hide
--- the overlay).
+-- | Toggle the sidebar.  The first press from 'SidebarAuto' opens it (the
+-- user is asking to see it); later presses alternate open/closed.
 toggleSidebar :: SidebarState -> SidebarState
-toggleSidebar SidebarOpen   = SidebarClosed
-toggleSidebar SidebarClosed = SidebarOpen
+toggleSidebar SidebarAuto    = SidebarOpen
+toggleSidebar SidebarClosed  = SidebarOpen
+toggleSidebar SidebarOpen    = SidebarClosed
 
 -- | What the widget layer should draw for the sidebar.
 data SidebarRender
   = RenderDocked Int   -- ^ chrome on the right of the row, this many columns
   | RenderOverlay Int  -- ^ floating card, this many columns
-  | RenderNone         -- ^ closed
+  | RenderNone         -- ^ hidden
   deriving (Show, Eq)
 
 -- | Resolve the state and terminal width into a concrete render decision.
 sidebarRender :: Int -> SidebarState -> SidebarRender
 sidebarRender _ SidebarClosed = RenderNone
+sidebarRender width SidebarAuto = case sidebarPlacement width of
+  SidebarDocked  -> RenderDocked (sidebarWidth width)
+  SidebarOverlay -> RenderNone
 sidebarRender width SidebarOpen = case sidebarPlacement width of
   SidebarDocked  -> RenderDocked (sidebarWidth width)
   SidebarOverlay -> RenderOverlay (sidebarWidth width)
+
+-- | Whether the resolved sidebar is floating over the conversation (only
+-- possible when explicitly opened on a narrow terminal).
+isOverlay :: SidebarRender -> Bool
+isOverlay RenderOverlay{} = True
+isOverlay _               = False
 
 -- | Width left for the conversation.
 --
@@ -84,6 +98,9 @@ sidebarRender width SidebarOpen = case sidebarPlacement width of
 -- width underneath it.
 messageWidth :: Int -> SidebarState -> Int
 messageWidth width SidebarClosed = max 1 width
+messageWidth width SidebarAuto = case sidebarPlacement width of
+  SidebarDocked  -> max 1 (width - sidebarWidth width - 3)
+  SidebarOverlay -> max 1 width
 messageWidth width SidebarOpen = case sidebarPlacement width of
   SidebarDocked  -> max 1 (width - sidebarWidth width - 3)
   SidebarOverlay -> max 1 width

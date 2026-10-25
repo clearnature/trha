@@ -23,7 +23,7 @@ import Control.Monad (forM_, void, when)
 import Control.Monad.IO.Class (liftIO)
 import System.Timeout (timeout)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, allowAlways, interruptSession, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, allowAlways, interruptSession, fetchTeamTasks, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import UI.Event
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
@@ -49,7 +49,7 @@ import Graphics.Vty.Config (defaultConfig)
 import Graphics.Vty.CrossPlatform (mkVty)
 import Graphics.Vty.Input.Events
 import qualified Graphics.Vty as V
-import Lens.Micro ((&), (.~), (^.))
+import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics)
 import UI.Render.Footer (footerHints)
 import System.Directory (getCurrentDirectory)
@@ -60,6 +60,10 @@ import UI.Dialog
 import UI.Render.Diff
     ( DiffClass(..), DiffLayout(..), DiffRow(..), diffClass, diffLayout, numberDiff
     , renderDiffRow, looksLikeDiff )
+import UI.Layout
+    ( SidebarState(..), SidebarRender(..), sidebarRender, messageWidth, toggleSidebar )
+import UI.Render.Sidebar
+    ( SidebarData(..), SidebarLine(..), sidebarLines )
 import Data.Time.Clock (UTCTime, diffUTCTime)
 import UI.InputHistory (HistState(..), emptyHistState, histUp, histDown, histCommit, loadHistory, appendHistory)
 import UI.Render.Picker (PickerItem(..), filterItems, maxVisible, moveSelection, queryAppend, queryDelete, windowRange)
@@ -92,6 +96,9 @@ data AppState = AppState
   , appAskTool    :: Maybe (String, [Text])  -- ^ tool identity captured from the ask event
   , appUsage      :: Maybe Usage        -- ^ real usage echo of the last turn
   , appCtxSize    :: Maybe Int          -- ^ context size of the active model
+  , appSidebar    :: SidebarState       -- ^ sidebar open/closed/auto (M4-1)
+  , appTodos      :: [TodoItem]         -- ^ team tasks shown in the sidebar
+  , appSessionTitle :: Maybe Text       -- ^ local transcript title of the session
   }
 
 -- | Chat message with timestamp
@@ -149,6 +156,9 @@ initialState bridge chan cfg = AppState
   , appAskTool   = Nothing
   , appUsage     = Nothing
   , appCtxSize   = Nothing
+  , appSidebar   = SidebarAuto
+  , appTodos     = []
+  , appSessionTitle = Nothing
   }
   where lang = parseLang (configLang cfg)
 
@@ -230,9 +240,32 @@ drawUI st =
     -- /settings takes over the whole screen (qwen-style dialog): the tab
     -- bar sits at the top and the content fills the terminal.
     Just _  -> [ drawSettingsPanel st ]
-    Nothing -> dialogLayer ++ [ mainUI ]
+    Nothing -> dialogLayer ++ [ overlayLayer, mainUI ]
   where
-    mainUI = vBox
+    -- The sidebar needs the terminal width, which only exists inside a
+    -- rendering context.  Dock: share the row.  Overlay: draw the card in a
+    -- separate layer translated to the right edge (the cells it does not
+    -- cover stay transparent, so the conversation shows through).
+    mainUI = Widget Greedy Greedy $ do
+      c <- getContext
+      let w = c ^. availWidthL
+      case sidebarRender w (appSidebar st) of
+        RenderDocked sw -> render $ hBox
+          [ hLimit (messageWidth w (appSidebar st)) content
+          , padLeft (Pad 1) (drawSidebar st sw)
+          ]
+        _ -> render content
+
+    overlayLayer = Widget Greedy Greedy $ do
+      c <- getContext
+      let w = c ^. availWidthL
+      case sidebarRender w (appSidebar st) of
+        RenderOverlay sw -> do
+          res <- render (drawSidebar st sw)
+          return $ res & imageL %~ V.translate (max 0 (w - sw)) 0
+        _ -> return emptyResult
+
+    content = vBox
       [ drawHeader (appLang st)
       , drawMessages st
       , maybe emptyWidget drawPlanCard (appPlan st)
@@ -245,6 +278,26 @@ drawUI st =
     dialogLayer = case stackTop (appDialogs st) of
       Just d  -> [ centerLayer (drawDialog st d) ]
       Nothing -> []
+
+-- | The sidebar card: Context, TODO and Session sections.
+drawSidebar :: AppState -> Int -> Widget ResourceName
+drawSidebar st sw =
+  withAttr (attrName "border") $
+    hLimit sw $
+      borderWithLabel (withAttr (attrName "title") $ str " Sidebar ") $
+        vBox [ withAttr (attrName (slAttr l)) $ str (T.unpack (slText l))
+             | l <- sidebarLines (max 1 (sw - 2)) (sidebarDataFor st) ]
+
+-- | Sidebar content assembled from the live state.
+sidebarDataFor :: AppState -> SidebarData
+sidebarDataFor st = SidebarData
+  { sdUsage     = appUsage st
+  , sdCtxSize   = appCtxSize st
+  , sdTodos     = appTodos st
+  , sdSessionId = T.pack <$> appSessionId st
+  , sdTitle     = appSessionTitle st
+  , sdModel     = appModel st
+  }
 
 drawHeader :: Lang -> Widget ResourceName
 drawHeader lang =
@@ -357,6 +410,9 @@ resumeSession selText = do
       when (null msgs) $
         appendMsg (mkMsg "system" (tr lang "Session " <> T.pack (ssId s) <> tr lang " has an empty transcript.") t)
       appendMsg (mkMsg "system" (tr lang "Note: continuing needs the session on the orchestration side.") t)
+      st <- get
+      void $ liftIO $ async $
+        refreshSidebar (appBridge st) (appChan st) (ssId s)
       scrollBottom
 
 -- | Numbered listing of local sessions (mirrors the REPL format).
@@ -870,6 +926,9 @@ handleChatKey (EvKey KPageDown []) =
   vScrollBy (viewportScroll MessageArea) 10
 -- | ctrl+o expands/collapses the most recent tool card.
 handleChatKey (EvKey (KChar 'o') [MCtrl]) = toggleRecentFold
+-- | ctrl+b docks/undocks (or opens/closes) the sidebar.
+handleChatKey (EvKey (KChar 'b') [MCtrl]) =
+  modify $ \s -> s { appSidebar = toggleSidebar (appSidebar s) }
 handleChatKey (EvKey (KChar 'g') []) =
   vScrollToBeginning (viewportScroll MessageArea)
 handleChatKey (EvKey (KChar 'G') []) =
@@ -1140,6 +1199,11 @@ handleAppEvent (EvToggleToolFold mid) = do
   scrollBottom
 handleAppEvent (EvCtxSize cs) = do
   modify $ \s -> s { appCtxSize = Just cs }
+handleAppEvent (EvTodos (Right ts)) = do
+  modify $ \s -> s { appTodos = ts }
+handleAppEvent (EvTodos (Left _)) = return ()
+handleAppEvent (EvSessionTitle mt) = do
+  modify $ \s -> s { appSessionTitle = mt }
 
 -- | Tool-card message from a completed lifecycle event (with output
 -- preview lines from the kernel tail).
@@ -1346,6 +1410,16 @@ handleSlash input = do
           appendMsg (mkMsg "system" (tr lang "Unknown command: " <> input <> tr lang " — try /help") t)
   scrollBottom
 
+-- | Refresh the sidebar's TODO list and title for a session.  Best effort:
+-- a scheduler that does not expose @teamTasks@ yields an empty list, and a
+-- missing local transcript yields no title.
+refreshSidebar :: SchedulerBridge -> BChan AppEvent -> SessionId -> IO ()
+refreshSidebar bridge chan sid = do
+  todos <- fetchTeamTasks bridge sid
+  writeBChan chan (EvTodos todos)
+  local <- listLocalSessions
+  writeBChan chan (EvSessionTitle (ssTitle <$> find ((== sid) . ssId) local))
+
 -- | Send a chat message: create session lazily, send async, never block UI.
 -- While the step runs, tool lifecycle events arrive over SSE; they are
 -- recorded to the transcript and surfaced through 'EvTool'.
@@ -1399,6 +1473,7 @@ handleChat input = do
         -- processed; bounded so a kernel without markers still tears down.
         _ <- liftIO $ timeout 250000 (takeMVar doneVar)
         liftIO cancel
+        refreshSidebar bridge chan sid
       zero = Usage 0 0 0
   void $ liftIO $ async $ case appSessionId st of
     Just sid -> do
@@ -1437,6 +1512,7 @@ helpTextFor lang = T.unlines $
        , tr lang "Keys:"
        , tr lang "  PgUp / PgDn       Scroll messages"
        , tr lang "  g / G             Jump to top / bottom"
+       , tr lang "  Ctrl+B            Show / hide the sidebar"
        , tr lang "  Ctrl+Q            Quit"
        ]
 

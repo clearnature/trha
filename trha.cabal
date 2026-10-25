@@ -580,6 +580,7 @@ executable trha
     UI.Dialog
     UI.Layout
     UI.Render.Picker
+    UI.Render.Sidebar
     UI.Render.Diff
     UI.Render.ToolCard
     UI.Theme

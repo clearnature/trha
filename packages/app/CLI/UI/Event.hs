@@ -93,4 +93,6 @@ data AppEvent
   | EvMetrics [(Text, Text)]
   | EvToggleToolFold Int -- ^ flip the fold state of tool message @id@
   | EvCtxSize Int        -- ^ context size of the active model (startup fetch)
+  | EvTodos (Either CLIError [TodoItem]) -- ^ sidebar TODO refresh
+  | EvSessionTitle (Maybe Text)          -- ^ sidebar title refresh
   deriving (Show)
