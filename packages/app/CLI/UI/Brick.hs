@@ -14,6 +14,7 @@ module UI.Brick
 
 import Brick
 import Brick.BChan
+import Brick.Widgets.Center (centerLayer)
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
 import Control.Concurrent (threadDelay)
@@ -54,6 +55,8 @@ import System.Directory (getCurrentDirectory)
 import System.IO (hFlush, stdout)
 import Control.Exception (IOException, try)
 import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
+import UI.Dialog
+import Data.Time.Clock (UTCTime, diffUTCTime)
 import UI.InputHistory (HistState(..), emptyHistState, histUp, histDown, histCommit, loadHistory, appendHistory)
 import UI.Render.Picker (PickerItem(..), filterItems, maxVisible, moveSelection, queryAppend, queryDelete, windowRange)
 import UI.Render.ToolCard (ToolStatus(..), ToolCard(..), ToolFold(..), toggleFold, toolCardView, toolCardLines, toolCardWithStatus)
@@ -70,7 +73,8 @@ data AppState = AppState
   , appPending   :: Maybe PendingMsg -- ^ Assistant reply being accumulated (streaming)
   , appLastUsage :: Maybe Int     -- ^ Token usage of the last completed reply
   , appHist      :: HistState     -- ^ Input history navigation (REPL-shared file)
-  , appPicker    :: Maybe PickerState -- ^ Quick-picker overlay (command menu)
+  , appDialogs   :: DialogStack      -- ^ modal dialog stack (top owns keys)
+  , appEscLast   :: Maybe UTCTime    -- ^ last escape press (double-esc window)
   , appBridge    :: SchedulerBridge
   , appChan      :: BChan AppEvent
   , appLang      :: Lang
@@ -83,13 +87,6 @@ data AppState = AppState
   , appUsage      :: Maybe Usage        -- ^ real usage echo of the last turn
   , appCtxSize    :: Maybe Int          -- ^ context size of the active model
   }
-
--- | Quick-picker state.  The candidate list is the shared registry
--- ('UI.Commands.Registry.pickerItems'), filtered live by @pQuery@.
-data PickerState = PickerState
-  { pQuery    :: Text
-  , pSelected :: Int
-  } deriving (Show)
 
 -- | Chat message with timestamp
 data ChatMessage = ChatMessage
@@ -131,7 +128,8 @@ initialState bridge chan cfg = AppState
   , appPending   = Nothing
   , appLastUsage = Nothing
   , appHist      = emptyHistState
-  , appPicker    = Nothing
+  , appDialogs   = emptyStack
+  , appEscLast   = Nothing
   , appBridge    = bridge
   , appChan      = chan
   , appLang      = lang
@@ -224,16 +222,21 @@ drawUI st =
     -- /settings takes over the whole screen (qwen-style dialog): the tab
     -- bar sits at the top and the content fills the terminal.
     Just _  -> [ drawSettingsPanel st ]
-    Nothing ->
-      [ vBox
-          [ drawHeader (appLang st)
-          , drawMessages st
-          , maybe emptyWidget drawPlanCard (appPlan st)
-          , maybe emptyWidget (drawPickerWidget st) (appPicker st)
-          , drawInput st
-          , drawStatus st
-          ]
+    Nothing -> dialogLayer ++ [ mainUI ]
+  where
+    mainUI = vBox
+      [ drawHeader (appLang st)
+      , drawMessages st
+      , maybe emptyWidget drawPlanCard (appPlan st)
+      , drawInput st
+      , drawStatus st
       ]
+    -- Brick's draw returns a layer stack: the first widget is the top
+    -- layer, so an open dialog renders over the chat as a centered card
+    -- (mouse clicks no longer pass through it in brick 3.0).
+    dialogLayer = case stackTop (appDialogs st) of
+      Just d  -> [ centerLayer (drawDialog st d) ]
+      Nothing -> []
 
 drawHeader :: Lang -> Widget ResourceName
 drawHeader lang =
@@ -241,39 +244,58 @@ drawHeader lang =
     padLeftRight 1 $
       hBox [ str " trha ", str (T.unpack (tr lang "— agent harness")) ]
 
--- | Quick-picker overlay: filtered command list with a live query row.
-drawPickerWidget :: AppState -> PickerState -> Widget ResourceName
-drawPickerWidget st ps =
+-- | One dialog as a centered bordered card (the top of the dialog stack).
+drawDialog :: AppState -> Dialog -> Widget ResourceName
+drawDialog st d =
   withAttr (attrName "border") $
-    borderWithLabel (withAttr (attrName "title") $ str (T.unpack (tr lang " Commands "))) $
-      vBox (rows ++ [queryRow])
+    borderWithLabel (withAttr (attrName "title") $ str (T.unpack title)) $
+      vBox (rows ++ [queryRow | isCommands])
   where
     lang = appLang st
-    matches = filterItems (pQuery ps) (pickerItems lang)
-    n       = length matches
-    sel     = pSelected ps
+    isCommands = case d of DialogCommands{} -> True; _ -> False
+    title = case d of
+      DialogModels{}     -> tr lang " Models "
+      DialogSessions{}   -> tr lang " Sessions "
+      DialogCommands{}   -> tr lang " Commands "
+    sel = case d of DialogModels _ s -> s; DialogSessions _ s -> s; DialogCommands _ _ s -> s
+    n = dialogCount d
     (start, end) = windowRange n sel maxVisible
-    rows = [ pickerRow idx sel it
-           | (idx, it) <- zip [start ..] (drop start (take (end + 1) matches))
-           , idx <= end ]
-    queryRow = padLeftRight 1 $ hBox
-      [ withAttr (attrName "input") $ str ("> " ++ T.unpack (pQuery ps))
-      , withAttr (attrName "status") $ str (T.unpack (tr lang "   ↑/↓ move · Enter run · Esc close"))
-      ]
+    rows = case d of
+      DialogModels ms _ ->
+        [ row idx sel (str (T.unpack (modelName it)))
+                      (str ("ctx " ++ show (modelContextSize it)))
+        | (idx, it) <- zip [start ..] (drop start (take (end + 1) ms)) ]
+      DialogSessions ss _ ->
+        [ row idx sel (str (T.unpack (ssTitle it)))
+                      (str (ssId it ++ maybe "" (\tok -> "  " ++ show tok ++ " tok") (ssUsage it)))
+        | (idx, it) <- zip [start ..] (drop start (take (end + 1) ss)) ]
+      DialogCommands{} ->
+        [ row idx sel (str (T.unpack (piId it)))
+                      (str (T.unpack (T.take 44 (piDesc it))))
+        | (idx, it) <- zip [start ..] (drop start (take (end + 1) (dialogCommandsItems d))) ]
 
-    pickerRow :: Int -> Int -> PickerItem -> Widget ResourceName
-    pickerRow idx cur it =
+    -- One selectable row: marker + label + dim right-hand detail.
+    row :: Int -> Int -> Widget ResourceName -> Widget ResourceName -> Widget ResourceName
+    row idx cur label detail =
       padLeftRight 1 $ hBox
         [ withAttr markerAttr $ str marker
         , str " "
-        , withAttr (attrName "title") $ str (T.unpack (piId it))
-        , withAttr (attrName "timestamp") $ str $ "  " ++ T.unpack (T.take 44 (piDesc it))
+        , withAttr (attrName "title") label
+        , withAttr (attrName "timestamp") (str "  ")
+        , withAttr (attrName "timestamp") detail
         ]
       where
         marker | idx == cur = "▸ "
                | otherwise  = "  "
         markerAttr | idx == cur = attrName "tool"
                    | otherwise  = attrName "timestamp"
+
+    queryRow = case d of
+      DialogCommands _ q _ -> padLeftRight 1 $ hBox
+        [ withAttr (attrName "input") $ str ("> " ++ T.unpack q)
+        , withAttr (attrName "status") $ str (T.unpack (tr lang "   ↑/↓ move · Enter run · Esc close"))
+        ]
+      _ -> emptyWidget
 
 statusLine :: AppState -> Text
 statusLine st = T.unlines
@@ -611,54 +633,84 @@ handleEvent :: BrickEvent ResourceName AppEvent -> EventM ResourceName AppState 
 handleEvent (AppEvent ev) = handleAppEvent ev
 handleEvent (VtyEvent (EvKey (KChar 'q') [MCtrl])) = halt
 handleEvent (VtyEvent (EvKey (KChar 'c') [MCtrl])) = halt
+handleEvent (VtyEvent (EvKey (KChar 'q') [MCtrl])) = halt
+handleEvent (VtyEvent (EvKey (KChar 'c') [MCtrl])) = halt
+handleEvent (VtyEvent (EvKey KEsc _)) = do
+  st <- get
+  case appSettings st of
+    Just _  -> handleSettingsKey (EvKey KEsc [])
+    Nothing -> escapeHierarchy
+-- A dialog is modal: while one is open the top dialog owns every key and
+-- the editor gets nothing until it closes.
 handleEvent (VtyEvent ev) = do
   st <- get
   case appSettings st of
     Just _  -> handleSettingsKey ev
-    Nothing -> case appPicker st of
-      Just _  -> handlePickerKey ev
+    Nothing -> case stackTop (appDialogs st) of
+      Just _  -> handleDialogKey ev
       Nothing -> handleChatKey ev
 handleEvent _ = return ()
 
--- | Keys while the quick picker is open.
-handlePickerKey :: Event -> EventM ResourceName AppState ()
-handlePickerKey (EvKey KUp [])       = movePickerSel (-1)
-handlePickerKey (EvKey KDown [])     = movePickerSel 1
-handlePickerKey (EvKey (KChar 'p') [MCtrl]) = movePickerSel (-1)
-handlePickerKey (EvKey (KChar 'n') [MCtrl]) = movePickerSel 1
-handlePickerKey (EvKey KEnter [])    = pickerEnter
-handlePickerKey (EvKey KEsc [])      = modify $ \s -> s { appPicker = Nothing }
-handlePickerKey (EvKey KBS [])       = do
-  modify $ \s -> s { appPicker = (\ps -> ps { pQuery = queryDelete (pQuery ps), pSelected = 0 }) <$> appPicker s }
+-- | Escape resolution per MiMo's hierarchy: pop an open dialog; a second
+-- press within 5 seconds requests an interrupt (M3 wires the real cancel).
+escapeHierarchy :: EventM ResourceName AppState ()
+escapeHierarchy = do
+  st <- get
+  now <- liftIO getCurrentTime
+  let within = maybe False (\t0 -> diffUTCTime now t0 <= 5) (appEscLast st)
+      (fired, _arm) = escPress within (isJust (appEscLast st))
+      flags = EscFlags { efSelection = False
+                       , efStack = not (stackNull (appDialogs st))
+                       , efShell = False
+                       , efComplete = False }
+  case resolveEscape flags of
+    EscPopDialog ->
+      modify $ \s -> s { appDialogs = stackPop (appDialogs s), appEscLast = Nothing }
+    _ | fired ->
+          modify $ \s -> s { appStatus = tr (appLang s) "Interrupt requested (cancel lands in M3)" }
+      | otherwise -> modify $ \s -> s { appEscLast = Just now }
+
+-- | Keys while a dialog is open: the top dialog owns them all.
+handleDialogKey :: Event -> EventM ResourceName AppState ()
+handleDialogKey (EvKey KUp [])    = modifyTop (dialogMoveSel (-1))
+handleDialogKey (EvKey KDown [])  = modifyTop (dialogMoveSel 1)
+handleDialogKey (EvKey (KChar 'p') [MCtrl]) = modifyTop (dialogMoveSel (-1))
+handleDialogKey (EvKey (KChar 'n') [MCtrl]) = modifyTop (dialogMoveSel 1)
+handleDialogKey (EvKey KEnter []) = dialogActivate
+handleDialogKey (EvKey KBS [])    = do
+  modifyTop dialogCommandsDelete
   scrollBottom
-handlePickerKey (EvKey (KChar c) [])
+handleDialogKey (EvKey (KChar c) [])
   | let o = fromEnum c in o >= 32 && o < 127 = do
-      modify $ \s -> s { appPicker = (\ps -> ps { pQuery = queryAppend (pQuery ps) c, pSelected = 0 }) <$> appPicker s }
+      modifyTop (dialogCommandsAppend c)
       scrollBottom
-handlePickerKey _ = return ()
+handleDialogKey _ = return ()
 
--- | Move the picker selection, clamping to the current match list.
-movePickerSel :: Int -> EventM ResourceName AppState ()
-movePickerSel delta = do
-  st <- get
-  case appPicker st of
-    Nothing -> return ()
-    Just ps -> do
-      let n = length (filterItems (pQuery ps) (pickerItems (appLang st)))
-      modify $ \s -> s { appPicker = Just ps { pSelected = moveSelection delta (pSelected ps) n } }
+-- | Apply a pure transformation to the top dialog of the stack.
+modifyTop :: (Dialog -> Dialog) -> EventM ResourceName AppState ()
+modifyTop f = modify $ \s -> s { appDialogs =
+  case stackTop (appDialogs s) of
+    Just d  -> stackPush (f d) (stackPop (appDialogs s))
+    Nothing -> appDialogs s }
 
--- | Run the command under the picker cursor.
-pickerEnter :: EventM ResourceName AppState ()
-pickerEnter = do
+-- | Activate the entry under the top dialog's cursor.
+dialogActivate :: EventM ResourceName AppState ()
+dialogActivate = do
   st <- get
-  case appPicker st of
+  case stackTop (appDialogs st) of
     Nothing -> return ()
-    Just ps -> do
-      let matches = filterItems (pQuery ps) (pickerItems (appLang st))
-      modify $ \s -> s { appPicker = Nothing }
-      case drop (pSelected ps) matches of
-        item : _ -> handleSlash (piId item)
-        []       -> return ()
+    Just d -> do
+      modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
+      case d of
+        DialogModels ms sel -> case drop sel ms of
+          (m : _) -> modify $ \s -> s { appModel = modelName m }
+          []      -> return ()
+        DialogSessions ss sel -> case drop sel ss of
+          (s : _) -> resumeSession (T.pack (ssId s))
+          []      -> return ()
+        DialogCommands _ _ sel -> case drop sel (dialogCommandsItems d) of
+          (item : _) -> handleSlash (piId item)
+          []         -> return ()
 
 -- | Keys in the normal chat view.
 handleChatKey :: Event -> EventM ResourceName AppState ()
@@ -710,8 +762,9 @@ handleChatKey (EvKey KDown []) = do
 handleChatKey (EvKey (KChar '/') []) = do
   st <- get
   let input = T.strip $ T.unlines $ getEditContents $ appInput st
+      lang = appLang st
   if T.null input
-    then modify $ \s -> s { appPicker = Just (PickerState "/" 0) }
+    then modify $ \s -> s { appDialogs = stackPush (DialogCommands (pickerItems lang) "/" 0) (appDialogs s) }
     else do
       newInput <- nestEventM' (appInput st) $ handleEditorEvent (VtyEvent (EvKey (KChar '/') []))
       put st { appInput = newInput }
@@ -817,21 +870,33 @@ handleAppEvent (EvResponse result) = case result of
 handleAppEvent (EvSessions result) = do
   lang <- gets appLang
   t <- liftIO now
-  let body = case result of
-        Right []  -> tr lang "No sessions."
-        Right sids -> (tr lang "Sessions:" <> "\n") <> T.unlines (map (\s -> "  • " <> T.pack s) sids)
-        Left err   -> tr lang "Error: " <> T.pack (show err)
-  appendMsg (mkMsg "system" body t)
+  case result of
+    Right [] -> appendMsg (mkMsg "system" (tr lang "No sessions.") t)
+    Right sids -> do
+      local <- liftIO listLocalSessions
+      modify $ \s -> s { appDialogs = stackPush (DialogSessions local 0) (appDialogs s) }
+      -- legacy ids row kept for parity with the REPL
+      appendMsg (mkMsg "system" ((tr lang "Sessions:" <> "\n")
+                       <> T.unlines (map (\s -> "  • " <> T.pack s) sids)) t)
+    Left err -> appendMsg (mkMsg "system" (tr lang "Error: " <> T.pack (show err)) t)
   scrollBottom
 handleAppEvent (EvModels result) = do
   lang <- gets appLang
   t <- liftIO now
-  let body = case result of
-        Right []    -> tr lang "No models available."
-        Right ms    -> (tr lang "Models:" <> "\n") <> T.unlines
-                         (map (\m -> "  • " <> modelName m <> " — " <> modelDescription m) ms)
-        Left err    -> tr lang "Error: " <> T.pack (show err)
-  appendMsg (mkMsg "system" body t)
+  case result of
+    Right [] -> appendMsg (mkMsg "system" (tr lang "No models available.") t)
+    Right ms -> do
+      st <- get
+      case stackTop (appDialogs st) of
+        Just (DialogModels _ _) -> modifyTop (const (DialogModels ms 0))
+        _ -> appendMsg (mkMsg "system" ((tr lang "Models:" <> "\n") <> T.unlines
+                         (map (\m -> "  • " <> modelName m <> " — " <> modelDescription m) ms)) t)
+    Left err -> do
+      st <- get
+      case stackTop (appDialogs st) of
+        Just (DialogModels _ _) -> modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
+        _ -> return ()
+      appendMsg (mkMsg "error" (tr lang "Error: " <> T.pack (show err)) t)
   scrollBottom
 handleAppEvent (EvDeleted sid) = do
   lang <- gets appLang
@@ -964,7 +1029,8 @@ handleSubmit input = do
     then case filterItems input (pickerItems (appLang st)) of
       []  -> handleSlash input  -- unknown or parameterised command typed in full
       [_] -> handleSlash input  -- unique match: run it directly
-      _   -> modify $ \s -> s { appPicker = Just (PickerState input 0) }
+      _   -> modify $ \s -> s { appDialogs =
+               stackPush (DialogCommands (pickerItems (appLang st)) input 0) (appDialogs s) }
     else handleChat input
 
 handleSlash :: Text -> EventM ResourceName AppState ()
@@ -991,10 +1057,13 @@ handleSlash input = do
           msg <- liftIO (runSettingsCommand lang arg)
           forM_ msg $ \m -> appendMsg (mkMsg "system" m t)
           scrollBottom
-    "/sessions" ->
-      void $ liftIO $ async $
-        listSessions bridge >>= writeBChan chan . EvSessions
-    "/models" ->
+    "/sessions" -> do
+      local <- liftIO listLocalSessions
+      if null local
+        then appendMsg (mkMsg "system" (tr lang "No local sessions found. Run a conversation first.") t)
+        else modify $ \s -> s { appDialogs = stackPush (DialogSessions local 0) (appDialogs s) }
+    "/models" -> do
+      modify $ \s -> s { appDialogs = stackPush (DialogModels [] 0) (appDialogs s) }
       void $ liftIO $ async $
         listModels bridge >>= writeBChan chan . EvModels
     "/quit" -> halt

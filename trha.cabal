@@ -577,6 +577,7 @@ executable trha
     UI.StatusInfo
     UI.Render.Markdown
     UI.InputHistory
+    UI.Dialog
     UI.Render.Picker
     UI.Render.ToolCard
     UI.Theme

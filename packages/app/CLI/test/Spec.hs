@@ -23,6 +23,7 @@ import qualified BridgeDeltaSpec
 import qualified UI.EventSpec
 import qualified UI.ThemeSpec
 import qualified UI.InputHistorySpec
+import qualified UI.DialogSpec
 
 main :: IO ()
 main = hspec $ do
@@ -48,3 +49,4 @@ main = hspec $ do
   UI.EventSpec.spec
   UI.ThemeSpec.spec
   UI.InputHistorySpec.spec
+  UI.DialogSpec.spec

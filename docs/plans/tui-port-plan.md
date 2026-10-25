@@ -58,9 +58,9 @@
 
   - [x] 步骤 3.3：手动验收（对真实 scheduler）：发一条长回复，确认逐字增长、无重复段落（若 `/api/agent/step` 整段 reply 与 SSE delta 重复，以 delta 流为准、step 返回仅作 finalize 信号——在 Scheduler.hs 注释记录该契约）。`git commit -m "feat(cli): streaming reply rendering with spinner"`。
 
-## M1：核心形态（启动时细化，契约如下）
+## M1：核心形态（启动时细化，契约如下）——**已完成（2026-10-25）**
 
-> 进度（2026-10-25）：**多行输入、markdown 增强、工具卡折叠、token 统计 已完成**（spec 256/256），待人工验收；spinner 三态待做。
+> 进度：五项全部落地（spec 256/256）：多行输入与共享历史（`UI/InputHistory.hs`）、markdown 增强（`spanWrap` 替代被 3.0 删除的 widget 级 `wrap`）、工具卡折叠（结构化 `ToolCard` + 内核 `output` 尾部预览，契约 §3 已登记）、token 统计（内核 `usage` 回显 + footer 四段 + 会话索引累计）、spinner 三态（`RunState` 阶梯）。提交 f7a5b82/014fe87/9e4b7c3/f1d2907/0f72c61/8661bff。**待人工验收**：`cabal run trha -- tui` 连真实模型。
 
 - [x] **多行输入**：brick editor `Just 1 → 动态高度`，1-6 行自适应（对齐 MiMo `maxHeight=6`）；`alt+enter` 换行、enter 提交；光标在首行时 ↑ 翻输入历史（复用 REPL 历史文件）。
   落地：editor 限 6 行（brick line-limit 同时是编辑上限与显示上限，`vLimit` 天然自适应）；alt+enter 直投 `handleEditorEvent`（brick 只对纯 `KEnter []` 换行）；↑/↓ 在首/末行翻历史，新增纯模块 `UI/InputHistory.hs`（草稿暂存 + `~/.trha/history` 共享读写，多行条目以换行→反斜杠 n 转义存行）。
@@ -76,9 +76,9 @@
 
 > 前置已就绪（2026-10-25）：CLI 已升级 **brick 3.0**（`trha-cli.cabal` 钉 `brick >= 3.0`）——3.0 自带层嵌入组合子 `above` 与 `Brick.Widgets.Menu/MenuBar` 弹出菜单，且鼠标点击不再穿透高层遮罩，对话框/浮层直接受益。参考源码已收录 `3rdparty/brick-3.0/`（注意：3.0 删除了 widget 级 `wrap`，M1-2 以渲染时 `spanWrap` 补位）。
 
-- 新模块 `UI/Dialog.hs`：`DialogStack = [Dialog]`、`openDialog/closeDialog/topDialog`、遮罩渲染、**escape 层级表**（对齐 MiMo：选区→弹栈→shell→联想→审批→双击中断）。
-- 迁移三个既有文本交互进对话框：模型选择器（复用 `Core/Types` 模型列表 + brick 底部列表 widget）、会话列表（复用 `Core/SessionSummary`）、命令面板（现有 picker 改浮层，键位对齐 `ctrl+p` + `/`）。
-- 验收：`escape` 层级表逐条 spec 化（纯状态机测试，不需要渲染）。
+- [x] 新模块 `UI/Dialog.hs`：`DialogStack = [Dialog]`、`stackPush/stackPop/stackTop/stackNull`、**escape 层级表** `resolveEscape`（对齐 MiMo：选区→弹栈→shell→联想→审批；5 秒双击布防 `escPress`——真实中断接 M3 审批锁定）。（2026-10-25 完成，spec 逐条覆盖，278/278）
+- [x] 迁移三个既有文本交互进对话框：模型选择器（`/models` 推空栈 + `EvModels` 异步填充）、会话列表（`/sessions`/`EvSessions` 走本地 `SessionSummary`，含标题与累计 token）、命令面板（现有 picker 改浮层，键位对齐 `ctrl+p` + `/`；`PickerState` 已删除）。绘制用 brick 层列表：`drawUI` 首元素 = 顶层，`centerLayer` 居中卡片。（2026-10-25 完成）
+- 验收：`escape` 层级表逐条 spec 化（纯状态机测试，不需要渲染）——✅ `UI/DialogSpec.hs`（层级表 5 行 + 双击布防 3 行 + 栈/选择/命令编辑 11 例）。
 
 ## M3：审批与 diff（启动时细化，契约如下）
 
