@@ -581,6 +581,7 @@ executable trha
     UI.Layout
     UI.Completion
     UI.Keys
+    UI.Skills
     UI.Render.Picker
     UI.Render.Sidebar
     UI.Render.Diff

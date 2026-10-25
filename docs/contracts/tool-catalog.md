@@ -76,7 +76,8 @@
 | 变量 | 作用 | 默认 |
 |---|---|---|
 | `TRHA_WORKSPACE` | 工具工作区（读写边界） | `.trha/workspace` 或启动时的 shell cwd |
-| `TRHA_SKILLS_DIR` | `skill` 的 markdown 目录 | `<workspace>/.trha/skills` |
+| `TRHA_SKILLS_DIR` | `skill` 的额外 markdown 目录 | `<workspace>/.trha/skills` |
+| `TRHA_SEARX_URL` | `web_search` 的 SearXNG 根地址（json 格式）；未设则回退 DuckDuckGo HTML | 未设 |
 | `TRHA_MAX_TOOL_ROUNDS` | 工具轮上限 | 不限（同一调用连续重复 3 次判停） |
 | `TRHA_MAX_SUBAGENT_DEPTH` | 子智能体嵌套深度 | 2 |
 | `TRHA_SCHEDULE_TICK_MS` / `TRHA_SCHEDULE_GRACE_MS` | 调度轮询 / 重启补跑窗口 | 5000 / 5min |

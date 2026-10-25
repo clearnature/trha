@@ -27,6 +27,7 @@ import qualified UI.DialogSpec
 import qualified UI.LayoutSpec
 import qualified UI.CompletionSpec
 import qualified UI.KeysSpec
+import qualified UI.SkillsSpec
 import qualified UI.Render.DiffSpec
 import qualified UI.Render.SidebarSpec
 
@@ -58,5 +59,6 @@ main = hspec $ do
   UI.LayoutSpec.spec
   UI.CompletionSpec.spec
   UI.KeysSpec.spec
+  UI.SkillsSpec.spec
   UI.Render.DiffSpec.spec
   UI.Render.SidebarSpec.spec

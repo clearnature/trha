@@ -28,6 +28,7 @@ import Core.Types
 import Data.Text (Text)
 import qualified Data.Text as T
 import UI.Completion (Completion)
+import UI.Skills (Skill)
 import UI.I18n (Lang(..), tr)
 import UI.StatusInfo (StatusRow(..))
 
@@ -98,5 +99,6 @@ data AppEvent
   | EvSessionTitle (Maybe Text)          -- ^ sidebar title refresh
   | EvCompletionIndex [Completion]       -- ^ @\@@-file index (startup scan)
   | EvProviders (Either CLIError [ProviderInfo]) -- ^ provider registry (TUI switching)
+  | EvSkills [Skill]                     -- ^ discovered SKILL.md files
   | EvFinalReply Text                    -- ^ authoritative reply from the step
   deriving (Show)

@@ -356,7 +356,13 @@ export async function runExtraTool(
         .trim();
       return clip(`HTTP ${res.status}\n${stripped.slice(0, 4000)}`);
     } catch (e) {
-      return `ERROR: ${(e as Error).message}`;
+      // Raw undici errors ("fetch failed") hide the real setup problem: with
+      // no search backend configured the DuckDuckGo HTML fallback is the only
+      // path, and a network that cannot reach it looks like a crash.
+      const hint = searx
+        ? ''
+        : ' — TRHA_SEARX_URL is not set and the DuckDuckGo fallback is unreachable; point TRHA_SEARX_URL at a SearXNG instance (json format)';
+      return `ERROR: ${(e as Error).message}${hint}`;
     }
   }
   if (name === 'list_subagent_models') {

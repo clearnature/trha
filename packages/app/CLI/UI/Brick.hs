@@ -19,7 +19,7 @@ import Brick.Widgets.Border
 import Brick.Widgets.Edit
 import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.Async (async)
-import Control.Monad (forM_, void, when)
+import Control.Monad (forM_, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import System.Timeout (timeout)
 import Core.Types
@@ -68,6 +68,7 @@ import UI.Completion
     ( Completion(..), CompletionState(..), completionPopup, moveCompletion
     , applySelected, scanProject, defaultIndexOptions )
 import UI.Keys (LeaderAction(..), leaderResolve, leaderHelp)
+import UI.Skills (Skill(..), scanSkills, skillDirs)
 import Data.Time.Clock (UTCTime, diffUTCTime)
 import UI.InputHistory (HistState(..), emptyHistState, histUp, histDown, histCommit, loadHistory, appendHistory)
 import UI.Render.Picker (PickerItem(..), filterItems, maxVisible, moveSelection, queryAppend, queryDelete, windowRange)
@@ -111,6 +112,7 @@ data AppState = AppState
   , appLeader     :: Bool               -- ^ leader key armed (M4-3)
   , appProvider   :: Maybe Text         -- ^ selected provider (Nothing = kernel inUse)
   , appProviders  :: [ProviderInfo]     -- ^ provider registry from the kernel
+  , appSkills     :: [Skill]            -- ^ discovered SKILL.md files (.agents/.trha)
   }
 
 -- | Chat message with timestamp
@@ -177,6 +179,7 @@ initialState bridge chan cfg = AppState
   , appLeader    = False
   , appProvider  = Nothing
   , appProviders = []
+  , appSkills    = []
   }
   where lang = parseLang (configLang cfg)
 
@@ -245,6 +248,10 @@ runTUI bridge cfg = do
     -- @-file completion index: scanned once at startup, off the UI thread.
     index <- scanProject defaultIndexOptions ws
     writeBChan chan (EvCompletionIndex index)
+    -- Skills: project .agents first, then home; refreshed once at startup.
+    dirs <- skillDirs ws
+    skills <- scanSkills dirs
+    writeBChan chan (EvSkills skills)
   env <- getEnvironment
   let theme = themeFor (configTheme cfg) (supportsTrueColor env)
       mkVty' = mkVty defaultConfig
@@ -334,10 +341,12 @@ drawPalette d =
                         , withAttr (attrName "timestamp") $ str "  "
                         , withAttr (attrName "timestamp") $
                             str (T.unpack (T.take 44 (piDesc it))) ]
-                 | (idx, it) <- zip [0 ..] (take 8 items) ]
+                 | (idx, it) <- zip [start ..]
+                                   (take (end + 1) (drop start items)) ]
   where
     items = dialogCommandsItems d
     sel = dialogCommandsSelected d
+    (start, end) = windowRange (length items) sel 10
 
 -- | The @-file popup shown above the input (up to eight candidates).
 drawCompletion :: AppState -> CompletionState -> Widget ResourceName
@@ -1083,13 +1092,14 @@ handleChatKey (EvKey (KChar 'b') [MCtrl]) =
 -- | ctrl+x arms the leader for one keystroke.
 handleChatKey (EvKey (KChar 'x') [MCtrl]) =
   modify $ \s -> s { appLeader = True, appStatus = tr (appLang s) leaderHelp }
--- | ctrl+p opens the inline command palette (MiMo's palette key).
+-- | ctrl+p opens the inline command palette.  It puts the same @/@ in the
+-- editor as typing it, so both paths show one identical list.
 handleChatKey (EvKey (KChar 'p') [MCtrl]) = do
   st <- get
   let text = editorValue st
-      q = if "/" `T.isPrefixOf` text then text else "/"
-  modify $ \s -> s { appPalette =
-    Just (DialogCommands (pickerItems (appLang s)) q 0) }
+  unless ("/" `T.isPrefixOf` text) $
+    modify $ \s -> s { appInput = editorText InputArea (Just 6) "/" }
+  refreshPalette
 handleChatKey (EvKey (KChar 'g') []) =
   vScrollToBeginning (viewportScroll MessageArea)
 handleChatKey (EvKey (KChar 'G') []) =
@@ -1176,6 +1186,14 @@ refreshCompletion = do
   let popup = completionPopup 8 (appIndex st) (editorValue st) (editorCursor st)
   modify $ \s -> s { appComp = popup }
 
+-- | Palette sources: registered slash commands plus discovered skills.
+paletteItemsFor :: AppState -> [PickerItem]
+paletteItemsFor st =
+  [ PickerItem ("/skill:" <> skName sk) (skName sk)
+      ("skill · " <> skDescription sk)
+  | sk <- appSkills st ]
+    ++ pickerItems (appLang st)
+
 -- | Recompute the inline slash-command palette from the editor text.  A
 -- single-line input starting with @/@ owns the palette; anything else
 -- closes it (the list is a hint, not a mode).
@@ -1187,7 +1205,7 @@ refreshPalette = do
   modify $ \s ->
     if "/" `T.isPrefixOf` text && single
       then s { appPalette =
-             Just (DialogCommands (pickerItems (appLang s)) text 0) }
+             Just (DialogCommands (paletteItemsFor s) (T.drop 1 text) 0) }
       else s { appPalette = Nothing }
 
 -- | Move the palette selection (clamped by the shared dialog state machine).
@@ -1205,8 +1223,21 @@ runPaletteItem = do
       (item : _) -> do
         modify $ \s -> s { appInput = editorText InputArea (Just 6) ""
                          , appPalette = Nothing }
-        handleSlash (piId item)
+        if "/skill:" `T.isPrefixOf` piId item
+          then useSkill (T.drop 7 (piId item))
+          else handleSlash (piId item)
       [] -> modify $ \s -> s { appPalette = Nothing }
+
+-- | Load a discovered skill into the conversation: its instructions become
+-- the user turn (the same contract as a slash-invoked skill in MiMo).
+useSkill :: Text -> EventM ResourceName AppState ()
+useSkill name = do
+  st <- get
+  case find ((== name) . skName) (appSkills st) of
+    Nothing -> return ()
+    Just sk -> do
+      body <- liftIO $ TIO.readFile (skPath sk)
+      handleSubmit ("Use the skill \"" <> skName sk <> "\":\n\n" <> body)
 
 -- | Pass an event through to the brick editor (default editing keys:
 -- alt+enter inserts a newline; cursor movement; pastes).
@@ -1455,6 +1486,8 @@ handleAppEvent (EvProviders (Right ps)) = do
     Just (DialogProviders _ _) -> modifyTop (const (DialogProviders ps 0))
     _                          -> return ()
 handleAppEvent (EvProviders (Left _)) = return ()
+handleAppEvent (EvSkills skills) = do
+  modify $ \s -> s { appSkills = skills }
 handleAppEvent (EvFinalReply text) = do
   -- The step reply is authoritative: replace whatever the preview has
   -- accumulated (a dropped delta must not truncate the answer).

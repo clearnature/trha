@@ -206,6 +206,18 @@
 - **斜杠命令改为内联列表**（对齐 MiMo）：输入 `/` 或 `ctrl+p` 时，命令列表显示在
   **输入框左侧上方**（左对齐、随输入过滤、↑/↓ 选择、Enter 执行、Esc 只关列表），
   不再是居中的模态 picker；复用 `DialogCommands` 的纯状态机（过滤/选择都有既有 spec）。
+  后续修正：`ctrl+p` 现在写入与 `/` 相同的编辑器内容，两条路径是**同一份列表**；
+  空输入时 **skills 排在命令前**，列表随选中项滚动（不再只显示前 8 条）；过滤使用
+  去掉前导 `/` 的关键词，`/brooks` 能直接命中 skill。
+- **Skills 默认支持 `.agents`**（对齐 MiMo 的开放标准）：新增 `UI/Skills.hs`，扫描
+  `<cwd>/.agents/skills`、`<cwd>/.trha/skills`、`$HOME/.agents/skills`、
+  `$HOME/.trha/skills`、`TRHA_SKILLS_DIR`；支持 `<name>/SKILL.md`（frontmatter
+  `name`/`description`）与 `<name>.md`，同名以项目目录优先。选中后把 SKILL.md 正文
+  作为用户回合发送（与 MiMo 的 slash 调用同契约）。启动时异步扫描（`EvSkills`）。
+- **web_search 的 `fetch failed`**：该工具默认回退 DuckDuckGo HTML，未配置
+  `TRHA_SEARX_URL` 且网络不可达时只报原始 undici 错误。现在错误信息附带
+  “TRHA_SEARX_URL 未设置、DuckDuckGo 回退不可达”的可操作提示；env 已登记到
+  `docs/contracts/tool-catalog.md`。
 - **Anthropic 流式协议不生效**：`anthropicRequestBody` 从未带 `"stream": true`，
   请求实际是阻塞的，SSE 解析器拿不到帧——`deepseek-anthropic` 只剩一个 `[DONE]`。
   修复后实测三条 wire（openai/anthropic/responses）的 kernel 流式端点都返回内容。
