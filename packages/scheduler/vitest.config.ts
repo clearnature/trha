@@ -1,11 +1,26 @@
 import { defineConfig } from 'vitest/config';
 
+// ── Memory guard (2026-10-25 incident) ──────────────────────────────────────
+// This suite spawns REAL child processes: headless Chrome (browser-tools),
+// login bash shells (terminal_open), and scheduler children. With vitest's
+// default worker pool on a 36-core box that meant dozens of concurrent forks
+// and several Chromium instances per full run — two overlapping runs OOM'd the
+// machine. Pool is therefore hard-capped; dev runs target single spec files.
 export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
     include: ['test/**/*.test.ts'],
     exclude: ['node_modules', 'dist'],
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        // Hard ceiling: browser + bash spawning suites must never fan out wide.
+        maxForks: 4,
+        minForks: 1,
+        isolate: true,
+      },
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text-summary'],
