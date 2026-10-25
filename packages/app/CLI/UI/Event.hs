@@ -68,4 +68,5 @@ data AppEvent
   | EvStatusInfo [StatusRow]
   | EvMetrics [(Text, Text)]
   | EvToggleToolFold Int -- ^ flip the fold state of tool message @id@
+  | EvCtxSize Int        -- ^ context size of the active model (startup fetch)
   deriving (Show)

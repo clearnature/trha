@@ -22,7 +22,8 @@ spec = do
     it "projects an empty transcript to defaults" $ do
       sessionSummaryOf "s1" []
         `shouldBe` SessionSummary { ssId = "s1", ssTitle = defaultTitle "s1"
-                                  , ssTurns = 0, ssModel = Nothing, ssLastTs = Nothing }
+                                  , ssTurns = 0, ssModel = Nothing, ssLastTs = Nothing
+                                  , ssUsage = Nothing }
 
     it "extracts model from the session event" $ do
       let ev = sessionEvent "session" ["ts" .= ("2026-09-05T00:00:00Z" :: Text), "model" .= ("deepseek-chat" :: Text)]
@@ -40,6 +41,15 @@ spec = do
     it "tracks the last event timestamp" $ do
       let evs = [ userMsg "t1" "hello", sessionEvent "assistant" ["ts" .= ("t9" :: Text)] ]
       ssLastTs (sessionSummaryOf "s1" evs) `shouldBe` Just "t9"
+
+    it "sums cumulative tokens from done events" $ do
+      let done n = sessionEvent "done" ["ts" .= ("t" <> T.pack (show (n :: Int))), "usage" .= object ["totalTokens" .= (n :: Int)]]
+          evs = [ userMsg "t1" "hello", done 100, done 50 ]
+      ssUsage (sessionSummaryOf "s1" evs) `shouldBe` Just 150
+
+    it "yields 0 for done events without usage" $ do
+      let evs = [ userMsg "t1" "hello", sessionEvent "done" ["ts" .= ("t2" :: Text)] ]
+      ssUsage (sessionSummaryOf "s1" evs) `shouldBe` Just 0
 
     it "ignores unknown event kinds" $ do
       let evs = [ sessionEvent "mystery" ["ts" .= ("t1" :: Text), "content" .= ("zzz" :: Text)]

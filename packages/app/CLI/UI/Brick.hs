@@ -21,7 +21,7 @@ import Control.Concurrent.Async (async)
 import Control.Monad (forM_, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWith, listSessions, createSession, deleteSession, sendMessage, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, reportStep)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWith, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, reportStep)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import UI.Event
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
@@ -33,7 +33,7 @@ import UI.StatusInfo (StatusRow(..), collectStatusInfo)
 import UI.StatsView (StatsBlock(..), buildStatsBlocks)
 import UI.I18n (Lang(..), parseLang, tr)
 import Config.Settings (resolveConfig)
-import Data.List (intersperse)
+import Data.List (intersperse, find)
 import Data.IORef
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust, listToMaybe)
@@ -80,6 +80,8 @@ data AppState = AppState
   , appMetrics    :: [(Text, Text)]     -- ^ static metric values (workspace/git)
   , appPlan       :: Maybe PlanView     -- ^ live multi-step plan (kernel-owned)
   , appFolds      :: Map.Map Int ToolFold -- ^ tool-card fold states, keyed by msgId
+  , appUsage      :: Maybe Usage        -- ^ real usage echo of the last turn
+  , appCtxSize    :: Maybe Int          -- ^ context size of the active model
   }
 
 -- | Quick-picker state.  The candidate list is the shared registry
@@ -139,6 +141,8 @@ initialState bridge chan cfg = AppState
   , appMetrics   = []
   , appPlan      = Nothing
   , appFolds     = Map.empty
+  , appUsage     = Nothing
+  , appCtxSize   = Nothing
   }
   where lang = parseLang (configLang cfg)
 
@@ -193,11 +197,16 @@ vtyFg c = fg $ case c of
 runTUI :: SchedulerBridge -> CLIConfig -> IO ()
 runTUI bridge cfg = do
   chan <- newBChan 20
-  -- static footer metrics are sampled once (workspace path, git branch)
+  -- static footer metrics are sampled once (workspace path, git branch);
+  -- the active model's context size is fetched for the occupancy segment
   _ <- async $ do
     ws <- getCurrentDirectory
     gb <- gitBranchText
     writeBChan chan (EvMetrics [("workspace", T.pack ws), ("git", gb)])
+    models <- listModels bridge
+    forM_ models $ \ms ->
+      forM_ (find (\m -> modelName m == configModel cfg) ms) $ \m ->
+        writeBChan chan (EvCtxSize (modelContextSize m))
   let theme = resolveTheme (configTheme cfg)
       mkVty' = mkVty defaultConfig
   vty <- mkVty'
@@ -305,6 +314,7 @@ localSessionLines lang sessions =
       <> "  (" <> T.pack (ssId s)
       <> maybe "" (\m -> " · " <> m) (ssModel s)
       <> " · " <> T.pack (show (ssTurns s)) <> tr lang " turn(s)"
+      <> maybe "" (\tok -> " · " <> T.pack (show tok) <> " tok") (ssUsage s)
       <> maybe "" (\ts -> " · " <> ts) (ssLastTs s)
       <> ")"
   | (i, s) <- zip [1 :: Int ..] sessions ]
@@ -573,6 +583,7 @@ drawStatus st =
   where
     live = FooterLive (appModel st) (fmap T.pack (appSessionId st)) (appStatus st)
                       (appLastUsage st) (messageChars st)
+                      (appUsage st) (appCtxSize st)
     metricSegs = footerMetrics (appLang st) (parseMetrics (configMetrics (appEffCfg st))) live (appMetrics st)
     messageChars st2 = sum (map (T.length . msgContent) (appMessages st2))
 
@@ -788,7 +799,9 @@ handleAppEvent (EvResponse result) = case result of
       flushPending
       bell <- gets (configBell . appEffCfg)
       when bell $ liftIO (putStr "\a" >> hFlush stdout)
-      modify $ \s -> s { appLastUsage = Just (usageTotalTokens usage) }
+      let real = usageTotalTokens usage > 0
+      modify $ \s -> s { appLastUsage = Just (usageTotalTokens usage)
+                       , appUsage = if real then Just usage else appUsage s }
       scrollBottom
   Left err -> do
     flushPending -- keep whatever partial content already arrived
@@ -880,6 +893,8 @@ handleAppEvent (EvToggleToolFold mid) = do
   modify $ \s -> s { appFolds =
     Map.alter (Just . toggleFold . fromMaybe FoldCollapsed) mid (appFolds s) }
   scrollBottom
+handleAppEvent (EvCtxSize cs) = do
+  modify $ \s -> s { appCtxSize = Just cs }
 
 -- | Tool-card message from a completed lifecycle event (with output
 -- preview lines from the kernel tail).
@@ -1108,21 +1123,27 @@ handleChat input = do
           liftIO $ atomicModifyIORef' deltasRef (const (True, ()))
           liftIO $ atomicModifyIORef' accRef (\acc -> (acc <> t, ()))
           writeBChan chan (EvResponse (Right (ChunkDelta t)))
-        result <- sendMessage bridge sid input
+        result <- sendMessageWithUsage bridge sid input
+        let (chunk, musage) = case result of
+              Right (c, u) -> (Right c, u)
+              Left e       -> (Left e, Nothing)
         sawDeltas <- liftIO (readIORef deltasRef)
-        case (sawDeltas, result) of
+        case (sawDeltas, chunk) of
           (True, _) -> do
             acc <- liftIO (readIORef accRef)
             recordChunk sid (Right (ChunkDelta acc))
-            -- zero usage: the step response carries none; M1 adds real stats
-            writeBChan chan (EvResponse (Right (ChunkDone (Usage 0 0 0))))
-          (False, r) -> do
-            recordChunk sid r
-            writeBChan chan (EvResponse r)
+            -- real usage when the kernel echoes it (turn out + cumulative)
+            writeBChan chan (EvResponse (Right (ChunkDone (fromMaybe zero musage))))
+          (False, c) -> do
+            recordChunk sid c
+            writeBChan chan (EvResponse c)
+            forM_ musage $ \u ->
+              writeBChan chan (EvResponse (Right (ChunkDone u)))
         -- drain window: let trailing SSE events (e.g. the final tool
         -- status) arrive before tearing the stream down
         liftIO $ threadDelay 100000
         cancel
+      zero = Usage 0 0 0
   void $ liftIO $ async $ case appSessionId st of
     Just sid -> do
       recordUser sid input

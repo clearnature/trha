@@ -18,6 +18,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import UI.I18n (Lang(..), tr)
+import Core.Types (Usage(..))
 
 -- | Key hints shown at the end of the footer.
 footerHints :: Text
@@ -40,11 +41,11 @@ footerSegments model mSession status mUsage =
 -- CLI statusline catalogue: model / git / workspace / context / tokens /
 -- session).
 metricKeys :: [Text]
-metricKeys = ["model", "git", "workspace", "context", "tokens", "session"]
+metricKeys = ["model", "git", "workspace", "context", "tokens", "session", "usage"]
 
 -- | Keys shown by default (order matters).
 defaultMetrics :: Text
-defaultMetrics = "model,git,context,session"
+defaultMetrics = "model,usage,context,session"
 
 -- | Parse a metrics configuration: keep supported keys, in order, unique.
 parseMetrics :: Text -> [Text]
@@ -60,6 +61,8 @@ data FooterLive = FooterLive
   , flStatus  :: Text
   , flUsage   :: Maybe Int   -- ^ last reply tokens
   , flChars   :: Int         -- ^ message-area characters (context)
+  , flDetail  :: Maybe Usage -- ^ in/out/total of the last turn (real echo)
+  , flCtxSize :: Maybe Int   -- ^ model context size (occupancy %)
   } deriving (Show, Eq)
 
 -- | Render the configured metrics as footer segments (localised labels).
@@ -73,5 +76,17 @@ footerMetrics lang order live statics = map render order
     render "context"   = tr lang "Context: " <> T.pack (show (flChars live)) <> tr lang " chars"
     render "tokens"    = tr lang "Tokens: " <> maybe "—" (T.pack . show) (flUsage live)
     render "session"   = tr lang "Session: " <> fromMaybe (tr lang "none") (flSession live)
-    render _           = ""
+    render "usage"     = case flDetail live of
+      Nothing -> ""
+      Just u  ->
+        tr lang "in" <> " " <> T.pack (show (usagePromptTokens u)) <> tr lang " · "
+          <> tr lang "out" <> " " <> T.pack (show (usageCompletionTokens u)) <> tr lang " · "
+          <> tr lang "total" <> " " <> T.pack (show (usageTotalTokens u))
+          <> maybe "" occupancy (occupancyPct u)
+    occupancy q = tr lang " · ctx " <> T.pack (show q) <> "%"
+    occupancyPct u =
+      let cin = usagePromptTokens u
+      in case flCtxSize live of
+           Just cs | cs > 0 -> Just (round (fromIntegral cin / fromIntegral cs * 100 :: Double))
+           _                -> Nothing
     lookupVal k = fromMaybe "—" (lookup k statics)

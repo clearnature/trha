@@ -22,6 +22,7 @@ import qualified Data.Aeson.Key as K
 import qualified Data.Aeson.KeyMap as KM
 import Data.Char (isDigit)
 import Data.List (find)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -32,6 +33,7 @@ data SessionSummary = SessionSummary
   , ssTurns   :: Int        -- ^ number of user turns
   , ssModel   :: Maybe Text
   , ssLastTs  :: Maybe Text -- ^ timestamp of the last recorded event
+  , ssUsage   :: Maybe Int  -- ^ cumulative tokens from @done@ events (M1-4)
   } deriving (Show, Eq)
 
 -- | Fallback title when a session has no user message yet.
@@ -55,6 +57,7 @@ sessionSummaryOf sid events =
     , ssTurns = length userEvents
     , ssModel = modelOf
     , ssLastTs = lastTsOf
+    , ssUsage = totalOf
     }
   where
     userEvents = [ v | v <- events, eventOf v == Just "user" ]
@@ -67,6 +70,15 @@ sessionSummaryOf sid events =
     lastTsOf = case reverse events of
       (v : _) -> fieldOf v "ts"
       []      -> Nothing
+    -- done events carry {"usage":{"totalTokens":N}}; sum them (no events → Nothing)
+    totalOf =
+      let doneEvents = [ v | v <- events, eventOf v == Just "done" ]
+          ns = [ round n | Object o <- doneEvents
+                        , Just (Object u) <- [KM.lookup (K.fromText "usage") o]
+                        , Just (Number n) <- [KM.lookup (K.fromText "totalTokens") u] ]
+      in case doneEvents of
+           [] -> Nothing
+           _  -> Just (sum ns)
 
     eventOf :: Value -> Maybe Text
     eventOf v = fieldOf v "event"
