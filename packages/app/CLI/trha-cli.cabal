@@ -33,6 +33,7 @@ executable trha
     UI.Render.Markdown
     UI.InputHistory
     UI.Dialog
+    UI.Layout
     UI.Render.Diff
     UI.Render.Picker
     UI.Render.ToolCard
@@ -103,6 +104,8 @@ test-suite trha-cli-test
     UI.InputHistorySpec
     UI.Dialog
     UI.DialogSpec
+    UI.Layout
+    UI.LayoutSpec
     UI.Render.Diff
     UI.Render.DiffSpec
   build-depends:    base ^>=4.22

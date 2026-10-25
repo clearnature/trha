@@ -24,6 +24,7 @@ import qualified UI.EventSpec
 import qualified UI.ThemeSpec
 import qualified UI.InputHistorySpec
 import qualified UI.DialogSpec
+import qualified UI.LayoutSpec
 import qualified UI.Render.DiffSpec
 
 main :: IO ()
@@ -51,4 +52,5 @@ main = hspec $ do
   UI.ThemeSpec.spec
   UI.InputHistorySpec.spec
   UI.DialogSpec.spec
+  UI.LayoutSpec.spec
   UI.Render.DiffSpec.spec

@@ -578,6 +578,7 @@ executable trha
     UI.Render.Markdown
     UI.InputHistory
     UI.Dialog
+    UI.Layout
     UI.Render.Picker
     UI.Render.Diff
     UI.Render.ToolCard
