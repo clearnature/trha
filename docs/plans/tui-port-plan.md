@@ -74,8 +74,8 @@
   - [x] 步骤 3.1：`Brick.hs` 消息区渲染改读 `pendingText` 逐 delta 增长；busy 期间输入框标签接 spinner 帧序列（`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`，`AppEvent Tick` 驱动，100ms）。
     落地偏差：未引入 `Tick` 定时器，实为**内容长度驱动**（`spinnerFrame (T.length (pmContent pm))`，`Brick.hs:603-608`）——零线程、delta 驱动重绘即驱动动画。行为可接受，保留该简化并在此登记。
 
-  - [ ] 步骤 3.2：移除 `Brick.hs:953-961` 的 `threadDelay 100_000` drain window——以 `ChunkDone`/`SseMessage` 终态事件收尾（对齐 MiMo 的 step-finish 语义）。
-    **未完成（2026-10-25 核对）**：代码已随文件增长漂到 `Brick.hs:1349-1351`，`threadDelay 100000` 与 "drain window" 注释仍在。转 M3.5-1。
+  - [x] 步骤 3.2：移除 `Brick.hs:953-961` 的 `threadDelay 100_000` drain window——以 `ChunkDone`/`SseMessage` 终态事件收尾（对齐 MiMo 的 step-finish 语义）。
+    落地（原勾选一度不实，2026-10-25 由 M3.5-1 补齐）：SSE 终态判定 + 有上限的终态等待替代固定 sleep，TUI 路径已无 `threadDelay`。
 
   - [ ] 步骤 3.3：手动验收（对真实 scheduler）：发一条长回复，确认逐字增长、无重复段落（若 `/api/agent/step` 整段 reply 与 SSE delta 重复，以 delta 流为准、step 返回仅作 finalize 信号——在 Scheduler.hs 注释记录该契约）。
     **未完成（勾选已回退）**：真实模型下的人工验收尚未执行。转 M3.5-7。
@@ -113,7 +113,7 @@
   形态更正：计划原文写"底部审批条"，实际实现是 `centerLayer` **居中模态浮层**（更接近 MiMo 的 dialog 形态）。
 - [x] **`UI/Render/Diff.hs`（分类部分）**：unified diff 行分类 + added/removed 配色（纯函数 + spec）。
   落地：`DiffClass`（`CAdd`/`CDel`/`CHunk`/`CMeta`/`CPlain`）分类 + `parseDiffLines`；展开态工具卡的输出行按 class 上色，主题新增四属性 `diffAdd/diffRemove/diffHunk/diffMeta`（dark/light 各一套）；DiffSpec 8 例。
-- [ ] **diff 显示规格（未做）**：行号对齐与「宽 <120 用 unified」的显示规则。当前只有分类上色，没有行号、没有宽度阈值分支。转 M3.5-8。
+- [x] **diff 显示规格**：行号对齐与「宽 <120 用 unified」的显示规则——已由 M3.5-8 完成（见该节）。
 
 ## M3.5：纠偏与收口（新增，先于 M4）——**进行中（7/8，仅剩人工验收）**
 
