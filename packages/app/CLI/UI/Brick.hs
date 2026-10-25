@@ -57,7 +57,9 @@ import System.IO (hFlush, stdout)
 import Control.Exception (IOException, try)
 import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
 import UI.Dialog
-import UI.Render.Diff (DiffClass(..), diffClass)
+import UI.Render.Diff
+    ( DiffClass(..), DiffLayout(..), DiffRow(..), diffClass, diffLayout, numberDiff
+    , renderDiffRow, looksLikeDiff )
 import Data.Time.Clock (UTCTime, diffUTCTime)
 import UI.InputHistory (HistState(..), emptyHistState, histUp, histDown, histCommit, loadHistory, appendHistory)
 import UI.Render.Picker (PickerItem(..), filterItems, maxVisible, moveSelection, queryAppend, queryDelete, windowRange)
@@ -427,17 +429,14 @@ messageBody md role content tool fold =
           FoldCollapsed ->
             vBox [ str (T.unpack l) | l <- toolCardCollapsed card ]
           FoldExpanded ->
-            -- diff-shaped tool output gets added/removed colouring
-            let trunc t | T.length t <= cardWidth - 4 = t
-                        | otherwise                   = T.take (cardWidth - 5) t <> "…"
-                diffAttrOf c = attrName $ case c of
-                  CAdd -> "diffAdd"; CDel -> "diffRemove"
-                  CHunk -> "diffHunk"; CMeta -> "diffMeta"; CPlain -> "tool"
-            in vBox $
+            vBox $
               [ str (T.unpack l)
               | l <- toolCardLines (T.pack (tcName card)) (tcArgs card) ]
-              <> [ withAttr (diffAttrOf (diffClass l)) $ str (T.unpack ("  │ " <> trunc l))
-                 | l <- tcOutput card ]
+              <> (if looksLikeDiff (tcOutput card)
+                    then [diffWidget (tcOutput card)]
+                    else [ withAttr (diffAttrOf (diffClass l)) $
+                             str (T.unpack ("  │ " <> truncLine l))
+                         | l <- tcOutput card ])
               <> [ withAttr (attrName "status") $ str (T.unpack (toolStatusLine st (tcDur card)))
                  | Just st <- [tcStatus card] ]
 
@@ -515,8 +514,39 @@ spanWrap spans = Widget Greedy Fixed $ do
         ]
   return $ emptyResult & imageL .~ V.vertCat imgs
 
--- | A word-wrapping token: one word or space-run, carrying the attribute
--- name of the span it came from.
+-- | Render a diff-shaped tool output: line numbers appear once the terminal
+-- is wide enough, and each line keeps its add/remove/hunk colour.
+diffWidget :: [Text] -> Widget ResourceName
+diffWidget ls = Widget Greedy Fixed $ do
+  c <- getContext
+  let width = max 1 (c ^. availWidthL)
+      lay = diffLayout width
+      resolve n = attrMapLookup n (c ^. ctxAttrMapL)
+      prefix = case lay of
+        DiffInline   -> "  │ "
+        DiffNumbered -> ""
+      rows = [ r { drText = truncLine (drText r) } | r <- numberDiff ls ]
+      imgs = [ V.text' (resolve (diffAttrOf (drClass r)))
+                   (prefix <> renderDiffRow lay r)
+             | r <- rows ]
+  return $ emptyResult & imageL .~ V.vertCat imgs
+
+-- | Card lines are capped so a long tool output cannot push the layout.
+truncLine :: Text -> Text
+truncLine t
+  | T.length t <= cardWidth - 4 = t
+  | otherwise                   = T.take (cardWidth - 5) t <> "…"
+
+-- | Attribute for one diff class (plain output keeps the tool attribute).
+diffAttrOf :: DiffClass -> AttrName
+diffAttrOf c = attrName $ case c of
+  CAdd   -> "diffAdd"
+  CDel   -> "diffRemove"
+  CHunk  -> "diffHunk"
+  CMeta  -> "diffMeta"
+  CPlain -> "tool"
+
+-- | A word-wrapping token: one word or space-run, carrying the attribute-- name of the span it came from.
 data SpanTok = SpanTok { tokAttr :: String, tokText :: Text }
 
 spanToks :: MdSpan -> [SpanTok]

@@ -17,8 +17,8 @@
 | **M0 数据流地基** | 消费 SSE text delta、流式渲染、去除 drain-window hack | 对真实 scheduler 发消息：回复**逐 delta 增长**（非整段出现）；无重复渲染；spec 全绿 | 流式与终态收尾已落地；人工验收未做 |
 | **M1 核心形态** | 多行输入、markdown 增强、工具卡折叠、token/上下文统计、会话状态 spinner | 输入 1-6 行自适应；markdown 列表/标题/行内样式可见；工具卡可折叠展开；footer 显示 prompt/completion/累计/占用% | 已落地（折叠仅"最近一张"卡） |
 | **M2 对话框系统** | UI/Dialog.hs 栈 + escape 层级表；模型/会话/命令面板迁入对话框 | dialog 栈 LIFO + escape 语义表逐条通过；`/models`、`/sessions`、`ctrl+p` 均为浮层，消息流不再被文本列表污染 | 已落地；双击 esc 与真实中断已在 M3.5-2/3 补齐 |
-| **M3 审批与 diff** | 权限审批对话框 + unified diff 渲染 + once/always/reject | 审批到达时消息流锁定；diff 正确配色；once/always/reject 走 scheduler `decision` API | 主链路已落地；diff 行号/宽度阈值未做；删除类 always 已移除 |
-| **M3.5 纠偏与收口**（新增） | 移除 drain window、双击 esc 修正、真实中断、审批安全特例、文档真实性、人工验收 | 下列 8 项逐条通过；文档勾选与代码一致 | **进行中（4/8）** |
+| **M3 审批与 diff** | 权限审批对话框 + unified diff 渲染 + once/always/reject | 审批到达时消息流锁定；diff 正确配色；once/always/reject 走 scheduler `decision` API | 主链路已落地；删除类 always 已移除；diff 行号/宽度阈值已在 M3.5-8 补齐 |
+| **M3.5 纠偏与收口**（新增） | 移除 drain window、双击 esc 修正、真实中断、审批安全特例、文档真实性、人工验收 | 下列 8 项逐条通过；文档勾选与代码一致 | **进行中（6/8，剩 reject 原因与人工验收）** |
 | **M4 侧栏与高级** | 侧栏（token/成本/TODO）、@文件补全、leader 键、truecolor 主题、鼠标 | 侧栏 ≥80 列停靠、窄屏浮层；`@` 触发文件补全；主题含 truecolor 调色板 | 未开始，拆三刀 |
 | **M5 存量补齐**（新增，不承诺） | fork/timeline/recovery、审批 diff 全屏、卡片焦点折叠、toast、reject 原因、成本/TPS | 每项启动时再细化 | backlog |
 
@@ -31,7 +31,7 @@
 | M0 | 流式渲染可用；drain window 已由终态等待替代（M3.5-1）；**人工验收仍未做**（3.3 勾选已回退）；spinner 实为内容驱动而非 Tick 驱动 | `Core.SSE.isTerminalPayload`、`Brick.hs` 的 `timeout 250000`、`:603-608` |
 | M1 | 五项功能在；工具卡折叠只切"最近一张"，无卡片焦点 | `toggleRecentFold`（`Brick.hs`） |
 | M2 | 对话框栈与 escape 表在；`resolveEscape` 实接线只喂 `efStack`（选区/shell/联想恒 False）；双击 esc 已按 Running 布防并在触发后清 armed（M3.5-2）；真实中断已接（M3.5-3） | `UI.Dialog.escWiring`、`Brick.hs` escape 段 |
-| M3 | 审批链路（parked → 浮层三选 → decision）与 diff 分类上色在；审批是**居中浮层**而非计划原文的"底部审批条"；删除类命令已无 always（M3.5-4）；diff 无行号、无宽 <120 规则；reject 仍不能附原因 | `UI.Dialog.approvalOptions`、`UI/Render/Diff.hs` |
+| M3 | 审批链路（parked → 浮层三选 → decision）与 diff 分类上色在；审批是**居中浮层**而非计划原文的"底部审批条"；删除类命令已无 always（M3.5-4）；diff 行号与 120 列阈值已补（M3.5-8）；reject 仍不能附原因 | `UI.Dialog.approvalOptions`、`UI/Render/Diff.hs` |
 | M4 | 未开始 | — |
 
 内核事实（决定 M3.5 排期）：
@@ -115,7 +115,7 @@
   落地：`DiffClass`（`CAdd`/`CDel`/`CHunk`/`CMeta`/`CPlain`）分类 + `parseDiffLines`；展开态工具卡的输出行按 class 上色，主题新增四属性 `diffAdd/diffRemove/diffHunk/diffMeta`（dark/light 各一套）；DiffSpec 8 例。
 - [ ] **diff 显示规格（未做）**：行号对齐与「宽 <120 用 unified」的显示规则。当前只有分类上色，没有行号、没有宽度阈值分支。转 M3.5-8。
 
-## M3.5：纠偏与收口（新增，先于 M4）——**进行中（4/8）**
+## M3.5：纠偏与收口（新增，先于 M4）——**进行中（6/8）**
 
 > 依据：2026-10-25 代码核对发现的 4 处勾选不实、2 处未注记偏离、3 处 MiMo 对齐缺口。原则：**先让计划与代码一致，再往下建**；每项完成即更新勾选与证据行号。
 
@@ -142,9 +142,10 @@
   - [ ] footer：in / out / total / ctx% 数值合理
   - [ ] 配一条 ask 规则：审批浮层弹出、消息流不可输入、once / always / reject 三路结果正确；always 后同命令不再询问
   - [ ] diff 输出有增删配色
-- [ ] **3.5-8 diff 显示规格**：行号对齐与「宽 <120 用 unified」目前未实现（只有分类上色）。
-  做法：先定显示规则（行号取自 hunk 头还是自增；宽度用 `availWidthL` 阈值切换 unified/side-by-side 或仅隐藏行号），落成纯函数 + spec，再接渲染。
-  验收：spec 覆盖阈值两侧与 hunk 行号；窄屏不溢出。
+- [x] **3.5-8 diff 显示规格**：行号对齐与宽度阈值。
+  落地：`UI.Render.Diff` 增 `hunkStart`/`numberDiff`/`DiffRow`（旧/新行号分别推进：context 双增、删除只推旧、新增只推新；hunk 外的 meta 行不编号）、`diffLayout`/`renderDiffRow`（**<120 列 inline unified 无行号，≥120 列加 4+4 行号栏**）与 `looksLikeDiff`（以 hunk 头为准，避免把 `-` 列表误判成 diff）。工具卡展开态在 `looksLikeDiff` 时改走 `diffWidget`（渲染时取 `availWidthL` 定布局，逐行按 class 上色）。
+  与 MiMo 的差异（已登记）：MiMo 在宽屏切 side-by-side，这里保持 unified 只加行号栏——工具卡展示的是输出尾部预览，配对 hunk 没有收益。
+  测试：DiffSpec 新增 12 例（hunk 解析含无计数形式、编号推进、hunk 外不编号、阈值两侧、两种渲染、looksLikeDiff）。
 
 ## M4：侧栏与高级（拆三刀，逐刀可交付）
 
