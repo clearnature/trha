@@ -41,6 +41,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import Data.Aeson
+import Data.List (sortOn)
 import Data.Maybe (fromMaybe, mapMaybe)
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text.Encoding as TE
@@ -1019,6 +1020,28 @@ adapterRefusalText (UnavailableProvider why) = why
 lookupField :: Text -> Object -> Maybe Value
 lookupField k o = KM.lookup (fromText k) o
 
+-- | Anthropic tool declarations: @{name, description, input_schema}@.
+anthropicToolSpecs :: Value -> [LLM.ToolSpec]
+anthropicToolSpecs v =
+  [ LLM.ToolSpec (str "name" o) (str "description" o)
+      (fromMaybe (object []) (lookupField "input_schema" o))
+  | Object o <- rawArray "tools" v ]
+  where
+    str k o = case lookupField k o of
+      Just (String x) -> x
+      _               -> ""
+
+-- | Responses tool declarations: @{type:"function", name, definition…}@.
+responsesToolSpecs :: Value -> [LLM.ToolSpec]
+responsesToolSpecs v =
+  [ LLM.ToolSpec (str "name" o) (str "description" o)
+      (fromMaybe (object []) (lookupField "parameters" o))
+  | Object o <- rawArray "tools" v ]
+  where
+    str k o = case lookupField k o of
+      Just (String x) -> x
+      _               -> ""
+
 -- | An array field of a JSON body ([] when absent or not an array).
 rawArray :: Text -> Value -> [Value]
 rawArray k v = case v of
@@ -1174,10 +1197,10 @@ openaiStreamHandler adapter body =
             , "message" .= object (
                 [ "role" .= ("assistant" :: Text), "content" .= content ]
                 ++ [ "tool_calls" .= [ object
-                        [ "id" .= ("call_" <> T.pack (show i) :: Text)
+                        [ "id" .= id0
                         , "type" .= ("function" :: Text)
                         , "function" .= object ["name" .= n, "arguments" .= a]
-                        ] | (i, (n, a)) <- zip [(0 :: Int) ..] toolCalls ]
+                        ] | (_, id0, n, a) <- toolCalls ]
                    | not (null toolCalls) ])
             , "finish_reason" .= (if null toolCalls then "stop" else "tool_calls" :: Text)
             ]]
@@ -1209,11 +1232,12 @@ anthropicStreamApp adapter = Tagged $ \req respond -> do
         -- text, or the tool loop can never close.
         let convo = maybe id (\x m -> ChatSystem x : m) sys
                       (mapMaybe anthropicChatMsg (rawArray "messages" v))
+            tools = anthropicToolSpecs v
         respond $ responseStream status200 sseHeaders $ \write flush -> do
           case effAdapter of
             Left why -> emitAnthropic write (ChunkError (adapterRefusalText why)) >> flush
             Right a  -> do
-              _ <- llmChatToolsStream a convo [] (\chunk -> emitAnthropic write chunk >> flush)
+              _ <- llmChatToolsStream a convo tools (\chunk -> emitAnthropic write chunk >> flush)
               pure ()
           emitAnthropic write (ChunkDone (mkUsage 0 0 0)) >> flush
 
@@ -1231,7 +1255,7 @@ anthropicStreamHandler adapter body =
       result <- liftIO $ case target of
         Just t  -> providerEvents t
                      (toChatMessages (maybe [] (\x -> [("system", x)]) sys ++ msgs))
-                     []
+                     (anthropicToolSpecs body)
                      onEvent >> pure (Right ())
         Nothing -> Stream.streamAnthropic "" model hsMsgs onEvent
       events <- liftIO $ readIORef eventsRef
@@ -1248,8 +1272,9 @@ anthropicStreamHandler adapter body =
         , "role"        .= ("assistant" :: Text)
         , "content"     .= (
             [ object ["type" .= ("text" :: Text), "text" .= content] | not (T.null content) ]
-            ++ [ object [ "type" .= ("tool_use" :: Text), "name" .= n, "input" .= rawJson a ]
-               | (n, a) <- toolCalls ])
+            ++ [ object [ "type" .= ("tool_use" :: Text), "id" .= id0
+                        , "name" .= n, "input" .= rawJson a ]
+               | (_, id0, n, a) <- toolCalls ])
         , "model"       .= model
         , "stop_reason" .= (if null toolCalls then "end_turn" else "tool_use" :: Text)
         , "stream_events" .= length events
@@ -1278,11 +1303,12 @@ responsesStreamApp adapter = Tagged $ \req respond -> do
         -- Faithful items: function_call_output must survive as a tool turn.
         let convo = maybe id (\x m -> ChatSystem x : m) instr
                       (mapMaybe responsesChatMsg (rawArray "input" v))
+            tools = responsesToolSpecs v
         respond $ responseStream status200 sseHeaders $ \write flush -> do
           case effAdapter of
             Left why -> emitResponses write (ChunkError (adapterRefusalText why)) >> flush
             Right a  -> do
-              _ <- llmChatToolsStream a convo [] (\chunk -> emitResponses write chunk >> flush)
+              _ <- llmChatToolsStream a convo tools (\chunk -> emitResponses write chunk >> flush)
               pure ()
           emitResponses write (ChunkDone (mkUsage 0 0 0)) >> flush
 
@@ -1302,7 +1328,7 @@ responsesStreamHandler adapter body =
       result <- liftIO $ case target of
         Just t  -> providerEvents t
                      (toChatMessages (maybe [] (\x -> [("system", x)]) instr ++ inputMsgs))
-                     []
+                     (responsesToolSpecs body)
                      onEvent >> pure (Right ())
         Nothing -> Stream.streamDeepSeek "" model hsMsgs onEvent
       events <- liftIO $ readIORef eventsRef
@@ -1332,11 +1358,11 @@ responsesStreamHandler adapter body =
                 ] ]
             ++ [ object
                    [ "type"      .= ("function_call" :: Text)
-                   , "id"        .= ("fc-stream" <> T.pack (show i) :: Text)
-                   , "call_id"   .= ("call_" <> T.pack (show i) :: Text)
+                   , "id"        .= id0
+                   , "call_id"   .= id0
                    , "name"      .= n
                    , "arguments" .= a
-                   ] | (i, (n, a)) <- zip [(0 :: Int) ..] toolCalls ])
+                   ] | (_, id0, n, a) <- toolCalls ])
         , "status"     .= ("completed" :: Text)
         , "stream_events" .= length events
         -- 约束判定：status 为 pass / warn；**总是**存在（warn 时仍返回内容，仅标注）。
@@ -1460,10 +1486,10 @@ emitAnthropic write chunk = case chunk of
     ]
   ChunkToolCallAt i id0 n a -> sse write (Just "content_block_start")
     [ "type" .= ("content_block_start" :: Text)
-    , "index" .= (1 :: Int)
+    , "index" .= i
     , "content_block" .= object
         [ "type" .= ("tool_use" :: Text)
-        , "id"   .= ("toolu_stream" :: Text)
+        , "id"   .= id0
         , "name" .= n
         , "input" .= rawJson a ] ]
   ChunkDone _ -> sse write (Just "message_stop") [ "type" .= ("message_stop" :: Text) ]
@@ -1482,8 +1508,10 @@ emitResponses write chunk = case chunk of
     ]
   ChunkToolCallAt i id0 n a -> sse write (Just "response.output_item.added")
     [ "type" .= ("response.output_item.added" :: Text)
+    , "output_index" .= i
     , "item" .= object
-        [ "type" .= ("function_call" :: Text), "name" .= n, "arguments" .= a ] ]
+        [ "type" .= ("function_call" :: Text), "id" .= id0
+        , "call_id" .= id0, "name" .= n, "arguments" .= a ] ]
   ChunkDone _ -> sse write (Just "response.completed")
     [ "type" .= ("response.completed" :: Text) ]
   ChunkError e -> sse write (Just "error")
@@ -1491,8 +1519,12 @@ emitResponses write chunk = case chunk of
 
 -- | Tool calls carried by the events of one streaming request.
 
-streamedToolCalls :: [Stream.StreamEvent] -> [(Text, Text)]
-streamedToolCalls events = [ (n, a) | Stream.SEVToolCall n a <- events ]
+streamedToolCalls :: [Stream.StreamEvent] -> [(Int, Text, Text, Text)]
+streamedToolCalls events = sortOn (\(i, _, _, _) -> i) $
+     [ (i, id0, n, a) | Stream.SEVToolCallAt i id0 n a <- events ]
+  ++ [ (i, "call_" <> T.pack (show i), n, a)
+     | (i, (n, a)) <- zip [(0 :: Int) ..]
+                        [ (n, a) | Stream.SEVToolCall n a <- events ] ]
 
 -- | An arguments string embedded back into JSON (kept as a string if it does
 -- not parse, so the caller still sees what the model said).

@@ -209,10 +209,30 @@
 - **Anthropic 流式协议不生效**：`anthropicRequestBody` 从未带 `"stream": true`，
   请求实际是阻塞的，SSE 解析器拿不到帧——`deepseek-anthropic` 只剩一个 `[DONE]`。
   修复后实测三条 wire（openai/anthropic/responses）的 kernel 流式端点都返回内容。
+- **协议切换矩阵（真实 DeepSeek，经 scheduler → 内核）**：
+
+  | provider | 纯文本 | 工具调用 |
+  |---|---|---|
+  | `deepseek`（openai） | MATRIX_OK | bash 执行 → DONE，1 tool 消息 |
+  | `deepseek-anthropic` | MATRIX_OK | bash 执行 → DONE，1 tool 消息 |
+  | `deepseek-responses` | MATRIX_OK | bash 执行 → DONE，1 tool 消息 |
+
+  期间修掉的真实协议缺口（均以 stub 回归测试锁定在
+  `packages/app/Desktop/test/provider-stream.test.ts`）：
+  1. Anthropic 流式漏 `stream:true`（内容全丢）。
+  2. Anthropic 工具轮 400：DeepSeek thinking 模式要求把 `thinking` 块（含签名）回传。
+     本轮**在带 tools 的请求里关闭 thinking**（`thinking.type=disabled`）——签名回放
+     需要给 `ChatMessage` 增加不透明字段，列入 M5；不带 tools 的轮次仍保留 thinking。
+  3. Anthropic/Responses 流式 tool 轮丢失供应商 id → 回传 `tool_use_id`/`call_id` 为空，
+     上游 400。现在两个解析器都保留 index + id（`ChunkToolCallAt`），聚合与 SSE
+     发射器也不再合成/丢弃 id。
+  4. Anthropic/Responses 的原生流式端点此前把 `tools` 丢成 `[]`（只有 OpenAI 端点转发）；
+     现按各自 wire 的形状解析并透传。
 - 证据：pty 驱动真实 TUI 连发两轮，transcript 记录 2 条 assistant 回复；`/provider`
   切换后 footer 显示 `deepseek/deepseek-flash`；最终输入框标签回到 ` Input `；
   `/` 与 `ctrl+p` 都弹出命令列表（`/help`、`/provider`、`/sessions` 可见）。
-  cabal 372/372 + 内核 308/0；scheduler typecheck + approval/interrupt 7/7。
+  cabal 372/372 + 内核 308/0；scheduler typecheck + approval/interrupt/workspace 12/12；
+  `KERNEL_BUILD=1 vitest provider-stream` 通过。
 
 ## M4-4 供应商 / 模型切换（2026-10-25）——**已落地，设置面待补齐**
 

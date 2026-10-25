@@ -200,6 +200,8 @@ anthropicRequestBody model msgs specs streaming =
        , "messages"   .= turns
        , "stream"     .= streaming
        ] ++ [ "system" .= systemText | not (T.null systemText) ]
+         ++ [ "thinking" .= object [ "type" .= ("disabled" :: Text) ]
+            | not (null specs) ]
          ++ [ "tools"  .= map anthropicTool specs | not (null specs) ]
 
 -- | The Responses API body, shared by the blocking and the streaming caller.
@@ -219,14 +221,14 @@ anthropicStream baseUrl apiKey model = do
                 , ("anthropic-version", "2023-06-01") ]
                 ++ [("x-api-key", TE.encodeUtf8 apiKey) | not (T.null (T.strip apiKey))]
   pure $ \msgs specs onEvent -> do
-    pending <- newIORef (Nothing :: Maybe (Text, Text))
+    pending <- newIORef (Nothing :: Maybe (Int, Text, Text, Text))
     result <- LStream.streamPostSse url headers (anthropicRequestBody model msgs specs True) $ \v -> do
       case anthropicEvent v of
         Just (Left txt) -> onEvent (ChunkDelta txt)
         Just (Right u)  -> onEvent (ChunkDone u)
         Nothing         -> pure ()
       done <- anthropicToolStep pending v
-      mapM_ (\(nm, args) -> onEvent (ChunkToolCall nm args)) done
+      mapM_ (\(idx, tid, nm, args) -> onEvent (ChunkToolCallAt idx tid nm args)) done
     case result of
       Left e   -> do onEvent (ChunkError e); pure (ChatTurn "" [] Nothing (Just e) Nothing)
       Right () -> pure (ChatTurn "" [] Nothing Nothing Nothing)
@@ -253,13 +255,13 @@ responsesStream baseUrl apiKey model = do
   let url = T.unpack (rootOf baseUrl) ++ "/v1/responses"
       headers = ("Content-Type", "application/json") : bearer apiKey
   pure $ \msgs specs onEvent -> do
-    pending <- newIORef (Nothing :: Maybe (Text, Text))
+    pending <- newIORef (Nothing :: Maybe (Int, Text, Text, Text))
     result <- LStream.streamPostSse url headers (responsesRequestBody model msgs specs True) $ \v -> do
       case responsesDelta v of
         Just txt | not (T.null txt) -> onEvent (ChunkDelta txt)
         _                           -> pure ()
       done <- responsesToolStep pending v
-      mapM_ (\(nm, args) -> onEvent (ChunkToolCall nm args)) done
+      mapM_ (\(idx, cid, nm, args) -> onEvent (ChunkToolCallAt idx cid nm args)) done
     case result of
       Left e   -> do onEvent (ChunkError e); pure (ChatTurn "" [] Nothing (Just e) Nothing)
       Right () -> pure (ChatTurn "" [] Nothing Nothing Nothing)
@@ -276,20 +278,23 @@ responsesDelta v = case v of
 
 -- | @content_block_start@ opens a @tool_use@ block, @input_json_delta@ feeds
 -- it, @content_block_stop@ closes it and yields the finished call.
-anthropicToolStep :: IORef (Maybe (Text, Text)) -> Value -> IO (Maybe (Text, Text))
+anthropicToolStep :: IORef (Maybe (Int, Text, Text, Text)) -> Value -> IO (Maybe (Int, Text, Text, Text))
 anthropicToolStep ref v = case v of
   Object o -> case field "type" o of
     Just (String "content_block_start") -> do
       case field "content_block" o of
         Just (Object b) | field "type" b == Just (String "tool_use") -> do
-          writeIORef ref (Just (asText (field "name" b), ""))
+          -- The provider's tool_use id is mandatory on the next request's
+          -- tool_result; without it DeepSeek rejects the round with 400.
+          writeIORef ref (Just (asInt (field "index" o), asText (field "id" b),
+                                asText (field "name" b), ""))
           pure Nothing
         _ -> pure Nothing
     Just (String "content_block_delta") -> do
       m <- readIORef ref
       case (m, field "delta" o) of
-        (Just (nm, acc), Just (Object d)) -> do
-          writeIORef ref (Just (nm, acc <> asText (field "partial_json" d)))
+        (Just (idx, tid, nm, acc), Just (Object d)) -> do
+          writeIORef ref (Just (idx, tid, nm, acc <> asText (field "partial_json" d)))
           pure Nothing
         _ -> pure Nothing
     Just (String "content_block_stop") -> do
@@ -301,20 +306,26 @@ anthropicToolStep ref v = case v of
 
 -- | @response.output_item.added@ names a @function_call@, its arguments arrive
 -- as @response.function_call_arguments.delta@, and @…done@ closes it.
-responsesToolStep :: IORef (Maybe (Text, Text)) -> Value -> IO (Maybe (Text, Text))
+responsesToolStep :: IORef (Maybe (Int, Text, Text, Text)) -> Value -> IO (Maybe (Int, Text, Text, Text))
 responsesToolStep ref v = case v of
   Object o -> case field "type" o of
     Just (String "response.output_item.added") -> do
       case field "item" o of
         Just (Object it) | field "type" it == Just (String "function_call") -> do
-          writeIORef ref (Just (asText (field "name" it), ""))
+          -- call_id pairs the function_call_output on the next request; an
+          -- empty one is rejected (input[n].call_id must be non-empty).
+          let cid = case asText (field "call_id" it) of
+                      "" -> asText (field "id" it)
+                      c  -> c
+          writeIORef ref (Just (asInt (field "output_index" o), cid,
+                                asText (field "name" it), ""))
           pure Nothing
         _ -> pure Nothing
     Just (String "response.function_call_arguments.delta") -> do
       m <- readIORef ref
       case m of
-        Just (nm, acc) -> do
-          writeIORef ref (Just (nm, acc <> asText (field "delta" o)))
+        Just (idx, cid, nm, acc) -> do
+          writeIORef ref (Just (idx, cid, nm, acc <> asText (field "delta" o)))
           pure Nothing
         Nothing -> pure Nothing
     Just (String "response.function_call_arguments.done") -> do
@@ -328,6 +339,11 @@ responsesToolStep ref v = case v of
 asText :: Maybe Value -> Text
 asText (Just (String s)) = s
 asText _                 = ""
+
+-- | A JSON number as Int (0 when absent).
+asInt :: Maybe Value -> Int
+asInt (Just (Number n)) = round n
+asInt _                 = 0
 
 -- | A JSON integer field.
 jsonInt :: Text -> Object -> Maybe Int
@@ -350,7 +366,8 @@ openAICompatAdapter baseUrl apiKey model = do
     { llmChat = \msgs -> do
         (code, body, ok) <- call (map toChat msgs) []
         if not ok
-          then pure [ChunkError ("HTTP " <> T.pack (show code))]
+          then pure [ChunkError ("HTTP " <> T.pack (show code) <> ": "
+                             <> T.take 500 (TE.decodeUtf8 (BL.toStrict body)))]
           else case decode body of
                  Nothing -> pure [ChunkError "failed to parse the endpoint's response"]
                  Just v  -> case parseDeepSeekChatTurn v of
@@ -396,7 +413,8 @@ anthropicAdapter baseUrl apiKey model = do
     { llmChat = \msgs -> do
         (code, body, ok) <- call (map toChat msgs) []
         if not ok
-          then pure [ChunkError ("HTTP " <> T.pack (show code))]
+          then pure [ChunkError ("HTTP " <> T.pack (show code) <> ": "
+                             <> T.take 500 (TE.decodeUtf8 (BL.toStrict body)))]
           else case decode body of
                  Nothing -> pure [ChunkError "failed to parse the endpoint's response"]
                  Just v  -> case parseAnthropicTurn v of
@@ -406,7 +424,8 @@ anthropicAdapter baseUrl apiKey model = do
     , llmChatTools = \msgs specs _gp -> do
         (code, body, ok) <- call msgs specs
         if not ok
-          then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code))) Nothing)
+          then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code) <> ": "
+                   <> T.take 500 (TE.decodeUtf8 (BL.toStrict body)))) Nothing)
           else case decode body of
                  Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response") Nothing)
                  Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e) Nothing) id (parseAnthropicTurn v))
@@ -494,6 +513,7 @@ parseAnthropicTurn v = case v of
     str k o = case field k o of
       Just (String s) -> s
       _               -> ""
+    nonEmpty a b = if T.null a then b else a
     int k o = case field k o of
       Just (Number n) -> Just (round n)
       _               -> Nothing
@@ -516,7 +536,8 @@ responsesAdapter baseUrl apiKey model = do
     { llmChat = \msgs -> do
         (code, body, ok) <- call (map toChat msgs) []
         if not ok
-          then pure [ChunkError ("HTTP " <> T.pack (show code))]
+          then pure [ChunkError ("HTTP " <> T.pack (show code) <> ": "
+                             <> T.take 500 (TE.decodeUtf8 (BL.toStrict body)))]
           else case decode body of
                  Nothing -> pure [ChunkError "failed to parse the endpoint's response"]
                  Just v  -> case parseResponsesTurn v of
@@ -526,7 +547,8 @@ responsesAdapter baseUrl apiKey model = do
     , llmChatTools = \msgs specs _gp -> do
         (code, body, ok) <- call msgs specs
         if not ok
-          then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code))) Nothing)
+          then pure (ChatTurn "" [] Nothing (Just ("HTTP " <> T.pack (show code) <> ": "
+                   <> T.take 500 (TE.decodeUtf8 (BL.toStrict body)))) Nothing)
           else case decode body of
                  Nothing -> pure (ChatTurn "" [] Nothing (Just "failed to parse the endpoint's response") Nothing)
                  Just v  -> pure (either (\e -> ChatTurn "" [] Nothing (Just e) Nothing) id (parseResponsesTurn v))
@@ -580,7 +602,8 @@ parseResponsesTurn v = case v of
                 , Object c <- V.toList cs
                 , Just (String ct) <- [field "type" c], ct == "output_text"
                 , Just (String t) <- [field "text" c] ]
-        calls = [ ToolCall (str "call_id" it) (str "name" it) (str "arguments" it)
+        calls = [ ToolCall (nonEmpty (str "call_id" it) (str "id" it))
+                            (str "name" it) (str "arguments" it)
                 | Object it <- items
                 , Just (String ty) <- [field "type" it], ty == "function_call" ]
         (mi, mo) = case field "usage" o of
@@ -592,6 +615,7 @@ parseResponsesTurn v = case v of
     str k o = case field k o of
       Just (String s) -> s
       _               -> ""
+    nonEmpty a b = if T.null a then b else a
     int k o = case field k o of
       Just (Number n) -> Just (round n)
       _               -> Nothing

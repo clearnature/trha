@@ -155,10 +155,16 @@ describe('provider streaming dispatch (A2/A3)', () => {
     await new Promise<void>(resolve => stub.listen(STUB_PORT, '127.0.0.1', () => resolve()));
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trha-stream-'));
-    const kernel: ChildProcess = spawn(bin as string, ['serve', '-p', String(KERNEL_PORT)], {
+    const kernel: ChildProcess = spawn(bin as string, ['serve', '--kernel-port', String(KERNEL_PORT)], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
+        // The kernel links wgpu-native from the vendored tree; a bare spawn
+        // does not inherit cabal's library path.
+        LD_LIBRARY_PATH: [
+          path.join(repoRoot, '3rdparty/wgpu-native/lib'),
+          process.env.LD_LIBRARY_PATH,
+        ].filter(Boolean).join(':'),
         TRHA_PROVIDERS_FILE: path.join(tmpDir, 'providers.json'),
         TRHA_PROVIDER_KEYS_FILE: path.join(tmpDir, 'keys.json'),
       },
@@ -212,19 +218,62 @@ describe('provider streaming dispatch (A2/A3)', () => {
       });
       const r2 = await fetch(`http://127.0.0.1:${KERNEL_PORT}/v1/messages/stream`, {
         method: 'POST', headers: json,
-        body: JSON.stringify({ model: 'claude', provider: 'anth', messages: [{ role: 'user', content: 'hi' }] }),
+        body: JSON.stringify({
+          model: 'claude', provider: 'anth', messages: [{ role: 'user', content: 'hi' }],
+          // The Anthropic endpoint takes Anthropic-shaped tools (input_schema).
+          tools: [{ name: 'read_file', description: 'read', input_schema: { type: 'object' } }],
+        }),
       });
       expect(r2.headers.get('content-type')).toContain('text/event-stream');
       const { frames: f2, firstByteMs: t2 } = await readSse(r2);
       expect(anthropicText(f2)).toBe('Hi from anth');
       expect(t2).toBeLessThan(STUB_GAP_MS);
       const anthTool = payloads(f2, 'content_block_start')
-        .map(p => (p.content_block as { type?: string; name?: string; input?: unknown } | undefined))
+        .map(p => (p.content_block as { type?: string; id?: string; name?: string; input?: unknown } | undefined))
         .find(b => b?.type === 'tool_use');
       expect(anthTool?.name).toBe('read_file');
       expect(anthTool?.input).toEqual({ path: 'a.txt' });
+      // The provider's tool_use id must survive: the next round's tool_result
+      // needs it (DeepSeek rejects an empty tool_use_id with 400).
+      expect(anthTool?.id).toBe('toolu_1');
       expect(seenUrls.at(-1)).toBe('/v1/messages');
       expect(seenBodies.at(-1)?.max_tokens).toBeGreaterThan(0);
+      // Regression: without stream:true the endpoint answers one JSON body and
+      // the SSE parser sees nothing (the reply silently disappeared).
+      expect(seenBodies.at(-1)?.stream).toBe(true);
+      // Thinking blocks cannot be replayed before a tool round yet, so the
+      // wire is asked not to enable thinking when tools are present.
+      expect((seenBodies.at(-1)?.thinking as { type?: string } | undefined)?.type).toBe('disabled');
+
+      // The scheduler consumes the OpenAI-shaped view of every wire; the
+      // tool-call id has to survive that translation too.
+      const r2b = await fetch(`http://127.0.0.1:${KERNEL_PORT}/v1/chat/completions/stream`, {
+        method: 'POST', headers: json,
+        body: JSON.stringify({
+          model: 'claude', provider: 'anth', messages: [{ role: 'user', content: 'hi' }],
+          tools: [{ type: 'function', function: { name: 'read_file', description: 'read', parameters: { type: 'object' } } }],
+        }),
+      });
+      const { frames: f2b } = await readSse(r2b);
+      const anthIds = payloads(f2b).flatMap(p =>
+        ((p.choices as { delta?: { tool_calls?: { id?: string }[] } }[] | undefined)?.[0]?.delta?.tool_calls) ?? [])
+        .map(c => c.id);
+      expect(anthIds).toContain('toolu_1');
+
+      // A tool round must send the id back (anthropic: tool_use_id).
+      const toolRound = [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'call_x', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.txt"}' } }] },
+        { role: 'tool', tool_call_id: 'call_x', content: 'ok' },
+      ];
+      const r2c = await fetch(`http://127.0.0.1:${KERNEL_PORT}/v1/chat/completions/stream`, {
+        method: 'POST', headers: json,
+        body: JSON.stringify({ model: 'claude', provider: 'anth', messages: toolRound }),
+      });
+      await readSse(r2c);
+      const anthBlocks = ((seenBodies.at(-1)?.messages as { content?: unknown }[] | undefined) ?? [])
+        .flatMap(m => (Array.isArray(m.content) ? m.content : []) as { type?: string; tool_use_id?: string }[]);
+      expect(anthBlocks.find(b => b.type === 'tool_result')?.tool_use_id).toBe('call_x');
 
       // ── Responses wire: typed events, arguments reassembled ─────────
       await fetch(`http://127.0.0.1:${KERNEL_PORT}/providers`, {
@@ -243,12 +292,23 @@ describe('provider streaming dispatch (A2/A3)', () => {
       expect(responsesText(f3)).toBe('Hi from resp');
       expect(t3).toBeLessThan(STUB_GAP_MS);
       const respCall = payloads(f3, 'response.output_item.added')
-        .map(p => (p.item as { type?: string; name?: string; arguments?: string } | undefined))
+        .map(p => (p.item as { type?: string; id?: string; name?: string; arguments?: string } | undefined))
         .find(i => i?.type === 'function_call');
       expect(respCall?.name).toBe('read_file');
       expect(respCall?.arguments).toBe('{"path":"a.txt"}');
+      // The stub only gives an item id; it must not become an empty call_id.
+      expect(respCall?.id).toBe('fc_1');
       expect(seenUrls.at(-1)).toBe('/v1/responses');
       expect(seenBodies.at(-1)?.stream).toBe(true);
+
+      // A tool round must send a non-empty call_id (DeepSeek: 400 otherwise).
+      const r3b = await fetch(`http://127.0.0.1:${KERNEL_PORT}/v1/chat/completions/stream`, {
+        method: 'POST', headers: json,
+        body: JSON.stringify({ model: 'gpt', provider: 'resp', messages: toolRound }),
+      });
+      await readSse(r3b);
+      const respInput = (seenBodies.at(-1)?.input as { type?: string; call_id?: string }[] | undefined) ?? [];
+      expect(respInput.find(i => i.type === 'function_call_output')?.call_id).toBe('call_x');
     } finally {
       kernel.kill('SIGTERM');
       await new Promise<void>(resolve => stub.close(() => resolve()));
