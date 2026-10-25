@@ -569,12 +569,14 @@ executable trha
     Core.SSE
     Core.Types
     UI.Brick
+    UI.Event
     UI.Commands
     UI.I18n
     UI.SettingsView
     UI.StatsView
     UI.StatusInfo
     UI.Render.Markdown
+    UI.InputHistory
     UI.Render.Picker
     UI.Render.ToolCard
     UI.Theme
@@ -592,7 +594,8 @@ executable trha
                   , filepath
                   , ansi-terminal
                   , process
-                  , brick >= 2.1
+                  , brick >= 3.0
+                  , microlens
                   , vty >= 6.1
                   , vty-crossplatform >= 0.4
                   , optparse-applicative >= 0.18
