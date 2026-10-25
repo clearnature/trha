@@ -856,6 +856,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // cannot escape it. Overridable so a test (or the desktop app pointing at a
   // real project) can choose the root without patching code.
   const WORKSPACE = process.env.TRHA_WORKSPACE ?? '/tmp/trha-workspace';
+  // `exec` picks the platform shell itself (`/bin/sh -c` on POSIX,
+  // `cmd.exe /d /s /c` on win32) — that platform behaviour is the contract; the
+  // explicit bash spawns elsewhere go through Server/shell.ts instead.
   const runShell = promisify(exec);
   // Background jobs cannot outlive this process, so they are process-local on
   // purpose (the tool tells the model exactly that).

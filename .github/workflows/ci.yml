@@ -97,7 +97,33 @@ jobs:
       run: |
         cd packages/scheduler
         npx vitest run
-  
+
+  # M1 (windows-shell-port-plan): scheduler tests are platform-pure — the win32
+  # shell contract (cmd.exe /d /s /c + verbatim quoting) is asserted via injected
+  # platform, so this job runs the same suite on a real Windows runner without
+  # needing bash.
+  scheduler-windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Use Node.js 20
+      uses: actions/setup-node@v3
+      with:
+        node-version: 20
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        cd packages/scheduler
+        npm install
+
+    - name: Test
+      run: |
+        cd packages/scheduler
+        npx vitest run
+
   desktop:
     runs-on: ubuntu-latest
 

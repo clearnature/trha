@@ -16,6 +16,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { listMcpResources, listMcpResourceTemplates, readMcpResource } from './mcp.js';
+import { hardenedEnv, resolveShell, shellRunner } from './shell.js';
 import { lspQuery } from './lsp.js';
 import { browserClose, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 
@@ -138,7 +139,8 @@ export function isStandardTool(name: string): boolean {
 export function startJob(host: StandardToolHost, command: string): string {
   // Stable, predictable ids: the model reads them back in job_output/job_kill.
   const id = `job-${host.jobs.size + 1}`;
-  const child = spawn('bash', ['-lc', command], { cwd: host.workspace }) as ChildProcessWithoutNullStreams;
+  const sh = resolveShell(command);
+  const child = spawn(sh.cmd, sh.args, { cwd: host.workspace, ...sh.options, env: hardenedEnv() }) as ChildProcessWithoutNullStreams;
   const record: JobRecord = { id, command, startedAt: Date.now(), output: [], status: 'running', child };
   const push = (chunk: Buffer): void => {
     record.output.push(chunk.toString('utf8'));
@@ -390,22 +392,19 @@ export async function runStandardTool(
     const language = typeof args.language === 'string' ? args.language : '';
     const code = typeof args.code === 'string' ? args.code : '';
     if (!code.trim()) return 'ERROR: code is required';
-    const runners: Record<string, { ext: string; cmd: string }> = {
-      python: { ext: 'py', cmd: 'python3' },
-      python3: { ext: 'py', cmd: 'python3' },
-      javascript: { ext: 'mjs', cmd: 'node' },
-      js: { ext: 'mjs', cmd: 'node' },
-      node: { ext: 'mjs', cmd: 'node' },
-      bash: { ext: 'sh', cmd: 'bash' },
-      sh: { ext: 'sh', cmd: 'bash' },
-      lean: { ext: 'lean', cmd: 'lean' },
+    const exts: Record<string, string> = {
+      python: 'py', python3: 'py', javascript: 'mjs', js: 'mjs', node: 'mjs',
+      bash: 'sh', sh: 'sh', lean: 'lean',
     };
-    const runner = runners[language.toLowerCase()];
-    if (!runner) return `ERROR: unsupported language "${language}" (python|javascript|bash|lean)`;
-    const file = path.join(host.workspace, `.trha-run-${Date.now().toString(36)}.${runner.ext}`);
+    const lang = language.toLowerCase();
+    const ext = exts[lang];
+    if (!ext) return `ERROR: unsupported language "${language}" (python|javascript|bash|lean)`;
+    const runner = shellRunner(lang);
+    if (!runner.ok) return `ERROR: bash is not available on this platform (use pwsh)`;
+    const file = path.join(host.workspace, `.trha-run-${Date.now().toString(36)}.${ext}`);
     await writeFile(file, code, 'utf8');
     return await new Promise<string>(resolve => {
-      const child = spawn(runner.cmd, [file], { cwd: host.workspace });
+      const child = spawn(runner.cmd, [file], { cwd: host.workspace, env: hardenedEnv() });
       const out: string[] = [];
       const cap = (b: Buffer): void => {
         out.push(b.toString('utf8'));

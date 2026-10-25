@@ -10,6 +10,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { browserEvaluate, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
+import { hardenedEnv, interactiveShell, powerShellCandidates, resolveShell } from './shell.js';
 import type { StandardToolHost, TeamTask } from './standardTools.js';
 
 export interface Terminal {
@@ -60,7 +61,8 @@ const clip = (s: string, cap = 20_000): string =>
 
 const sh = (host: ExtraHost, cmd: string): Promise<{ code: number; out: string }> =>
   new Promise(resolve => {
-    const child = spawn('bash', ['-lc', cmd], { cwd: host.cwd() });
+    const shell = resolveShell(cmd);
+    const child = spawn(shell.cmd, shell.args, { cwd: host.cwd(), ...shell.options, env: hardenedEnv() });
     const out: string[] = [];
     child.stdout.on('data', (b: Buffer) => out.push(b.toString('utf8')));
     child.stderr.on('data', (b: Buffer) => out.push(b.toString('utf8')));
@@ -150,8 +152,12 @@ export async function runExtraTool(
   // ── persistent terminals ─────────────────────────────────────────────
   if (name === 'terminal_open') {
     const id = `term-${host.terminals.size + 1}`;
-    const child = spawn('bash', ['-l'], {
-      cwd: host.cwd(), env: { ...process.env, PS1: '' }, stdio: ['pipe', 'pipe', 'pipe'],
+    const ish = interactiveShell();
+    const child = spawn(ish.cmd, ish.args, {
+      cwd: host.cwd(),
+      // PS1 is a bash concept; PowerShell needs no prompt scrubbing
+      env: hardenedEnv(undefined, process.platform === 'win32' ? process.env : { ...process.env, PS1: '' }),
+      stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
     const term: Terminal = { id, child, output: '', status: 'running' };
     const push = (b: Buffer): void => {
@@ -308,15 +314,20 @@ export async function runExtraTool(
   if (name === 'pwsh') {
     const cmd = typeof args.command === 'string' ? args.command : '';
     if (!cmd) return 'ERROR: command is required';
-    const r = await new Promise<{ code: number; out: string }>(resolve => {
-      const child = spawn('pwsh', ['-NoLogo', '-Command', cmd], { cwd: host.cwd() });
-      const out: string[] = [];
-      child.stdout.on('data', (b: Buffer) => out.push(b.toString('utf8')));
-      child.stderr.on('data', (b: Buffer) => out.push(b.toString('utf8')));
-      child.on('error', e => resolve({ code: 127, out: e.message }));
-      child.on('exit', code => resolve({ code: code ?? -1, out: out.join('') }));
-    });
-    if (r.code === 127) return `ERROR: pwsh is not installed (${r.out})`;
+    // PS7 (pwsh) first; Windows PowerShell 5 (powershell.exe) as the win32 fallback
+    let r: { code: number; out: string } = { code: 127, out: '' };
+    for (const exe of powerShellCandidates()) {
+      r = await new Promise<{ code: number; out: string }>(resolve => {
+        const child = spawn(exe, ['-NoLogo', '-Command', cmd], { cwd: host.cwd(), env: hardenedEnv() });
+        const out: string[] = [];
+        child.stdout.on('data', (b: Buffer) => out.push(b.toString('utf8')));
+        child.stderr.on('data', (b: Buffer) => out.push(b.toString('utf8')));
+        child.on('error', e => resolve({ code: 127, out: e.message }));
+        child.on('exit', code => resolve({ code: code ?? -1, out: out.join('') }));
+      });
+      if (r.code !== 127) break; // executable missing -> try the next candidate
+    }
+    if (r.code === 127) return `ERROR: neither pwsh nor powershell.exe is installed (${r.out})`;
     return clip(`exit ${r.code}\n${r.out}`);
   }
 

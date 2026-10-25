@@ -64,8 +64,12 @@ describe('persistent terminals', () => {
     const id = /term-1/.exec(opened ?? '')?.[0];
     expect(id).toBeTruthy();
     await runExtraTool('terminal_send', { id, input: 'echo term-ok' }, host);
-    await new Promise(r => setTimeout(r, 300));
-    const read = await runExtraTool('terminal_read', { id }, host);
+    // bash -l startup races the fixed sleep under full-suite load; poll instead
+    let read = '';
+    for (let i = 0; i < 30 && !read.includes('term-ok'); i++) {
+      await new Promise(r => setTimeout(r, 100));
+      read = await runExtraTool('terminal_read', { id }, host);
+    }
     expect(read).toContain('term-ok');
     expect(await runExtraTool('terminal_list', {}, host)).toContain(id!);
     expect(await runExtraTool('terminal_close', { id }, host)).toMatch(/closed/);
@@ -253,7 +257,7 @@ describe('remaining branches', () => {
 
   it('pwsh reports a missing binary clearly', async () => {
     const out = await runExtraTool('pwsh', { command: 'echo hi' }, host);
-    expect(out).toMatch(/^ERROR: pwsh is not installed|^exit 0/);
+    expect(out).toMatch(/^ERROR: neither pwsh nor powershell\.exe is installed|^exit 0/);
   });
 
   it('session events degrade when the kernel is unreachable', async () => {

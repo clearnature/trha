@@ -11,6 +11,19 @@ trha 调度层提供了：
 - Haskell 桥接
 - 事件系统
 
+## 平台 shell 契约（Server/shell.ts）
+
+所有 shell 执行路径（`bash` 工具、后台 `job`、worktree、`terminal_open`、`run_code`）经 `Server/shell.ts` 统一解析：
+
+| 平台 | shell | 形式 | 说明 |
+| --- | --- | --- | --- |
+| Linux/macOS | `bash` | `bash -lc <command>` | 契约不变；POSIX 测试为回归护栏 |
+| Windows | `cmd.exe` | `cmd.exe /d /s /c "<command>"` + `windowsVerbatimArguments` | 引号由 cmd.exe 解析（对齐 DeepSeek-Reasonix `windows_compat.go`）；外层引号由 `/s` 剥除 |
+| PowerShell | `pwsh` → `powershell.exe`（win32 回退链） | `-NoLogo -Command <command>` | 独立 `pwsh` 工具 |
+| `run_code` bash/sh | POSIX only | win32 返回带指引的错误 | 不静默换语言 |
+
+安全语义：win32 全部 spawn 注入 `NoDefaultCurrentDirectoryInExePath=1`（防 cwd 裸命令名劫持，对齐 Reasonix `runner.go:85`）。`bash` 工具名是**平台无关的 shell 工具身份**（权限规则键不变），实际 shell 由本模块按平台决定。CI：`ci.yml` 的 `scheduler-windows` job 在真实 Windows runner 上跑全量 vitest。
+
 ## 架构
 
 ```
