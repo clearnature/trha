@@ -21,7 +21,7 @@ import Control.Concurrent.Async (async)
 import Control.Monad (forM_, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, listSessions, createSession, deleteSession, sendMessage, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, reportStep)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWith, listSessions, createSession, deleteSession, sendMessage, listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, reportStep)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import UI.Event
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
@@ -34,6 +34,7 @@ import UI.StatsView (StatsBlock(..), buildStatsBlocks)
 import UI.I18n (Lang(..), parseLang, tr)
 import Config.Settings (resolveConfig)
 import Data.List (intersperse)
+import Data.IORef
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -414,9 +415,21 @@ drawInput st =
       withAttr (attrName "input") $
         renderEditor (str . T.unpack . T.unlines) True (appInput st)
   where
+    -- No timer thread: streaming deltas drive redraws, so the frame index
+    -- derives from the accumulated length — it animates exactly while the
+    -- reply is actually moving (a frozen spinner honestly shows a stall).
     busyLabel
-      | appBusy st = withAttr (attrName "busy") $ str " ⏳ Thinking… "
+      | appBusy st =
+          withAttr (attrName "busy") $ str $
+            case appPending st of
+              Just pm -> " " <> T.unpack (spinnerFrame (T.length (pmContent pm))) <> " Streaming… "
+              Nothing -> " ⏳ Thinking… "
       | otherwise  = str " Input "
+
+-- | Braille spinner frames (10-step cycle). Pure so it is trivially testable.
+spinnerFrame :: Int -> Text
+spinnerFrame i = frames !! (i `mod` length frames)
+  where frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 -- | Live multi-step plan card: the kernel owns the plan, this only renders it.
 --
@@ -920,14 +933,33 @@ handleChat input = do
       chan   = appChan st
       model  = appModel st
       runStepWithTools sid = do
-        cancel <- subscribeSessionEvents bridge sid (toolSink chan sid)
+        -- Streaming contract (M0): when the scheduler emits text deltas the
+        -- deltas are authoritative and the synchronous reply is only the
+        -- terminal signal — emitting its text too would duplicate the stream.
+        -- Kernels without SSE deltas fall back to the whole reply in one chunk
+        -- (the pre-M0 behaviour). The transcript keeps one accumulated row
+        -- either way.
+        accRef     <- liftIO (newIORef T.empty)
+        deltasRef  <- liftIO (newIORef False)
+        cancel <- subscribeSessionEventsWith bridge sid (toolSink chan sid) $ \t -> do
+          liftIO $ atomicModifyIORef' deltasRef (const (True, ()))
+          liftIO $ atomicModifyIORef' accRef (\acc -> (acc <> t, ()))
+          writeBChan chan (EvResponse (Right (ChunkDelta t)))
         result <- sendMessage bridge sid input
+        sawDeltas <- liftIO (readIORef deltasRef)
+        case (sawDeltas, result) of
+          (True, _) -> do
+            acc <- liftIO (readIORef accRef)
+            recordChunk sid (Right (ChunkDelta acc))
+            -- zero usage: the step response carries none; M1 adds real stats
+            writeBChan chan (EvResponse (Right (ChunkDone (Usage 0 0 0))))
+          (False, r) -> do
+            recordChunk sid r
+            writeBChan chan (EvResponse r)
         -- drain window: let trailing SSE events (e.g. the final tool
         -- status) arrive before tearing the stream down
         liftIO $ threadDelay 100000
         cancel
-        recordChunk sid result
-        writeBChan chan (EvResponse result)
   void $ liftIO $ async $ case appSessionId st of
     Just sid -> do
       recordUser sid input
