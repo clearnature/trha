@@ -18,6 +18,7 @@ module API.ProviderRuntime
   , responsesStream
   , cpuAdapterFor
   , cpuAdapterCacheSize
+  , anthropicRequestBody
   , StreamCall
   ) where
 
@@ -188,13 +189,16 @@ openAICompatStream baseUrl apiKey model =
       apiKey body onEvent
 
 -- | The Messages API body, shared by the blocking and the streaming caller.
-anthropicRequestBody :: Text -> [ChatMessage] -> [ToolSpec] -> Value
-anthropicRequestBody model msgs specs =
+-- Without @stream: true@ the endpoint answers with one JSON body, so the SSE
+-- parser sees no frames and the reply silently disappears.
+anthropicRequestBody :: Text -> [ChatMessage] -> [ToolSpec] -> Bool -> Value
+anthropicRequestBody model msgs specs streaming =
   let (systemText, turns) = toAnthropicMessages msgs
   in object $
        [ "model"      .= model
        , "max_tokens" .= (4096 :: Int)
        , "messages"   .= turns
+       , "stream"     .= streaming
        ] ++ [ "system" .= systemText | not (T.null systemText) ]
          ++ [ "tools"  .= map anthropicTool specs | not (null specs) ]
 
@@ -216,7 +220,7 @@ anthropicStream baseUrl apiKey model = do
                 ++ [("x-api-key", TE.encodeUtf8 apiKey) | not (T.null (T.strip apiKey))]
   pure $ \msgs specs onEvent -> do
     pending <- newIORef (Nothing :: Maybe (Text, Text))
-    result <- LStream.streamPostSse url headers (anthropicRequestBody model msgs specs) $ \v -> do
+    result <- LStream.streamPostSse url headers (anthropicRequestBody model msgs specs True) $ \v -> do
       case anthropicEvent v of
         Just (Left txt) -> onEvent (ChunkDelta txt)
         Just (Right u)  -> onEvent (ChunkDone u)
@@ -386,7 +390,7 @@ anthropicAdapter baseUrl apiKey model = do
       headers = [ ("Content-Type", "application/json")
                 , ("anthropic-version", "2023-06-01") ]
                 ++ (if T.null (T.strip apiKey) then [] else [("x-api-key", TE.encodeUtf8 apiKey)])
-      call msgs specs = postJson manager url headers (anthropicRequestBody model msgs specs)
+      call msgs specs = postJson manager url headers (anthropicRequestBody model msgs specs False)
   stream <- anthropicStream baseUrl apiKey model
   pure LLMAdapter
     { llmChat = \msgs -> do

@@ -107,6 +107,7 @@ data AppState = AppState
   , appSessionTitle :: Maybe Text       -- ^ local transcript title of the session
   , appIndex      :: [Completion]       -- ^ @\@@-file index (M4-2)
   , appComp       :: Maybe CompletionState -- ^ open completion popup
+  , appPalette    :: Maybe Dialog       -- ^ inline slash-command palette (DialogCommands)
   , appLeader     :: Bool               -- ^ leader key armed (M4-3)
   , appProvider   :: Maybe Text         -- ^ selected provider (Nothing = kernel inUse)
   , appProviders  :: [ProviderInfo]     -- ^ provider registry from the kernel
@@ -172,6 +173,7 @@ initialState bridge chan cfg = AppState
   , appSessionTitle = Nothing
   , appIndex     = []
   , appComp      = Nothing
+  , appPalette   = Nothing
   , appLeader    = False
   , appProvider  = Nothing
   , appProviders = []
@@ -290,6 +292,7 @@ drawUI st =
       [ drawHeader (appLang st)
       , drawMessages st
       , maybe emptyWidget drawPlanCard (appPlan st)
+      , maybe emptyWidget drawPalette (appPalette st)
       , maybe emptyWidget (drawCompletion st) (appComp st)
       , drawInput st
       , drawStatus st
@@ -309,6 +312,32 @@ drawSidebar st sw =
       borderWithLabel (withAttr (attrName "title") $ str " Sidebar ") $
         vBox [ withAttr (attrName (slAttr l)) $ str (T.unpack (slText l))
              | l <- sidebarLines (max 1 (sw - 2)) (sidebarDataFor st) ]
+
+-- | Inline slash-command palette, anchored at the input's left edge (the
+-- MiMo form: a list above the prompt, filtered as you type — not a centred
+-- modal that steals the editor).
+drawPalette :: Dialog -> Widget ResourceName
+drawPalette d =
+  withAttr (attrName "tool") $
+    hLimit 66 $
+      borderWithLabel (withAttr (attrName "title") $ str " Commands ") $
+        vBox $
+          if null items
+            then [ padLeftRight 1 $ withAttr (attrName "timestamp") $
+                     str " no matching command" ]
+            else [ let selected = idx == sel
+                       marker = if selected then "▸ " else "  "
+                       attr = if selected then "tool" else "timestamp"
+                   in padLeftRight 1 $ hBox
+                        [ withAttr (attrName attr) $ str marker
+                        , withAttr (attrName "title") $ str (T.unpack (piId it))
+                        , withAttr (attrName "timestamp") $ str "  "
+                        , withAttr (attrName "timestamp") $
+                            str (T.unpack (T.take 44 (piDesc it))) ]
+                 | (idx, it) <- zip [0 ..] (take 8 items) ]
+  where
+    items = dialogCommandsItems d
+    sel = dialogCommandsSelected d
 
 -- | The @-file popup shown above the input (up to eight candidates).
 drawCompletion :: AppState -> CompletionState -> Widget ResourceName
@@ -837,7 +866,10 @@ handleEvent (VtyEvent (EvKey KEsc _)) = do
       -- MiMo's hierarchy: the autocomplete popup closes before anything
       -- else, and closing it must not arm the interrupt double-press.
       Just _  -> modify $ \s -> s { appComp = Nothing, appEscLast = Nothing }
-      Nothing -> escapeHierarchy
+      Nothing -> case appPalette st of
+        -- Esc dismisses the command palette without touching the input.
+        Just _  -> modify $ \s -> s { appPalette = Nothing, appEscLast = Nothing }
+        Nothing -> escapeHierarchy
 handleEvent (VtyEvent (EvMouseDown _ _ BScrollUp _)) =
   vScrollBy (viewportScroll MessageArea) (-3)
 handleEvent (VtyEvent (EvMouseDown _ _ BScrollDown _)) =
@@ -1051,6 +1083,13 @@ handleChatKey (EvKey (KChar 'b') [MCtrl]) =
 -- | ctrl+x arms the leader for one keystroke.
 handleChatKey (EvKey (KChar 'x') [MCtrl]) =
   modify $ \s -> s { appLeader = True, appStatus = tr (appLang s) leaderHelp }
+-- | ctrl+p opens the inline command palette (MiMo's palette key).
+handleChatKey (EvKey (KChar 'p') [MCtrl]) = do
+  st <- get
+  let text = editorValue st
+      q = if "/" `T.isPrefixOf` text then text else "/"
+  modify $ \s -> s { appPalette =
+    Just (DialogCommands (pickerItems (appLang s)) q 0) }
 handleChatKey (EvKey (KChar 'g') []) =
   vScrollToBeginning (viewportScroll MessageArea)
 handleChatKey (EvKey (KChar 'G') []) =
@@ -1065,60 +1104,58 @@ handleChatKey (EvKey KEnter []) = do
                          , appComp = Nothing }
         refreshCompletion
       Nothing -> modify $ \s -> s { appComp = Nothing }
-    Nothing -> do
-      let input = T.strip (editorValue st)
-      if not (T.null input) && not (appBusy st)
-        then do
-          liftIO (appendHistory input)
-          modify $ \s -> s { appInput = editorText InputArea (Just 6) ""
-                           , appHist = histCommit input (appHist s)
-                           , appComp = Nothing }
-          handleSubmit input
-        else when (T.null input && not (appBusy st)) toggleRecentFold
+    Nothing -> case appPalette st of
+      -- The inline command palette owns Enter while it has a match.
+      Just d | not (null (dialogCommandsItems d)) -> runPaletteItem
+      _ -> do
+        let input = T.strip (editorValue st)
+        if not (T.null input) && not (appBusy st)
+          then do
+            liftIO (appendHistory input)
+            modify $ \s -> s { appInput = editorText InputArea (Just 6) ""
+                             , appHist = histCommit input (appHist s)
+                             , appComp = Nothing
+                             , appPalette = Nothing }
+            handleSubmit input
+          else when (T.null input && not (appBusy st)) toggleRecentFold
 -- | alt+enter inserts a newline: the editor only breaks lines on a plain
 -- KEnter, so feed it one directly (this skips the submit intercept).
 handleChatKey (EvKey KEnter [MAlt]) =
-  editDefaultKey (EvKey KEnter []) >> refreshCompletion
+  editDefaultKey (EvKey KEnter []) >> refreshCompletion >> refreshPalette
 -- | ↑ recalls history when the cursor is on the first line; inside the
 -- input it moves the cursor up one line.  With the @-file popup open it
 -- moves the popup selection instead.
 handleChatKey (EvKey KUp []) = do
   st <- get
-  case appComp st of
-    Just cs -> modify $ \s -> s { appComp = Just (moveCompletion (-1) cs) }
-    Nothing -> do
-      let cur = T.unlines (getEditContents (appInput st))
-      case histUp cur (appHist st) of
-        Just (h', entry) | cursorRow (appInput st) == 0 ->
-          put st { appHist = h', appInput = editorText InputArea (Just 6) entry }
-        _ -> editDefaultKey (EvKey KUp [])
+  case appPalette st of
+    Just _ -> movePalette (-1)
+    Nothing -> case appComp st of
+      Just cs -> modify $ \s -> s { appComp = Just (moveCompletion (-1) cs) }
+      Nothing -> do
+        let cur = T.unlines (getEditContents (appInput st))
+        case histUp cur (appHist st) of
+          Just (h', entry) | cursorRow (appInput st) == 0 ->
+            put st { appHist = h', appInput = editorText InputArea (Just 6) entry }
+          _ -> editDefaultKey (EvKey KUp [])
 -- | ↓ walks history forward (or restores the draft) when the cursor is on
 -- the last line; inside the input it moves the cursor down one line.
 handleChatKey (EvKey KDown []) = do
   st <- get
-  case appComp st of
-    Just cs -> modify $ \s -> s { appComp = Just (moveCompletion 1 cs) }
-    Nothing -> do
-      let rows = max 1 (length (getEditContents (appInput st)))
-      if cursorRow (appInput st) == rows - 1
-        then case histDown (appHist st) of
-          Just (h', entry) ->
-            put st { appHist = h', appInput = editorText InputArea (Just 6) entry }
-          Nothing -> editDefaultKey (EvKey KDown [])
-        else editDefaultKey (EvKey KDown [])
+  case appPalette st of
+    Just _ -> movePalette 1
+    Nothing -> case appComp st of
+      Just cs -> modify $ \s -> s { appComp = Just (moveCompletion 1 cs) }
+      Nothing -> do
+        let rows = max 1 (length (getEditContents (appInput st)))
+        if cursorRow (appInput st) == rows - 1
+          then case histDown (appHist st) of
+            Just (h', entry) ->
+              put st { appHist = h', appInput = editorText InputArea (Just 6) entry }
+            Nothing -> editDefaultKey (EvKey KDown [])
+          else editDefaultKey (EvKey KDown [])
 -- | A leading @/@ on an empty input opens the quick-picker (command menu);
 -- any other @/@ is typed into the editor as plain text.
-handleChatKey (EvKey (KChar '/') []) = do
-  st <- get
-  let input = T.strip $ T.unlines $ getEditContents $ appInput st
-      lang = appLang st
-  if T.null input
-    then modify $ \s -> s { appDialogs = stackPush (DialogCommands (pickerItems lang) "/" 0) (appDialogs s) }
-    else do
-      newInput <- nestEventM' (appInput st) $ handleEditorEvent (VtyEvent (EvKey (KChar '/') []))
-      put st { appInput = newInput }
-      refreshCompletion
-handleChatKey ev = editDefaultKey ev >> refreshCompletion
+handleChatKey ev = editDefaultKey ev >> refreshCompletion >> refreshPalette
 
 -- | Full editor text: lines joined with newlines (no trailing newline).
 editorValue :: AppState -> Text
@@ -1138,6 +1175,38 @@ refreshCompletion = do
   st <- get
   let popup = completionPopup 8 (appIndex st) (editorValue st) (editorCursor st)
   modify $ \s -> s { appComp = popup }
+
+-- | Recompute the inline slash-command palette from the editor text.  A
+-- single-line input starting with @/@ owns the palette; anything else
+-- closes it (the list is a hint, not a mode).
+refreshPalette :: EventM ResourceName AppState ()
+refreshPalette = do
+  st <- get
+  let text = editorValue st
+      single = not (T.any (== '\n') text)
+  modify $ \s ->
+    if "/" `T.isPrefixOf` text && single
+      then s { appPalette =
+             Just (DialogCommands (pickerItems (appLang s)) text 0) }
+      else s { appPalette = Nothing }
+
+-- | Move the palette selection (clamped by the shared dialog state machine).
+movePalette :: Int -> EventM ResourceName AppState ()
+movePalette delta =
+  modify $ \s -> s { appPalette = dialogMoveSel delta <$> appPalette s }
+
+-- | Run the highlighted palette entry and close the palette.
+runPaletteItem :: EventM ResourceName AppState ()
+runPaletteItem = do
+  st <- get
+  case appPalette st of
+    Nothing -> return ()
+    Just d -> case drop (dialogCommandsSelected d) (dialogCommandsItems d) of
+      (item : _) -> do
+        modify $ \s -> s { appInput = editorText InputArea (Just 6) ""
+                         , appPalette = Nothing }
+        handleSlash (piId item)
+      [] -> modify $ \s -> s { appPalette = Nothing }
 
 -- | Pass an event through to the brick editor (default editing keys:
 -- alt+enter inserts a newline; cursor movement; pastes).

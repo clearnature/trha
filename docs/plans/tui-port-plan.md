@@ -203,9 +203,16 @@
   空输入也占 6 行。对照 MiMo prompt `textarea minHeight=1 maxHeight=6`、codex
   `Constraint::Length(input_height)`、gemini Composer 后，改为按当前行数
   `vLimit (max 1 (min 6 lines))`，空输入恢复 1 行。
+- **斜杠命令改为内联列表**（对齐 MiMo）：输入 `/` 或 `ctrl+p` 时，命令列表显示在
+  **输入框左侧上方**（左对齐、随输入过滤、↑/↓ 选择、Enter 执行、Esc 只关列表），
+  不再是居中的模态 picker；复用 `DialogCommands` 的纯状态机（过滤/选择都有既有 spec）。
+- **Anthropic 流式协议不生效**：`anthropicRequestBody` 从未带 `"stream": true`，
+  请求实际是阻塞的，SSE 解析器拿不到帧——`deepseek-anthropic` 只剩一个 `[DONE]`。
+  修复后实测三条 wire（openai/anthropic/responses）的 kernel 流式端点都返回内容。
 - 证据：pty 驱动真实 TUI 连发两轮，transcript 记录 2 条 assistant 回复；`/provider`
-  切换后 footer 显示 `deepseek/deepseek-flash`；最终输入框标签回到 ` Input `。
-  cabal 372/372；scheduler typecheck + approval/interrupt 7/7。
+  切换后 footer 显示 `deepseek/deepseek-flash`；最终输入框标签回到 ` Input `；
+  `/` 与 `ctrl+p` 都弹出命令列表（`/help`、`/provider`、`/sessions` 可见）。
+  cabal 372/372 + 内核 308/0；scheduler typecheck + approval/interrupt 7/7。
 
 ## M4-4 供应商 / 模型切换（2026-10-25）——**已落地，设置面待补齐**
 
