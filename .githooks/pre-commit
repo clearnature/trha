@@ -23,7 +23,8 @@ need_lint=0
 lint_files=$(printf '%s\n' "$changed" | grep -E '\.(ts|tsx|mts|cts|js|mjs)$' || true)
 if [ -n "$lint_files" ]; then need_lint=1; fi
 need_hlint=0
-haskell_sources=$(printf '%s\n' "$changed" | grep -E '\.(hs|lhs)$' || true)
+# vendored third-party Haskell under 3rdparty/ keeps upstream style; lint gate applies to project sources only
+haskell_sources=$(printf '%s\n' "$changed" | grep -E '\.(hs|lhs)$' | grep -v '^3rdparty/' || true)
 if [ -n "$haskell_sources" ]; then need_hlint=1; fi
 need_ci=0
 case "$changed" in
