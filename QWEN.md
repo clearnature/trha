@@ -81,6 +81,12 @@ The Servant server (`API.Server.startServer`) listens on a configurable port and
 - **Haskell**: `cabal test` runs `test/Spec.hs` (Hspec + QuickCheck). Tests cover Core plugin system, sessions, agent state machine, tool registry, event bus, cache engine, and LLM adapter creation.
 - **TypeScript**: `cd packages/scheduler && npm test` runs Vitest. Test files in `packages/scheduler/test/`.
 - **Smoke tests**: `benchmarks/` directory contains integration/smoke tests.
+- **测试运行纪律（内存防护，2026-10-25 OOM 事故后确立）**：scheduler 套件会拉起**真实子进程**（browser-tools 测试启动无头 Chrome、`terminal_open` 启动登录 bash、部分用例 spawn 子 scheduler）。
+  1. **单实例**：同一时刻只允许一个 vitest 进程。重跑前先 `pgrep -af vitest`；被中断的运行必须确认已死（中断时 vitest 的 afterEach/afterAll 清理不会执行，Chrome/bash 会变孤儿）。
+  2. **并发上限**：`vitest.config.ts` 已硬限 `pool: 'forks', maxForks: 4`（36 核机器默认会开几十个 worker，每个都加载完整套件并拉起子进程）——不要移除该上限。
+  3. **范围收敛**：开发期只跑受影响的 spec 文件（`npx vitest run test/<file>`）；全量运行每个里程碑最多一次。
+  4. **收尾兜底**：异常退出后 `pkill -f "trha-browser-" ; pkill -f "bash -l"`（无头 Chrome profile / 残留终端）再重跑。
+  5. **边界**：测试产物只落在 `os.tmpdir()` 或 workspace；写路径有 `confineWritePath` 兜底；测试代码不得在 workspace 外写文件。
 
 ## Development Conventions
 
@@ -145,6 +151,9 @@ Three GitHub Actions workflows in `.github/workflows/`:
 - `docs/plans/plan-reconciliation.md` — Plan vs reality (feature scope)
 - `docs/plans/code-docs-reconciliation.md` — Code vs docs (build / wiring / usage scope). ⚠️ §2's WebGPU "not in any cabal component" is stale — see `docs/architecture/project-overview.md` §5
 - `docs/plans/electron-44-upgrade.md` — Electron 28 → 44 upgrade: done (deps + binary verified) / pending (`chrome-sandbox` SUID, live-launch check, electron binary mirror config, uncommitted)
+- `docs/plans/typescript-7-toolchain-migration.md` — TypeScript 7 toolchain migration memo: vitest 5 / vite 7 / electron 44.9.3 / audit zero, compat matrix all green; **no self-made TS-API shim** — wait for typescript-eslint PR #12803 + 7.1 stable (triggers & checklist inside)
+- `docs/plans/tui-port-plan.md` — TUI port plan (MiMo-Code shapes → trha CLI): M0 streaming foundation fully TDD-detailed, M1-M4 milestone contracts; facts in `docs/reference/mimocode-tui-analysis.md`
+- `docs/plans/windows-shell-port-plan.md` — Windows shell support port (shell.ts abstraction + cmd.exe/PowerShell semantics; gaps G1-G7 vs Reasonix/harness): M0 fully TDD-detailed, M1-M2 contracts
 
 **Reference — `docs/reference/`**
 - `docs/reference/source-code-analysis.md`, `reasonix-architecture-analysis.md`, `reasonix-cli-tui-architecture-analysis.md`, `cordis-plugin-notes.md`, `dsh-docs-alignment-plan.md`, `electron-desktop-plan.md`, `layer-integration-report.md`

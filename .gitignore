@@ -201,3 +201,6 @@ __pycache__/
 
 # Local end-to-end scratch (state dirs, step captures, logs)
 .e2e-*/
+
+# Mimosa security-scan hook state (per-directory, machine-local)
+.mimosa/
