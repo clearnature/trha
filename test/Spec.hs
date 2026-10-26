@@ -3,6 +3,16 @@
 
 import Test.Hspec
 import Test.QuickCheck
+import Kernel.Carrier
+  ( Layer (..), initialPoint, dimCarrier, dotC, normC2, basisVec
+  , allA4, a4Card, plancherelSum, dimI, Irrep (..)
+  , baseCard, projClass, zeroSection, constantSection, sectionNorm, isFraming
+  , mkBaseKey
+  , flatDim, effectiveDim, overcount, minFiberSize, maxFiberSize, uniformCoordsFaithful
+  , overcountByOrbit, overcountDecomposition, equivariantSectionPossible
+  , spinFiberCard, spinTotalCard, phaseAct )
+import qualified Sov.Math.Trit as MT
+import Sov.Math.Eis (eisOne, eisZero)
 import Infrastructure.CPU.GGUF
 import Infrastructure.CPU.Dequant
 import Infrastructure.CPU.SOV3
@@ -2542,3 +2552,70 @@ main = hspec $ do
           unsetEnv "TRHA_PROVIDERS_FILE"
           code `shouldBe` 200
           ("cpu" `isInfixOf` body) `shouldBe` True   -- 本地引擎回答（回显模型名）
+
+  -- ──────────────────────────────────────────────────────────────────────
+  -- Kernel.Carrier：C[A₄] 函数空间 + Plancherel 内积（sov-math 接线）
+  --
+  -- 判据：载体是 12 维函数空间（不是点集）；内积是 Plancherel 配对（不是点积）；
+  -- 基 δ_g 在配对下正交归一；维数满足 Plancherel 恒等式 Σ d_ρ² = |A₄|。
+  -- ──────────────────────────────────────────────────────────────────────
+  describe "Kernel.Carrier (sov-math 接线)" $ do
+    it "载体维数 = |A₄| = 12（函数空间，不是点集）" $ do
+      dimCarrier `shouldBe` 12
+      a4Card `shouldBe` 12
+      length allA4 `shouldBe` 12
+
+    it "层声明只有 L12（其余层不进内核）" $ do
+      L12 `shouldBe` L12
+
+    it "Plancherel 内积：δ 基正交归一（144 对全检）" $ do
+      let pairs = [ (g, h) | g <- allA4, h <- allA4 ]
+      and [ dotC (basisVec g) (basisVec h)
+              == (if g == h then eisOne else eisZero)
+          | (g, h) <- pairs ] `shouldBe` True
+
+    it "初态 δ_e 的范数为 1" $
+      normC2 initialPoint `shouldBe` eisOne
+
+    it "Plancherel 恒等式 Σ_ρ d_ρ² = |A₄| = dim" $ do
+      plancherelSum `shouldBe` 12
+      plancherelSum `shouldBe` dimCarrier
+
+    it "不可约表示维数是 1,1,1,3 —— 只有 R3 是矢量（dim ≥ 2）" $
+      map dimI [ R1, R1', R1'', R3 ] `shouldBe` [1, 1, 1, 3]
+
+    it "状态是关联丛的截面：底空间 T⁶/A₄ = 135 类，索引是 BaseKey" $
+      case mkBaseKey 0 of
+        Just k -> do
+          baseCard `shouldBe` 135
+          sectionNorm zeroSection k `shouldBe` eisZero
+        Nothing -> expectationFailure "mkBaseKey 0 应当成功"
+    it "BaseKey 拒绝越界（135 / −1）" $
+      (mkBaseKey 135, mkBaseKey (-1)) `shouldBe` (Nothing, Nothing)
+
+    it "零截面不是 framing；常截面 δ_e 是 framing（Hopf 扭转的判据）" $ do
+      isFraming zeroSection `shouldBe` False
+      isFraming (constantSection initialPoint) `shouldBe` True
+
+    it "描述差（非不变量）：平纤维 1620 vs 典范 729 ⇒ 891" $ do
+      flatDim `shouldBe` 1620
+      effectiveDim `shouldBe` 729
+      overcount `shouldBe` 891
+
+    it "描述差按轨道类型分解（谁贡献了多少）" $ do
+      overcountByOrbit `shouldBe` [ (1, 27, 297), (4, 54, 432), (6, 27, 162), (12, 27, 0) ]
+      overcountDecomposition `shouldBe` True
+
+    it "等变截面不存在（存在 1 点轨道）" $
+      equivariantSectionPossible `shouldBe` False
+
+    it "统一 12 坐标不忠实（存在 1 点轨道）" $ do
+      minFiberSize `shouldBe` 1
+      maxFiberSize `shouldBe` 12
+      uniformCoordsFaithful `shouldBe` False
+
+    it "旋量层：GF(3)² 纤维 9、总空间 6561、相位 α 阶 4、α² = −I" $ do
+      spinFiberCard `shouldBe` 9
+      spinTotalCard `shouldBe` 6561
+      phaseAct 4 (MT.T1, MT.T0) `shouldBe` (MT.T1, MT.T0)   -- 阶 4
+      phaseAct 2 (MT.T1, MT.T0) `shouldBe` (MT.T2, MT.T0)   -- α² = −I：v ↦ −v
