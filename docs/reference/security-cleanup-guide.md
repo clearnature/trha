@@ -2,7 +2,7 @@
 
 ## 问题描述
 
-API 密钥 `tp-cwa1hhqtypbyqyzk9ezz23usjfzk6575ddcq1s8gg3cc1042` 被提交到 Git 历史中。
+API 密钥 `tp-cwa1…c1042` 被提交到 Git 历史中。
 
 **受影响的文件**：
 - `scripts/benchmark/mimo-api-test.ts` (初始提交 `9af0c28`)
@@ -21,7 +21,7 @@ cp -r /home/yanli/work/trha /home/yanli/work/trha-backup
 
 # 创建替换文件
 cat > /tmp/replacements.txt << 'EOF'
-tp-cwa1hhqtypbyqyzk9ezz23usjfzk6575ddcq1s8gg3cc1042==>REMOVED_API_KEY
+tp-cwa1…c1042==>REMOVED_API_KEY
 EOF
 
 # 执行过滤
@@ -43,10 +43,10 @@ cp -r . ../trha-backup
 # 执行过滤
 git filter-branch --force --tree-filter '
 if [ -f scripts/benchmark/mimo-api-test.ts ]; then
-    sed -i "s/tp-cwa1hhqtypbyqyzk9ezz23usjfzk6575ddcq1s8gg3cc1042/REMOVED_API_KEY/g" scripts/benchmark/mimo-api-test.ts
+    sed -i "s/tp-cwa1…c1042/REMOVED_API_KEY/g" scripts/benchmark/mimo-api-test.ts
 fi
 if [ -f scripts/benchmark/mimo-api-test.sh ]; then
-    sed -i "s/tp-cwa1hhqtypbyqyzk9ezz23usjfzk6575ddcq1s8gg3cc1042/REMOVED_API_KEY/g" scripts/benchmark/mimo-api-test.sh
+    sed -i "s/tp-cwa1…c1042/REMOVED_API_KEY/g" scripts/benchmark/mimo-api-test.sh
 fi
 ' --tag-name-filter cat -- --all
 
@@ -61,7 +61,7 @@ git push origin main --force
 wget https://repo1.maven.org/maven2/com/madgag/bfg/1.14.0/bfg-1.14.0.jar
 
 # 创建敏感信息文件
-echo "tp-cwa1hhqtypbyqyzk9ezz23usjfzk6575ddcq1s8gg3cc1042" > /tmp/sensitive.txt
+echo "tp-cwa1…c1042" > /tmp/sensitive.txt
 
 # 执行清理
 java -jar bfg-1.14.0.jar --replace-text /tmp/sensitive.txt /home/yanli/work/trha
@@ -80,8 +80,8 @@ git push origin main --force
 # 检查历史中是否还有敏感信息
 git log --all --oneline -- scripts/benchmark/mimo-api-test.ts scripts/benchmark/mimo-api-test.sh | while read commit; do
     echo "Checking $commit..."
-    git show $commit:scripts/benchmark/mimo-api-test.ts 2>/dev/null | grep -c "tp-cwa1hhqtypbyqyzk9ezz23usjfzk6575ddcq1s8gg3cc1042" || true
-    git show $commit:scripts/benchmark/mimo-api-test.sh 2>/dev/null | grep -c "tp-cwa1hhqtypbyqyzk9ezz23usjfzk6575ddcq1s8gg3cc1042" || true
+    git show $commit:scripts/benchmark/mimo-api-test.ts 2>/dev/null | grep -c "tp-cwa1…c1042" || true
+    git show $commit:scripts/benchmark/mimo-api-test.sh 2>/dev/null | grep -c "tp-cwa1…c1042" || true
 done
 ```
 
