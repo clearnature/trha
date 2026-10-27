@@ -36,6 +36,10 @@ Thumbs.db
 *.token
 *.credentials
 secrets/
+
+# 例外：desktop e2e 用的自签测试证书（CN=127.0.0.1，10 年期，无敏感物）——
+# studio-info 测试桩与生产调度器同为 HTTPS，必须有证书才能起 https 桩。
+!packages/app/Desktop/test/fixtures/*.pem
 credentials/
 
 # API keys and tokens

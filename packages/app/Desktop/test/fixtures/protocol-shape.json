@@ -2,6 +2,7 @@
   "handshake": {
     "name": "string",
     "port": "number",
+    "scheme": "string",
     "v": "number"
   },
   "health": {
@@ -159,8 +160,8 @@
     {
       "contextSize": "number",
       "description": "string",
-      "name": "string",
-      "maxOutputTokens": "number"
+      "maxOutputTokens": "number",
+      "name": "string"
     }
   ],
   "session": {
@@ -173,7 +174,10 @@
       "id": "string",
       "messages": [],
       "mode": "string",
-      "pendingApproval": "object"
+      "pendingApproval": "object",
+      "permissionMode": "string",
+      "planMode": "boolean",
+      "yoloRestore": "object"
     }
   ],
   "messages": {

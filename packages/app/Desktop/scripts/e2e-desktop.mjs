@@ -18,8 +18,12 @@
 // the response *shape* (field names + types) as a fixture.
 
 import { spawn } from 'node:child_process';
+// 调度器监听 https（自签 loopback 证书）：e2e 进程内关闭校验。
+// 只影响本脚本与其子进程，不改全局。
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -60,10 +64,24 @@ function startScheduler({ port, token }) {
   if (!fs.existsSync(schedulerEntry)) {
     throw new Error(`scheduler entry not found: ${schedulerEntry} (run the scheduler build first)`);
   }
+  // HOME 隔离：调度器按 ~/.trha/run/scheduler.pid 单实例认领；当宿主机上已有
+  // 一个活调度器（用户自己的会话）时，e2e 会被 pid 门拒掉。把 HOME 指到一次性
+  // 目录 + 预写同值 kernel-token，e2e 即完全环境封闭（端口已由 E2E_PORT 隔离）。
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'trha-e2e-home-'));
+  fs.mkdirSync(path.join(tmpHome, '.trha'), { recursive: true });
+  fs.writeFileSync(path.join(tmpHome, '.trha', 'kernel-token'), token);
   const child = spawn(process.execPath, [schedulerEntry], {
-    env: { ...process.env, TRHA_TOKEN: token, TRHA_PORT: String(port), TRHA_LEASE_STDIN: '1' },
+    env: {
+      ...process.env,
+      HOME: tmpHome,
+      TRHA_KERNEL_TOKEN: token,
+      TRHA_TOKEN: token,
+      TRHA_PORT: String(port),
+      TRHA_LEASE_STDIN: '1',
+    },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+  child.on('exit', () => { try { fs.rmSync(tmpHome, { recursive: true, force: true }); } catch {} });
   const handshake = new Promise((resolve, reject) => {
     let head = '';
     child.stdout.on('data', d => {
@@ -85,7 +103,7 @@ function startScheduler({ port, token }) {
  * @param {{ port?: number, token?: string }} [opts]
  */
 export async function collectProtocol({ port = DEFAULT_PORT, token = DEFAULT_TOKEN } = {}) {
-  const base = `http://127.0.0.1:${port}`;
+  const base = `https://127.0.0.1:${port}`;
   const headers = authHeaders(token);
   const { child, handshake } = startScheduler({ port, token });
 
