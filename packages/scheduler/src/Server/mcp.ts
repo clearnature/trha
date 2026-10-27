@@ -46,7 +46,14 @@ async function loadConfig(): Promise<Record<string, McpServerConfig>> {
   if (!file) return {};
   try {
     const raw = JSON.parse(await readFile(file, 'utf8')) as { servers?: Record<string, McpServerConfig> };
-    return raw.servers ?? {};
+    // 缺 command 的条目在 loadConfig 就丢弃：否则它会带着 undefined 一路走到
+    // spawn 才炸出不可读的 TypeError，违反本模块「失败必须是可读 ERROR」的契约。
+    const out: Record<string, McpServerConfig> = {};
+    for (const [id, cfg] of Object.entries(raw.servers ?? {})) {
+      if (typeof cfg?.command !== 'string' || !cfg.command.trim()) continue;
+      out[id] = cfg;
+    }
+    return out;
   } catch {
     return {};
   }

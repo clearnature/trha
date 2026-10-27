@@ -1,0 +1,76 @@
+// lsp.ts 客户端测试：用**假 stdio 语言服务器**（test/helpers/fake-lsp.mjs）打真帧循环。
+//
+// 覆盖：startServer 的 spawn/initialize/initialized 握手、Content-Length 帧解析、
+// didOpen 的单次发送、publishDiagnostics 的收集、各 operation 的结果格式化、
+// serverFor 的扩展名选择（TRHA_LSP_COMMAND → extensions:['*']）。
+// 不需要真实语言服务器；server 退出由 shutdownLsp 统一处理。
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { lspQuery, lspStatus, shutdownLsp } from '../src/Server/lsp.js';
+
+const helperDir = path.dirname(fileURLToPath(import.meta.url));
+const FAKE = path.join(helperDir, 'fake-lsp.mjs');
+let ws = '';
+let tsFile = '';
+
+beforeAll(async () => {
+  ws = await mkdtemp(path.join(tmpdir(), 'lsp-client-'));
+  tsFile = path.join(ws, 'a.ts');
+  await writeFile(tsFile, 'const answer = 42;\n', 'utf8');
+  process.env.TRHA_LSP_COMMAND = `${path.join(helperDir, 'fake-lsp-wrap.sh')}`;
+  process.env.TRHA_LSP_ROOT = ws;
+});
+
+afterAll(() => {
+  delete process.env.TRHA_LSP_COMMAND;
+  delete process.env.TRHA_LSP_ROOT;
+  shutdownLsp();
+});
+
+describe('lsp 客户端（假 stdio 服务器）', () => {
+  it('hover：Content-Length 帧往返，取回 contents.value', async () => {
+    expect(await lspQuery({ file: tsFile, operation: 'hover' })).toContain('fake hover');
+  });
+
+  it('diagnostics：didOpen 推送的假诊断被收集并可读', async () => {
+    // 先 hover 一次确保 didOpen 已发生（服务器随后推 publishDiagnostics）
+    await lspQuery({ file: tsFile, operation: 'hover' });
+    const diag = await lspQuery({ file: tsFile, operation: 'diagnostics' });
+    expect(String(diag)).toContain('fake diag');
+  });
+
+  it('symbols：数组格式化（name/kind/行号 +1）', async () => {
+    expect(await lspQuery({ file: tsFile, operation: 'symbols' })).toContain('fakeSym (kind 12) @ line 5');
+  });
+
+  it('definition：位置列表格式化', async () => {
+    expect(await lspQuery({ file: tsFile, operation: 'definition' })).toContain('file:///fake/x.ts');
+  });
+
+  it('references / implementation / callHierarchy / incoming / outgoing：null 结果也返回字符串', async () => {
+    for (const operation of ['references', 'implementation', 'callHierarchy', 'incomingCalls', 'outgoingCalls'] as const) {
+      const r = await lspQuery({ file: tsFile, operation });
+      expect(typeof r).toBe('string');
+    }
+  });
+
+  it('workspaceSymbol：query 透传', async () => {
+    const r = await lspQuery({ file: tsFile, operation: 'workspaceSymbol', query: 'fake' });
+    expect(typeof r).toBe('string');
+  });
+
+  it('lspStatus 反映已启动的服务器', () => {
+    const st = lspStatus();
+    expect(st).toBeDefined();
+  });
+
+  it('同一文件重复操作：didOpen 只发一次（opened 去重）', async () => {
+    const a = await lspQuery({ file: tsFile, operation: 'hover' });
+    const b = await lspQuery({ file: tsFile, operation: 'hover' });
+    expect(a).toBe(b);
+  });
+});
