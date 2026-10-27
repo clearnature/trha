@@ -100,6 +100,7 @@ export const toolCatalog: ToolDefinition[] = [
       properties: {
         task: { type: 'string' },
         name: { type: 'string', description: 'short label used in the child session id' },
+        agent: { type: 'string', description: 'agent definition name from ~/.trha/agents (optional)' },
       },
       required: ['task'],
     },
@@ -389,7 +390,7 @@ export const toolCatalog: ToolDefinition[] = [
   },
   {
     name: 'web_fetch',
-    description: 'Fetch a URL and return its text (HTML is stripped)',
+    description: 'Fetch a URL and return readable text (HTML is parsed; no search engine needed)',
     parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
   },
   {

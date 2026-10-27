@@ -1,5 +1,11 @@
 # 源代码分析报告
 
+> **2026-10-27 更新提示**：本文写于早期（四来源），其中 Reasonix 的目录结构、trha 的模块划分已与现状不符，
+> 请以 `../architecture/architecture-snapshot-2026-10-27.md` 为准。微内核的三个来源（Cordis / Yi `dynamic-state` /
+> Reasonix Extension Protocol v2）及其对照见 `microkernel-lineage.md`。
+> Haskell 侧的完整 harness 参考（`/data/work/functional-programming/hs` 的 haskell-agent、
+> langchain-hs、tricorder）也收在同一文档的 §3.5。
+
 ## 概述
 
 本报告分析了四个项目的源代码结构，为构建融合架构提供参考。

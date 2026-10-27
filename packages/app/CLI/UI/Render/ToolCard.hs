@@ -17,6 +17,7 @@ module UI.Render.ToolCard
   , toolCardView
   , toolCardCollapsed
   , toolCardExpanded
+  , statusSuffix
     -- * Limits
   , cardWidth
   ) where

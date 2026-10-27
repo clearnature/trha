@@ -69,7 +69,7 @@ async function runScript(
   let sessionId = opts.sessionId;
   if (!sessionId) {
     const start = await fetch(`${base}/api/session/start`, {
-      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard' }),
+      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard', permissionMode: 'yolo' }),
     });
     sessionId = ((await start.json()) as { sessionId: string }).sessionId;
   }

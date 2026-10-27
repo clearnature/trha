@@ -15,7 +15,7 @@ spec = do
     it "reports the compiler" $ do
       runtimeLine `shouldSatisfy` T.isPrefixOf "ghc"
     it "builds the base URL from the config" $ do
-      baseUrlLine defaultCLIConfig `shouldBe` "http://localhost:3456"
+      baseUrlLine defaultCLIConfig `shouldBe` "https://127.0.0.1:28433/"
 
   describe "parsePages" $ do
     it "parses the resident pages from a statm line" $ do

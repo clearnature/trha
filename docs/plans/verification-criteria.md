@@ -60,7 +60,7 @@
 
 ## 4. 覆盖进度表（2026-09-13，北京时间）
 
-工具：`test-cpu/Spec.hs`（独立套件）+ `test-cpu/negative/*.hs`（负面编译用例，不参与构建）。
+工具：`test/cpu/Spec.hs`（独立套件）+ `test/cpu/negative/*.hs`（负面编译用例，不参与构建）。
 全绿基线：`cabal build all` **0 error / 0 warning**；`trha-test` 177/0（4 pending）；
 `trha-cpu-test` **65/0**；`trha-webgpu-test` 2/0。
 
@@ -76,7 +76,7 @@
 | 6 | 十二律两序 + 隔八相生（+7 半音纯五度循环） | 古律学（用户 2026-09-13 指正） | ✅ 3 例 |
 | 7 | 分圆单位根：C₄ / C₃ / C₁₂ 群结构 | `PhaseSubgroup.agda`（⟨α⟩ ≅ C₄） | ✅ 7 例（经 Z[ζ₁₂] 验证） |
 | 8 | 商空间周期 60 / 3312 + `periodNotDivisible` | `Sovereign.Coupling.ZhonglvPhaseSync` | ✅ 10 例 |
-| 9 | 全息态与基模（`hermitianIP`/`normSq`/`basisVec`/`basisAt`/`Orthogonal`） | `HolographicSpace.agda` + `FiniteInnerProduct.agda` + `GF9.agda` | ✅ 10 例（**补齐实现**：`src/Infrastructure/CPU/HolographicSpace.hs`） |
+| 9 | 全息态与基模（`hermitianIP`/`normSq`/`basisVec`/`basisAt`/`Orthogonal`） | `HolographicSpace.agda` + `FiniteInnerProduct.agda` + `GF9.agda` | ✅ 10 例（**补齐实现**：`src/llm/Infrastructure/CPU/HolographicSpace.hs`） |
 
 ### C2 · 类型不变量由**编译期**强制（负面编译用例）
 
@@ -107,7 +107,7 @@
 
 **已知局限（不掩盖）**：
 
-- ~~`test-cpu` 现用的层使 `adj` 恒零~~ → **已补**：`adj` 恒零是**默认层**的性质而非
+- ~~`test/cpu` 现用的层使 `adj` 恒零~~ → **已补**：`adj` 恒零是**默认层**的性质而非
   `causalGraphStep` 的普遍性质；取 `wlAttnQ = wlAttnK = 全 1` 即得非零邻接，且**非零下
   秩仍 ≤ 1**（见第 7 条）。**仍存**的限制是：传播对 `hidden` 的**可观测**影响被
   旧的 `\`div\` 10` 截断掩盖（`gf27ToInt ∈ [0,26]` ⇒ 只有 `{0,1,2}`）——**该截断已修**
@@ -130,7 +130,7 @@
 33 跨 AVX2 的 8 路块）。
 
 > 更正：本节此前误写"GPU(WGSL) 实现**缺失**、C3 覆盖 **3/4**"。实际第四实现**早已存在**
-> （WGSL + 真机对拍，见 `test-webgpu/Spec.hs`），只是与 ①②③ 分在两个套件，故未在同一处
+> （WGSL + 真机对拍，见 `test/webgpu/Spec.hs`），只是与 ①②③ 分在两个套件，故未在同一处
 > 呈现。已改为 4/4。
 
 对拍：穷举 `[0,26]²`（729 组）验 ①≡②；同批输入验 ①≡②≡③；边界（空/零元/单位元）；
@@ -150,8 +150,8 @@
 | 4 | 判定分量齐全 `t6` / `reach` / `edges` / `reason` | ✅ |
 | 5 | 草稿（本地三值）与外部输出走同一入口 | ✅ |
 
-实现：`src/Infrastructure/CPU/ConstraintVerdict.hs`（投影桥 + 判定入口）、
-`src/API/Server.hs`（`constraintField` + 各端点接线）。
+实现：`src/llm/Infrastructure/CPU/ConstraintVerdict.hs`（投影桥 + 判定入口）、
+`src/api/API/Server.hs`（`constraintField` + 各端点接线）。
 
 **遗留**：`trha-api` / `trha-llm` 重复编译 `Infrastructure.CPU.*`（共享
 `hs-source-dirs: src`）—— 本次以补齐 `other-modules`（14 → 19）绕过，未根治；
@@ -175,7 +175,7 @@
    默认层 `adj` 恒零 ⇒ `fused = 0` ⇒ 改不改系数都得到 `x`（最初的旧断言就是这样假绿的）。
 3. **本测试层下 `adj` 恒零**（见上方「已知局限」）。
 
-以上三条都已写成断言固定在 `test-cpu/Spec.hs` 里，避免日后被误读为「缺陷」或「正常」。
+以上三条都已写成断言固定在 `test/cpu/Spec.hs` 里，避免日后被误读为「缺陷」或「正常」。
 
 ---
 

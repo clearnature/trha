@@ -1,0 +1,2 @@
+probe write OK (edited)
+appended line ok

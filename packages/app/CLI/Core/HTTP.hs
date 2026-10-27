@@ -5,6 +5,11 @@ module Core.HTTP
     HTTPClient(..)
   , createHTTPClient
 
+    -- * Manager settings
+  , managerSettingsFor
+  , managerSettingsForBase
+  , baseSchemeHost
+
     -- * Proxy policy
   , ProxyChoice(..)
   , resolveProxy
@@ -34,7 +39,8 @@ import qualified Data.Text.Encoding as TE
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Network.HTTP.Client
-import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Network.Connection (TLSSettings(..))
+import Network.HTTP.Client.TLS (mkManagerSettings, tlsManagerSettings)
 import Network.HTTP.Types (HeaderName)
 import Network.HTTP.Types.Status
 
@@ -45,17 +51,60 @@ data HTTPClient = HTTPClient
   , httpClientToken   :: Text
   }
 
--- | Create a new HTTP client
-createHTTPClient :: Text -> Int -> Text -> Int -> Text -> IO HTTPClient
-createHTTPClient host port token timeoutMs proxySetting = do
-  let base = tlsManagerSettings
+-- | Manager settings for one target.
+--
+-- @scheme@ is @"https"@ (the scheduler default) or @"http"@ (legacy).
+-- Loopback HTTPS uses a self-signed certificate by design, so certificate
+-- validation is disabled **for loopback only**; remote targets keep the
+-- system trust store.
+managerSettingsFor :: Text -> Text -> ManagerSettings
+managerSettingsFor scheme host
+  | T.toLower (T.strip scheme) == "https" && isLoopbackHost host =
+      mkManagerSettings (TLSSettingsSimple True False False) Nothing
+  | otherwise = tlsManagerSettings
+
+-- | 'managerSettingsFor' for an already-built base URL
+-- (@\"https://localhost:28433\"@), for callers that only kept an
+-- 'HTTPClient' and build a private manager from its base.
+--
+-- An unparseable base falls back to strict TLS: silently trusting anything
+-- else is worse than failing the handshake.
+managerSettingsForBase :: String -> ManagerSettings
+managerSettingsForBase base = case baseSchemeHost base of
+  Just (scheme, host) -> managerSettingsFor scheme host
+  Nothing             -> tlsManagerSettings
+
+-- | Split @\"https://user@127.0.0.1:28433/path\"@ into @(\"https\", \"127.0.0.1\")@.
+--
+-- 'Nothing' when there is no scheme, which is what makes
+-- 'managerSettingsForBase' fail closed on an unparseable base.
+baseSchemeHost :: String -> Maybe (Text, Text)
+baseSchemeHost base =
+  case T.breakOn "://" (T.pack base) of
+    (scheme, rest)
+      | not (T.null scheme), not (T.null rest) ->
+          Just (T.toLower scheme, hostOf (T.drop 3 rest))
+    _ -> Nothing
+  where
+    -- drop the path, then any userinfo, then the port
+    hostOf raw = bracketless (snd (T.breakOnEnd "@" (T.takeWhile (/= '/') raw)))
+    bracketless authority
+      | "[" `T.isPrefixOf` authority = T.takeWhile (/= ']') (T.drop 1 authority)
+      | otherwise                    = T.takeWhile (/= ':') authority
+
+-- | Create a new HTTP client.
+createHTTPClient :: Text -> Text -> Int -> Text -> Int -> Text -> IO HTTPClient
+createHTTPClient scheme host port token timeoutMs proxySetting = do
+  let https = T.toLower (T.strip scheme) == "https"
+      base = (managerSettingsFor scheme host)
         { managerResponseTimeout = responseTimeoutMicro (timeoutMs * 1000) }
       settings = case resolveProxy host proxySetting of
         ProxyDirect    -> managerSetProxy noProxy base
         ProxyFromEnv   -> base
         ProxyForced h p -> managerSetProxy (useProxy (Proxy (TE.encodeUtf8 h) p)) base
   manager <- newManager settings
-  let baseUrl = "http://" ++ T.unpack host ++ ":" ++ show port
+  let proto = if https then "https" else "http"
+      baseUrl = proto ++ "://" ++ T.unpack host ++ ":" ++ show port
   return $ HTTPClient manager baseUrl token
 
 --------------------------------------------------------------------------------
@@ -147,8 +196,8 @@ parseResponse response
 unreachable :: HTTPClient -> Text
 unreachable client =
   "连不上 " <> T.pack (httpClientBase client)
-    <> "（调度层没在跑？起法：`trha serve` 起内核 :3333，"
-    <> "`cd packages/scheduler && node dist/cli.js` 起调度层 :3456）"
+    <> "（调度层没在跑？起法：`trha serve` 起内核 :19433，"
+    <> "`cd packages/scheduler && node dist/cli.js` 起调度层 :28433）"
 
 -- | Run one request, mapping connection-level failures to 'CLIError'.
 sendRequest :: HTTPClient -> IO (Response BSL.ByteString) -> IO (Either CLIError (Response BSL.ByteString))

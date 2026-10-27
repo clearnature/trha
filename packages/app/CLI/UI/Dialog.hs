@@ -25,6 +25,10 @@ module UI.Dialog
   , approvalOptions
   , isDestructiveShell
     -- * Command-dialog editing
+  , dialogSkillsAppend
+  , dialogSkillsDelete
+  , dialogSkillsQuery
+  , dialogSkillsItems
   , dialogCommandsAppend
   , dialogCommandsDelete
   , dialogCommandsQuery
@@ -38,9 +42,16 @@ module UI.Dialog
   , escWiring
   ) where
 
-import Core.Types (ModelInfo(..), ProviderInfo(..))
+import UI.I18n (Lang)
+
+import Core.Types (AgentEntry(..), ModelInfo(..), ProviderInfo(..))
 import Core.SessionSummary (SessionSummary(..))
-import UI.Render.Picker (PickerItem(..), filterItems, moveSelection, queryAppend, queryDelete)
+import UI.Skills (Skill(..))
+import UI.ProviderPresets (Preset(..))
+import UI.Theme (Theme(..))
+import UI.Render.Picker
+    ( PickerItem(..), filterItems, moveSelection, moveSelectionSkipping
+    , queryAppend, queryDelete )
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -52,6 +63,11 @@ data Dialog
   | DialogSessions [SessionSummary] Int     -- ^ /sessions: filtered, selected
   | DialogCommands [PickerItem] Text Int    -- ^ full registry, query, selected
   | DialogProviders [ProviderInfo] Int      -- ^ /provider: providers, selected
+  | DialogPresets [Preset] Int             -- ^ /provider: preset vendors, selected
+  | DialogSkills [Skill] Text Int           -- ^ /skills: skills, query, selected
+  | DialogAgents [AgentEntry] Int           -- ^ /agents: session tree, selected
+  | DialogThemes [Theme] Int                -- ^ /theme: built-in themes, selected
+  | DialogLanguages [Lang] Int              -- ^ /language: interface languages, selected
   | DialogApproval Text String [Text] Int   -- ^ ask message, tool, args, selected
   | DialogConfirm Text Int                  -- ^ "always" confirmation, selected (0=yes)
   deriving (Show, Eq)
@@ -86,6 +102,11 @@ dialogCount (DialogModels ms _)      = length ms
 dialogCount (DialogSessions ss _)    = length ss
 dialogCount (DialogCommands all0 q _) = length (filterItems q all0)
 dialogCount (DialogProviders ps _)   = length ps
+dialogCount (DialogPresets ps _)     = length ps
+dialogCount (DialogSkills ss q _)    = length (filterSkills q ss)
+dialogCount (DialogAgents as _)      = length as
+dialogCount (DialogThemes ts _)      = length ts
+dialogCount (DialogLanguages ls _)   = length ls
 dialogCount (DialogApproval _ name args _) = length (approvalOptions name args)
 dialogCount (DialogConfirm _ _)      = 2  -- yes / no
 
@@ -135,8 +156,13 @@ dialogMoveSel :: Int -> Dialog -> Dialog
 dialogMoveSel delta d = case d of
   DialogModels ms s      -> DialogModels ms (mv (dialogCount d) s)
   DialogSessions ss s    -> DialogSessions ss (mv (dialogCount d) s)
-  DialogCommands all0 q s -> DialogCommands all0 q (mv (dialogCount d) s)
+  DialogCommands all0 q s -> DialogCommands all0 q (moveSelectionSkipping delta s (filterItems q all0))
   DialogProviders ps s     -> DialogProviders ps (mv (dialogCount d) s)
+  DialogPresets ps s       -> DialogPresets ps (mv (dialogCount d) s)
+  DialogSkills ss q s      -> DialogSkills ss q (mv (dialogCount d) s)
+  DialogAgents as s        -> DialogAgents as (mv (dialogCount d) s)
+  DialogThemes ts s        -> DialogThemes ts (mv (dialogCount d) s)
+  DialogLanguages ls s     -> DialogLanguages ls (mv (dialogCount d) s)
   DialogApproval m t a s  -> DialogApproval m t a (mv (dialogCount d) s)
   DialogConfirm m s       -> DialogConfirm m (mv (dialogCount d) s)
   where
@@ -144,6 +170,28 @@ dialogMoveSel delta d = case d of
 
 -- | Append a character to the command query, re-filter the registry and
 -- reset the selection.
+-- | Skills filtered by a case-insensitive substring match on name/description.
+filterSkills :: Text -> [Skill] -> [Skill]
+filterSkills q ss
+  | T.null (T.strip q) = ss
+  | otherwise = filter matches ss
+  where
+    needle = T.toLower (T.strip q)
+    matches sk = needle `T.isInfixOf` T.toLower (skName sk)
+              || needle `T.isInfixOf` T.toLower (skDescription sk)
+
+dialogSkillsAppend :: Char -> Dialog -> Dialog
+dialogSkillsAppend c (DialogSkills ss q _) = DialogSkills ss (queryAppend q c) 0
+
+dialogSkillsDelete :: Dialog -> Dialog
+dialogSkillsDelete (DialogSkills ss q _) = DialogSkills ss (queryDelete q) 0
+
+dialogSkillsQuery :: Dialog -> Text
+dialogSkillsQuery (DialogSkills _ q _) = q
+
+dialogSkillsItems :: Dialog -> [Skill]
+dialogSkillsItems (DialogSkills ss q _) = filterSkills q ss
+
 dialogCommandsAppend :: Char -> Dialog -> Dialog
 dialogCommandsAppend c (DialogCommands all0 q _) =
   let q' = queryAppend q c

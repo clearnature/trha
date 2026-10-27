@@ -13,6 +13,7 @@ module UI.Theme
     -- * Palette
   , defaultTheme
   , themes
+  , themeNames
   , themeAttrNames
     -- * Resolution
   , resolveTheme
@@ -118,7 +119,77 @@ lightTheme = Theme "light"
 
 -- | All built-in themes.
 themes :: [Theme]
-themes = [defaultTheme, lightTheme]
+themes =
+  [ defaultTheme, lightTheme
+  , gruvboxTheme, draculaTheme, nordTheme
+  , solarizedDarkTheme, monokaiTheme, solarizedLightTheme
+  ]
+  ++
+  [ mkPalette "catppuccin-mocha"     (Magenta,     Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "catppuccin-frappe"    (Magenta,     Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "catppuccin-macchiato" (Magenta,     Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "catppuccin-latte"     (Blue,        Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "one-dark"             (Blue,        Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "one-light"            (Blue,        Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "github-dark"          (Blue,        Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "github-light"         (Blue,        Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "ayu-dark"             (Yellow,      Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "ayu-light"            (Blue,        Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "rose-pine"            (Magenta,     Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "rose-pine-dawn"       (Magenta,     Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "kanagawa"             (Yellow,      Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "everforest"           (Green,       Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "tokyo-night-storm"    (Cyan,        Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "material"             (Cyan,        Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "night-owl"            (Cyan,        Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "palenight"            (Magenta,     Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "oceanic-next"         (Cyan,        Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "spacegray"            (Blue,        Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "tomorrow-night"       (Blue,        Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "zenburn"              (Yellow,      Blue,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "monokai-pro"          (Magenta,     Cyan,       Green,       Yellow,      Red,       BrightBlack)
+  , mkPalette "solarized-light-hc"   (Blue,        Blue,       Green,       Yellow,      Red,       BrightBlack)
+  ]
+
+-- | Names of the built-in themes (for @/theme@ and the picker).
+themeNames :: [Text]
+themeNames = map themeName themes
+
+-- | A palette from six anchors: accent, assistant, ok, warn, error, muted.
+-- Every new theme only has to choose those (the roles stay consistent).
+mkPalette :: Text -> (TermColor, TermColor, TermColor, TermColor, TermColor, TermColor) -> Theme
+mkPalette name (accent, assistantC, ok, warn, err, muted) = Theme name
+  [ ("header",    ColorSpec accent [StyleBold])
+  , ("user",      ColorSpec ok [StyleBold])
+  , ("assistant", ColorSpec assistantC [])
+  , ("tool",      ColorSpec accent [])
+  , ("system",    ColorSpec warn [])
+  , ("error",     ColorSpec err [StyleBold])
+  , ("input",     ColorSpec accent [])
+  , ("status",    ColorSpec muted [])
+  , ("timestamp", ColorSpec muted [])
+  , ("border",    ColorSpec muted [])
+  , ("title",     ColorSpec accent [StyleBold])
+  , ("busy",      ColorSpec warn [StyleBold])
+  , ("plan",      ColorSpec accent [StyleBold])
+  , ("codeBlock", ColorSpec muted [])
+  , ("codeLang",  ColorSpec warn [StyleBold])
+  , ("mdBold",    ColorSpec accent [StyleBold])
+  , ("mdCode",    ColorSpec accent [])
+  , ("diffAdd",   ColorSpec ok [])
+  , ("diffRemove", ColorSpec err [])
+  , ("diffHunk",  ColorSpec accent [])
+  , ("diffMeta",  ColorSpec muted [])
+  , ("selection", ColorSpec accent [StyleReverse])
+  ]
+
+gruvboxTheme, draculaTheme, nordTheme, solarizedDarkTheme, monokaiTheme, solarizedLightTheme :: Theme
+gruvboxTheme        = mkPalette "gruvbox"         (Yellow,     Blue,         Green,       Yellow,      Red,       BrightBlack)
+draculaTheme        = mkPalette "dracula"         (Magenta,    Cyan,         Green,       Yellow,      Red,       BrightBlack)
+nordTheme           = mkPalette "nord"            (BrightCyan, BrightBlue,   BrightGreen, BrightYellow, BrightRed, BrightBlack)
+solarizedDarkTheme  = mkPalette "solarized-dark"  (Cyan,       Blue,         Green,       Yellow,      Red,       BrightBlack)
+monokaiTheme        = mkPalette "monokai"         (Yellow,     Cyan,         Green,       Yellow,      Red,       BrightBlack)
+solarizedLightTheme = mkPalette "solarized-light" (Blue,       Blue,         Green,       Yellow,      Red,       BrightBlack)
 
 -- | Resolve a theme name (case-insensitive); unknown or empty names fall
 -- back to 'defaultTheme'.
@@ -149,16 +220,17 @@ themeFor name truecolor
   | otherwise = resolveTheme name
 
 upgradeToTrueColor :: Theme -> Theme
-upgradeToTrueColor th =
-  th { themeColors =
-         [ (role, case lookup role table of
-                    Just rgb -> cs { csFg = rgb }
-                    Nothing  -> cs)
-         | (role, cs) <- themeColors th ] }
+upgradeToTrueColor th = case T.toLower (themeName th) of
+  "tokyo-night" -> applyTable darkTrueColor th
+  "light"       -> applyTable lightTrueColor th
+  _             -> th  -- ANSI themes stay as they are
   where
-    table
-      | T.toLower (themeName th) == "light" = lightTrueColor
-      | otherwise                           = darkTrueColor
+    applyTable table t =
+      t { themeColors =
+             [ (role, case lookup role table of
+                        Just rgb -> cs { csFg = rgb }
+                        Nothing  -> cs)
+             | (role, cs) <- themeColors t ] }
 
 -- | Tokyo Night RGB values (the dark palette).
 darkTrueColor :: [(Text, TermColor)]

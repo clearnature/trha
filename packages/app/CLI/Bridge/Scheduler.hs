@@ -30,11 +30,41 @@ module Bridge.Scheduler
   , sendMessage
   , sendMessageWithUsage
   , sendMessageWithTarget
+  , sendMessageWithTargetEffort
+  , sendMessageWithEffort
   , getMessages
   , allowAlways
   , interruptSession
   , fetchTeamTasks
+  , SessionInfo(..)
+  , fetchSessionInfo
+  , fetchAgents
+  , renameSession
+  , tagSession
+  , fetchServiceStatus
+  , fetchBalance
+  , transcribeVoice
+  , compactSession
+  , retrySession
+  , btwAsk
+  , recapSession
+  , queueMessage
+  , fetchQueue
+  , steerSession
+  , forkSession
+  , branchSession
+  , setInUseProvider
+  , startLoop
+  , fetchLoops
+  , stopLoops
+  , listWorkflows
+  , runWorkflow
+  , SessionMode(..)
+  , fetchSessionMode
+  , applySessionMode
   , listProviders
+  , probeProvider
+  , ProviderProbe(..)
   , saveProvider
   , removeProvider
 
@@ -47,6 +77,7 @@ module Bridge.Scheduler
   , planStep
   , approvePlan
   , denyPlan
+  , denyPlanWithReason
 
     -- * Multi-step plans (kernel-owned)
   , submitPlan
@@ -70,27 +101,28 @@ module Bridge.Scheduler
   , healthCheck
   ) where
 
+import Config.Settings (resolveConfig)
 import Core.Types
+import Core.RunState (RuntimeEntry(..), Service(..), readRuntimeEntry)
 import Core.HTTP
-import Core.SSE (SseDecoder, SsePayload(..), classifyPayload, feed, newDecoder)
+import Core.SSE (SseDecoder, SsePayload(..), SseNotice(..), classifyPayload, toNotice, feed, newDecoder)
 import Data.Aeson
 import qualified Data.Aeson.KeyMap as KM
-import Data.Aeson.Types (parseMaybe, (.:))
+import Data.Aeson.Types (parseMaybe, (.:), (.:?), (.!=))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Control.Concurrent (forkIO, killThread, newEmptyMVar, putMVar, takeMVar)
-import Control.Monad (void, when)
+import Control.Monad (join, void, when)
 import Data.Maybe (fromMaybe)
 import System.Timeout (timeout)
-import Control.Exception (catch)
+import Control.Exception (SomeAsyncException, SomeException, catch, fromException, throwIO)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Network.HTTP.Client
-    ( BodyReader, managerResponseTimeout, managerSetProxy, newManager, noProxy
+    ( BodyReader, HttpException(..), managerResponseTimeout, managerSetProxy, newManager, noProxy
     , parseRequest, requestHeaders, responseBody, responseTimeoutNone, withResponse, brRead
     )
-import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (HeaderName)
 
 -- | Scheduler bridge
@@ -102,8 +134,21 @@ data SchedulerBridge = SchedulerBridge
 -- | Create a new scheduler bridge
 createSchedulerBridge :: CLIConfig -> IO SchedulerBridge
 createSchedulerBridge config = do
-  http <- createHTTPClient (configHost config) (configPort config) (configToken config) (configTimeout config) (configProxy config)
-  return $ SchedulerBridge config http
+  -- The scheduler publishes its live endpoint in ~/.trha/runtime.json; use it
+  -- when the caller left the defaults in place.
+  rt <- readRuntimeEntry Scheduler
+  let cfg = case rt of
+        Just e | configPort config == 28433 ->
+          config
+            { configHost  = T.pack (reHost e)
+            , configPort  = rePort e
+            , configToken = if T.strip (configToken config) == "dev-token"
+                              then T.pack (reToken e)
+                              else configToken config
+            }
+        _ -> config
+  http <- createHTTPClient (configScheme cfg) (configHost cfg) (configPort cfg) (configToken cfg) (configTimeout cfg) (configProxy cfg)
+  return $ SchedulerBridge cfg http
 
 --------------------------------------------------------------------------------
 -- Session Operations
@@ -112,7 +157,10 @@ createSchedulerBridge config = do
 -- | Create a session on the orchestration layer.
 createSession :: SchedulerBridge -> IO (Either CLIError SessionId)
 createSession bridge = do
-  result <- httpPost (bridgeHTTP bridge) "/api/session/start" (object ["mode" .= ("standard" :: Text)])
+  cfg <- resolveConfig defaultCLIConfig
+  result <- httpPost (bridgeHTTP bridge) "/api/session/start"
+    (object [ "mode" .= ("standard" :: Text)
+            , "askTimeout" .= configAskTimeout cfg ])
   return $ case result of
     Right (Object r) -> case parseMaybe (.: "sessionId") r of
       Just sessionId -> Right sessionId
@@ -168,11 +216,27 @@ sendMessageWithUsage bridge sessionId content =
 sendMessageWithTarget
   :: SchedulerBridge -> SessionId -> Maybe Text -> Maybe Text -> Text
   -> IO (Either CLIError (StreamChunk, Maybe Usage))
-sendMessageWithTarget bridge sessionId mprovider mmodel content = do
+sendMessageWithTarget bridge sessionId mprovider mmodel content =
+  sendMessageWithTargetEffort bridge sessionId mprovider mmodel Nothing Nothing content
+
+-- | Like 'sendMessageWithTarget' but carries a reasoning effort, which the
+-- scheduler forwards to the kernel as @genParams.effort@.
+sendMessageWithEffort
+  :: SchedulerBridge -> SessionId -> Maybe Text -> Maybe Text -> Text
+  -> IO (Either CLIError (StreamChunk, Maybe Usage))
+sendMessageWithEffort bridge sessionId meffort mlang content =
+  sendMessageWithTargetEffort bridge sessionId Nothing Nothing meffort mlang content
+
+sendMessageWithTargetEffort
+  :: SchedulerBridge -> SessionId -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Text
+  -> IO (Either CLIError (StreamChunk, Maybe Usage))
+sendMessageWithTargetEffort bridge sessionId mprovider mmodel meffort mlang content = do
   let body = object $
         [ "sessionId" .= sessionId, "message" .= content ]
         ++ [ "provider" .= p | Just p <- [mprovider] ]
         ++ [ "model" .= m | Just m <- [mmodel] ]
+        ++ [ "effort" .= e | Just e <- [meffort] ]
+        ++ [ "reasoningLanguage" .= l | Just l <- [mlang] ]
   result <- httpPost (bridgeHTTP bridge) "/api/agent/step" body
     :: IO (Either CLIError Value)
   return $ case result of
@@ -193,12 +257,30 @@ listProviders bridge = do
     :: IO (Either CLIError Value)
   return (result >>= providerStoreToList)
 
+-- | Ask an endpoint what it is (@POST /api/providers/probe@).  The kernel
+-- classifies the model listing; the caller confirms every field.
+probeProvider
+  :: SchedulerBridge -> Text -> Text
+  -> IO (Either CLIError ProviderProbe)
+probeProvider bridge baseUrl apiKey = do
+  let body = object [ "baseUrl" .= baseUrl, "apiKey" .= apiKey ]
+  r <- httpPost (bridgeHTTP bridge) "/api/providers/probe" body
+    :: IO (Either CLIError Value)
+  return $ case r of
+    Right v  -> case fromJSON v of
+      Success p -> Right p
+      _         -> Left (ValidationError "Invalid probe response")
+    Left err -> Left err
+
 -- | Save (or overwrite) one provider.  An empty @apiKey@ keeps the stored
 -- key (the kernel treats a blank key as "unchanged").
 saveProvider
   :: SchedulerBridge -> Text -> Text -> Text -> Text -> [Text] -> Text
+  -> Bool -> Bool -> Text -> [Text] -> [Text]
+  -> Maybe Value -> Maybe Value -> Text -> Text -> Maybe Int
   -> IO (Either CLIError [ProviderInfo])
-saveProvider bridge name kind baseUrl apiKey models def = do
+saveProvider bridge name kind baseUrl apiKey models def authHeader noProxy effort vision efforts
+             headers extraBody thinking responsesMode contextWindow = do
   let body = object
         [ "name" .= name
         , "kind" .= kind
@@ -206,10 +288,16 @@ saveProvider bridge name kind baseUrl apiKey models def = do
         , "apiKey" .= apiKey
         , "models" .= models
         , "default" .= def
-        , "authHeader" .= True
-        , "noProxy" .= False
-        , "effort" .= ("" :: Text)
-        , "vision" .= ([] :: [Text])
+        , "authHeader" .= authHeader
+        , "noProxy" .= noProxy
+        , "effort" .= effort
+        , "efforts" .= efforts
+        , "vision" .= vision
+        , "headers" .= headers
+        , "extraBody" .= extraBody
+        , "thinking" .= thinking
+        , "responsesMode" .= responsesMode
+        , "contextWindow" .= contextWindow
         ]
   result <- httpPost (bridgeHTTP bridge) "/api/providers" body
     :: IO (Either CLIError Value)
@@ -247,10 +335,258 @@ fetchTeamTasks bridge sessionId = do
     Right _          -> Left $ ValidationError "Invalid session response"
     Left err         -> Left err
 
+-- | Sessions with their parent links (sidebar agent tree).
+fetchAgents :: SchedulerBridge -> IO (Either CLIError [AgentEntry])
+fetchAgents bridge = do
+  result <- httpGet (bridgeHTTP bridge) "/api/sessions" :: IO (Either CLIError [Value])
+  return $ case result of
+    Right rows -> Right [ e | Just e <- map parseMaybeAgent rows ]
+    Left err   -> Left err
+  where
+    parseMaybeAgent (Object o) =
+      case parseMaybe (.: "id") o of
+        Just sid -> Just AgentEntry { aeId = sid, aeParent = join (parseMaybe (.:? "parentId") o) }
+        Nothing  -> Nothing
+    parseMaybeAgent _ = Nothing
+
+-- | One GET for the sidebar's goal and TODO sections.
+fetchSessionInfo :: SchedulerBridge -> SessionId -> IO (Either CLIError SessionInfo)
+fetchSessionInfo bridge sid = do
+  result <- httpGet (bridgeHTTP bridge) ("/api/session/" ++ sid)
+              :: IO (Either CLIError Value)
+  return $ case result of
+    Right (Object r) -> Right SessionInfo
+      { siGoal = case KM.lookup "goal" r of
+          Just (Object g) -> parseMaybe (.: "objective") g
+          _               -> Nothing
+      , siTodos = fromMaybe [] (parseMaybe (.: "teamTasks") r)
+      }
+    Right _  -> Left $ ValidationError "Invalid session response"
+    Left err -> Left err
+
+-- | Read the session's current posture.
+fetchSessionMode :: SchedulerBridge -> SessionId -> IO (Either CLIError SessionMode)
+fetchSessionMode bridge sid =
+  httpGet (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/mode")
+
+-- | Apply one posture action: @cycle@ (Shift+Tab), @yolo@ (Ctrl+Y), or @set@.
+applySessionMode :: SchedulerBridge -> SessionId -> Value -> IO (Either CLIError SessionMode)
+applySessionMode bridge sid body =
+  httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/mode") body
+
+-- | Rename a session (user-facing title; persisted server-side).
+renameSession :: SchedulerBridge -> SessionId -> Text -> IO (Either CLIError Value)
+renameSession bridge sid title =
+  httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/meta")
+    (object ["title" .= title])
+
+-- | Replace a session's tags.
+tagSession :: SchedulerBridge -> SessionId -> [Text] -> IO (Either CLIError Value)
+tagSession bridge sid tags =
+  httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/meta")
+    (object ["tags" .= tags])
+
+-- | Built-in workflow templates (/workflow).
+listWorkflows :: SchedulerBridge -> IO (Either CLIError [(Text, Text)])
+listWorkflows bridge = do
+  r <- httpGet (bridgeHTTP bridge) "/api/workflows"
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> Right
+      [ (n, d)
+      | Just (Object o) <- map Just (fromMaybe [] (parseMaybe (.: "workflows") v))
+      , Just n <- [parseMaybe (.: "name") o]
+      , Just d <- [parseMaybe (.: "description") o] ]
+
+-- | Run a workflow template in this session.
+runWorkflow :: SchedulerBridge -> SessionId -> Text -> Text -> IO (Either CLIError Text)
+runWorkflow bridge sid name input = do
+  r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/workflow")
+         (object ["name" .= name, "input" .= input])
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> case parseMaybe (.: "reply") v of
+      Just t  -> Right t
+      Nothing -> Left (ServerError "workflow returned no reply")
+
+-- | Start a recurring prompt (/loop).
+startLoop :: SchedulerBridge -> SessionId -> Int -> Text -> IO (Either CLIError Text)
+startLoop bridge sid intervalMs prompt = do
+  r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/loop")
+         (object ["interval" .= intervalMs, "prompt" .= prompt])
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> case parseMaybe (.: "id") v of
+      Just i  -> Right i
+      Nothing -> Left (ServerError "loop returned no id")
+
+-- | Active loops of a session.
+fetchLoops :: SchedulerBridge -> SessionId -> IO (Either CLIError [Text])
+fetchLoops bridge sid = do
+  r <- httpGet (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/loop")
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> Right
+      [ p <> "  (" <> T.pack (show (repeatMs :: Int)) <> " ms, " <> T.pack (show (runs :: Int)) <> trhaRuns <> ")"
+      | Just (Object o) <- map Just (fromMaybe [] (parseMaybe (.: "loops") v))
+      , Just p <- [parseMaybe (.: "prompt") o]
+      , Just repeatMs <- [parseMaybe (.: "repeatMs") o]
+      , Just runs <- [parseMaybe (.: "runs") o] ]
+  where trhaRuns = " runs" :: Text
+
+-- | Cancel every active loop of a session.
+stopLoops :: SchedulerBridge -> SessionId -> IO (Either CLIError Int)
+stopLoops bridge sid = do
+  r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/loop") (object ["stop" .= True])
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> case parseMaybe (.: "cancelled") v of
+      Just n  -> Right n
+      Nothing -> Left (ServerError "loop stop returned no count")
+
+-- | Make one saved provider the active one (/switch).
+setInUseProvider :: SchedulerBridge -> Text -> IO (Either CLIError [ProviderInfo])
+setInUseProvider bridge name = do
+  r <- httpPost (bridgeHTTP bridge) "/api/providers/in-use" (object ["name" .= name])
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> providerStoreToList v
+
+-- | Copy this session into a child (/fork); @upto@ truncates the history.
+forkSession :: SchedulerBridge -> SessionId -> Maybe Int -> IO (Either CLIError SessionId)
+forkSession bridge sid upto = do
+  r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/fork")
+         (object [ "upto" .= n | Just n <- [upto] ])
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> case parseMaybe (.: "id") v of
+      Just i  -> Right i
+      Nothing -> Left (ServerError "fork returned no id")
+
+-- | Fork just before the last user turn (/branch).
+branchSession :: SchedulerBridge -> SessionId -> IO (Either CLIError SessionId)
+branchSession bridge sid = do
+  r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/branch") (object [])
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> case parseMaybe (.: "id") v of
+      Just i  -> Right i
+      Nothing -> Left (ServerError "branch returned no id")
+
+-- | Inject a prompt into the running turn (/steer).
+steerSession :: SchedulerBridge -> SessionId -> Text -> IO (Either CLIError Int)
+steerSession bridge sid prompt = do
+  r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/steer")
+         (object ["prompt" .= prompt])
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> case parseMaybe (.: "steered") v of
+      Just n  -> Right n
+      Nothing -> Left (ServerError "steer returned no count")
+
+-- | Park a message to run after the current turn (/queue).
+queueMessage :: SchedulerBridge -> SessionId -> Text -> IO (Either CLIError Int)
+queueMessage bridge sid message = do
+  r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/queue")
+         (object ["message" .= message])
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> case parseMaybe (.: "queued") v of
+      Just n  -> Right n
+      Nothing -> Left (ServerError "queue returned no depth")
+
+-- | Messages currently queued for a session.
+fetchQueue :: SchedulerBridge -> SessionId -> IO (Either CLIError [Text])
+fetchQueue bridge sid = do
+  r <- httpGet (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/queue")
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> Right
+      [ m | Just (Object o) <- map Just (fromMaybe [] (parseMaybe (.: "queued") v))
+          , Just m <- [parseMaybe (.: "message") o] ]
+
+-- | Summarize the conversation so far (/recap).
+recapSession :: SchedulerBridge -> SessionId -> IO (Either CLIError Text)
+recapSession bridge sid = do
+  r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/recap") (object [])
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> case parseMaybe (.: "summary") v of
+      Just t  -> Right t
+      Nothing -> Left (ServerError "recap returned no summary")
+
+-- | Ask a side question without touching the conversation (/btw).
+btwAsk :: SchedulerBridge -> SessionId -> Text -> IO (Either CLIError Text)
+btwAsk bridge sid question = do
+  r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/btw")
+         (object ["question" .= question])
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> case parseMaybe (.: "answer") v of
+      Just t  -> Right t
+      Nothing -> Left (ServerError "btw returned no answer")
+
+-- | Replay the last turn exactly (/retry).
+retrySession :: SchedulerBridge -> SessionId -> IO (Either CLIError Text)
+retrySession bridge sid = do
+  r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/retry") (object [])
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> case parseMaybe (.: "reply") v of
+      Just t  -> Right t
+      Nothing -> Left (ServerError "retry returned no reply")
+
+-- | Compact a session's history through the scheduler's context governor.
+compactSession :: SchedulerBridge -> SessionId -> IO (Either CLIError (Text, Int))
+compactSession bridge sid = do
+  r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/compact") (object [])
+  pure $ case r of
+    Left e  -> Left e
+    Right v -> case parseMaybe (.: "savedTokens") v of
+      Just n  -> Right (fromMaybe "none" (parseMaybe (.: "trigger") v), n)
+      Nothing -> Left (ServerError "compact returned no result")
+
+-- | Transcribe a recorded WAV through the scheduler (MiMo's ASR contract:
+-- chat/completions + input_audio, not /audio/transcriptions).
+transcribeVoice :: SchedulerBridge -> Text -> IO (Either CLIError Text)
+transcribeVoice bridge path = do
+  r <- httpPost (bridgeHTTP bridge) "/api/transcribe" (object ["path" .= path])
+  pure $ case r of
+    Left e   -> Left e
+    Right v  -> case parseMaybe (.: "text") v of
+      Just t | not (T.null (T.strip t)) -> Right t
+      _ -> Left (ServerError "transcribe returned no text")
+
+-- | Provider account balance (DeepSeek @/user/balance@, via the scheduler).
+fetchBalance :: SchedulerBridge -> IO (Either CLIError Balance)
+fetchBalance bridge = httpGet (bridgeHTTP bridge) "/api/balance"
+
+-- | LSP / MCP service state for the sidebar (best effort: [] when the
+-- scheduler predates the endpoints).
+fetchServiceStatus :: SchedulerBridge -> IO ([Text], [Text])
+fetchServiceStatus bridge = do
+  mcp <- httpGet (bridgeHTTP bridge) "/api/mcp/status" :: IO (Either CLIError Value)
+  lsp <- httpGet (bridgeHTTP bridge) "/api/lsp/status" :: IO (Either CLIError Value)
+  return (lspLine lsp, mcpLine mcp)
+  where
+    mcpLine (Right (Object o)) =
+      let configured = fromMaybe [] (join (parseMaybe (.:? "configured") o)) :: [Text]
+          connected  = fromMaybe [] (join (parseMaybe (.:? "connected") o)) :: [Text]
+      in [ T.pack (show (length connected)) <> "/"
+             <> T.pack (show (length configured))
+             <> (if null connected then "" else " (" <> T.intercalate "," connected <> ")") ]
+    mcpLine _ = []
+    lspLine (Right (Object o)) =
+      case join (parseMaybe (.:? "running") o) :: Maybe Bool of
+        Just True ->
+          let diags = fromMaybe 0 (join (parseMaybe (.:? "diagnostics") o)) :: Int
+          in ["running" <> (if diags > 0 then " · " <> T.pack (show diags) <> " diags" else "")]
+        _ -> []
+    lspLine _ = []
+
 --------------------------------------------------------------------------------
 -- Session Events (SSE)
 --------------------------------------------------------------------------------
-
 -- | Subscribe to a session's SSE event stream (Phase 2 S2 tool events).
 -- Feed chunks through 'Core.SSE', deliver decoded 'ToolEvent's to the
 -- callback.  Returns a cancellation action that stops the reader thread
@@ -272,20 +608,22 @@ subscribeSessionEventsWith
   -> (Text -> IO ())
   -> IO (IO ())
 subscribeSessionEventsWith bridge sid onEvent onDelta =
-  subscribeSessionEventsWithTerminal bridge sid onEvent onDelta (return ())
+  subscribeSessionEventsWithTerminal bridge sid onEvent onDelta (return ()) (const (return ()))
 
 -- | Like 'subscribeSessionEventsWith', plus a third sink fired when the
 -- turn's terminal marker arrives (the assistant message echo or the plan
 -- gate).  One stream preserves order, so by then every tool update of that
 -- turn has already been delivered — callers can tear the stream down
--- without a sleep.
+-- without a sleep.  The fourth sink carries structured side-channel events
+-- (reasoning deltas, step boundaries, context compaction).
 subscribeSessionEventsWithTerminal
   :: SchedulerBridge -> SessionId
   -> (Either CLIError ToolEvent -> IO ())
   -> (Text -> IO ())
   -> IO ()
+  -> (SseNotice -> IO ())
   -> IO (IO ())
-subscribeSessionEventsWithTerminal bridge sid onEvent onDelta onTerminal = do
+subscribeSessionEventsWithTerminal bridge sid onEvent onDelta onTerminal onNotice = do
   let client = bridgeHTTP bridge
       url    = buildUrl client ("/api/events/" ++ sid)
   request <- parseRequest url
@@ -297,16 +635,16 @@ subscribeSessionEventsWithTerminal bridge sid onEvent onDelta onTerminal = do
   -- forever (the server had answered, the client never woke up).  The
   -- stream targets the loopback scheduler, so no proxy and no timeout.
   mgr <- newManager (managerSetProxy noProxy
-          (tlsManagerSettings { managerResponseTimeout = responseTimeoutNone }))
+          ((managerSettingsForBase (httpClientBase client))
+             { managerResponseTimeout = responseTimeoutNone }))
   ready <- newEmptyMVar
   tid <- forkIO $
-    catch
-      (withResponse request' mgr $ \resp -> do
-         -- headers received: the server has registered our stream, so
-         -- events emitted from this point on will reach us
-         putMVar ready ()
-         readLoop newDecoder (responseBody resp))
-      (\e -> onEvent (Left (UnknownCLIError ("SSE error: " <> T.pack (show (e :: IOError))))))
+    (withResponse request' mgr $ \resp -> do
+       -- headers received: the server has registered our stream, so
+       -- events emitted from this point on will reach us
+       putMVar ready ()
+       readLoop newDecoder (responseBody resp))
+      `catch` report
   -- bounded wait for the handshake so callers can subscribe before the
   -- request that triggers the events they care about
   _ <- timeout 2000000 (takeMVar ready)
@@ -330,11 +668,36 @@ subscribeSessionEventsWithTerminal bridge sid onEvent onDelta onTerminal = do
         Right (Object o)
           | Just (String txt) <- KM.lookup "text" o -> onDelta txt
         _ -> onEvent (Left (ValidationError ("malformed text delta: " <> snippet t)))
+      payload
+        | Just notice <- toNotice payload -> onNotice notice
       SseMessage role  -> when (role == "assistant") onTerminal
       SsePlan          -> onTerminal -- the parked turn ends here
       SseUnknown p     ->
         onEvent (Left (ValidationError ("unrecognised SSE payload: " <> snippet p)))
     snippet = T.take 120 . TE.decodeUtf8With (\_ _ -> Just '?')
+
+    -- Nothing may escape this thread: an uncaught exception here prints
+    -- @trha: Uncaught exception …@ over the TUI.  Cancellation
+    -- ('killThread', i.e. 'SomeAsyncException') still propagates; everything
+    -- else becomes one error event.
+    report :: SomeException -> IO ()
+    report e
+      | isAsync e             = throwIO e
+      | Just he <- fromException e = onEvent (Left (sseError he))
+      | otherwise = onEvent (Left (UnknownCLIError ("SSE error: " <> T.pack (show e))))
+    isAsync :: SomeException -> Bool
+    isAsync e = case fromException e :: Maybe SomeAsyncException of
+      Just _  -> True
+      Nothing -> False
+
+    -- A failed handshake (wrong scheme, untrusted cert) is an 'HttpException',
+    -- which is *not* an 'IOError': the old handler never fired and the reader
+    -- thread died with an uncaught exception printed to stderr.  Show the
+    -- failure reason only — the full Request dump is 20 lines of internals.
+    sseError :: HttpException -> CLIError
+    sseError (HttpExceptionRequest _ content) =
+      UnknownCLIError ("SSE error: " <> T.pack (show content))
+    sseError e = UnknownCLIError ("SSE error: " <> T.pack (show e))
 
     authHeaders :: Text -> [(HeaderName, ByteString)]
     authHeaders t
@@ -420,6 +783,22 @@ approvePlan bridge sessionId = decidePlan bridge sessionId True
 -- | Deny the pending plan.
 denyPlan :: SchedulerBridge -> SessionId -> IO (Either CLIError PlanVerdict)
 denyPlan bridge sessionId = decidePlan bridge sessionId False
+
+-- | Deny the pending plan with a reason (forwarded to the kernel, where it
+-- can be shown to the model as the rejection cause).
+denyPlanWithReason :: SchedulerBridge -> SessionId -> Text -> IO (Either CLIError PlanVerdict)
+denyPlanWithReason bridge sessionId reason = do
+  result <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sessionId ++ "/decision")
+    (object ["action" .= ("reject" :: Text), "reason" .= reason])
+    :: IO (Either CLIError Value)
+  return $ case result of
+    Right (Object r) ->
+      case parseMaybe (.: "status") r :: Maybe Text of
+        Just "rejected" -> Right PlanDenied
+        Just other      -> Left $ ValidationError $ "Unexpected decision status: " <> other
+        Nothing         -> Left $ ValidationError "Missing status"
+    Right _ -> Left $ ValidationError "Unexpected decision payload"
+    Left err -> Left err
 
 -- | Shared implementation of POST /api/session/:id/decision.
 decidePlan :: SchedulerBridge -> SessionId -> Bool -> IO (Either CLIError PlanVerdict)

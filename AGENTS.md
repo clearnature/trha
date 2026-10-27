@@ -52,13 +52,17 @@ children. On a many-core machine vitest's default pool forks dozens of workers.
 
 ## Critical Conventions
 
-- **Shared `src/` module ownership — read before touching `trha.cabal` or
-  `src/`**: all five internal libraries share `hs-source-dirs: src`; every
-  module must be owned by exactly one library. Listed in two ⇒ duplicate
-  incompatible types; listed in neither ⇒ link failure
-  (`undefined reference to trha…_Core…`) that only appears in `cabal build all`,
-  **not** in single-library builds. See [`QWEN.md`](./QWEN.md) §Development
-  Conventions for the ownership table and the guarded `other-modules` list.
+- **Per-library source roots (2026-10-27) — read before touching `trha.cabal`
+  or `src/`**: each library owns its own `hs-source-dirs` — `src/core` (trha-core),
+  `src/llm` (trha-llm), `src/api` (trha-api), `src/infra` (trha-infra),
+  `src/webgpu` (trha-webgpu), `src/gpu-infer` (trha-gpu-infer); `src/presentation`
+  is **not** in any cabal component. A module belongs to exactly one library;
+  other libraries import it through `build-depends`. Do **not** introduce a
+  shared source root: it makes GHC compile one file per library and produces
+  same-name-different-type duplicates (44 were removed on 2026-10-27; the
+  symptom only appears at `cabal build all` link time, not in single-library
+  builds). See [`QWEN.md`](./QWEN.md) §Development Conventions for the
+  ownership table.
 - **Platform shell contract** (scheduler): every shell spawn goes through
   `packages/scheduler/src/Server/shell.ts` — POSIX `bash -lc` (byte-stable
   contract), win32 `cmd.exe /d /s /c` + `windowsVerbatimArguments` +

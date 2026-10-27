@@ -1,8 +1,17 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
+import type { MenuItemConstructorOptions } from 'electron';
 import { isSupported, parseHandshake } from './handshake.js';
 import { StudioInfo, fetchStudioInfo } from './studioInfo.js';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { homedir } from 'node:os';
+import {
+  resolveSchedulerToken,
+  runningSchedulerPid,
+  stopAll,
+  stopResultText,
+} from './services.js';
 
 let mainWindow: BrowserWindow | null = null;
 let schedulerProcess: ChildProcess | null = null;
@@ -14,8 +23,21 @@ function generateToken(): string {
          Math.random().toString(36).substring(2, 15);
 }
 
-const SCHEDULER_PORT = 3456;
+const SCHEDULER_PORT = 28433;
 const SESSION_TOKEN = generateToken();
+
+// The scheduler serves HTTPS with a self-signed loopback certificate.
+// Accept it for loopback only; remote origins keep normal validation.
+app.on('certificate-error', (event, _webContents, url, _error, _certificate, callback) => {
+  let host = '';
+  try { host = new URL(url).hostname; } catch { /* malformed: reject below */ }
+  if (host === '127.0.0.1' || host === 'localhost') {
+    event.preventDefault();
+    callback(true);
+    return;
+  }
+  callback(false);
+});
 
 // ── Local prefs (theme/lang/font size) persisted under userData ──────────
 function prefsFile(): string {
@@ -68,33 +90,55 @@ function schedulerEntry(): string {
   return path.join(__dirname, '../../../../scheduler/dist/cli.js');
 }
 
-// Start the scheduler as a child process.  Host contract:
-//   * stdout: exactly one line of versioned JSON handshake first (unknown
-//     version/name => refuse to start);
-//   * logs: stderr only;
-//   * stdin is a lease -- we close it on exit so the child drains and quits.
+// Start (or reuse) the scheduler.
+//
+// **Reuse**: if a scheduler is already running on this machine it is shared
+// with the TUI and Web shells.  Desktop does not spawn a second one and does
+// not take it over.
+//
+// **Ownership**: a scheduler spawned here is detached and does not use the
+// stdin lease, so quitting Desktop (which only closes the shell) leaves it
+// running for the other shells.  `Services → Stop kernel and scheduler…`
+// is the explicit way to stop it.
+function schedulerLogFd(): number {
+  const dir = path.join(homedir(), '.trha', 'logs');
+  mkdirSync(dir, { recursive: true });
+  return openSync(path.join(dir, 'desktop-scheduler.log'), 'a');
+}
+
 function startScheduler(): Promise<void> {
+  const running = runningSchedulerPid();
+  if (running) {
+    console.error(`[scheduler] reusing running scheduler (pid ${running})`);
+    schedulerProcess = null;
+    return Promise.resolve();
+  }
+
   return new Promise((resolve, reject) => {
     const schedulerPath = schedulerEntry();
+    const logFd = schedulerLogFd();
 
     schedulerProcess = spawn(schedulerRuntime() ?? 'node', [schedulerPath], {
+      // Detached: closing Desktop must not take the shared services with it.
+      detached: true,
       env: {
         ...process.env,
         TRHA_TOKEN: SESSION_TOKEN,
         TRHA_PORT: String(SCHEDULER_PORT),
-        TRHA_LEASE_STDIN: '1',
         // Session persistence (G2). Without this the scheduler runs in
         // memory-only mode and a restart loses live conversations.
         TRHA_STATE_DIR: process.env.TRHA_STATE_DIR ?? path.join(app.getPath('userData'), 'sessions'),
-        // Kernel endpoint. 3333 is the `trha serve --kernel-port` default and
-        // is deliberately distinct from SCHEDULER_PORT (3456).
+        // Kernel endpoint. 19433 is the `trha serve --kernel-port` default and
+        // is deliberately distinct from SCHEDULER_PORT (28433).
         TRHA_LLM_HOST: process.env.TRHA_LLM_HOST ?? '127.0.0.1',
-        TRHA_LLM_PORT: process.env.TRHA_LLM_PORT ?? '3333',
+        TRHA_LLM_PORT: process.env.TRHA_LLM_PORT ?? '19433',
         // Plugin directory scan + hot reload (otherwise undefined => disabled).
         TRHA_PLUGINS_DIR: process.env.TRHA_PLUGINS_DIR ?? path.join(app.getPath('userData'), 'plugins'),
       },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      // stdout: handshake only (read below); stderr: log file (survives us).
+      stdio: ['ignore', 'pipe', logFd],
     });
+    closeSync(logFd);
 
     let stdoutHead = '';
     let settled = false;
@@ -103,7 +147,6 @@ function startScheduler(): Promise<void> {
       settled = true;
       if (err) {
         console.error('[scheduler] refusing to start:', err.message);
-        schedulerProcess?.stdin?.end();
         schedulerProcess?.kill();
         schedulerProcess = null;
         reject(err);
@@ -123,6 +166,9 @@ function startScheduler(): Promise<void> {
       } else if (!isSupported(handshake)) {
         settle(new Error(`unsupported scheduler handshake v${handshake.v} (${handshake.name})`));
       } else {
+        // The handshake is the only line we need from this child; detach so
+        // closing Desktop does not close its pipes or take it down.
+        schedulerProcess?.unref();
         settle(null);
       }
       // beyond the handshake line, stdout is ignored (contract: one line only)
@@ -159,18 +205,53 @@ async function refreshStudioInfo(): Promise<void> {
   }
 }
 
-// stdin lease: releasing it lets the child drain and exit on any platform
-// without signals; kill() is only a fallback if it lingers.
-function releaseScheduler(): void {
-  const child = schedulerProcess;
-  if (!child) return;
-  child.stdin?.end();
-  setTimeout(() => {
-    if (schedulerProcess) {
-      schedulerProcess.kill();
-      schedulerProcess = null;
-    }
-  }, 3000);
+// stdin lease is gone on purpose: Desktop owns only its own window.  Shared
+// services are stopped explicitly from the Services menu (or `trha stop`).
+
+function buildMenu(): void {
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: 'Services',
+      submenu: [
+        {
+          label: 'Stop kernel and scheduler…',
+          accelerator: 'CommandOrControl+Shift+Q',
+          click: () => {
+            void confirmAndStop();
+          },
+        },
+        { type: 'separator' },
+        { role: 'quit', label: 'Quit Desktop' },
+      ],
+    },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+// The Desktop equivalent of the TUI's `/stop confirm`: one confirmation, stop
+// both services, then close the shell.
+async function confirmAndStop(): Promise<void> {
+  const { response } = await dialog.showMessageBox({
+    type: 'warning',
+    buttons: ['Cancel', 'Stop services'],
+    defaultId: 0,
+    cancelId: 0,
+    message: 'Stop the kernel and scheduler?',
+    detail:
+      'Both background services stop and other shells (TUI, Web) disconnect. '
+      + 'Quitting Desktop alone leaves them running.',
+  });
+  if (response !== 1) return;
+  const results = await stopAll();
+  await dialog.showMessageBox({
+    type: 'info',
+    message: 'Services',
+    detail: results.map(stopResultText).join('\n'),
+  });
+  app.quit();
 }
 
 function createWindow() {
@@ -199,7 +280,7 @@ function createWindow() {
 }
 
 // IPC Handlers
-ipcMain.handle('get-token', () => SESSION_TOKEN);
+ipcMain.handle('get-token', () => resolveSchedulerToken() ?? SESSION_TOKEN);
 ipcMain.handle('get-scheduler-port', () => SCHEDULER_PORT);
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('get-studio-info', () => studioInfo);
@@ -208,6 +289,7 @@ ipcMain.handle('set-prefs', (_e, prefs) => { writePrefs(prefs); });
 
 // App lifecycle
 app.whenReady().then(async () => {
+  buildMenu();
   await startScheduler();
   void refreshStudioInfo();
   createWindow();
@@ -217,7 +299,8 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on('before-quit', () => releaseScheduler());
+// Quit closes this shell only: the scheduler and kernel keep serving the TUI
+// and Web shells.  `Services → Stop kernel and scheduler…` stops them.
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

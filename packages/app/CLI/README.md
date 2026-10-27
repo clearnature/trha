@@ -86,7 +86,7 @@ cabal install exe:trha --installdir "$HOME/.local/bin" --overwrite-policy=always
 # 启动 CLI（REPL 模式；/quit 退出）
 trha cli
 
-# 启动 TUI（全屏终端界面；Ctrl+Q 退出）
+# 启动 TUI（全屏终端界面；Ctrl+Q 直接退出，Ctrl+C 连按两次退出，Ctrl+D 空输入时退出）
 trha tui
 
 # 指定 TUI 主题（tokyo-night 深色 / light 浅色，默认读 settings.yaml 或 --theme）
@@ -97,7 +97,7 @@ trha --theme light tui
 # 例如输入 "/mo" 回车 → 选择面板列出 /model、/models → 回车执行
 
 # 指定服务端与模型（默认读 ~/.trha/settings.yaml）
-trha -h localhost -p 3456 -m deepseek-chat cli
+trha -h localhost -p 28433 -m deepseek-chat cli
 
 # 发送消息
 > /help
@@ -109,6 +109,21 @@ trha -h localhost -p 3456 -m deepseek-chat cli
 # 新建会话 / 切换模型
 > /new
 > /model deepseek-chat
+
+# 退出与服务管理
+> /quit                 # 只退出当前壳（Ctrl+Q 等价）
+> /stop                # 提示确认
+> /stop confirm        # 停止内核与 scheduler 并退出 TUI
+
+# 键盘（与 Reasonix / Claude Code 一致）
+#   Ctrl+C   运行中→中断 turn；输入非空→清空；空闲连按两次→退出（3 秒窗口）
+#   Ctrl+D   空闲且输入为空→退出
+#   Ctrl+Q   直接退出（保留旧习惯；部分终端的流控可能吞掉该键）
+
+# 终端里（不需要 TUI）
+trha status            # kernel: pid … (running) / scheduler: …
+trha stop              # 两个都停（SIGTERM，校验 pid 身份）
+trha stop scheduler    # 只停一个
 ```
 
 ### 配置目录 `~/.trha`
@@ -143,7 +158,7 @@ trha -h localhost -p 3456 -m deepseek-chat cli
 configHost: localhost
 configMaxTokens: 4096
 configModel: deepseek-chat
-configPort: 3456   # orchestration layer (packages/scheduler)
+configPort: 28433   # orchestration layer (packages/scheduler)
 configRetries: 3
 configTimeout: 30000
 configVerbose: false

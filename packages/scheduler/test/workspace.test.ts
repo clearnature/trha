@@ -52,4 +52,73 @@ describe('resolveWorkspace', () => {
     await writeFile(path.join(cwd, '.trha', 'workspace'), '   \n');
     expect(resolveWorkspace({ cwd })).toBe(cwd);
   });
+
+  // Regression: a scheduler launched from a subpackage (the Electron host and
+  // the dev launcher both `cd packages/<pkg>` first) used to take that
+  // subdirectory as the workspace, so the system prompt's `{{cwd}}` and the
+  // file sandbox silently moved with the launch directory even though the repo
+  // root declared a workspace.
+  it('walks up to a marker in an ancestor', async () => {
+    const root = await tempDir();
+    await mkdir(path.join(root, '.trha'), { recursive: true });
+    await writeFile(path.join(root, '.trha', 'workspace'), '.\n');
+    const sub = path.join(root, 'packages', 'scheduler');
+    await mkdir(sub, { recursive: true });
+    expect(resolveWorkspace({ cwd: sub })).toBe(root);
+  });
+
+  it('keeps walking up past an empty marker in a subdirectory', async () => {
+    const root = await tempDir();
+    await mkdir(path.join(root, '.trha'), { recursive: true });
+    await writeFile(path.join(root, '.trha', 'workspace'), 'app\n');
+    const sub = path.join(root, 'packages', 'scheduler');
+    await mkdir(path.join(sub, '.trha'), { recursive: true });
+    await writeFile(path.join(sub, '.trha', 'workspace'), '  \n');
+    expect(resolveWorkspace({ cwd: sub })).toBe(path.resolve(root, 'app'));
+  });
+
+  it('resolves an ancestor marker relative to the folder holding .trha', async () => {
+    const root = await tempDir();
+    await mkdir(path.join(root, '.trha'), { recursive: true });
+    await writeFile(path.join(root, '.trha', 'workspace'), 'services/api\n');
+    const sub = path.join(root, 'packages', 'deep', 'deeper');
+    await mkdir(sub, { recursive: true });
+    expect(resolveWorkspace({ cwd: sub })).toBe(path.resolve(root, 'services', 'api'));
+  });
+
+  it('falls back to the nearest project root when no marker exists', async () => {
+    const root = await tempDir();
+    await mkdir(path.join(root, '.git'), { recursive: true });
+    const sub = path.join(root, 'packages', 'scheduler');
+    await mkdir(sub, { recursive: true });
+    expect(resolveWorkspace({ cwd: sub })).toBe(root);
+  });
+
+  // The subpackage carries its own package.json, so a manifest-first search
+  // would stop there and reproduce the original bug.
+  it('prefers the checkout root over a subpackage manifest', async () => {
+    const root = await tempDir();
+    await mkdir(path.join(root, '.git'), { recursive: true });
+    const sub = path.join(root, 'packages', 'scheduler');
+    await mkdir(sub, { recursive: true });
+    await writeFile(path.join(sub, 'package.json'), '{}\n');
+    expect(resolveWorkspace({ cwd: sub })).toBe(root);
+  });
+
+  it('stops at a manifest root when the tree is not a checkout', async () => {
+    const root = await tempDir();
+    await writeFile(path.join(root, 'package.json'), '{}\n');
+    const sub = path.join(root, 'packages', 'scheduler');
+    await mkdir(sub, { recursive: true });
+    expect(resolveWorkspace({ cwd: sub })).toBe(root);
+  });
+
+  it('prefers the $HOME marker over the project-root fallback', async () => {
+    const cwd = await tempDir();
+    const home = await tempDir();
+    await mkdir(path.join(cwd, '.git'), { recursive: true });
+    await mkdir(path.join(home, '.trha'), { recursive: true });
+    await writeFile(path.join(home, '.trha', 'workspace'), '/srv/app');
+    expect(resolveWorkspace({ cwd, home })).toBe('/srv/app');
+  });
 });

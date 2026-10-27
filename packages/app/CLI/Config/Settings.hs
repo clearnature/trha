@@ -24,20 +24,29 @@ module Config.Settings
   , getConfigDir
   , getHomeConfigPath
   , getProjectConfigPath
+    -- * Backups
+  , backupSettings
+  , backupKeep
   ) where
 
 import Core.Types (CLIConfig(..), defaultCLIConfig)
-import Control.Monad (unless)
+import Control.Monad (forM_, unless, when)
 import Data.Aeson (Result(..), Value(..), fromJSON, toJSON)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
+import Data.List (isPrefixOf, isSuffixOf, sort)
 import qualified Data.Text as T
+import Data.Time.Clock (getCurrentTime)
+import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Yaml (ParseException, decodeFileEither, encode)
 import System.Directory
-    ( createDirectoryIfMissing
+    ( copyFile
+    , createDirectoryIfMissing
     , doesFileExist
     , getCurrentDirectory
     , getHomeDirectory
+    , listDirectory
+    , removeFile
     , renameFile
     )
 import System.FilePath ((</>))
@@ -49,15 +58,17 @@ import System.Posix.Files (setFileMode)
 
 -- | Initialise the user data directory and return the effective configuration.
 --
--- * Creates @~/.trha@ and @~/.trha/sessions@ (both 0700) on first run.
--- * Writes the default @~/.trha/settings.yaml@ if it does not exist yet.
+-- * Creates @~/.trha@ (0700) and writes the default
+--   @~/.trha/settings.yaml@ if it does not exist yet.
+-- * Does /not/ create the directory skeleton: that is a one-time
+--   installation step, done by @trha setup@ ('Config.Home.initHomeDirs').
+--   Commands create the directories they write to on demand.
 -- * Merges: defaults < @~/.trha/settings.yaml@ < @./.trha/settings.yaml@
 --   (a per-project file is honoured when present, never auto-created).
 initConfig :: IO CLIConfig
 initConfig = do
   dir <- getConfigDir
   ensurePrivateDir dir
-  ensurePrivateDir (dir </> "sessions")
   homePath <- getHomeConfigPath
   exists <- doesFileExist homePath
   unless exists (writeSettingsAtomic homePath defaultCLIConfig)
@@ -66,12 +77,43 @@ initConfig = do
   resolveConfig defaultCLIConfig
 
 -- | Save configuration to @~/.trha/settings.yaml@ (atomic, 0600).
+--
+-- The previous file is copied to @~/.trha/backups/@ first: a bad wizard run
+-- or a broken edit then has a rollback point instead of destroying the only
+-- copy of the user's configuration.
 saveConfig :: CLIConfig -> IO ()
 saveConfig config = do
   dir <- getConfigDir
   ensurePrivateDir dir
   path <- getHomeConfigPath
+  backupSettings dir path
   writeSettingsAtomic path config
+
+-- | How many @settings-*.yaml@ rollback copies to keep.
+backupKeep :: Int
+backupKeep = 10
+
+-- | Copy @path@ into @dir\/backups\/settings-<stamp>.yaml@ (no-op when the
+-- file does not exist yet) and prune the oldest copies beyond 'backupKeep'.
+backupSettings :: FilePath -> FilePath -> IO ()
+backupSettings dir path = do
+  exists <- doesFileExist path
+  when exists $ do
+    let bdir = dir </> "backups"
+    createDirectoryIfMissing True bdir
+    setFileMode bdir 0o700
+    stamp <- formatTime defaultTimeLocale "%Y%m%d-%H%M%S" <$> getCurrentTime
+    copyFile path (bdir </> ("settings-" <> stamp <> ".yaml"))
+    pruneBackups bdir
+
+-- | Drop the oldest @settings-*.yaml@ copies once there are more than
+-- 'backupKeep'.  The stamp prefix sorts chronologically.
+pruneBackups :: FilePath -> IO ()
+pruneBackups bdir = do
+  names <- sort <$> listDirectory bdir
+  let ours = [ n | n <- names, "settings-" `isPrefixOf` n, ".yaml" `isSuffixOf` n ]
+  forM_ (take (max 0 (length ours - backupKeep)) ours) $ \n ->
+    removeFile (bdir </> n)
 
 -- | @~/.trha@ (user data directory)
 getConfigDir :: IO FilePath
@@ -138,6 +180,7 @@ resolveConfig fallback = do
 keepNonBlank :: CLIConfig -> CLIConfig -> CLIConfig
 keepNonBlank base cfg = cfg
   { configHost  = keep (configHost cfg)  (configHost base)
+  , configScheme = keep (configScheme cfg) (configScheme base)
   , configModel = keep (configModel cfg) (configModel base)
   , configProvider = keep (configProvider cfg) (configProvider base)
   , configToken = keep (configToken cfg) (configToken base)

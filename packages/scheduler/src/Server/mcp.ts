@@ -64,6 +64,12 @@ async function connect(name: string, cfg: McpServerConfig): Promise<Client> {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env, ...cfg.env },
   }) as ChildProcessWithoutNullStreams;
+  // An MCP server that cannot be spawned must fail its tool, not the whole
+  // scheduler (an unhandled ChildProcess 'error' event exits Node).
+  await new Promise<void>((resolve, reject) => {
+    child.once('spawn', () => resolve());
+    child.once('error', reject);
+  });
 
   const client: Client = { child, nextId: 1, pending: new Map(), ready: Promise.resolve() };
   let buffer = '';
@@ -194,4 +200,15 @@ function requestOn(client: Client, method: string, params: unknown): Promise<unk
 export function shutdownMcp(): void {
   for (const [, c] of clients) c.child.kill('SIGTERM');
   clients.clear();
+}
+
+/** Connection state for the sidebar: configured servers and live clients. */
+export async function mcpStatus(): Promise<{ configured: string[]; connected: string[] }> {
+  let configured: string[] = [];
+  try {
+    configured = Object.keys(await loadConfig());
+  } catch {
+    configured = [];
+  }
+  return { configured, connected: Array.from(clients.keys()) };
 }

@@ -7,9 +7,13 @@ module UI.Keys
   ( LeaderAction(..)
   , leaderResolve
   , leaderHelp
+  , CtrlCAction(..)
+  , decideCtrlC
+  , decideCtrlD
   ) where
 
 import Data.Text (Text)
+import Data.Time.Clock (UTCTime, diffUTCTime)
 
 -- | What a leader keystroke can do.
 data LeaderAction
@@ -40,3 +44,28 @@ leaderResolve c = lookup c table
 leaderHelp :: Text
 leaderHelp =
   "Leader: b sidebar · p provider · m models · s sessions · , settings · ? help · i interrupt · esc cancel"
+
+-- | What Ctrl+C does, following the terminal convention (Reasonix, Claude
+-- Code): interrupt work first, clear input second, and only quit on a second
+-- press from an idle empty prompt.
+data CtrlCAction
+  = CtrlCInterrupt     -- ^ a turn is running
+  | CtrlCClearInput    -- ^ the prompt is not empty
+  | CtrlCQuit          -- ^ idle, empty, and the arm window has not expired
+  | CtrlCArmQuit       -- ^ idle and empty: show the "press again" hint
+  deriving (Show, Eq)
+
+-- | Window in which a second Ctrl+C quits.
+ctrlCWindowSeconds :: Integer
+ctrlCWindowSeconds = 3
+
+decideCtrlC :: Bool -> Bool -> Maybe UTCTime -> UTCTime -> CtrlCAction
+decideCtrlC busy hasInput armed now
+  | busy = CtrlCInterrupt
+  | hasInput = CtrlCClearInput
+  | Just t <- armed, diffUTCTime now t <= fromIntegral ctrlCWindowSeconds = CtrlCQuit
+  | otherwise = CtrlCArmQuit
+
+-- | Ctrl+D quits only from an idle, empty prompt (the terminal EOF convention).
+decideCtrlD :: Bool -> Bool -> Bool
+decideCtrlD busy hasInput = not busy && not hasInput

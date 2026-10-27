@@ -1,6 +1,6 @@
 // Scheduler host-lease handshake parsing (Electron host architecture):
 // stdout of the child carries exactly one line of versioned JSON first:
-//   {"v":1,"name":"trha-scheduler","port":3456}
+//   {"v":1,"name":"trha-scheduler","port":28433}
 // Unknown versions or names cause the host to refuse to start the child.
 
 export interface Handshake {

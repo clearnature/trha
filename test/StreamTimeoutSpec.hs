@@ -38,7 +38,7 @@ streamTimeoutSpec = describe "stream timeouts" $ do
     testWithApplication (pure stallingApp) $ \port -> do
       turn <- Stream.openAICompatStreamCall
         ("http://127.0.0.1:" <> show port <> "/v1/chat/completions")
-        "k"
+        [("Authorization", "Bearer k")]
         (object ["model" .= ("test" :: String), "stream" .= True])
         (\_ -> pure ())
       unsetEnv "TRHA_STREAM_TIMEOUT_MS"

@@ -8,8 +8,13 @@ module UI.Render.Picker
     PickerItem(..)
     -- * Filtering
   , filterItems
+  , buildPalette
+  , sectionItem
+  , isSection
     -- * Selection & viewport
   , moveSelection
+  , moveSelectionSkipping
+  , firstSelectable
   , windowRange
     -- * Query editing
   , queryAppend
@@ -18,6 +23,8 @@ module UI.Render.Picker
   , maxVisible
   ) where
 
+import Data.List (findIndex, sortOn)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -27,6 +34,32 @@ data PickerItem = PickerItem
   , piLabel :: Text -- ^ displayed label
   , piDesc  :: Text -- ^ description, also searched
   } deriving (Show, Eq)
+
+-- | Section header item: @#<id>@ in 'piId', the visible label in 'piLabel'.
+sectionItem :: Text -> Text -> PickerItem
+sectionItem sid label = PickerItem ("#" <> sid) label ""
+
+-- | True for the non-selectable section headers.
+isSection :: PickerItem -> Bool
+isSection it = "#" `T.isPrefixOf` piId it
+
+-- | Slash-palette layout: the 3 most recently used skills and 3 most
+-- recently used commands first, then each functional command group with its
+-- heading (@[(section-id, heading, items)]@), then every skill.
+buildPalette
+  :: [PickerItem]                     -- ^ recent skills
+  -> [PickerItem]                     -- ^ recent commands
+  -> [(Text, Text, [PickerItem])]     -- ^ grouped commands: (id, heading, items)
+  -> [PickerItem]                     -- ^ all skills
+  -> [PickerItem]
+buildPalette recentSkills recentCmds groups allSkills =
+  [sectionItem "recent" "recent"]
+    ++ recentSkills
+    ++ recentCmds
+    ++ concat [ sectionItem key heading : items
+              | (key, heading, items) <- groups, not (null items) ]
+    ++ [sectionItem "skills" "skills"]
+    ++ sortOn (T.toLower . piLabel) allSkills
 
 -- | Maximum number of rows shown at once.
 maxVisible :: Int
@@ -55,6 +88,26 @@ moveSelection :: Int -> Int -> Int -> Int
 moveSelection delta selected total
   | total <= 0 = 0
   | otherwise = max 0 (min (selected + delta) (total - 1))
+
+-- | Index of the first selectable entry (section headers are skipped).
+firstSelectable :: [PickerItem] -> Int
+firstSelectable items = fromMaybe 0 (findIndex (not . isSection) items)
+
+-- | Move the selection by a delta, skipping section headers (a palette with
+-- group headings must never park the cursor on one).  At an end it stays on
+-- the nearest selectable entry.
+moveSelectionSkipping :: Int -> Int -> [PickerItem] -> Int
+moveSelectionSkipping delta selected items
+  | null candidates = 0
+  | delta > 0 = case [ i | i <- candidates, i > selected ] of
+      (i : _) -> i
+      []      -> last candidates
+  | delta < 0 = case [ i | i <- candidates, i < selected ] of
+      []      -> head candidates
+      is      -> last is
+  | otherwise = selected
+  where
+    candidates = [ i | (i, it) <- zip [0 :: Int ..] items, not (isSection it) ]
 
 -- | Visible window @(first, last)@ of a scrollable list, keeping the
 -- selection roughly centred.  An empty list yields @(0, -1)@.

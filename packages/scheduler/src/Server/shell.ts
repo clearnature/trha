@@ -1,10 +1,17 @@
-// Platform shell resolution for every spawn site.
+// Platform shell resolution for every shell-executing path.
 //
-// POSIX keeps the exact `bash -lc` contract — the existing scheduler tests are
-// the regression guard. win32 uses `cmd.exe /d /s /c`, the same form Node's
-// `exec` picks and DeepSeek-Reasonix's windows_compat.go encodes for. All
-// functions are pure: the platform is injected, so behaviour is testable
-// without a real Windows machine.
+// POSIX keeps the exact `bash -lc` contract for the *spawn* sites (background
+// jobs, terminals, run_code) — the existing scheduler tests are the regression
+// guard. win32 uses `cmd.exe /d /s /c`, the same form Node's `exec` picks and
+// DeepSeek-Reasonix's windows_compat.go encodes for. All functions are pure:
+// the platform is injected, so behaviour is testable without a real Windows
+// machine.
+//
+// The one exception is `execShell()`: the `bash`/`sh` *tool* goes through
+// Node's `exec`, which owns the argv itself, so it only needs the executable —
+// and it deliberately pins `bash -c` (no `-l`) to keep the inherited PATH.
+
+import { existsSync } from 'node:fs';
 
 export type ShellSpec = {
   cmd: string;
@@ -42,6 +49,26 @@ export function powerShellCandidates(platform: NodeJS.Platform = process.platfor
 }
 
 export type RunnerSpec = { ok: boolean; cmd: string };
+
+/**
+ * Shell executable for Node's `exec`-based paths (the `bash` tool), or
+ * `undefined` to keep Node's platform default (`/bin/sh` on POSIX,
+ * `ComSpec` on win32).  Only the *executable* is returned because `exec`
+ * builds the `-c` / `/d /s /c` argv itself.
+ *
+ * POSIX pins bash so the tool really is bash (`[[ ]]`, arrays, `pipefail`).
+ * It is intentionally NOT `bash -lc`: a login shell re-runs the profile, which
+ * rebuilds PATH and can swap the user's toolchain (measured: fnm node v26 →
+ * system node v22).  Alpine-style images without /bin/bash fall back to the
+ * POSIX default instead of failing.
+ */
+export function execShell(
+  platform: NodeJS.Platform = process.platform,
+  has: (p: string) => boolean = existsSync,
+): string | undefined {
+  if (platform === 'win32') return undefined;
+  return has('/bin/bash') ? '/bin/bash' : undefined;
+}
 
 /** run_code shell runner for a language; bash/sh are POSIX-only. */
 export function shellRunner(language: string, platform: NodeJS.Platform = process.platform): RunnerSpec {

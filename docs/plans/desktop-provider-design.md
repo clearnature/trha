@@ -41,7 +41,7 @@
 > A5 中**测试暴露并修掉 2 个真 bug**：㈠ `generateStream` 的增量**没带分隔符** → 客户端拼接得到 `token_0token_0…`，与阻塞答案不符；㈡ CPU adapter 的 `llmChatTools = unsupportedTools`（空）而 `cpuStream` 产出文本 → **流式比阻塞多做了事**（正是我在 OpenAI adapter 上特意避免的错误）；已让阻塞路径也走同一引擎（`cpuTools`）。新增断言（`test/Spec.hs`）：CPU adapter **逐 token 回调 100 次**且拼接**逐字等于**阻塞路径的答案。
 > A5 剩余回退（**诚实边界，非妥协**）：`providerStream` 的未知-wire 错误路径；CPU 引擎本身仍是**占位实现**（`take maxTokens (repeat 0)`）—— 但逐 token 的形状已固定，未来真实推理只需替换循环体。
 > A5 验证：`cabal test` **39/0**（+1 新断言）；内核 e2e 4 文件 **5 passed**。
-> **A6 🚧（自研 CPU 真实推理，M1 完成）**：用户选定"自研完整推理"路线。先做拓扑扫描，结论：`src/Infrastructure/CPU/` 已有 ~1100 行**骨架**——标量算子（matmul/softmax/rmsNorm/rope）是**真实现**，但 BLAS/SIMD 只有"检测"（`blasSGEMM` 内部又是一份标量循环），推理本体（权重加载/前向/KV cache/采样/BPE）**完全缺失**（`generate = take maxTokens (repeat 0)`）。
+> **A6 🚧（自研 CPU 真实推理，M1 完成）**：用户选定"自研完整推理"路线。先做拓扑扫描，结论：`src/llm/Infrastructure/CPU/` 已有 ~1100 行**骨架**——标量算子（matmul/softmax/rmsNorm/rope）是**真实现**，但 BLAS/SIMD 只有"检测"（`blasSGEMM` 内部又是一份标量循环），推理本体（权重加载/前向/KV cache/采样/BPE）**完全缺失**（`generate = take maxTokens (repeat 0)`）。
 > 验证前提已具备：本机有 **llama.cpp 完整源码树**（`/home/yanli/work/9060xt/llama.cpp`）——`build/bin/llama-server` 可作对照、`ggml/src/gguf.cpp` 与 `ggml/src/ggml-quants.c` 是格式与量化的参考实现、`models/*.gguf` 是真实测试文件。
 > 里程碑：M1 GGUF 解析+张量抽象 ✅ · M2 反量化(F32/F16/Q8_0/Q4_0) · M3 BPE 分词 · M4 单层前向+KV cache · M5 完整前向+Sampler（greedy 与 llama-server 逐 token 一致）· M6 SIMD/BLAS/线程/量化点积。
 > **M1 ✅**：`Infrastructure/CPU/GGUF.hs` —— 按 `gguf.cpp` 核实的布局解析 header/metadata(13 种值类型，**宽度按参考实现**：UINT8/16 各占 1/2 字节)/张量目录/alignment 对齐；`VArray`、幂等对齐校验、越界防护。验证：① 真实文件 `ggml-vocab-baichuan.gguf` → version=3、alignment=32、**18 条元数据全部解析**、数据区按 32 对齐（"张量数为 0"经 `od` 读字节核实为**文件事实**而非解析错位）；② **合成 GGUF**（自包含）→ 张量目录精确匹配 name/dims（最快变化在前 `[4,2]`）/type(F32=0)/offset/数据区起点/字节切片。

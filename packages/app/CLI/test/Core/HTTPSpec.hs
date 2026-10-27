@@ -18,7 +18,7 @@ import Core.Types (CLIConfig(..), CLIError(..), defaultCLIConfig)
 
 -- | Port 1 on loopback: nothing listens there, and connecting fails fast.
 deadClient :: IO HTTPClient
-deadClient = createHTTPClient "127.0.0.1" 1 "dev-token" 3000 ""
+deadClient = createHTTPClient "http" "127.0.0.1" 1 "dev-token" 3000 ""
 
 spec :: Spec
 spec = describe "HTTP errors" $ do
@@ -66,6 +66,22 @@ spec = describe "HTTP errors" $ do
         Left TimeoutError -> expectationFailure "refused connection misclassified as timeout"
         Left (ConnectionError _) -> pure ()
         other -> expectationFailure ("expected ConnectionError, got " <> show other)
+
+  describe "manager settings" $ do
+    -- regression: the SSE subscriber built its own manager from
+    -- `tlsManagerSettings`, so an https://localhost scheduler (self-signed by
+    -- design) failed the handshake with "certificate has unknown CA" while
+    -- every other request on the same client worked.
+    it "recovers scheme and host from the base URL the bridge builds" $ do
+      baseSchemeHost "https://localhost:3456" `shouldBe` Just ("https", "localhost")
+      baseSchemeHost "http://127.0.0.1:3456" `shouldBe` Just ("http", "127.0.0.1")
+      baseSchemeHost "https://api.example.com:443" `shouldBe` Just ("https", "api.example.com")
+      baseSchemeHost "https://user@127.0.0.1:3456/api/x" `shouldBe` Just ("https", "127.0.0.1")
+      baseSchemeHost "https://[::1]:3456" `shouldBe` Just ("https", "::1")
+
+    it "fails closed when the base has no scheme" $ do
+      baseSchemeHost "localhost:3456" `shouldBe` Nothing
+      baseSchemeHost "" `shouldBe` Nothing
 
   describe "configProxy JSON compatibility" $ do
     it "defaults to the empty policy when reading an old settings file" $ do

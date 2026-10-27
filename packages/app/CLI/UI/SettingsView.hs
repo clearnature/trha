@@ -19,7 +19,7 @@ module UI.SettingsView
 import Data.Text (Text)
 import qualified Data.Text as T
 import Core.Types (CLIConfig(..), defaultCLIConfig)
-import UI.I18n (Lang(..), tr)
+import UI.I18n (Lang(..), langName, tr)
 
 -- | One setting shown in the panel (schema metadata + current value).
 data SettingsEntry = SettingsEntry
@@ -45,9 +45,11 @@ settingsEntries lang cfg = map mk ordered
           , ("maxTokens", "int", tr lang "Maximum tokens per completion", T.pack (show (configMaxTokens cfg)), T.pack (show (configMaxTokens def)))
           , ("timeout", "int", tr lang "HTTP request timeout in milliseconds", T.pack (show (configTimeout cfg)), T.pack (show (configTimeout def)))
           , ("proxy", "text", tr lang "Proxy for remote targets: unset = env | none | http://host:port", configProxy cfg, configProxy def)
+          , ("scheme", "text", tr lang "Scheduler transport: https (default) | http", configScheme cfg, configScheme def)
           , ("retries", "int", tr lang "Retry count for failed requests", T.pack (show (configRetries cfg)), T.pack (show (configRetries def)))
           , ("theme", "text", tr lang "TUI theme: tokyo-night | light", configTheme cfg, configTheme def)
-          , ("lang", "text", tr lang "Interface language: zh | en", configLang cfg, configLang def)
+          , ("lang", "text", tr lang "Interface language: BCP 47 tag (zh-Hans | zh-Hant | en …)", configLang cfg, configLang def)
+          , ("reasoningLanguage", "text", tr lang "Language for the model's reasoning (auto = follow the interface language)", configReasoningLanguage cfg, configReasoningLanguage def)
           , ("verbose", "bool", tr lang "Verbose logging", if configVerbose cfg then "true" else "false", if configVerbose def then "true" else "false")
           , ("metrics", "text", tr lang "Status-line metrics (comma separated keys)", configMetrics cfg, configMetrics def)
           , ("markdown", "bool", tr lang "Render assistant replies as markdown", boolT (configMarkdown cfg), boolT (configMarkdown def))
@@ -58,9 +60,9 @@ settingsEntries lang cfg = map mk ordered
     boolT True = "true"
     boolT False = "false"
     groupKeys :: [[Text]]
-    groupKeys = [ ["host", "port", "token", "proxy"]   -- connection
+    groupKeys = [ ["host", "port", "token", "proxy", "scheme"]   -- connection
                 , ["model", "maxTokens", "timeout", "retries"]  -- model
-                , ["theme", "lang", "verbose", "metrics", "markdown", "timestamps", "hints", "bell"]
+                , ["theme", "lang", "reasoningLanguage", "verbose", "metrics", "markdown", "timestamps", "hints", "bell"]
                 ]
     ordered = concatMap (\group -> [ e | e <- raw, fst5 e `elem` group ]) groupKeys
     fst5 (k, _, _, _, _) = k
@@ -75,16 +77,19 @@ settingsEntries lang cfg = map mk ordered
       "timeout"   -> "Timeout"
       "retries"   -> "Retries"
       "proxy"     -> "Proxy"
+      "scheme"    -> "Scheduler scheme"
       "verbose"   -> "Verbose logging"
       "theme"     -> "Theme"
       "metrics"   -> "Status-line metrics"
       "markdown"  -> "Markdown rendering"
       "timestamps" -> "Timestamps"
       "hints"     -> "Footer hints"
+      "reasoningLanguage" -> "Reasoning language"
       "bell"      -> "Reply bell"
       _           -> "Interface language")
     enumChoices "theme" = ["tokyo-night", "light"]
-    enumChoices "lang"  = ["zh", "en"]
+    enumChoices "lang"  = map langName ([minBound .. maxBound] :: [Lang])
+    enumChoices "reasoningLanguage" = "auto" : map langName ([minBound .. maxBound] :: [Lang])
     enumChoices _       = []
 
 -- | Case-insensitive filtering over key and hint (mirrors the search box
@@ -128,5 +133,5 @@ defaultHint :: Lang -> Text -> Text
 defaultHint lang v = tr lang "(default: " <> v <> close
   where
     close = case lang of
-      Zh -> "）"
       En -> ")"
+      _  -> "）"

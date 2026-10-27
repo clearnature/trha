@@ -4,12 +4,20 @@ module UI.ThemeSpec (spec) where
 
 import Test.Hspec
 import UI.Theme
+import Data.List (nub)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 
 spec :: Spec
 spec = do
+  describe "themes" $ do
+    it "ships 32 built-in themes with unique names" $ do
+      length themes `shouldBe` 32
+      let names = map themeName themes
+      length (nub names) `shouldBe` length names
+    it "resolves every name case-insensitively" $
+      mapM_ (\n -> themeName (resolveTheme (T.toUpper n)) `shouldBe` n) (map themeName themes)
   describe "resolveTheme" $ do
     it "resolves the default theme by name" $ do
       themeName (resolveTheme "tokyo-night") `shouldBe` "tokyo-night"

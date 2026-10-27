@@ -83,7 +83,7 @@ describe('agent orchestration tools', () => {
     const schedulerServer = await listen(app);
     const base = `http://127.0.0.1:${schedulerServer.port}`;
     const start = await fetch(`${base}/api/session/start`, {
-      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard' }),
+      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard', permissionMode: 'yolo' }),
     });
     const { sessionId } = (await start.json()) as { sessionId: string };
     const step = await fetch(`${base}/api/agent/step`, {

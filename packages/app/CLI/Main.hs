@@ -4,10 +4,17 @@ module Main where
 
 import Core.Types
 import Core.Args
+import Core.Fonts
 import Bridge.Scheduler
 import Config.Settings
-import qualified API.Server (startStubKernel)
+import Core.RunLog (logLine)
+import Core.RunState
+import Core.ProjectStore (ensureProject)
+import UI.SetupWizard (runSetupWizard)
+import qualified API.Server (kernelBindAddress, startStubKernel)
 import UI.Brick (runTUI)
+import UI.InputHistory (historyFilePath)
+import UI.CustomCommands (CustomCommand(..), loadCustomCommands)
 import UI.I18n (Lang(..), parseLang, tr)
 import UI.Commands
 import UI.Commands.Registry (settingsSchemaJson)
@@ -15,18 +22,19 @@ import Data.IORef
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Char (isSpace)
+import Data.Char (isSpace, toLower)
 import Data.List (isPrefixOf)
+import Control.Monad (forM_, when)
+import Control.Exception (finally)
 import Control.Monad.IO.Class (liftIO)
 import Options.Applicative
 import System.Console.ANSI
 import System.Console.Haskeline
-import System.Directory (getHomeDirectory, createDirectoryIfMissing)
+import System.Directory (getCurrentDirectory)
 import Data.Maybe (fromMaybe)
 import Control.Applicative ((<|>))
 import System.Environment (lookupEnv)
-import System.Exit (ExitCode(ExitFailure), exitWith)
-import System.FilePath ((</>))
+import System.Exit (ExitCode(ExitFailure), exitFailure, exitWith)
 import System.IO (hFlush, hIsTerminalDevice, hPutStrLn, stderr, stdin, stdout, hSetEncoding, utf8)
 
 -- | Build CLIConfig from global options.
@@ -61,13 +69,18 @@ runTUIMode config = do
       let lang = parseLang (configLang config)
       putStrLn (T.unpack (tr lang "Starting TUI mode..."))
       putStrLn (T.unpack (tr lang "Press Ctrl+Q to quit"))
+      logLine ("start tui model=" <> configModel config)
       bridge <- createSchedulerBridge config
       runTUI bridge config
+      logLine "exit tui"
 
 -- | Run CLI mode
 runCLIMode :: CLIConfig -> IO ()
 runCLIMode config = do
   hSetEncoding stdout utf8
+  logLine ("start cli model=" <> configModel config)
+  cwd <- getCurrentDirectory
+  ensureProject cwd
   let lang = parseLang (configLang config)
   -- Colored banner
   setSGR [SetColor Foreground Vivid Cyan]
@@ -85,7 +98,7 @@ runCLIMode config = do
 
 -- | Run serve mode: start the kernel's OpenAI-compatible API server so the
 -- scheduler (and therefore the CLI/TUI/Desktop shells) can reach it on
--- 127.0.0.1:3333 by default.  The stub adapter supplies a deterministic
+-- 127.0.0.1:19433 by default.  The stub adapter supplies a deterministic
 -- two-round tool loop, which makes the whole chain work without an LLM key;
 -- swap it for a real provider adapter once credentials are configured.
 --
@@ -95,12 +108,52 @@ runCLIMode config = do
 -- session persistence without repeating the path. Absent both, the kernel is
 -- in-memory only (and says so).
 runServeMode :: Int -> Maybe FilePath -> CLIConfig -> IO ()
-runServeMode kernelPort cliStateDir config = do
+runServeMode kernelPort cliStateDir _config = do
   envStateDir <- lookupEnv "TRHA_STATE_DIR"
   let stateDir = cliStateDir <|> envStateDir
-  putStrLn $ "Starting API server on " ++ T.unpack (configHost config) ++ ":" ++ show kernelPort
-            ++ maybe " (sessions: in-memory only)" (\d -> " (sessions: " ++ d ++ ")") stateDir
-  API.Server.startStubKernel kernelPort stateDir
+  outcome <- writePid Kernel
+  case outcome of
+    PidOwnedBy pid -> do
+      hPutStrLn stderr $ "another kernel is already running (pid " ++ show pid
+        ++ "); stop it first: trha stop kernel"
+      exitFailure
+    PidWritten -> do
+      putStrLn $ "Starting API server on " ++ API.Server.kernelBindAddress ++ ":" ++ show kernelPort
+                ++ maybe " (sessions: in-memory only)" (\d -> " (sessions: " ++ d ++ ")") stateDir
+      API.Server.startStubKernel kernelPort stateDir `finally` removePid Kernel
+
+-- | @trha stop [kernel|scheduler|all] [--force]@.
+--
+-- SIGTERM only; a process that outlives the five-second timeout is reported
+-- (non-zero exit) unless @--force@ was given.
+runStopMode :: Maybe String -> Bool -> IO ()
+runStopMode arg force = case arg of
+  Nothing -> stopEverything
+  Just raw -> case map toLower raw of
+    "all" -> stopEverything
+    other -> case parseService other of
+      Just svc -> do
+        r <- stopService svc force
+        putStrLn (stopResultText svc r)
+        when (isStopFailure r) exitFailure
+      Nothing -> do
+        hPutStrLn stderr ("unknown service: " ++ raw ++ " (use kernel | scheduler | all)")
+        exitFailure
+  where
+    stopEverything = do
+      rs <- stopAll force
+      forM_ rs $ \(svc, r) -> putStrLn (stopResultText svc r)
+      when (any (isStopFailure . snd) rs) exitFailure
+
+isStopFailure :: StopResult -> Bool
+isStopFailure NotRunning    = False
+isStopFailure Stopped{}     = False
+isStopFailure Forced{}      = False
+isStopFailure _             = True
+
+-- | @trha status@: pids and liveness, no side effects.
+runStatusMode :: IO ()
+runStatusMode = serviceStatuses >>= putStr . statusText
 
 -- | All slash commands for tab completion (derived from the shared
 -- registry so REPL completion, TUI picker and parser stay in sync).
@@ -122,19 +175,20 @@ completeSlash (revBefore, revWord) = return (before, completions)
 -- | REPL loop with haskeline: history, slash tab-completion, λ prompt
 repl :: SchedulerBridge -> IORef (Maybe SessionId) -> IORef Text -> Lang -> IO ()
 repl bridge sessionRef modelRef lang = do
-  home <- getHomeDirectory
-  let histDir = home </> ".trha"
-  createDirectoryIfMissing True histDir
+  -- history lives under ~/.trha/state/ (a legacy ~/.trha/history is copied
+  -- once by historyFilePath, so old entries survive the move)
+  histFile <- historyFilePath
+  customCmds <- loadCustomCommands
   let baseSettings = defaultSettings :: Settings IO
       settings = baseSettings
-        { historyFile = Just (histDir </> "history")
+        { historyFile = Just histFile
         , autoAddHistory = True
         , complete = completeSlash
         }
-  runInputT settings loop
+  runInputT settings (loop customCmds)
   where
-    loop :: InputT IO ()
-    loop = do
+    loop :: [CustomCommand] -> InputT IO ()
+    loop cmds = do
       (model, session) <- liftIO $ do
         m <- readIORef modelRef
         s <- readIORef sessionRef
@@ -148,15 +202,39 @@ repl bridge sessionRef modelRef lang = do
       case minput of
         Nothing -> liftIO $ putStrLn (T.unpack (tr lang "Goodbye!"))
         Just input -> do
-          let command = parseCommand (T.pack input)
+          let command = parseCommandWith (map ccName cmds) (T.pack input)
           case command of
             Quit -> liftIO $ putStrLn (T.unpack (tr lang "Goodbye!"))
+            StopConfirmed -> do
+              rs <- liftIO (stopAll False)
+              liftIO $ mapM_ (putStrLn . uncurry stopResultText) rs
+              liftIO $ putStrLn (T.unpack (tr lang "Stopped. Goodbye!"))
             _ -> do
               result <- liftIO $ executeCommand lang bridge sessionRef modelRef command
               case result of
                 Just msg -> liftIO $ putStrLn (T.unpack msg)
                 Nothing -> return ()
-              loop
+              loop cmds
+
+-- | @trha fonts …@
+runFontsMode :: Text -> IO ()
+runFontsMode act = case T.toLower (T.strip act) of
+  "status"   -> mapM_ TIO.putStrLn =<< fontsStatus
+  "activate" -> fontsActivate >>= either TIO.putStrLn TIO.putStrLn
+  "tty"      -> mapM_ TIO.putStrLn =<< fontsTty
+  _          -> putStrLn "usage: trha fonts [status|activate|tty]"
+
+-- | @trha setup [--yes]@ — one-time initialisation of the user data
+-- directory.
+--
+-- With a terminal it runs the questionnaire in "UI.SetupWizard"; with
+-- @--yes@ (or a piped stdin) it only creates the skeleton and keeps the
+-- current settings.
+runSetupMode :: Bool -> CLIConfig -> IO ()
+runSetupMode nonInteractive config = do
+  let lang = parseLang (configLang config)
+  _ <- runSetupWizard lang nonInteractive config
+  pure ()
 
 -- | Main entry point
 main :: IO ()
@@ -167,4 +245,8 @@ main = do
     CmdTUI   -> runTUIMode config
     CmdCLI   -> runCLIMode config
     CmdServe kernelPort stateDir -> runServeMode kernelPort stateDir config
+    CmdSetup nonInteractive -> runSetupMode nonInteractive config
     CmdSettingsSchema -> putStrLn (T.unpack settingsSchemaJson)
+    CmdFonts act -> runFontsMode act
+    CmdStop svc force -> runStopMode svc force
+    CmdStatus -> runStatusMode

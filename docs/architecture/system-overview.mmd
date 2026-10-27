@@ -1,0 +1,70 @@
+%% trha 系统架构图（分层构想）
+%%
+%% ⚠️ 状态：**未标注即为「构想」**，与代码现状有出入 —— 权威现状见
+%%    docs/architecture/project-overview.md §2 与 docs/architecture/architecture.md。
+%%    2026-09-17 更正的三处：
+%%      ① Desktop 不是 GTK/Qt，是 **Electron 44 + React**（`packages/app/Desktop`）；
+%%      ② Web 不是 Warp，是 **React + Vite**，且目前**仍是空壳**（15 个源/配置文件，
+%%         不在 cabal.project、不在 ci.yml 任何一个 job）；
+%%      ③ 本图缺了真实存在的一层：**TS 编排层**（`packages/scheduler`，
+%%         shell ↔ scheduler(:28433, Bearer) ↔ kernel），以及 **WebGPU 后端**
+%%         （`library trha-webgpu`，已建成、真机对拍过、未接生产路径）。
+graph TD
+    subgraph "Applications"
+        CLI["CLI / TUI Frontend<br/>(Haskell: brick + haskeline)"]
+        Desktop["Desktop Frontend<br/>(Electron 44 + React)"]
+        Web["Web Frontend<br/>(React + Vite — 空壳，未接线)"]
+    end
+
+    subgraph "Orchestration (TypeScript)"
+        Sched["packages/scheduler<br/>(会话态 · 审批门 · 插件 · 子代理 · SSE)"]
+    end
+
+    subgraph "Shared Core Layer"
+        Core["trha-core"]
+        subgraph "Core Modules"
+            Plugin["Core.Plugin<br/>(Free Monad DSL)"]
+            Session["Core.Session<br/>(Event Log + projections)"]
+            Agent["Core.Agent<br/>(State Machine — D-3 已进会话)"]
+            Tools["Core.Tools<br/>(Registry)"]
+            LLM["LLM.Adapter<br/>(三 wire + 本地 CPU)"]
+            Event["Core.Event<br/>(Event Bus)"]
+        end
+    end
+
+    subgraph "Infrastructure Layer"
+        Storage["Storage<br/>(JSON/SQLite)"]
+        Network["Network<br/>(HTTP Client)"]
+        Sandbox["Sandbox<br/>(Process Isolation)"]
+        Telemetry["Telemetry<br/>(Metrics)"]
+        CPU["Infrastructure.CPU<br/>(三值推理内核)"]
+        GPU["Infrastructure.WebGPU<br/>(wgpu-native / Vulkan)"]
+    end
+
+    API["src/API<br/>(Servant + Warp: /v1/* · /providers*)"]
+
+    CLI --> Sched
+    Desktop --> Sched
+    Web -.->|未接线| Sched
+    Sched -->|HTTP + SSE| API
+    API --> Core
+
+    Core --> Plugin
+    Core --> Session
+    Core --> Agent
+    Core --> Tools
+    Core --> LLM
+    Core --> Event
+
+    Session --> Storage
+    LLM --> Network
+    Tools --> Sandbox
+    Agent --> Telemetry
+    LLM --> CPU
+    CPU -.->|未接生产路径| GPU
+
+    Plugin --> Session
+    Plugin --> Agent
+    Plugin --> Tools
+    Agent --> LLM
+    Agent --> Tools

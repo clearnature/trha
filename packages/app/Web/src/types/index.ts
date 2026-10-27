@@ -45,3 +45,32 @@ export interface ModeConfig {
   maxTokens: number;
   contextSize: number;
 }
+
+/** One todo row from the session's standard-tool state. */
+export interface TodoItem {
+  id: string;
+  text: string;
+  status: 'pending' | 'in_progress' | 'completed';
+}
+
+/** Session tree row (subagents carry a parentId). */
+export interface AgentEntry {
+  id: string;
+  parentId?: string | null;
+}
+
+/** Top-level workspace entry (directories end with '/'). */
+export interface FileItem {
+  path: string;
+  dir: boolean;
+}
+
+/** Live session facts the sidebar shows (context/cache/todos/goal). */
+export interface SessionInfo {
+  todos: TodoItem[];
+  goal: string | null;
+  cwd: string | null;
+  promptTokens: number;
+  cacheHit: number;
+  cacheMiss: number;
+}

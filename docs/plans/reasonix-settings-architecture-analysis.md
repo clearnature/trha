@@ -61,7 +61,7 @@ mcp / remote / skills / plugins / memory / hooks / diagnostics / shortcuts / sto
 - **导航**：Search 过滤 + 分组折叠；settingsTabIcon（21 图标）；meta 描述
 - **模型设置子 tab**：`ModelsSectionProps.subtab: "usage"|"access"|"stats"` —— models 面板内部再分 3 层
 - **主题**：theme/themeStyle/terminalTheme/conversationWidth/textSize/zoomPct/fontFamily（多状态 + 保存队列 `createTerminalThemeSaveQueue`）
-- **国际化**：zh/en/zh-TW 三语；`useT()` 贯穿；`settings.navGroup.*`/`settings.tab.*` 全在字典
+- **国际化**：zh/en/zh-TW 三语（Reasonix 用区域标签；trha 采用 BCP 47 脚本标签 `zh-Hans`/`zh-Hant`）；`useT()` 贯穿；`settings.navGroup.*`/`settings.tab.*` 全在字典
 - **布局**：`ManagementPageShell` 共享（Trash/Automation/Settings 三管理页）：导航左栏 + 内容右栏；搜索清空；Escape 关闭
 
 ## 6. trha 对齐差距（现状 vs 参考）
@@ -73,7 +73,7 @@ mcp / remote / skills / plugins / memory / hooks / diagnostics / shortcuts / sto
 | 模型参数 | temperature/topP/maxTokens 等 + subagent 分配 | **无**（store/port 无生成参数字段） |
 | providers | ProviderView[] 完整管理 + presets | 有 ProvidersPanel（add/check/remove/defaultModel/webSearch） |
 | 模型预设 | providerPresets + officialProviders + kind picker | `AddProvider`（add/fromCatalogs? 需核） |
-| 语言 | zh/en/zh-TW + desktopLanguage(""|en|zh) | zh/en（已有 i18n 表）+ lang 持久化 |
+| 语言 | zh/en/zh-TW（同上，trha 用 `zh-Hans`/`zh-Hant`）+ desktopLanguage(""|en|zh) | zh/en（已有 i18n 表）+ lang 持久化 |
 | 接线 | SettingsView 44 字段全到内核 | prefs 3 字段（theme/lang/fontSize）；providers 有；模型参数无 |
 
 ## 7. 结论（改造方案骨架）

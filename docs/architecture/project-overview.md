@@ -24,11 +24,11 @@
 
 | 层 | 技术 | 位置 | 实测规模 | 在构建里？ |
 |---|---|---|---|---|
-| **核心引擎** | Haskell 2010 + GHC 扩展、Free monad、STM、aeson | `src/Core/**` | 14 `.hs` / 1240 行 | ✅ `library trha-core` |
-| **LLM 适配 + CPU 推理内核** | Haskell、http-client、vector、GF(3)/GF(27)/GF(81) 整数域 | `src/LLM/**`、`src/Infrastructure/CPU/**` | `src/LLM` 5 `.hs` + CPU 目录 30 个文件 | ✅ `library trha-llm`（含 `c-sources: cbits/gf27_avx2.c`） |
-| **协议面** | Servant + Warp，OpenAI / Anthropic / Responses 三 wire ± 流式 | `src/API/**` | 4 `.hs` / 2011 行 | ✅ `library trha-api`（`visibility: public`） |
-| **基础设施** | JSON/SQLite 存储、HTTP、进程沙箱、遥测 | `src/Infrastructure/{Storage,Network,Sandbox,Telemetry}` | — | ✅ `library trha-infra` |
-| **WebGPU 后端** | 手写 FFI 绑 wgpu-native C API（`WGPUStringView` + `*CallbackInfo`）+ WGSL + hsc2hs | `src/Infrastructure/WebGPU/**`（`Raw/` 9 模块） | 9 模块 + `cbits/wgpu_callback_shim.c` | ✅ `library trha-webgpu`（`trha.cabal:222`），5 个探针可执行 + `trha-webgpu-test` |
+| **核心引擎** | Haskell 2010 + GHC 扩展、Free monad、STM、aeson | `src/core/Core/**` | 14 `.hs` / 1240 行 | ✅ `library trha-core` |
+| **LLM 适配 + CPU 推理内核** | Haskell、http-client、vector、GF(3)/GF(27)/GF(81) 整数域 | `src/llm/LLM/**`、`src/llm/Infrastructure/CPU/**` | `src/LLM` 5 `.hs` + CPU 目录 30 个文件 | ✅ `library trha-llm`（含 `c-sources: src/llm/cbits/gf27_avx2.c`） |
+| **协议面** | Servant + Warp，OpenAI / Anthropic / Responses 三 wire ± 流式 | `src/api/API/**` | 4 `.hs` / 2011 行 | ✅ `library trha-api`（`visibility: public`） |
+| **基础设施** | JSON/SQLite 存储、HTTP、进程沙箱、遥测 | `src/infra/Infrastructure/{Storage,Network,Sandbox,Telemetry}` | — | ✅ `library trha-infra` |
+| **WebGPU 后端** | 手写 FFI 绑 wgpu-native C API（`WGPUStringView` + `*CallbackInfo`）+ WGSL + hsc2hs | `src/webgpu/Infrastructure/WebGPU/**`（`Raw/` 9 模块） | 9 模块 + `src/webgpu/cbits/wgpu_callback_shim.c` | ✅ `library trha-webgpu`（`trha.cabal:222`），5 个探针可执行 + `trha-webgpu-test` |
 | **编排层** | TypeScript + Express + Zod + Winston + Cordis 式插件 | `packages/scheduler/` | 27 `.ts`，19 测试文件 / 115 用例 | npm 独立构建（不在 cabal） |
 | **CLI / TUI 外壳** | Haskell + brick + vty + haskeline + optparse-applicative | `packages/app/CLI/`（`trha-cli.cabal`） | 45 文件；`trha-cli-test` 182 用例 | ✅ `cabal.project` 的第二个 package |
 | **桌面外壳** | Electron 44.2.0 + React 18 + Vite + Zustand + electron-builder 26.15.3 + Vitest/jsdom | `packages/app/Desktop/` | 46 源文件，30 测试文件 / 137 用例；打包装配实测可产出 linux deb 且能启动 | npm 独立构建（不在 cabal） |
@@ -47,29 +47,31 @@ grep -nE "^(library|executable|test-suite)" trha.cabal
 
 | stanza | 源码根 | 说明 |
 |---|---|---|
-| `library trha-core` | `src` | 被 infra / llm / api / test 使用 |
-| `library trha-infra` | `src` | 依赖 trha-core |
-| `library trha-llm` | `src` | 依赖 core + infra；含 C 源 `cbits/gf27_avx2.c` |
-| `library trha-api` | `src` | 依赖 core + llm；`visibility: public` |
-| `library trha-webgpu` | `src` | 依赖 `3rdparty/wgpu-native/`（include + `extra-libraries: wgpu_native`） |
-| `library trha-gpu-infer` | `gpu-infer` | **独立目录**（避免共享 `src/` 重编导致的双类型）——GPU 推理桥接层：`initGpuForward`（5GB 权重常驻）+ `gpuForwardFull`（60 层 GPU + CPU 尾巴）+ `gpuForwardFactory`（Int 编码函数句柄跨库）；依赖 trha-llm + trha-webgpu；2026-09-19 新增 |
+| `library trha-core` | `src/core` | `Core.*` + `Kernel.Carrier`；被 infra / llm / api / test 使用 |
+| `library trha-infra` | `src/infra` | `Infrastructure.{Storage,Network,Sandbox,Telemetry}.*` + `Core.HTTPProxy` |
+| `library trha-llm` | `src/llm` | `LLM.*` + `Infrastructure.CPU.*`；含 C 源 `src/llm/cbits/gf27_avx2.c` |
+| `library trha-api` | `src/api` | `API.*` + `Core.Provider.Types`；`visibility: public` |
+| `library trha-webgpu` | `src/webgpu` | `Infrastructure.WebGPU.*`；依赖 `3rdparty/wgpu-native/` |
+| `library trha-gpu-infer` | `src/gpu-infer` | **独立目录**（避免共享 `src/` 重编导致的双类型）——GPU 推理桥接层：`initGpuForward`（5GB 权重常驻）+ `gpuForwardFull`（60 层 GPU + CPU 尾巴）+ `gpuForwardFactory`（Int 编码函数句柄跨库）；依赖 trha-llm + trha-webgpu；2026-09-19 新增 |
 | `executable trha`（CLI/服务） | `packages/app/CLI` | 另有同名 `executable trha` 在 `trha-cli.cabal` |
 | `executable trha-kernel-stub` | `packages/kernel-stub` | 无 key 的两轮工具循环桩 |
 | 5 个 `trha-webgpu-*` 探针 | `benchmarks/webgpu` | hello / compute / errorprobe / gf27 / gf27matmul |
 | `executable trha-cpu-gf27simd` | `benchmarks/cpu` | AVX2 对拍 |
 | `test-suite trha-test` | `test` | 190 例 |
-| `test-suite trha-cpu-test` | `test-cpu` | 99 例（另有 9 个**负面编译**用例不参与构建） |
-| `test-suite trha-webgpu-test` | `test-webgpu` | 3 例（真机 GPU；无 GPU 时 pending） |
+| `test-suite trha-cpu-test` | `test/cpu` | 99 例（另有 9 个**负面编译**用例不参与构建） |
+| `test-suite trha-webgpu-test` | `test/webgpu` | 3 例（真机 GPU；无 GPU 时 pending） |
 | `trha-webgpu-*` 探针（新增） | `benchmarks/webgpu` | layerprobe（单层 16x）/ layer60probe（60 层正确性）/ qprobe（q 上 GPU）/ integprobe（GPU-only 闭环）/ gpue2e（生产路径 e2e） |
 | `test-suite trha-cli-test` | `packages/app/CLI` | 182 例 |
 
-**不在根构建（需 `cd` 进去单独构建）**：`packages/sdk`（18 文件）、`packages/haskell-network`（19）、
-`packages/go-haskell-bridge`（21）、`packages/app/Web`（15）、`packages/scheduler`（npm）。
+**不在根构建（需 `cd` 进去单独构建）**：`packages/app/Web`（15）、`packages/scheduler`（npm）。
+`packages/sdk` 已于 2026-10-27 **并入根构建**（P-02）；`packages/haskell-network` 与
+`packages/go-haskell-bridge` 已归档到 `archive/`（不再维护）。
 
-**⚠️ 一条必须守的构建不变量**：5 个 library **共享 `hs-source-dirs: src`**，
-所以每个模块必须**恰好属于一个** library。`library trha-api` 的 `other-modules`
-（`trha.cabal:140` 的 `other-modules:`，现 **29 项**；历史上从 14 → 19 → 27 → 29 一路补）**禁止删除** —— 删了之后 `cabal build trha-api` 仍 EXIT=0，
-但 `cabal build all` 会在**链接期**失败。规则出处：`QWEN.md` §Development Conventions。
+**⚠️ 构建布局（2026-10-27 起）**：每个 library 拥有**独立的 `hs-source-dirs`**
+（`src/core` / `src/llm` / `src/infra` / `src/webgpu` / `src/api` / `src/gpu-infer`），
+一个模块只属于一个 library，其余库通过 `build-depends` 引用。
+拆分前 5 个库共享 `src`，导致 **44 个模块被各编两份**（同名不同类型）；拆分后重复数为 **0**。
+规则出处：`QWEN.md` §Development Conventions。
 
 ### 1.3 依赖
 
@@ -135,7 +137,7 @@ Desktop — `react 18`、`zustand`、`axios`、`winston` + devDeps `electron 44.
 ║ ✅ 工具裁决与执行（toolGuard）· provider 透传 · /studio 托管          ║
 ║ ✅ 19 测试文件 / 115 用例                                            ║
 ╚════════════════════════════╤════════════════════════════════════════╝
-            ✅ HTTP + SSE（:3456，Bearer）
+            ✅ HTTP + SSE（:28433，Bearer）
                              ▼
 ╔════════ 外壳 Shell ═════════════════════════════════════════════════╗
 ║ ✅ CLI / TUI（brick + haskeline；trha-cli-test 182/0）              ║
@@ -171,7 +173,7 @@ SSE 事件帧 4 类（消息 / 计划挂起 / 决策 / 工具生命周期）。
 | `src/Infrastructure` | 41 | 5986 |
 | `src/Presentation` | 8 | 306（**未接线**，全仓无 `import Presentation.*`） |
 | `test/Spec.hs` | 1 | 2284 |
-| `test-cpu/Spec.hs` + `negative/` | 1 + 9 | 862 |
+| `test/cpu/Spec.hs` + `negative/` | 1 + 9 | 862 |
 
 **语言分布（排除构建产物与 node_modules）**：`.hs` 203 · `.ts` 149 · `.tsx` 43 · `.wgsl` 38 ·
 `.md` 61 · `.glsl` 24 · `.go` 9 · `.c/.h` 各 2 · `.hsc` 2 · `.sh` 13。
@@ -189,7 +191,7 @@ SSE 事件帧 4 类（消息 / 计划挂起 / 决策 / 工具生命周期）。
 |---|---|---|
 | **判据 C1–C5**（`plans/verification-criteria.md`） | **5/5 ✅** | C1 九主题对拍 Agda、C2 九个负面编译用例、C3 四实现同批全等 4/4、C4 八项语义、C5 五个验收点；基线复现见 §8 |
 | **CPU 三值推理蓝图 M1–M21**（`plans/pybitnet-ternary-inference-blueprint.md`） | **✅ 全部**（M1b、M7a–M7i、M8–M21） | 文末「当前状态」逐条；真实全 60 层 292s / 峰值 41 GiB / 0 fail |
-| **自研 CPU 推理 M1–M6**（`plans/desktop-provider-design.md` A6） | **2/6**：M1 GGUF ✅、M2 反量化（8 型）✅；M3 BPE / M4 单层前向+KV / M5 完整前向+Sampler / M6 SIMD 未做 | `src/Infrastructure/CPU/Inference.hs:36,47,77,86` 四处 `-- (placeholder)` |
+| **自研 CPU 推理 M1–M6**（`plans/desktop-provider-design.md` A6） | **2/6**：M1 GGUF ✅、M2 反量化（8 型）✅；M3 BPE / M4 单层前向+KV / M5 完整前向+Sampler / M6 SIMD 未做 | `src/llm/Infrastructure/CPU/Inference.hs:36,47,77,86` 四处 `-- (placeholder)` |
 | **WebGPU 接线 W1–W7**（`plans/webgpu-wiring-plan.md`） | **✅ 7/7 已跑通** | `library trha-webgpu`（`trha.cabal:222`）+ 5 探针 + `trha-webgpu-test` 3/0（真机 AMD Navi 44 + Vulkan/radv） |
 | **WebGPU T1–T4**（同文档 §9） | **✅ 4/4** | GF(27) matmul 与 CPU 逐元素一致、Profile 真实计时、rpath、独立 hspec 套件 |
 | **Desktop UI 移植 T1–T12**（`plans/desktop-ui-execution-plan.md`） | **22/24**：`T5b`(resume) ▢、`T12a`(清旧组件) 用户裁定「暂不删除，保留清单」 | 30 测试文件 / 137 用例（§8 复现） |
@@ -220,7 +222,7 @@ SSE 事件帧 4 类（消息 / 计划挂起 / 决策 / 工具生命周期）。
 
 | 项 | 判据（实测） |
 |---|---|
-| **CPU 生成层仍是占位** | `src/Infrastructure/CPU/Inference.hs` `loadModel`（:84）与采样仍是占位；**tokenize/detokenize 已于 2026-09-18 升级为真 token 化**（白名单 1:1 + base-1536 escape，可逆、零越界，`r-mu6p0yuj-1kmxri`）。**结论：内核目前不能真正做题**，端到端证明的只是**链路闭合** |
+| **CPU 生成层仍是占位** | `src/llm/Infrastructure/CPU/Inference.hs` `loadModel`（:84）与采样仍是占位；**tokenize/detokenize 已于 2026-09-18 升级为真 token 化**（白名单 1:1 + base-1536 escape，可逆、零越界，`r-mu6p0yuj-1kmxri`）。**结论：内核目前不能真正做题**，端到端证明的只是**链路闭合** |
 | **D-4 依赖类型论 / Liquid Haskell** | 0 处代码（仅 `reference/` 文档） |
 | **D-5 草稿模型 speculative draft** | 概念已定案（与约束同一机制的两面），实现未做 |
 | **G3 `trha-ui` 共享渲染库** | 未提取；渲染仍在 CLI 包内 |
@@ -243,8 +245,8 @@ SSE 事件帧 4 类（消息 / 计划挂起 / 决策 / 工具生命周期）。
 
 ### 4.3 已知的架构债（不阻塞，但要知道）
 
-- **`trha-api` 与 `trha-llm` 重复编译 `Infrastructure.CPU.*`**（共享 `hs-source-dirs: src`）。
-  已评估并**决定不拆分**（记录在 `architecture-intended-vs-actual.md` §6b；裁决理由是构建时间不是本项目判据）。
+- ~~**`trha-api` 与 `trha-llm` 重复编译 `Infrastructure.CPU.*`**~~ **✅ 2026-10-27 已解决**：
+  按库拆分 `hs-source-dirs`（方案 A 全拆），44 → 0；见 `plans/improvement-plan-2026-10-27.md` P-01。
 - **WebGPU 库依赖 `LD_LIBRARY_PATH` / `-optl-Wl,-rpath,…`**（`cabal.project.local`，不入仓）。
 - **死代码**：`LLM.Stream` 部分路径与 3 个旧 `*StreamHandler` 在 A4/A5 后已无引用。
 
@@ -258,14 +260,14 @@ SSE 事件帧 4 类（消息 / 计划挂起 / 决策 / 工具生命周期）。
 
 | # | 位置 | 宣称 | 实测 | 严重度 |
 |---|---|---|---|---|
-| ~~1~~ | `docs/plans/code-docs-reconciliation.md` §2 | 「`src/Infrastructure/WebGPU/**` **不在任何 cabal**」 | 已有 `library trha-webgpu`（`trha.cabal:222`）+ 5 探针 + 测试套件 | ✅ **已修（2026-09-17）**：§2 该行改为「旧层已归档 / 新高层已在构建 / 仍未接生产路径」，并补 §8 变更记录 |
+| ~~1~~ | `docs/plans/code-docs-reconciliation.md` §2 | 「`src/webgpu/Infrastructure/WebGPU/**` **不在任何 cabal**」 | 已有 `library trha-webgpu`（`trha.cabal:222`）+ 5 探针 + 测试套件 | ✅ **已修（2026-09-17）**：§2 该行改为「旧层已归档 / 新高层已在构建 / 仍未接生产路径」，并补 §8 变更记录 |
 | ~~2~~ | `QWEN.md:17` | 层表含 `src/Orchestration/`（Haskell↔TS 桥） | `ls src/Orchestration` → 不存在；2026-09-13 已归档至 `archive/orchestration/` | ✅ **已修**：换成 WebGPU 后端 + Scheduler Bridge 两行 |
 | ~~3~~ | `QWEN.md:43` | 「5 个内部库（… **`trha-orchestration`**）」 | 数目仍是 5，但**组成变了**：orchestration 已删、换成 **`trha-webgpu`** | ✅ **已修** |
 | ~~4~~ | `QWEN.md:91` | `Orchestration.*` → trha-orchestration only | 该库已不在 `trha.cabal` | ✅ **已修**：归属表加 `Infrastructure.WebGPU.*` → trha-webgpu only、删 Orchestration 行 |
 | ~~5~~ | `docs/README.md:3` | 「本目录共 **39 份**文档」；`plans/` 「进行中（**8**）」 | 实测 **42 份**（+导览 = 43 文件；本文新增后为 43 份 / 44 文件）；`plans/` **11** 份 | ✅ **已修**：改为 44；plans 8→11；补 3 份漏列的计划文档；阅读顺序加本文 |
 | ~~6~~ | `docs/architecture/architecture.md` §8 | 下一步计划：Phase 3/4/5 **未勾** | `README.md` Phase 表标 ✅（带实测注记）；两者口径不一致 | ✅ **已修**：§8 加状态标注（逐条勾选 + 指向本文 §3），并注明 §4.3/§4.4 的 GTK·Qt / Warp 非现状 |
 | ~~7~~ | `docs/plans/webgpu-wiring-plan.md` §2 | `3rdparty/ref-llama.cpp-ggml-webgpu/` | 实际目录名是 `3rdparty/llama-webgpu/`（同文档 §7 写法正确） | ✅ **已修**：改名 + 补 `llama-vulkan/` + §7 变更记录 |
-| ~~8~~ | `maps/system-overview.mmd` | Desktop = 「GTK/Qt」、Web = 「Warp」 | Desktop 是 Electron + React；Web 是 React + Vite | ✅ **已修**：改标签 + 顶部加「未标注即为构想」状态头 + 补入 TS 编排层与 WebGPU |
+| ~~8~~ | `docs/architecture/system-overview.mmd` | Desktop = 「GTK/Qt」、Web = 「Warp」 | Desktop 是 Electron + React；Web 是 React + Vite | ✅ **已修**：改标签 + 顶部加「未标注即为构想」状态头 + 补入 TS 编排层与 WebGPU |
 | 9 | `.github/workflows/ci.yml` | GHC 9.4.8 / cabal 3.10.2.1 | 需 GHC 9.12+（`base ^>=4.22`）、`cabal-version: 3.8` | ✅ **已改（命令本机验证 / CI 实跑未验证）**：抬到 ghcup 的 GHC **9.14.1**（base-4.22.0.0）+ cabal **3.16.1.0**；两处 job 均加 `Provide wgpu-native lib dir` 步骤补 `cabal.project.local`。`cabal build all && cabal test all` 本机 **EXIT=0**（`r-mu517qwn-d0b8v2`）—— 但**工作流本身没跑过** |
 | ~~15~~ | `docs/plans/plan-reconciliation.md` §Phase3 表 | 「**Desktop/Web 起跑基线** ❌ …Desktop 仅有 README+旧 dist」 | 与同文 G4 行（已修）重复且同样过期 | ✅ **已修**：改为 🟡 并写明 Desktop 已起跑 / Web 仍空壳 |
 | ~~16~~ | `docs/reference/reasonix-cli-tui-architecture-analysis.md:42` | 能力矩阵把 `trha-orchestration Subagent 骨架` 当作现有能力 | 该库已归档出构建 | ✅ **已修**：划掉并注明 2026-09-13 已归档（本行是当时的对照记录） |
@@ -295,11 +297,11 @@ grep -nE "^(library|executable|test-suite)" trha.cabal
 
 # 未接线清单
 grep -rn "import Presentation" --include=*.hs . | grep -v dist-newstyle      # → 无输出
-grep -rn "Infrastructure.WebGPU" --include=*.hs src/ | grep -v "^src/Infrastructure/WebGPU/"   # → 生产侧无输出
+grep -rn "Infrastructure.WebGPU" --include=*.hs src/ | grep -v "^src/webgpu/Infrastructure/WebGPU/"   # → 生产侧无输出
 grep -rn "WebGPU\|Presentation" --include=*.cabal . | grep -v dist-newstyle
 
 # 生成层仍是占位
-grep -n "placeholder" src/Infrastructure/CPU/Inference.hs                    # 36/47/77/86
+grep -n "placeholder" src/llm/Infrastructure/CPU/Inference.hs                    # 36/47/77/86
 
 # 文档漂移
 ls src/Orchestration 2>&1                                                    # → No such file
@@ -362,5 +364,5 @@ ls 3rdparty/                                                                 # l
 | 2026-09-17 | 初版：技术栈（分层 + 构建拓扑 + 依赖 + 3rdparty）· 架构现状图 + 职责分界 + 协议 + 规模 · 计划完成度总账（逐计划）· 未完成/未验证 · 文档漂移清单 10 条 · 复核命令 · 本轮回执 |
 | 2026-09-17 | **桌面版打通**：`.github/workflows/` 无关；改 `packages/app/Desktop/electron-builder.yml` 两处（`win.signingHashAlgorithms` → `win.signtoolOptions`；`extraResources` 把 scheduler 的 `node_modules` 单列一条，绕开 electron-builder ≥25 的硬编码排除）。编译 / 打包 / 实机启动三段全部实测通过，回执 `r-mu52cxfw-jnesjs`·`r-mu52how8-ei0sg7`·`r-mu52huhe-m9ivzy`；根因与复现写入 `plans/electron-44-upgrade.md` §6 |
 | 2026-09-17 | **二次扫描**又发现 4 条同类残留（#11–#14：`smoke-tests.yml` 同样钉 9.4.8、`architecture-intended-vs-actual.md` §3 活状态图仍称 WebGPU 不在构建、`webgpu-wiring-plan.md` §1/§3.1 的未标日期快照、`architecture.md` §2 图与 §4.3/§4.4）—— 一并修掉。教训见 `worklog journal` `j-mu518js2-vryo` |
-| 2026-09-19 | **WebGPU 生产接线完成（D-6 闭合）**：trha-gpu-infer 独立库（gpu-infer/ 目录，规避共享 src 双类型）+ `engineGPU` 弱耦合句柄 + `createCPUAdapterWith`/`setEngineGPU` + ProviderRuntime `TRHA_GPU=1` → `gpuForwardFactory` → GPU-only 60 层闭环（q/christoffel 上 WGSL、cur/nxt 轮换、单次读回；hidden 与 CPU reportL 逐元素一致，353ms/60 层 ≈5.1x CPU；失败回退 CPU）。回执链：r-mu7cdlsf-mecbgq（60 层一致）、r-mu6wfgrm-obntjm（e2e）、r-mu7d7hdv-3vab6u（197/0 回归）。本文 §0/§2.1/§3/§4 三处「未接生产」→「已接线」。 |
-| 2026-09-17 | **§5 的 10 条漂移中 9 条已修**（1–8、10；第 9 条 CI 已改但**CI 实跑仍未验证**）。改动文件：`.github/workflows/ci.yml`、`docs/plans/code-docs-reconciliation.md`、`docs/plans/plan-reconciliation.md`、`docs/plans/webgpu-wiring-plan.md`、`docs/architecture/architecture.md`、`maps/system-overview.mmd`、`docs/README.md`、`QWEN.md`。取证：`cabal build all && cabal test all` → EXIT=0（`r-mu517qwn-d0b8v2`） |
+| 2026-09-19 | **WebGPU 生产接线完成（D-6 闭合）**：trha-gpu-infer 独立库（src/gpu-infer/ 目录，规避共享 src 双类型）+ `engineGPU` 弱耦合句柄 + `createCPUAdapterWith`/`setEngineGPU` + ProviderRuntime `TRHA_GPU=1` → `gpuForwardFactory` → GPU-only 60 层闭环（q/christoffel 上 WGSL、cur/nxt 轮换、单次读回；hidden 与 CPU reportL 逐元素一致，353ms/60 层 ≈5.1x CPU；失败回退 CPU）。回执链：r-mu7cdlsf-mecbgq（60 层一致）、r-mu6wfgrm-obntjm（e2e）、r-mu7d7hdv-3vab6u（197/0 回归）。本文 §0/§2.1/§3/§4 三处「未接生产」→「已接线」。 |
+| 2026-09-17 | **§5 的 10 条漂移中 9 条已修**（1–8、10；第 9 条 CI 已改但**CI 实跑仍未验证**）。改动文件：`.github/workflows/ci.yml`、`docs/plans/code-docs-reconciliation.md`、`docs/plans/plan-reconciliation.md`、`docs/plans/webgpu-wiring-plan.md`、`docs/architecture/architecture.md`、`docs/architecture/system-overview.mmd`、`docs/README.md`、`QWEN.md`。取证：`cabal build all && cabal test all` → EXIT=0（`r-mu517qwn-d0b8v2`） |

@@ -54,3 +54,25 @@ spec = do
     it "includes the open-standard .agents tree by default" $ do
       skillDirList "/proj" "/home/u" Nothing
         `shouldSatisfy` elem "/home/u/.agents/skills"
+
+  describe "parseSkillInvocation" $ do
+    it "recognises a bare trigger" $
+      parseSkillInvocation "/skill:brooks" `shouldBe` Just ("brooks", "")
+
+    it "keeps the request typed after the trigger" $
+      parseSkillInvocation "  /skill:brooks review src/Foo.hs  "
+        `shouldBe` Just ("brooks", "review src/Foo.hs")
+
+    it "rejects an empty name and non-trigger input" $ do
+      parseSkillInvocation "/skill:" `shouldBe` Nothing
+      parseSkillInvocation "/skills" `shouldBe` Nothing
+      parseSkillInvocation "Use the skill \"brooks\"" `shouldBe` Nothing
+
+  describe "skillTurn" $ do
+    it "combines the skill instructions with the request" $
+      skillTurn (Skill "review" "" "/s/review/SKILL.md") "# Review\n" "check Foo.hs"
+        `shouldBe` "Use the skill \"review\":\n\n# Review\n\ncheck Foo.hs"
+
+    it "omits a blank request" $
+      skillTurn (Skill "review" "" "/s/review/SKILL.md") "body" "   "
+        `shouldBe` "Use the skill \"review\":\n\nbody"

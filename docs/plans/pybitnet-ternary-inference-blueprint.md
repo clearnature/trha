@@ -1,7 +1,7 @@
 # pyBitNet 三值推理内核 — 实现蓝图（照参考实现，非凭记忆）
 
 > 来源：`/data/trit/pyBitNet`（用户项目）。所有公式与常量都标注了**参考文件:行号**，
-> 便于逐条核对。Haskell 侧实现见 `src/Infrastructure/CPU/{S2Geometry,SOV3}.hs` 及后续 M7b–M7d。
+> 便于逐条核对。Haskell 侧实现见 `src/llm/Infrastructure/CPU/{S2Geometry,SOV3}.hs` 及后续 M7b–M7d。
 
 ## 0. 模型是什么（按用户说明与文档修正）
 

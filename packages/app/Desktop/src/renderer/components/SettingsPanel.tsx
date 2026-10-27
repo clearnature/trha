@@ -92,7 +92,7 @@ export function SettingsPanel({ onClose, theme, setTheme }: SettingsPanelProps) 
         <div className="setting-group">
           <label>Connection</label>
           <div className="settings-info">
-            <span>Scheduler: localhost:3456</span>
+            <span>Scheduler: https://127.0.0.1:28433</span>
             <span>Backend: Haskell core (Warp + servant)</span>
           </div>
         </div>

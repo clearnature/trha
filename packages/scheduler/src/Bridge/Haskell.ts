@@ -8,6 +8,8 @@ import { HttpClient } from '../Core/HTTP.js';
 export interface BridgeConfig {
   host: string;
   port: number;
+  /** Lazy: the kernel may mint `~/.trha/kernel-token` after the scheduler boots. */
+  tokenProvider?: (() => string | null) | undefined;
 }
 
 /** One conversation message: either a legacy [role, content] tuple or a
@@ -27,7 +29,7 @@ export interface QueryRequest {
   /** Which saved provider answers this request (P6). */
   provider?: string | undefined;
   /** Model generation params (LLM settings; absent = kernel defaults). */
-  genParams?: { temperature?: number | undefined; topP?: number | undefined; maxTokens?: number | undefined } | undefined;
+  genParams?: { temperature?: number | undefined; topP?: number | undefined; maxTokens?: number | undefined; effort?: string | undefined; sessionId?: string | undefined } | undefined;
   /**
    * Kernel session key. When set, the kernel mirrors its D-3 projections
    * (t6state/constraint) and advances its FSM on that session. Absent means
@@ -55,6 +57,7 @@ export interface QueryResponse {
     totalTokens?: number | undefined;
     cacheHitTokens?: number | undefined;
     cacheMissTokens?: number | undefined;
+    reasoningTokens?: number | undefined;
   };
   /** Kernel's causal-constraint verdict (`trha_constraint`), verbatim object,
    *  when the kernel attaches it to the completion response (D-1). */
@@ -77,7 +80,7 @@ export class HaskellBridge {
 
   constructor(config: BridgeConfig) {
     this.config = config;
-    this.httpClient = new HttpClient(config.host, config.port);
+    this.httpClient = new HttpClient(config.host, config.port, config.tokenProvider);
   }
 
   /** The kernel's base URL — for calls that need fetch directly (streaming). */
@@ -127,10 +130,10 @@ export class HaskellBridge {
   }
 
   /** Release the kernel's gate. Idempotent from the caller's view (400 = nothing parked). */
-  async decideApproval(sessionId: string, approve: boolean): Promise<void> {
+  async decideApproval(sessionId: string, approve: boolean, reason?: string): Promise<void> {
     await this.httpClient.post<Record<string, unknown>>(
       `/session/${encodeURIComponent(sessionId)}/decision`,
-      { approve },
+      reason === undefined ? { approve } : { approve, reason },
     );
   }
 
@@ -152,10 +155,10 @@ export class HaskellBridge {
     );
   }
 
-  async decidePlan(sessionId: string, action: string): Promise<Record<string, unknown>> {
+  async decidePlan(sessionId: string, action: string, reason?: string): Promise<Record<string, unknown>> {
     return this.httpClient.post<Record<string, unknown>>(
       `/session/${encodeURIComponent(sessionId)}/decision`,
-      { action },
+      reason === undefined ? { action } : { action, reason },
     );
   }
 
@@ -197,10 +200,14 @@ export class HaskellBridge {
     if (request.model) body.model = request.model;
     if (request.provider) body.provider = request.provider;
     // LLM 设置 → 内核（temperature/topP/maxTokens；省略 = 内核默认）
-    if (request.genParams) {
-      if (request.genParams.temperature !== undefined) body.temperature = request.genParams.temperature;
-      if (request.genParams.topP !== undefined) body.topP = request.genParams.topP;
-      if (request.genParams.maxTokens !== undefined) body.max_tokens = request.genParams.maxTokens;
+    // sessionId rides inside genParams so the Responses wire can key its
+    // previous_response_id per session (the top-level field is legacy).
+    const genParams: Record<string, unknown> = { ...request.genParams };
+    if (request.sessionId) genParams.sessionId = request.sessionId;
+    if (Object.keys(genParams).length > 0) {
+      body.genParams = Object.fromEntries(
+        Object.entries(genParams).filter(([, v]) => v !== undefined),
+      );
     }
     if (request.sessionId) body.sessionId = request.sessionId;
 
@@ -214,6 +221,7 @@ export class HaskellBridge {
   async queryModelStream(
     request: QueryRequest,
     onDelta: (text: string) => void,
+    onReasoning?: (text: string) => void,
   ): Promise<QueryResponse> {
     const body: Record<string, unknown> = {
       messages: request.messages.map(normalizeMessage),
@@ -229,11 +237,22 @@ export class HaskellBridge {
     if (request.model) body.model = request.model;
     if (request.provider) body.provider = request.provider;
 
-    const r = await fetch(`${this.baseUrl()}/v1/chat/completions/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify(body),
-    });
+    const url = `${this.baseUrl()}/v1/chat/completions/stream`;
+    const doFetch = (): Promise<Response> => {
+      const kernelToken = this.config.tokenProvider?.() ?? null;
+      return fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+          ...(kernelToken ? { Authorization: `Bearer ${kernelToken}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+    };
+    let r = await doFetch();
+    // Every kernel launch rotates the token; 401 means we used the old one.
+    if (r.status === 401) r = await doFetch();
     const contentType = r.headers.get('content-type') ?? '';
     // A kernel that answers with plain JSON has no streaming endpoint (or the
     // wire could not stream): say so, so the caller can fall back instead of
@@ -294,7 +313,10 @@ export class HaskellBridge {
           } }[] | undefined)?.[0]?.delta;
           if (!delta) continue;
           if (delta.content) { reply += delta.content; onDelta(delta.content); }
-          if (delta.reasoning_content) reasoning += delta.reasoning_content;
+          if (delta.reasoning_content) {
+            reasoning += delta.reasoning_content;
+            onReasoning?.(delta.reasoning_content);
+          }
           if (delta.reasoning_signature) reasoningSignature += delta.reasoning_signature;
           for (const tc of delta.tool_calls ?? []) {
             const idx = tc.index ?? 0;
@@ -372,6 +394,8 @@ function parseCompletion(raw: Record<string, unknown>): QueryResponse {
   const usageRaw = raw.usage as {
     prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown;
     prompt_cache_hit_tokens?: unknown; prompt_cache_miss_tokens?: unknown;
+    reasoning_tokens?: unknown;
+    completion_tokens_details?: { reasoning_tokens?: unknown };
   } | undefined;
   const constraint = typeof raw.trha_constraint === 'object' && raw.trha_constraint !== null
     ? (raw.trha_constraint as Record<string, unknown>)
@@ -388,6 +412,10 @@ function parseCompletion(raw: Record<string, unknown>): QueryResponse {
         ? usageRaw.prompt_cache_hit_tokens : undefined,
       cacheMissTokens: typeof usageRaw?.prompt_cache_miss_tokens === 'number'
         ? usageRaw.prompt_cache_miss_tokens : undefined,
+      // Thinking tokens are reported either flat or nested (OpenAI shape).
+      reasoningTokens: typeof usageRaw?.completion_tokens_details?.reasoning_tokens === 'number'
+        ? usageRaw.completion_tokens_details.reasoning_tokens
+        : typeof usageRaw?.reasoning_tokens === 'number' ? usageRaw.reasoning_tokens : undefined,
     },
     ...(constraint ? { constraint } : {}),
   };

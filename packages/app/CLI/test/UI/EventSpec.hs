@@ -8,11 +8,11 @@ module UI.EventSpec (spec) where
 
 import Test.Hspec
 
-import Core.Types (StreamChunk(..), Usage(..))
+import Core.Types (StreamChunk(..), Usage(..), mkUsage)
 import UI.Event
 
 zeroUsage :: Usage
-zeroUsage = Usage 0 0 0
+zeroUsage = mkUsage 0 0 0
 
 spec :: Spec
 spec = describe "UI.Event" $ do
@@ -65,3 +65,42 @@ spec = describe "UI.Event" $ do
 
     it "running while busy without a pending step" $ do
       runState True False `shouldBe` RunRunning
+
+  describe "nextCardFocus" $ do
+    it "is Nothing when there are no tool cards" $
+      nextCardFocus [] Nothing 1 `shouldBe` Nothing
+
+    it "focuses the newest card when none is focused" $
+      nextCardFocus [3, 7, 9] Nothing (-1) `shouldBe` Just 9
+
+    it "moves between cards and clamps at both ends" $ do
+      nextCardFocus [3, 7, 9] (Just 7) 1 `shouldBe` Just 9
+      nextCardFocus [3, 7, 9] (Just 7) (-1) `shouldBe` Just 3
+      nextCardFocus [3, 7, 9] (Just 9) 1 `shouldBe` Just 9
+      nextCardFocus [3, 7, 9] (Just 3) (-1) `shouldBe` Just 3
+
+    it "recovers to the newest card when the focus is stale" $
+      nextCardFocus [3, 7] (Just 42) 0 `shouldBe` Just 7
+
+  describe "reasoning accumulation" $ do
+    it "appends thinking deltas in arrival order" $ do
+      let pm = appendReasoning "b" (appendReasoning "a" (newPending "12:00"))
+      flushThinking pm `shouldBe` "ab"
+
+    it "keeps reasoning separate from the reply text" $ do
+      let pm = reduceChunk (ChunkDelta "answer") (appendReasoning "think" (newPending "12:00"))
+      flushThinking pm `shouldBe` "think"
+      snd (flushParts pm) `shouldBe` "answer"
+
+    it "is empty when the model sent no reasoning" $
+      flushThinking (newPending "12:00") `shouldBe` ""
+
+  describe "shellCommandOf" $ do
+    it "recognises the ! prefix" $ do
+      shellCommandOf "!ls -la" `shouldBe` Just "ls -la"
+      shellCommandOf "  !echo hi  " `shouldBe` Just "echo hi"
+
+    it "ignores a bare ! and ordinary messages" $ do
+      shellCommandOf "!" `shouldBe` Nothing
+      shellCommandOf "  !   " `shouldBe` Nothing
+      shellCommandOf "ls -la" `shouldBe` Nothing

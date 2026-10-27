@@ -1,11 +1,15 @@
 // Minimal LSP client over stdio (Content-Length framing).
 //
-// Ported semantics from deepseek-harness's `lsp` tool: a single operation per
-// call against one configured language server. Supported: hover, definition,
-// references, diagnostics, document symbols.
+// Ported semantics from MiMo-Code's LSP module (lsp/server.ts + tool/lsp.ts):
+// several language servers, selected by file extension, with the operations
+// the model needs (hover, definition, references, symbols, diagnostics,
+// workspace symbols, implementation, call hierarchy).
 //
-// Config: TRHA_LSP_COMMAND (default `typescript-language-server --stdio`) and
-// TRHA_LSP_ROOT (defaults to the workspace).
+// Config:
+//   TRHA_LSP_COMMAND  force one server for every file (legacy; `bin --stdio`)
+//   TRHA_LSP_CONFIG   JSON file: { "servers": { "id": { "command": [...],
+//                     "extensions": [".foo"], "languageId": "foo" } } }
+//   TRHA_LSP_ROOT     workspace root (defaults to TRHA_WORKSPACE / cwd)
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
@@ -15,29 +19,118 @@ import { pathToFileURL } from 'node:url';
 interface Waiter { resolve: (v: unknown) => void; reject: (e: Error) => void }
 
 interface LspClient {
+  id: string;
   child: ChildProcessWithoutNullStreams;
   nextId: number;
   pending: Map<number, Waiter>;
   diagnostics: Map<string, unknown[]>;
   opened: Set<string>;
   root: string;
+  languageId: string;
 }
 
-let client: LspClient | undefined;
-let starting: Promise<LspClient> | undefined;
-
-function splitCommand(cmd: string): { bin: string; args: string[] } {
-  const parts = cmd.trim().split(/\s+/);
-  return { bin: parts[0] ?? '', args: parts.slice(1) };
+export interface ServerConfig {
+  id: string;
+  /** Full command line (space-separated) or argv array; normalized to argv. */
+  command: string;
+  extensions: string[];
+  languageId?: string;
 }
 
-async function start(): Promise<LspClient> {
+/** Built-in servers, ordered so more specific extensions win. */
+const BUILTINS: ServerConfig[] = [
+  { id: 'typescript', command: 'typescript-language-server --stdio', extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'] },
+  { id: 'rust', command: 'rust-analyzer', extensions: ['.rs'] },
+  { id: 'haskell', command: 'haskell-language-server-wrapper --lsp', extensions: ['.hs', '.lhs'] },
+  { id: 'python', command: 'pyright-langserver --stdio', extensions: ['.py', '.pyi'] },
+  { id: 'go', command: 'gopls', extensions: ['.go'] },
+  { id: 'clangd', command: 'clangd', extensions: ['.c', '.cc', '.cpp', '.h', '.hpp'] },
+  { id: 'lua', command: 'lua-language-server', extensions: ['.lua'] },
+  { id: 'bash', command: 'bash-language-server start', extensions: ['.sh', '.bash'] },
+  { id: 'yaml', command: 'yaml-language-server --stdio', extensions: ['.yaml', '.yml'] },
+  { id: 'json', command: 'vscode-json-language-server --stdio', extensions: ['.json', '.jsonc'] },
+  { id: 'toml', command: 'taplo lsp stdio', extensions: ['.toml'] },
+  { id: 'html', command: 'vscode-html-language-server --stdio', extensions: ['.html', '.htm'] },
+  { id: 'css', command: 'vscode-css-language-server --stdio', extensions: ['.css', '.scss'] },
+];
+
+let configured: ServerConfig[] | undefined;
+
+function splitCommand(cmd: string): string {
+  return cmd.trim();
+}
+
+/** Read the JSON config once; unknown shapes are ignored. */
+async function loadServers(): Promise<ServerConfig[]> {
+  if (configured) return configured;
+  const forced = process.env.TRHA_LSP_COMMAND;
+  if (forced && forced.trim()) {
+    configured = [{
+      id: 'custom',
+      command: forced,
+      extensions: ['*'],
+    }];
+    return configured;
+  }
+  const servers: ServerConfig[] = [...BUILTINS];
+  const file = process.env.TRHA_LSP_CONFIG;
+  if (file) {
+    try {
+      const raw = JSON.parse(await readFile(file, 'utf8')) as {
+        servers?: Record<string, { command?: string | string[]; extensions?: string[]; languageId?: string }>;
+      };
+      for (const [id, cfg] of Object.entries(raw.servers ?? {})) {
+        const cmd = Array.isArray(cfg.command) ? cfg.command.join(' ') : cfg.command;
+        if (!cmd) continue;
+        const exts = (cfg.extensions ?? []).map(e => e.toLowerCase());
+        servers.unshift({
+          id,
+          command: splitCommand(cmd),
+          extensions: exts.length > 0 ? exts : ['*'],
+          ...(cfg.languageId ? { languageId: cfg.languageId } : {}),
+        });
+      }
+    } catch { /* malformed config: keep the built-ins */ }
+  }
+  configured = servers;
+  return servers;
+}
+
+async function serverFor(file: string): Promise<ServerConfig | undefined> {
+  const servers = await loadServers();
+  const ext = path.extname(file).toLowerCase();
+  const exact = servers.find(s => s.extensions.includes(ext));
+  return exact ?? servers.find(s => s.extensions.includes('*'));
+}
+
+const clients = new Map<string, LspClient>();
+const starting = new Map<string, Promise<LspClient>>();
+
+async function startServer(cfg: ServerConfig): Promise<LspClient> {
   const root = process.env.TRHA_LSP_ROOT ?? process.env.TRHA_WORKSPACE ?? process.cwd();
-  const { bin, args } = splitCommand(process.env.TRHA_LSP_COMMAND ?? 'typescript-language-server --stdio');
-  if (!bin) throw new Error('TRHA_LSP_COMMAND is empty');
+  const existing = clients.get(cfg.id);
+  if (existing) return existing;
 
-  const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'], cwd: root }) as ChildProcessWithoutNullStreams;
-  const c: LspClient = { child, nextId: 1, pending: new Map(), diagnostics: new Map(), opened: new Set(), root };
+  const parts = cfg.command.trim().split(/\s+/);
+  const bin = parts[0] ?? '';
+  if (!bin) throw new Error(`LSP server ${cfg.id}: empty command`);
+  const child = spawn(bin, parts.slice(1), { stdio: ['pipe', 'pipe', 'pipe'], cwd: root }) as ChildProcessWithoutNullStreams;
+  // A missing language server must fail the tool, not the scheduler: an
+  // unhandled 'error' event on ChildProcess terminates the whole process.
+  await new Promise<void>((resolve, reject) => {
+    child.once('spawn', () => resolve());
+    child.once('error', (e: NodeJS.ErrnoException) => {
+      reject(new Error(
+        e.code === 'ENOENT'
+          ? `${cfg.id}: language server "${bin}" not found (install it or set TRHA_LSP_COMMAND)`
+          : `${cfg.id}: ${e.message}`,
+      ));
+    });
+  });
+  const c: LspClient = {
+    id: cfg.id, child, nextId: 1, pending: new Map(), diagnostics: new Map(),
+    opened: new Set(), root, languageId: cfg.languageId ?? '',
+  };
 
   let buffer = Buffer.alloc(0);
   child.stdout.on('data', (chunk: Buffer) => {
@@ -72,8 +165,8 @@ async function start(): Promise<LspClient> {
     }
   });
   child.on('exit', () => {
-    client = undefined;
-    for (const [, w] of c.pending) w.reject(new Error('language server exited'));
+    clients.delete(cfg.id);
+    for (const [, w] of c.pending) w.reject(new Error(`[${cfg.id}] language server exited`));
     c.pending.clear();
   });
 
@@ -93,31 +186,41 @@ async function start(): Promise<LspClient> {
     });
   };
 
-  c.pending.set(-1, { resolve: () => {}, reject: () => {} });
-  c.pending.delete(-1);
   await request('initialize', {
     processId: process.pid,
-    rootUri: pathToFileURL(c.root).toString(),
+    rootUri: pathToFileURL(root).toString(),
     capabilities: {
       textDocument: {
         hover: { contentFormat: ['markdown', 'plaintext'] },
         definition: {},
         references: {},
+        implementation: {},
         documentSymbol: {},
         publishDiagnostics: {},
+        callHierarchy: {},
       },
+      workspace: { symbol: {} },
     },
-    workspaceFolders: [{ uri: pathToFileURL(c.root).toString(), name: 'workspace' }],
+    workspaceFolders: [{ uri: pathToFileURL(root).toString(), name: 'workspace' }],
   });
   send({ jsonrpc: '2.0', method: 'initialized', params: {} });
-  client = c;
+  clients.set(cfg.id, c);
   return c;
 }
 
-async function ensure(): Promise<LspClient> {
-  if (client) return client;
-  starting ??= start().finally(() => { starting = undefined; });
-  return starting;
+async function ensureFor(file: string): Promise<LspClient> {
+  const cfg = await serverFor(file);
+  if (!cfg) {
+    throw new Error(`No LSP server available for ${path.extname(file) || file}; set TRHA_LSP_COMMAND or TRHA_LSP_CONFIG`);
+  }
+  const running = clients.get(cfg.id);
+  if (running) return running;
+  let pending = starting.get(cfg.id);
+  if (!pending) {
+    pending = startServer(cfg).finally(() => { starting.delete(cfg.id); });
+    starting.set(cfg.id, pending);
+  }
+  return pending;
 }
 
 async function openDocument(c: LspClient, file: string): Promise<string> {
@@ -125,11 +228,10 @@ async function openDocument(c: LspClient, file: string): Promise<string> {
   if (!c.opened.has(uri)) {
     let text = '';
     try { text = await readFile(path.resolve(c.root, file), 'utf8'); } catch { /* diagnostics only */ }
-    c.child.stdin.write('');
     const body = JSON.stringify({
       jsonrpc: '2.0',
       method: 'textDocument/didOpen',
-      params: { textDocument: { uri, languageId: languageFor(file), version: 1, text } },
+      params: { textDocument: { uri, languageId: c.languageId || languageFor(file), version: 1, text } },
     });
     c.child.stdin.write(`Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`);
     c.opened.add(uri);
@@ -144,20 +246,29 @@ function languageFor(file: string): string {
   if (ext === '.hs') return 'haskell';
   if (ext === '.py') return 'python';
   if (ext === '.rs') return 'rust';
+  if (ext === '.go') return 'go';
+  if (ext === '.c' || ext === '.h') return 'c';
+  if (ext === '.cc' || ext === '.cpp' || ext === '.hpp') return 'cpp';
   return 'plaintext';
 }
 
+export type LspOperation =
+  | 'hover' | 'definition' | 'references' | 'diagnostics' | 'symbols'
+  | 'workspaceSymbol' | 'implementation' | 'callHierarchy' | 'incomingCalls' | 'outgoingCalls';
+
 export interface LspArgs {
   file: string;
-  operation: 'hover' | 'definition' | 'references' | 'diagnostics' | 'symbols';
+  operation: LspOperation;
   line?: number;
   character?: number;
+  /** Query for workspaceSymbol. */
+  query?: string;
 }
 
 /** Run one LSP operation and return a compact, model-readable string. */
 export async function lspQuery(args: LspArgs): Promise<string> {
   if (!args.file) throw new Error('file is required');
-  const c = await ensure();
+  const c = await ensureFor(args.file);
   const uri = await openDocument(c, args.file);
   const position = { line: Math.max(0, (args.line ?? 1) - 1), character: Math.max(0, (args.character ?? 1) - 1) };
 
@@ -170,8 +281,10 @@ export async function lspQuery(args: LspArgs): Promise<string> {
     return typeof contents === 'string' ? contents : (contents?.value ?? '(empty hover)');
   }
   if (args.operation === 'definition') {
-    const r = await requestOn(c, 'textDocument/definition', { textDocument: { uri }, position });
-    return formatLocations(r);
+    return formatLocations(await requestOn(c, 'textDocument/definition', { textDocument: { uri }, position }));
+  }
+  if (args.operation === 'implementation') {
+    return formatLocations(await requestOn(c, 'textDocument/implementation', { textDocument: { uri }, position }));
   }
   if (args.operation === 'references') {
     const r = await requestOn(c, 'textDocument/references', {
@@ -186,8 +299,38 @@ export async function lspQuery(args: LspArgs): Promise<string> {
     if (!Array.isArray(r) || r.length === 0) return '(no symbols)';
     return r.map(s => `${s.name ?? '?'} (kind ${s.kind ?? '?'}) @ line ${(s.range?.start?.line ?? 0) + 1}`).join('\n');
   }
-  // diagnostics: the server pushes them; ask for a pull if supported, else use
-  // whatever arrived after didOpen.
+  if (args.operation === 'workspaceSymbol') {
+    const query = args.query ?? '';
+    const r = (await requestOn(c, 'workspace/symbol', { query })) as Array<{
+      name?: string; kind?: number; location?: { uri?: string; range?: { start?: { line?: number; character?: number } } };
+    }>;
+    if (!Array.isArray(r) || r.length === 0) return '(no symbols)';
+    return r.slice(0, 100).map(s => {
+      const loc = s.location;
+      const file = loc?.uri ? decodeURIComponent(loc.uri.replace(/^file:\/\//, '')) : '?';
+      return `${s.name ?? '?'} (kind ${s.kind ?? '?'}) @ ${file}:${(loc?.range?.start?.line ?? 0) + 1}`;
+    }).join('\n');
+  }
+  if (args.operation === 'callHierarchy' || args.operation === 'incomingCalls' || args.operation === 'outgoingCalls') {
+    const items = (await requestOn(c, 'textDocument/prepareCallHierarchy', {
+      textDocument: { uri }, position,
+    })) as Array<{ name?: string; kind?: number; uri?: string; range?: unknown; selectionRange?: unknown }>;
+    if (!Array.isArray(items) || items.length === 0) return '(no call hierarchy)';
+    if (args.operation === 'callHierarchy') {
+      return items.map(i => `${i.name ?? '?'} (kind ${i.kind ?? '?'})`).join('\n');
+    }
+    const method = args.operation === 'incomingCalls' ? 'callHierarchy/incomingCalls' : 'callHierarchy/outgoingCalls';
+    const r = (await requestOn(c, method, { item: items[0] })) as Array<{
+      from?: { name?: string; uri?: string }; to?: { name?: string; uri?: string };
+    }>;
+    if (!Array.isArray(r) || r.length === 0) return '(no calls)';
+    return r.slice(0, 100).map(x => {
+      const other = args.operation === 'incomingCalls' ? x.from : x.to;
+      const file = other?.uri ? decodeURIComponent(other.uri.replace(/^file:\/\//, '')) : '?';
+      return `${other?.name ?? '?'} @ ${file}`;
+    }).join('\n');
+  }
+  // diagnostics: the server pushes them; give it a moment after didOpen.
   await new Promise(r => setTimeout(r, 300));
   const diags = c.diagnostics.get(uri) ?? [];
   if (diags.length === 0) return '(no diagnostics)';
@@ -223,6 +366,24 @@ function formatLocations(r: unknown): string {
 }
 
 export function shutdownLsp(): void {
-  client?.child.kill('SIGTERM');
-  client = undefined;
+  for (const [, c] of clients) c.child.kill('SIGTERM');
+  clients.clear();
+  starting.clear();
+  configured = undefined;
+}
+
+/** Language-server state for the sidebar. */
+export function lspStatus(): {
+  running: boolean;
+  diagnostics: number;
+  servers: Array<{ id: string; running: boolean; diagnostics: number }>;
+} {
+  const servers = Array.from(clients.values()).map(c => ({
+    id: c.id, running: true, diagnostics: c.diagnostics.size,
+  }));
+  return {
+    running: servers.length > 0,
+    diagnostics: servers.reduce((n, s) => n + s.diagnostics, 0),
+    servers,
+  };
 }

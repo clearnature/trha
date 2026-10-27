@@ -13,11 +13,13 @@
 //     reported as such rather than pretending to survive a restart.
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { discoverSkills, readSkill, skillDirs } from './skills.js';
 import { listMcpResources, listMcpResourceTemplates, readMcpResource } from './mcp.js';
 import { hardenedEnv, resolveShell, shellRunner } from './shell.js';
-import { lspQuery } from './lsp.js';
+import { lspQuery, type LspOperation } from './lsp.js';
 import { browserClose, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 
 export interface Todo {
@@ -78,7 +80,7 @@ export interface TeamTask {
 
 /** Host hooks the agent-orchestration tools need; supplied by the scheduler. */
 export interface AgentHooks {
-  spawn: (task: string, name?: string) => Promise<{ id: string; reply: string }>;
+  spawn: (task: string, name?: string, agent?: string) => Promise<{ id: string; reply: string }>;
   list: () => AgentRef[];
   send: (id: string, text: string) => Promise<{ delivered: boolean; reply?: string }>;
   interrupt: (id: string) => boolean;
@@ -161,13 +163,22 @@ export function startJob(host: StandardToolHost, command: string): string {
 const stripHtml = (html: string): string => html
   .replace(/<script[\s\S]*?<\/script>/gi, ' ')
   .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-  .replace(/<\/(p|div|li|tr|h[1-6]|br)>/gi, '\n')
+  .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+  .replace(/<!--[\s\S]*?-->/g, ' ')
+  .replace(/<\/(p|div|li|tr|h[1-6]|br|title)>/gi, '\n')
   .replace(/<br\s*\/?>/gi, '\n')
   .replace(/<[^>]+>/g, ' ')
+  .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
+  .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
   .replace(/&nbsp;/g, ' ')
+  .replace(/&quot;/g, '"')
+  .replace(/&apos;/g, "'")
   .replace(/&lt;/g, '<')
   .replace(/&gt;/g, '>')
   .replace(/&amp;/g, '&')
+  .replace(/&mdash;/g, '—')
+  .replace(/&ndash;/g, '–')
+  .replace(/&hellip;/g, '…')
   .replace(/[ \t]+/g, ' ')
   .replace(/\n{3,}/g, '\n\n')
   .trim();
@@ -248,16 +259,20 @@ export async function runStandardTool(
     const file = typeof args.file === 'string' ? args.file : '';
     const operation = args.operation;
     if (!file) return 'ERROR: file is required';
-    if (operation !== 'hover' && operation !== 'definition' && operation !== 'references'
-        && operation !== 'diagnostics' && operation !== 'symbols') {
-      return 'ERROR: operation must be hover|definition|references|diagnostics|symbols';
+    const allowed: readonly LspOperation[] = [
+      'hover', 'definition', 'references', 'diagnostics', 'symbols',
+      'workspaceSymbol', 'implementation', 'callHierarchy', 'incomingCalls', 'outgoingCalls',
+    ];
+    if (typeof operation !== 'string' || !allowed.includes(operation as LspOperation)) {
+      return `ERROR: operation must be ${allowed.join('|')}`;
     }
     try {
       const out = await lspQuery({
         file,
-        operation,
+        operation: operation as LspOperation,
         ...(typeof args.line === 'number' ? { line: args.line } : {}),
         ...(typeof args.character === 'number' ? { character: args.character } : {}),
+        ...(typeof args.query === 'string' ? { query: args.query } : {}),
       });
       return clip(out);
     } catch (e) {
@@ -270,7 +285,9 @@ export async function runStandardTool(
     const task = typeof args.task === 'string' ? args.task.trim() : '';
     if (!task) return 'ERROR: task is required';
     const nameHint = typeof args.name === 'string' ? args.name : undefined;
-    const r = await host.agents.spawn(task, nameHint);
+    // Named agent definition (~/.trha/agents/<name>/), optional.
+    const agentName = typeof args.agent === 'string' ? args.agent : undefined;
+    const r = await host.agents.spawn(task, nameHint, agentName);
     return `subagent ${r.id} finished:\n${clip(r.reply)}`;
   }
 
@@ -400,8 +417,23 @@ export async function runStandardTool(
     const ext = exts[lang];
     if (!ext) return `ERROR: unsupported language "${language}" (python|javascript|bash|lean)`;
     const runner = shellRunner(lang);
-    if (!runner.ok) return `ERROR: bash is not available on this platform (use pwsh)`;
-    const file = path.join(host.workspace, `.trha-run-${Date.now().toString(36)}.${ext}`);
+    // shellRunner only ever refuses bash/sh (win32); name the language instead
+    // of blaming bash for a Python request.
+    if (!runner.ok) {
+      const hint = lang === 'bash' || lang === 'sh' ? ' (use pwsh for shell code)' : '';
+      return `ERROR: ${lang} is not available on this platform${hint}`;
+    }
+    // The scratch file must not land in the workspace. `run_code` runs on
+    // almost every turn, and a crash or a kill used to leave `.trha-run-*.py`
+    // sitting next to the user's sources — inside the file-history and write
+    // sandbox surface, and, when the workspace itself was mis-resolved, in
+    // whichever subdirectory the scheduler happened to be launched from.
+    // A private dir under the OS temp root keeps the workspace clean; `cwd`
+    // below stays the workspace, so relative paths in the snippet behave the
+    // same as before.
+    const dir = path.join(tmpdir(), 'trha-run');
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const file = path.join(dir, `run-${Date.now().toString(36)}-${process.pid}.${ext}`);
     await writeFile(file, code, 'utf8');
     return await new Promise<string>(resolve => {
       const child = spawn(runner.cmd, [file], { cwd: host.workspace, env: hardenedEnv() });
@@ -510,8 +542,9 @@ export async function runStandardTool(
       status: 'active',
     };
     host.state.schedules = [...(host.state.schedules ?? []), schedule];
-    // The due-check driver is not part of this port: the record is real, the
-    // firing is not (documented), so this never silently spends tokens.
+    // The due-check driver lives in Server/index.ts (TRHA_SCHEDULE_TICK_MS):
+    // it fires this record off the session it was persisted on, so a schedule
+    // created here really does turn into a turn.
     return `OK: scheduled\n${JSON.stringify(schedule)}`;
   }
 
@@ -574,23 +607,18 @@ export async function runStandardTool(
   }
 
   if (name === 'skill') {
-    const dir = process.env.TRHA_SKILLS_DIR ?? path.join(host.workspace, '.trha', 'skills');
-    const wanted = typeof args.name === 'string' ? args.name : '';
+    const wanted = typeof args.name === 'string' ? args.name.trim() : '';
+    const dirs = skillDirs(host.workspace);
     if (!wanted) {
-      let names: string[] = [];
-      try {
-        names = (await readdir(dir)).filter(f => f.endsWith('.md')).map(f => f.replace(/\.md$/, ''));
-      } catch {
-        return `(no skills; put markdown files in ${dir})`;
-      }
-      return names.length ? names.sort().join('\n') : `(no skills in ${dir})`;
+      const skills = await discoverSkills(dirs);
+      if (skills.length === 0) return `(no skills; looked in ${dirs.join(', ')})`;
+      return skills
+        .map(s => (s.description ? `${s.name} — ${s.description}` : s.name))
+        .join('\n');
     }
-    const file = path.join(dir, `${wanted.replace(/[^A-Za-z0-9._-]/g, '_')}.md`);
-    try {
-      return clip(await readFile(file, 'utf8'));
-    } catch {
-      return `ERROR: no skill "${wanted}" in ${dir}`;
-    }
+    const body = await readSkill(dirs, wanted);
+    if (body === null) return `ERROR: no skill "${wanted}" in ${dirs.join(', ')}`;
+    return clip(body);
   }
 
   if (name === 'web_fetch') {
@@ -599,7 +627,17 @@ export async function runStandardTool(
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15_000);
     try {
-      const res = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'trha/1.0' } });
+      const res = await fetch(url, {
+        signal: ctrl.signal,
+        redirect: 'follow',
+        headers: {
+          // Many sites answer a bare bot UA with a challenge page; a normal
+          // browser UA plus language negotiation gets the readable HTML.
+          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        },
+      });
       const type = res.headers.get('content-type') ?? '';
       const body = await res.text();
       const text = type.includes('html') ? stripHtml(body) : body;

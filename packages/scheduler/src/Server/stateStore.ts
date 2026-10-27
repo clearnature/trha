@@ -7,7 +7,20 @@
 
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { readdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
+
+/**
+ * Where session state is persisted when `TRHA_STATE_DIR` is not set.
+ *
+ * The directory is part of the standard `~/.trha` layout (created by
+ * `trha setup`); keeping the default here means a scheduler started by hand
+ * persists conversations instead of silently running in memory only.
+ */
+export function defaultStateDir(): string {
+  const override = process.env.TRHA_STATE_DIR?.trim();
+  return override || path.join(homedir(), '.trha', 'scheduler-state');
+}
 
 export interface PersistedSession {
   v: number;
@@ -26,6 +39,13 @@ export interface PersistedSession {
   teamTasks?: unknown[];
   parentId?: string;
   cwd?: string;
+  /** User-facing title and tags (rename/tag). */
+  title?: string;
+  tags?: string[];
+  /** Session permission posture (Reasonix parity; absent in older files). */
+  permissionMode?: string;
+  planMode?: boolean;
+  yoloRestore?: string | null;
 }
 
 /** Directory is created on demand. */
@@ -50,6 +70,8 @@ export async function saveSession(
     todos?: unknown[]; goal?: unknown; schedules?: unknown[]; pendingQuestion?: unknown;
     presentations?: unknown[];
     teamTasks?: unknown[]; parentId?: string; cwd?: string;
+    title?: string; tags?: string[];
+    permissionMode?: string; planMode?: boolean; yoloRestore?: string | null;
   },
 ): Promise<void> {
   await ensureDir(dir);
@@ -69,6 +91,11 @@ export async function saveSession(
     ...(session.teamTasks ? { teamTasks: session.teamTasks } : {}),
     ...(session.parentId ? { parentId: session.parentId } : {}),
     ...(session.cwd ? { cwd: session.cwd } : {}),
+    ...(session.title ? { title: session.title } : {}),
+    ...(session.tags ? { tags: session.tags } : {}),
+    ...(session.permissionMode ? { permissionMode: session.permissionMode } : {}),
+    ...(session.planMode !== undefined ? { planMode: session.planMode } : {}),
+    ...(session.yoloRestore !== undefined ? { yoloRestore: session.yoloRestore } : {}),
   };
   const target = fileFor(dir, session.id);
   // Unique temp name: two writes of the same session (a tool update racing the

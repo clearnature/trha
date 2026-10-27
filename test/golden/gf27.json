@@ -1,0 +1,583 @@
+{
+  "spec": "gf27-golden v1",
+  "authority": "src/Sovereign/Algebra/FieldTower/GF27.agda",
+  "authority_repo": "/data/work/discrete-mathematics",
+  "irreducible": "x^3 + 2*x + 1 (mod 3)",
+  "mult_group": "GF(27)* ≅ Z/26Z, 生成元 α（α^13 = 2 = -1）",
+  "coords_weights": [
+    1,
+    3,
+    9
+  ],
+  "coords_note": "GF27 = (t0, t1, t2)，enc = t0 + 3*t1 + 9*t2",
+  "star": [
+    {
+      "pow": 0,
+      "coords": [
+        1,
+        0,
+        0
+      ],
+      "enc": 1,
+      "alpha_exp": 0
+    },
+    {
+      "pow": 1,
+      "coords": [
+        0,
+        1,
+        0
+      ],
+      "enc": 3,
+      "alpha_exp": 1
+    },
+    {
+      "pow": 2,
+      "coords": [
+        0,
+        0,
+        1
+      ],
+      "enc": 9,
+      "alpha_exp": 2
+    },
+    {
+      "pow": 3,
+      "coords": [
+        2,
+        1,
+        0
+      ],
+      "enc": 5,
+      "alpha_exp": 3
+    },
+    {
+      "pow": 4,
+      "coords": [
+        0,
+        2,
+        1
+      ],
+      "enc": 15,
+      "alpha_exp": 4
+    },
+    {
+      "pow": 5,
+      "coords": [
+        2,
+        1,
+        2
+      ],
+      "enc": 23,
+      "alpha_exp": 5
+    },
+    {
+      "pow": 6,
+      "coords": [
+        1,
+        1,
+        1
+      ],
+      "enc": 13,
+      "alpha_exp": 6
+    },
+    {
+      "pow": 7,
+      "coords": [
+        2,
+        2,
+        1
+      ],
+      "enc": 17,
+      "alpha_exp": 7
+    },
+    {
+      "pow": 8,
+      "coords": [
+        2,
+        0,
+        2
+      ],
+      "enc": 20,
+      "alpha_exp": 8
+    },
+    {
+      "pow": 9,
+      "coords": [
+        1,
+        1,
+        0
+      ],
+      "enc": 4,
+      "alpha_exp": 9
+    },
+    {
+      "pow": 10,
+      "coords": [
+        0,
+        1,
+        1
+      ],
+      "enc": 12,
+      "alpha_exp": 10
+    },
+    {
+      "pow": 11,
+      "coords": [
+        2,
+        1,
+        1
+      ],
+      "enc": 14,
+      "alpha_exp": 11
+    },
+    {
+      "pow": 12,
+      "coords": [
+        2,
+        0,
+        1
+      ],
+      "enc": 11,
+      "alpha_exp": 12
+    },
+    {
+      "pow": 13,
+      "coords": [
+        2,
+        0,
+        0
+      ],
+      "enc": 2,
+      "alpha_exp": 13
+    },
+    {
+      "pow": 14,
+      "coords": [
+        0,
+        2,
+        0
+      ],
+      "enc": 6,
+      "alpha_exp": 14
+    },
+    {
+      "pow": 15,
+      "coords": [
+        0,
+        0,
+        2
+      ],
+      "enc": 18,
+      "alpha_exp": 15
+    },
+    {
+      "pow": 16,
+      "coords": [
+        1,
+        2,
+        0
+      ],
+      "enc": 7,
+      "alpha_exp": 16
+    },
+    {
+      "pow": 17,
+      "coords": [
+        0,
+        1,
+        2
+      ],
+      "enc": 21,
+      "alpha_exp": 17
+    },
+    {
+      "pow": 18,
+      "coords": [
+        1,
+        2,
+        1
+      ],
+      "enc": 16,
+      "alpha_exp": 18
+    },
+    {
+      "pow": 19,
+      "coords": [
+        2,
+        2,
+        2
+      ],
+      "enc": 26,
+      "alpha_exp": 19
+    },
+    {
+      "pow": 20,
+      "coords": [
+        1,
+        1,
+        2
+      ],
+      "enc": 22,
+      "alpha_exp": 20
+    },
+    {
+      "pow": 21,
+      "coords": [
+        1,
+        0,
+        1
+      ],
+      "enc": 10,
+      "alpha_exp": 21
+    },
+    {
+      "pow": 22,
+      "coords": [
+        2,
+        2,
+        0
+      ],
+      "enc": 8,
+      "alpha_exp": 22
+    },
+    {
+      "pow": 23,
+      "coords": [
+        0,
+        2,
+        2
+      ],
+      "enc": 24,
+      "alpha_exp": 23
+    },
+    {
+      "pow": 24,
+      "coords": [
+        1,
+        2,
+        2
+      ],
+      "enc": 25,
+      "alpha_exp": 24
+    },
+    {
+      "pow": 25,
+      "coords": [
+        1,
+        0,
+        2
+      ],
+      "enc": 19,
+      "alpha_exp": 25
+    }
+  ],
+  "pow_enc": [
+    1,
+    3,
+    9,
+    5,
+    15,
+    23,
+    13,
+    17,
+    20,
+    4,
+    12,
+    14,
+    11,
+    2,
+    6,
+    18,
+    7,
+    21,
+    16,
+    26,
+    22,
+    10,
+    8,
+    24,
+    25,
+    19
+  ],
+  "log27": [
+    -1,
+    0,
+    13,
+    1,
+    9,
+    3,
+    14,
+    16,
+    22,
+    2,
+    21,
+    12,
+    10,
+    6,
+    11,
+    4,
+    18,
+    7,
+    15,
+    25,
+    8,
+    17,
+    20,
+    5,
+    23,
+    24,
+    19
+  ],
+  "log27_zero": -1,
+  "conventions": {
+    "agda": "fromGF27 (0,0,0) = pow0（零元折到单位元，Agda 约定）",
+    "trha": "log27[0] = -1（零元哨兵，trha 实现层约定）"
+  },
+  "from27": [
+    {
+      "coords": [
+        0,
+        0,
+        0
+      ],
+      "pow": 0,
+      "note": "零元映到单位元 (约定)"
+    },
+    {
+      "coords": [
+        1,
+        0,
+        0
+      ],
+      "pow": 0,
+      "note": ""
+    },
+    {
+      "coords": [
+        2,
+        0,
+        0
+      ],
+      "pow": 13,
+      "note": ""
+    },
+    {
+      "coords": [
+        0,
+        1,
+        0
+      ],
+      "pow": 1,
+      "note": ""
+    },
+    {
+      "coords": [
+        0,
+        2,
+        0
+      ],
+      "pow": 14,
+      "note": ""
+    },
+    {
+      "coords": [
+        0,
+        0,
+        1
+      ],
+      "pow": 2,
+      "note": ""
+    },
+    {
+      "coords": [
+        0,
+        0,
+        2
+      ],
+      "pow": 15,
+      "note": ""
+    },
+    {
+      "coords": [
+        1,
+        1,
+        0
+      ],
+      "pow": 9,
+      "note": ""
+    },
+    {
+      "coords": [
+        1,
+        2,
+        0
+      ],
+      "pow": 16,
+      "note": ""
+    },
+    {
+      "coords": [
+        2,
+        1,
+        0
+      ],
+      "pow": 3,
+      "note": ""
+    },
+    {
+      "coords": [
+        2,
+        2,
+        0
+      ],
+      "pow": 22,
+      "note": ""
+    },
+    {
+      "coords": [
+        1,
+        0,
+        1
+      ],
+      "pow": 21,
+      "note": ""
+    },
+    {
+      "coords": [
+        1,
+        0,
+        2
+      ],
+      "pow": 25,
+      "note": ""
+    },
+    {
+      "coords": [
+        2,
+        0,
+        1
+      ],
+      "pow": 12,
+      "note": ""
+    },
+    {
+      "coords": [
+        2,
+        0,
+        2
+      ],
+      "pow": 8,
+      "note": ""
+    },
+    {
+      "coords": [
+        0,
+        1,
+        1
+      ],
+      "pow": 10,
+      "note": ""
+    },
+    {
+      "coords": [
+        0,
+        1,
+        2
+      ],
+      "pow": 17,
+      "note": ""
+    },
+    {
+      "coords": [
+        0,
+        2,
+        1
+      ],
+      "pow": 4,
+      "note": ""
+    },
+    {
+      "coords": [
+        0,
+        2,
+        2
+      ],
+      "pow": 23,
+      "note": ""
+    },
+    {
+      "coords": [
+        1,
+        1,
+        1
+      ],
+      "pow": 6,
+      "note": ""
+    },
+    {
+      "coords": [
+        1,
+        1,
+        2
+      ],
+      "pow": 20,
+      "note": ""
+    },
+    {
+      "coords": [
+        1,
+        2,
+        1
+      ],
+      "pow": 18,
+      "note": ""
+    },
+    {
+      "coords": [
+        1,
+        2,
+        2
+      ],
+      "pow": 24,
+      "note": ""
+    },
+    {
+      "coords": [
+        2,
+        1,
+        1
+      ],
+      "pow": 11,
+      "note": ""
+    },
+    {
+      "coords": [
+        2,
+        1,
+        2
+      ],
+      "pow": 5,
+      "note": ""
+    },
+    {
+      "coords": [
+        2,
+        2,
+        1
+      ],
+      "pow": 7,
+      "note": ""
+    },
+    {
+      "coords": [
+        2,
+        2,
+        2
+      ],
+      "pow": 19,
+      "note": ""
+    }
+  ],
+  "sha256": "e26a112604409fd64f31d8300bff18bd29d160eb49f4d9f7c6d721f9636f2f71"
+}

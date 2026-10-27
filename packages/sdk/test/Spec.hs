@@ -5,7 +5,6 @@ import Test.QuickCheck
 import Core.Types
 import Core.Client
 import Core.HTTP
-import Types.Config
 import Client.Session
 import Client.Agent
 import Client.Tool
@@ -32,36 +31,29 @@ main = hspec $ do
       let url = buildUrl client "/api/test"
       url `shouldBe` "http://localhost:3000/api/test"
 
-  describe "Types.Config" $ do
-    it "can load and save config" $ do
-      let config = defaultConfig
-      saveConfig "/tmp/test-config.json" config
-      loaded <- loadConfig "/tmp/test-config.json"
-      loaded `shouldBe` Just config
-
   describe "Client.Session" $ do
     it "can create session client" $ do
       sdk <- createClient "localhost" 3000
       let client = createSessionClient sdk
-      sessionClientSDK client `shouldBe` sdk
+      clientConfig (sessionClientSDK client) `shouldBe` clientConfig sdk
 
   describe "Client.Agent" $ do
     it "can create agent client" $ do
       sdk <- createClient "localhost" 3000
       let client = createAgentClient sdk
-      agentClientSDK client `shouldBe` sdk
+      clientConfig (agentClientSDK client) `shouldBe` clientConfig sdk
 
   describe "Client.Tool" $ do
     it "can create tool client" $ do
       sdk <- createClient "localhost" 3000
       let client = createToolClient sdk
-      toolClientSDK client `shouldBe` sdk
+      clientConfig (toolClientSDK client) `shouldBe` clientConfig sdk
 
   describe "Client.Model" $ do
     it "can create model client" $ do
       sdk <- createClient "localhost" 3000
       let client = createModelClient sdk
-      modelClientSDK client `shouldBe` sdk
+      clientConfig (modelClientSDK client) `shouldBe` clientConfig sdk
 
   describe "Utils.Logger" $ do
     it "can create logger" $ do

@@ -10,12 +10,15 @@ module Core.SSE
   , feed
   , parseToolEvent
   , SsePayload(..)
+  , SseNotice(..)
   , classifyPayload
+  , toNotice
   , isTerminalPayload
   ) where
 
 import Core.Types (ToolEvent)
 import Data.Aeson (Value(Object, String), decodeStrict, eitherDecodeStrict')
+import Data.Aeson.Types (parseMaybe, (.:))
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
@@ -74,26 +77,68 @@ parseToolEvent = either (const Nothing) Just . eitherDecodeStrict'
 data SsePayload
   = SseTool ToolEvent
   | SseTextDelta BS.ByteString
+  | SseReasoning Text        -- ^ thinking delta (agent:reasoning)
+  | SseStep Int Int Int      -- ^ round, message count, tool count (agent:model-request)
+  | SseCompaction Text Int   -- ^ trigger, tokens saved (agent:context)
+  | SseRetry Int Int Text    -- ^ attempt, delay ms, reason (agent:retry)
   | SseMessage Text          -- ^ role (user / assistant / ...)
   | SsePlan
   | SseUnknown BS.ByteString
   deriving (Show, Eq)
 
+-- | Structured side-channel events the TUI renders as cards/rows.  Kept
+-- separate from 'SsePayload' so the bridge can hand them to one sink.
+data SseNotice
+  = ReasoningDelta Text
+  | StepStarted Int Int Int
+  | ContextCompacted Text Int
+  | RetryScheduled Int Int Text
+  deriving (Show, Eq)
+
 -- | Classify one payload, keeping the raw bytes for diagnostics.
 classifyPayload :: BS.ByteString -> SsePayload
-classifyPayload raw
-  | Just ev <- parseToolEvent raw = SseTool ev
-  | Just (Object o) <- decodeStrict raw
-  , Just _ <- KM.lookup "text" o = SseTextDelta raw
-  | Just (Object o) <- decodeStrict raw
-  , Just (String role) <- KM.lookup "role" o = SseMessage role
-  -- plan/approval marker: {status,message} without a tool name — the
-  -- approval gate parks the turn; the synchronous reply carries the same
-  -- signal, so the stream copy is only silenced here (not re-rendered).
-  | Just (Object o) <- decodeStrict raw
-  , Just _ <- KM.lookup "status" o
-  , Just _ <- KM.lookup "message" o = SsePlan
-  | otherwise = SseUnknown raw
+classifyPayload raw =
+  case parseToolEvent raw of
+    Just ev -> SseTool ev
+    Nothing -> case decodeStrict raw of
+      Just (Object o) -> fromObject o
+      _ -> SseUnknown raw
+  where
+    fromObject o
+      | Just (String r) <- KM.lookup "reasoning" o = SseReasoning r
+      | Just _ <- KM.lookup "text" o = SseTextDelta raw
+      | Just n <- asCompaction o = n
+      | Just n <- asRetry o = n
+      | Just n <- asStep o = n
+      | Just (String role) <- KM.lookup "role" o = SseMessage role
+      -- plan/approval marker: {status,message} without a tool name — the
+      -- approval gate parks the turn; the synchronous reply carries the same
+      -- signal, so the stream copy is only silenced here (not re-rendered).
+      | Just _ <- KM.lookup "status" o
+      , Just _ <- KM.lookup "message" o = SsePlan
+      | otherwise = SseUnknown raw
+    asStep o =
+      SseStep
+        <$> parseMaybe (.: "round") o
+        <*> parseMaybe (.: "messageCount") o
+        <*> parseMaybe (.: "toolCount") o
+    asCompaction o =
+      SseCompaction
+        <$> parseMaybe (.: "trigger") o
+        <*> parseMaybe (.: "savedTokens") o
+    asRetry o =
+      SseRetry
+        <$> parseMaybe (.: "attempt") o
+        <*> parseMaybe (.: "delayMs") o
+        <*> parseMaybe (.: "reason") o
+
+-- | The structured event behind a payload, when there is one.
+toNotice :: SsePayload -> Maybe SseNotice
+toNotice (SseReasoning t)   = Just (ReasoningDelta t)
+toNotice (SseStep r m t)    = Just (StepStarted r m t)
+toNotice (SseCompaction tr n) = Just (ContextCompacted tr n)
+toNotice (SseRetry a d r)     = Just (RetryScheduled a d r)
+toNotice _ = Nothing
 
 -- | Whether a payload marks the end of a turn on the session stream.
 --

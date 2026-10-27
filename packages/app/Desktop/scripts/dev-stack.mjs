@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 // Dev stack launcher: bring up the whole desktop chain in one command.
 //
-//   kernel (API server on 8080)  ←  scheduler (3456)  ←  Desktop / CLI / TUI
+//   kernel (API server on 19433)  ←  scheduler (28433)  ←  Desktop / CLI / TUI
 //
 // The kernel entry defaults to the already-built `trha-kernel-stub`
 // (deterministic two-round tool loop, no LLM key required).  Once an LLM key
 // is configured you can point KERNEL_BIN at the real `trha serve` binary
-// instead -- the scheduler does not care which one answers on 8080.
+// instead -- the scheduler does not care which one answers on 19433.
 //
 // Usage:  node packages/app/Desktop/scripts/dev-stack.mjs
-//         KERNEL_PORT=8080 SCHED_PORT=3456 KERNEL_BIN=... node .../dev-stack.mjs
+//         KERNEL_PORT=19433 SCHED_PORT=28433 KERNEL_BIN=... node .../dev-stack.mjs
 
 import { spawn } from 'node:child_process';
 import * as path from 'node:path';
@@ -19,8 +19,8 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../../../..');
 
-const KERNEL_PORT = Number(process.env.KERNEL_PORT ?? 8080);
-const SCHED_PORT = Number(process.env.SCHED_PORT ?? 3456);
+const KERNEL_PORT = Number(process.env.KERNEL_PORT ?? 19433);
+const SCHED_PORT = Number(process.env.SCHED_PORT ?? 28433);
 const TOKEN = process.env.TRHA_TOKEN ?? 'dev-token';
 
 function kernelBin() {

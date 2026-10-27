@@ -16,6 +16,7 @@ module UI.I18n
   , langName
   , tr
   , zhDict
+  , toTraditional
   ) where
 
 import Data.Text (Text)
@@ -24,32 +25,119 @@ import qualified Data.Map.Strict as M
 
 -- | Active interface language.
 data Lang
-  = Zh -- ^ Chinese (default interface)
-  | En -- ^ English
+  = Zh   -- ^ Simplified Chinese (default interface)
+  | ZhHant -- ^ Traditional Chinese (zh-Hant)
+  | Fr   -- ^ French
+  | Es   -- ^ Spanish
+  | Ru   -- ^ Russian
+  | Th   -- ^ Thai
+  | Bo   -- ^ Tibetan (support requested 2026-10-26; skeleton, needs native review)
+  | Ii   -- ^ Nuosu Yi (same)
+  | My   -- ^ Burmese (Myanmar)
+  | En   -- ^ English
   deriving (Show, Eq, Ord, Bounded, Enum)
 
 -- | Parse a language identifier (from CLI flag or settings file).
--- Unknown values fall back to 'En' so typos never crash the shell.
+--
+-- Tags follow BCP 47 with ISO 15924 script subtags for Chinese
+-- (@zh-Hans@ / @zh-Hant@); no legacy region aliases are accepted — unknown
+-- values fall back to 'En' so typos never crash the shell.
 parseLang :: Text -> Lang
 parseLang raw = case T.toLower (T.strip raw) of
-  "zh"     -> Zh
-  "zh-cn"  -> Zh
   "zh-hans" -> Zh
-  "中文"   -> Zh
-  "cn"     -> Zh
-  "en"     -> En
-  "en-us"  -> En
-  _        -> En
+  "zh-hans-cn" -> Zh
+  "zh-hans-sg" -> Zh
+  "zh-hant" -> ZhHant
+  "fr"      -> Fr
+  "es"      -> Es
+  "ru"      -> Ru
+  "th"      -> Th
+  "en"      -> En
+  "en-us"   -> En
+  "en-gb"   -> En
+  "fr-fr"   -> Fr
+  "es-es"   -> Es
+  "ru-ru"   -> Ru
+  "th-th"   -> Th
+  "bo"      -> Bo
+  "bo-cn"   -> Bo
+  "ii"      -> Ii
+  "ii-cn"   -> Ii
+  "my"      -> My
+  "my-mm"   -> My
+  _         -> En
 
 -- | Short display name for a language.
 langName :: Lang -> Text
-langName Zh = "zh"
-langName En = "en"
+langName Zh   = "zh-Hans"
+langName ZhHant = "zh-Hant"
+langName Fr   = "fr"
+langName Es   = "es"
+langName Ru   = "ru"
+langName Th   = "th"
+langName Bo   = "bo"
+langName Ii   = "ii"
+langName My   = "my"
+langName En   = "en"
 
--- | Translate an English key into the active language.
+-- | Translate an English key into the active language.  Every non-English
+-- dictionary is a skeleton: translated keys win, everything else falls back
+-- to the canonical English (missing translations never break the shell).
 tr :: Lang -> Text -> Text
 tr En key = key
 tr Zh key = M.findWithDefault key key zhDict
+tr ZhHant key = toTraditional (M.findWithDefault key key zhDict)
+tr Fr key = M.findWithDefault key key frDict
+tr Es key = M.findWithDefault key key esDict
+tr Ru key = M.findWithDefault key key ruDict
+tr Th key = M.findWithDefault key key thDict
+tr Bo key = M.findWithDefault key key boDict
+tr Ii key = M.findWithDefault key key iiDict
+tr My key = M.findWithDefault key key myDict
+
+-- | Simplified → Traditional conversion for the interface vocabulary.
+-- Traditional Chinese shares the dictionary; only the glyphs differ, so a
+-- character map keeps one source of truth instead of a second full table.
+toTraditional :: Text -> Text
+toTraditional = T.map (\c -> M.findWithDefault c c hantChars)
+
+hantChars :: M.Map Char Char
+hantChars = M.fromList
+  [ ('设','設'), ('话','話'), ('会','會'), ('项','項'), ('开','開'), ('关','關')
+  , ('发','發'), ('现','現'), ('显','顯'), ('这','這'), ('个','個'), ('为','為'), ('从','從')
+  , ('对','對'), ('时','時'), ('间','間'), ('问','問'), ('题','題'), ('读','讀')
+  , ('写','寫'), ('删','刪'), ('选','選'), ('择','擇'), ('状','狀'), ('态','態')
+  , ('连','連'), ('错','錯'), ('误','誤'), ('输','輸'), ('总','總'), ('计','計')
+  , ('历','歷'), ('帮','幫'), ('颜','顏'), ('体','體'), ('语','語'), ('简','簡')
+  , ('当','當'), ('标','標'), ('签','籤'), ('页','頁'), ('载','載'), ('导','導')
+  , ('缓','緩'), ('压','壓'), ('缩','縮'), ('占','佔'), ('应','應'), ('务','務')
+  , ('远','遠'), ('权','權'), ('网','網'), ('络','絡'), ('机','機'), ('记','記')
+  , ('忆','憶'), ('调','調'), ('试','試'), ('诊','診'), ('断','斷'), ('观','觀')
+  , ('键','鍵'), ('储','儲'), ('径','徑'), ('於','於'), ('检','檢'), ('声','聲')
+  , ('强','強'), ('认','認'), ('余','餘'), ('询','詢'), ('动','動'), ('划','劃')
+  , ('审','審'), ('绝','絕'), ('过','過'), ('弃','棄'), ('复','復'), ('暂','暫')
+  , ('没','沒'), ('败','敗'), ('与','與'), ('们','們'), ('说','說'), ('让','讓')
+  , ('给','給'), ('万','萬'), ('亿','億'), ('点','點'), ('线','線'), ('图','圖')
+  , ('数','數'), ('据','據'), ('库','庫'), ('称','稱'), ('铁','鐵'), ('华','華')
+  , ('国','國'), ('学','學'), ('习','習'), ('书','書'), ('写','寫'), ('读','讀')
+  , ('门','門'), ('闭','閉'), ('户','戶'), ('单','單'), ('双','雙'), ('击','擊')
+  , ('打','打'), ('断','斷'), ('续','續'), ('断','斷'), ('变','變'), ('化','化')
+  , ('运','運'), ('行','行'), ('监','監'), ('测','測'), ('录','錄'), ('影','影')
+  , ('响','響'), ('质','質'), ('量','量'), ('优','優'), ('级','級'), ('别','別')
+  , ('权','權'), ('益','益'), ('规','規'), ('则','則'), ('删','刪'), ('改','改')
+  , ('增','增'), ('查','查'), ('找','找'), ('搜','搜'), ('索','索'), ('引','引')
+  , ('擎','擎'), ('页','頁'), ('面','面'), ('板','板'), ('区','區'), ('域','域')
+  , ('栏','欄'), ('档','檔'), ('案','案'), ('夹','夾'), ('题','題'), ('目','目')
+  , ('录','錄'), ('级','級'), ('联','聯'), ('系','系'), ('绑','綁'), ('定','定')
+  , ('认','認'), ('证','證'), ('凭','憑'), ('据','據'), ('密','密'), ('钥','鑰')
+  , ('匙','匙'), ('令','令'), ('牌','牌'), ('权','權'), ('限','限'), ('桶','桶')
+  , ('队','隊'), ('列','列'), ('排','排'), ('程','程'), ('序','序'), ('员','員')
+  , ('组','組'), ('装','裝'), ('配','配'), ('置','置'), ('启','啟'), ('停','停')
+  , ('用','用'), ('禁','禁'), ('卸','卸'), ('载','載')
+  -- 会话/状态词（此前缺失，ZhHant 会渲染成混合简繁）
+  , ('绪','緒'), ('细','細'), ('统','統'), ('转','轉'), ('换','換')
+  , ('志','誌'), ('详','詳')
+  ]
 
 -- | English -> Simplified Chinese dictionary.  Keys are the canonical
 -- English strings used by the shell (command descriptions, status text,
@@ -63,6 +151,7 @@ zhDict = M.fromList
   , ("out", "输出")
   , ("total", "累计")
   , (" · ctx ", " · 占用 ")
+  , (" · ready", " · 就绪")
     -- permission ask card (M3)
   , ("Always allow ", "总是允许 ")
   , (" for future runs?", "（今后的运行）？")
@@ -99,11 +188,23 @@ zhDict = M.fromList
   , ("Abandon the running plan", "放弃正在执行的计划")
   , ("Exit the application", "退出程序")
   , ("Exit the application (alias)", "退出程序（别名）")
+  , ("Stop the kernel and scheduler (usage: /stop confirm)", "停止内核与调度器（用法：/stop confirm）")
+  , ("This stops the kernel and scheduler and exits. Type /stop confirm to proceed."
+    , "这会停止内核与调度器并退出。输入 /stop confirm 确认。")
+  , ("This stops the kernel and scheduler and exits TUI. Type /stop confirm to proceed."
+    , "这会停止内核与调度器并退出 TUI。输入 /stop confirm 确认。")
+  , ("Stopped. Goodbye!", "已停止。再见！")
 
   -- REPL banner & hints (Main)
   , ("Type '/help' for commands, '/quit' to exit", "输入 '/help' 查看命令，'/quit' 退出")
   , ("Goodbye!", "再见！")
   , ("Press Ctrl+Q to quit", "按 Ctrl+Q 退出")
+  , ("Press Ctrl+C again to quit", "再按一次 Ctrl+C 退出")
+  , ("Keys:", "按键：")
+  , ("quit", "退出")
+  , ("interrupt; press twice to quit", "中断；连按两次退出")
+  , ("quit when the prompt is empty", "输入为空时退出")
+  , ("stop the kernel and scheduler", "停止内核与调度器")
 
   -- REPL model/session line (Main)
   , ("session: ", "会话：")
@@ -123,6 +224,80 @@ zhDict = M.fromList
   , ("No plugins registered.", "未注册任何插件。")
   , ("Plugins:", "插件列表：")
   , ("Unknown command: ", "未知命令：")
+  , ("user command", "用户命令")
+  , ("custom", "自定义")
+  , ("session", "会话")
+  , ("history", "会话数据")
+  , ("plan", "计划与任务")
+  , ("model", "模型与供应商")
+  , ("context", "上下文与记忆")
+  , ("tools", "工具与服务")
+  , ("input", "输入与附件")
+  , ("appearance", "外观与语言")
+  , ("settings", "权限与设置")
+  , ("help", "帮助与退出")
+  , ("Scheduler transport: https (default) | http", "调度层协议：https（默认）| http")
+  , ("Scheduler scheme", "调度层协议")
+  , ("Value must be http or https: ", "值必须是 http 或 https：")
+  , ("Ctrl+B sidebar toggle    Ctrl+Q quit    Ctrl+C twice", "Ctrl+B 侧栏开关    Ctrl+Q 退出    Ctrl+C 两次退出")
+  , ("Unknown skill: ", "未知技能：")
+  , ("Cannot read skill file: ", "无法读取技能文件：")
+  , ("Mode: ", "模式：")
+  , ("unknown", "未知")
+  , ("cache ", "缓存 ")
+  , ("turn hit ", "本次命中 ")
+  , (" · avg ", " · 平均 ")
+  , ("avg ", "平均 ")
+  , ("context ", "上下文 ")
+  , ("compact ", "压缩 ")
+  , ("Send a message first to create a session", "请先发送一条消息创建会话")
+  , ("No session to export", "没有可导出的会话")
+  , ("Cleared", "已清空")
+  , ("Type a message to start a new session, or /resume to continue one.", "输入一条消息开始新会话，或用 /resume 继续已有会话。")
+  , ("Recent sessions", "最近会话")
+  , ("No local sessions yet.", "还没有本地会话。")
+  , ("Shift+Tab switches the permission posture; /help lists commands.", "Shift+Tab 切换权限姿态；/help 列出命令。")
+  , ("Back to the Home screen (recent sessions)", "回到首页（最近会话）")
+  , ("Home", "首页")
+  , ("Draft stashed", "草稿已暂存")
+  , ("Draft restored", "草稿已恢复")
+  , ("stash is empty", "暂存为空")
+  , ("stash: ", "暂存：")
+  , (" drafts", " 条草稿")
+  , ("Park or restore a draft (usage: /stash [pop|list])", "暂存/恢复草稿（用法：/stash [pop|list]）")
+  , ("Favourite: ", "已收藏：")
+  , ("Pin/unpin a favourite model (usage: /fav [model])", "收藏/取消收藏模型（用法：/fav [模型]）")
+  , (" Skills ", " 技能 ")
+  , ("List discovered skills", "列出已发现技能")
+  , ("Themes: ", "主题：")
+  , ("Unknown theme: ", "未知主题：")
+  , ("Theme: ", "主题：")
+  , ("No matching session", "没有匹配的会话")
+  , ("Recent sessions: ", "最近的会话：")
+  , ("No local sessions yet. Run a conversation first.", "还没有本地会话。先运行一次对话。")
+  , ("List or switch the colour theme (usage: /theme [name])", "列出/切换配色主题（用法：/theme [名称]）")
+  , ("Cycle or set the permission posture (usage: /mode [read-only|ask|auto|yolo|plan])", "循环或设置权限姿态（用法：/mode [read-only|ask|auto|yolo|plan]）")
+  , ("Copy the last assistant message", "复制最后一条助手消息")
+  , ("Toggle verbose tool output", "切换详细工具输出")
+  , ("Show team tasks", "显示团队任务")
+  , ("Show the agent session tree", "显示代理会话树")
+  , (" Agents ", " 代理 ")
+  , (" Themes ", " 主题 ")
+  , ("Show agent sessions in a dialog", "在对话框中显示代理会话")
+  , ("Rename the active session (usage: /rename <title>)", "重命名当前会话（用法：/rename <标题>）")
+  , ("Set session tags (usage: /tag <tag> [tag...])", "设置会话标签（用法：/tag <标签>...）")
+  , ("Deny the pending plan (usage: /deny [reason])", "拒绝待处理的计划（用法：/deny [原因]）")
+  , ("No active session.", "没有活动会话。")
+  , ("Renamed", "已重命名")
+  , ("Tags updated", "标签已更新")
+  , ("No image in clipboard", "剪贴板中没有图片")
+  , ("Image saved: ", "图片已保存：")
+  , ("Recording unavailable", "录音不可用（需要 arecord 与输入设备）")
+  , ("Voice saved: ", "语音已保存：")
+  , ("The session no longer exists on the scheduler; the next message creates a new one.", "该会话在调度器中已不存在（可能已重启）；下一条消息会自动新建会话。")
+  , ("Export the transcript (usage: /export [json|md] [path])", "导出转写（用法：/export [json|md] [路径]）")
+  , ( "Shift+Tab read-only/ask/auto/YOLO/plan · Ctrl+Y YOLO · Ctrl+O expand tool output · Ctrl+Q quit · Ctrl+C twice"
+    , "Shift+Tab 只读/询问/自动/YOLO/计划 · Ctrl+Y YOLO · Ctrl+O 展开工具输出 · Ctrl+Q 退出 · Ctrl+C 两次退出" )
   , ("Usage: /plan <what to do>", "用法：/plan <要做的事>")
   , ("No active session. Use /new to create one.", "当前没有活动会话，请用 /new 新建一个。")
   , ("Plan: ", "计划：")
@@ -192,7 +367,9 @@ zhDict = M.fromList
   , ("Retry count for failed requests", "失败请求的重试次数")
   , ("Verbose logging", "详细日志")
   , ("TUI theme: tokyo-night | light", "TUI 主题：tokyo-night | light")
-  , ("Interface language: zh | en", "界面语言：zh | en")
+  , ("Interface language: BCP 47 tag (zh-Hans | zh-Hant | en …)", "界面语言：BCP 47 标签（zh-Hans | zh-Hant | en …）")
+  , ("Reasoning language", "思考语言")
+  , ("Language for the model's reasoning (auto = follow the interface language)", "模型思考语言（auto = 跟随界面语言）")
   , ("(default: ", "（默认：")
   , ("Settings", "设置")
   , (" settings ", " 设置 ")
@@ -264,4 +441,315 @@ zhDict = M.fromList
   , ("Show message timestamps", "显示消息时间戳")
   , ("Show the footer key hints", "显示底部快捷键提示")
   , ("Ring the bell when a reply completes", "回复完成时终端响铃")
+  , ("Switch the CLI language (usage: /language [code])", "切换 CLI 语言（用法：/language [code]）")
+  , ("Show the working-tree diff", "显示工作区 diff")
+  , ("Show context-window usage", "显示上下文窗口用量")
+  , ("Check scheduler, provider, fonts and settings", "检查调度器、Provider、字体与设置")
+  , ("Show remembered notes (~/.trha/memories)", "显示记忆笔记（~/.trha/memories）")
+  , ("Append a note to memory (usage: /remember <text>)", "追加记忆笔记（用法：/remember <text>）")
+  , ("Show transcript statistics for this session", "显示本会话的转写统计")
+  , ("Show account balance and the active model", "显示账户余额与当前模型")
+  , ("Compact the conversation history (usage: /compact [focus])", "压缩会话历史（用法：/compact [focus]）")
+  , ("List queued clipboard attachments", "列出待发送的剪贴板附件")
+  , ("Drop all queued clipboard attachments", "清空待发送的剪贴板附件")
+  , ("Show MCP server status", "显示 MCP 服务状态")
+  , ("Show LSP server status", "显示 LSP 服务状态")
+  , ("List built-in provider presets", "列出内置 Provider 预设")
+  , ("List configured hooks", "列出已配置的 hooks")
+  , ("Attach a clipboard image (usage: /paste [text])", "附加剪贴板图片（用法：/paste [text]）")
+  , ("Edit the next message in $EDITOR", "在 $EDITOR 中编辑下一条消息")
+  , ("Show or set the reply style (default|concise|detailed)", "显示或设置回复风格（default|concise|detailed）")
+  , ("Show session details (mode, goal, todos)", "显示会话详情（姿态、目标、任务）")
+  , ("Replay the current session transcript", "回放当前会话的转写")
+  , ("Retry the last turn exactly", "精确重试上一轮")
+  , ("Ask a side question without changing the conversation", "旁路提问，不改变会话")
+  , ("Summarize the conversation so far", "摘要当前会话")
+  , ("Queue a message for after this turn (usage: /queue [message])", "排队一条消息，在当前轮结束后发送（用法：/queue [message]）")
+  , ("Steer the running turn (usage: /steer <prompt>)", "转向当前轮（用法：/steer <prompt>）")
+  , ("Fork this session into a child (usage: /fork [title])", "把当前会话分叉为子会话（用法：/fork [title]）")
+  , ("Fork just before the last user turn", "在最后一条用户消息之前分叉")
+  , ("Show the session goal and todo count", "显示会话目标与任务数")
+  , ("Switch the active provider (usage: /switch [name])", "切换当前 Provider（用法：/switch [name]）")
+  , ("Run a prompt on an interval (usage: /loop <30s|5m|1h> <prompt> | /loop stop)", "按间隔重复执行提示（用法：/loop <30s|5m|1h> <prompt> | /loop stop）")
+  , ("Show the session tree and tool-call counts", "显示会话树与工具调用次数")
+  , ("Run a workflow template (usage: /workflow [name] [input])", "运行工作流模板（用法：/workflow [name] [input]）")
+  , ("Show or edit manual currency rates (usage: /currency [set CODE RATE | base CODE])", "显示或编辑手动汇率（用法：/currency [set CODE RATE | base CODE]）")
+  , ("Clear the transcript view (history is kept)", "清空转写视图（保留历史）")
+  , ("Show or set the approval wait in seconds (usage: /ask-timeout [seconds])", "显示或设置审批等待秒数（用法：/ask-timeout [seconds]）")
+  , ("Show or set the reasoning language (usage: /reasoning-language [auto|zh-Hans|en])", "显示或设置思考语言（用法：/reasoning-language [auto|zh-Hans|en]）")
+  , ("Language: ", "语言：")
+  , ("language: ", "界面语言：")
+  , ("available: ", "可用：")
+  , (" — /language <code>\n", " — /language <代码>\n")
+  , ("  Ctrl+B            Show / hide the sidebar", "  Ctrl+B            显示/隐藏侧栏")
+  , ("  Ctrl+Q            Quit", "  Ctrl+Q            退出")
+  , ("  Ctrl+C            Interrupt; press twice to quit", "  Ctrl+C            中断；连按两次退出")
+  , ("  Ctrl+D            Quit when the prompt is empty", "  Ctrl+D            输入为空时退出")
+  , ("  Ctrl+X            Leader (b/p/m/s/,/?/i)", "  Ctrl+X            Leader（b/p/m/s/,/?/i）")
+  , ("  PgUp / PgDn       Scroll messages", "  PgUp / PgDn       滚动消息")
+  , ("  Type a slash prefix and press Enter to open the command menu;", "  输入斜杠前缀并按 Enter 打开命令菜单；")
+  , ("  balance: ", "  余额：")
+  , ("  characters: ", "  字符数：")
+  , ("  context: ", "  上下文：")
+  , ("  font: ", "  字体：")
+  , ("  Ctrl+Home / End   Jump to top / bottom", "  Ctrl+Home / End   跳到顶部/底部")
+  , ("  goal: ", "  目标：")
+  , ("  keep typing to filter, ↑/↓ to move, Enter to run, Esc to close.", "  继续输入以过滤，↑/↓ 移动，Enter 执行，Esc 关闭。")
+  , ("  language: ", "  界面语言：")
+  , ("  mode: ", "  模式：")
+  , ("  model: ", "  模型：")
+  , ("  providers: ", "  Provider：")
+  , ("  scheduler: ", "  调度器：")
+  , ("  session: ", "  会话：")
+  , ("  todos: ", "  待办：")
+  , ("  transcript lines: ", "  转写行数：")
+  , (" Approval ", " 审批 ")
+  , (" Commands ", " 命令 ")
+  , (" Confirm ", " 确认 ")
+  , (" Models ", " 模型 ")
+  , (" Providers ", " Provider ")
+  , (" Sessions ", " 会话 ")
+  , (" attachments.", " 个附件。")
+  , (" loop(s).", " 个循环。")
+  , (" pending)", " 待处理）")
+  , (" seconds", " 秒")
+  , (" tokens", " token")
+  , (" · Shift+Tab read-only/ask/auto/YOLO/plan · Ctrl+Y YOLO", " · Shift+Tab 只读/询问/自动/YOLO/计划 · Ctrl+Y YOLO")
+  , (" — use /language <code> (available: ", " — 使用 /language <代码>（可用：")
+  , ("): saved ", "）：已保存 ")
+  , ("Agents:", "代理会话：")
+  , ("Approval timeout: ", "审批超时：")
+  , ("Attachments:", "附件：")
+  , ("Branched: ", "已分叉：")
+  , ("Cleared ", "已清除 ")
+  , ("Cleared (history is kept).", "已清屏（保留历史）。")
+  , ("Clipboard unavailable; wrote ", "剪贴板不可用；已写入 ")
+  , ("Compacted (", "已压缩（")
+  , ("Context window: ", "上下文窗口：")
+  , ("Copied to clipboard", "已复制到剪贴板")
+  , ("Currency (base ", "汇率（基准 ")
+  , ("Currency base: ", "汇率基准：")
+  , ("Currency updated: ", "汇率已更新：")
+  , ("Current language: ", "当前语言：")
+  , ("Doctor:", "诊断：")
+  , ("Editor failed: ", "编辑器失败：")
+  , ("Error", "错误")
+  , ("Forked: ", "已派生：")
+  , ("Goal: ", "目标：")
+  , ("Graph:", "依赖图：")
+  , ("Hooks:", "钩子：")
+  , ("Keys:", "按键：")
+  , ("LSP:", "LSP：")
+  , ("Loop started: ", "循环已启动：")
+  , ("Loops:", "循环：")
+  , ("MCP:", "MCP：")
+  , ("No active loops.", "没有活动的循环。")
+  , ("No assistant message to copy", "没有可复制的助手消息")
+  , ("No attachments.", "没有附件。")
+  , ("No hooks.", "没有钩子。")
+  , ("No memory notes yet (use /remember <text>).", "还没有记忆条目（使用 /remember <文本>）。")
+  , ("No providers configured (see ~/.trha/providers.json).", "未配置 Provider（见 ~/.trha/providers.json）。")
+  , ("No providers configured.", "未配置 Provider。")
+  , ("No tasks", "没有任务")
+  , ("No transcript for this session yet.", "此会话还没有转写。")
+  , ("No uncommitted changes.", "没有未提交的改动。")
+  , ("No workflows.", "没有工作流。")
+  , ("Nothing to recap yet.", "暂无可回顾的内容。")
+  , ("Output style: ", "输出风格：")
+  , ("Plan", "计划")
+  , ("Plan submitted — decide each step with /approve, /skip, /reject or /abandon.", "计划已提交——用 /approve、/skip、/reject 或 /abandon 决定每一步。")
+  , ("Provider presets:", "Provider 预设：")
+  , ("Provider saved", "Provider 已保存")
+  , ("Provider wizard 1/6: ", "Provider 向导 1/6：")
+  , ("Provider: ", "Provider：")
+  , ("Providers:", "Provider：")
+  , ("Queue is empty.", "队列为空。")
+  , ("Queued (", "已排队（")
+  , ("Queued:", "已排队：")
+  , ("Quick picker:", "快速选择器：")
+  , ("Reasoning language: ", "思考语言：")
+  , ("trha setup — initialise ~/.trha", "trha 初始化向导")
+  , ("Home directory: ", "用户目录：")
+  , ("Standard directories are in place", "标准目录已就位")
+  , ("created", "新建")
+  , ("No terminal; keeping the current settings.", "非交互终端，使用当前配置。")
+  , ("current: ", "当前：")
+  , ("Choose [blank = keep]: ", "选择 [回车=保持]：")
+  , ("keep current", "保持当前")
+  , ("Model [blank = first]: ", "模型 [回车=第一项]：")
+  , ("API key (blank = keep existing): ", "API Key（回车=保持现有）：")
+  , ("Setup complete. Settings: ", "初始化完成。配置：")
+  , ("Self-check:", "自检：")
+  , ("Next: run trha for the TUI, or trha cli for the REPL.", "下一步：运行 trha 打开 TUI，或 trha cli 进入 REPL。")
+  , ("not configured", "未配置")
+  , ("key saved", "密钥已保存")
+  , ("no key", "无密钥")
+  , ("not found", "未找到")
+  , ("Remembered: ", "已记住：")
+  , ("Session expired", "会话已过期")
+  , ("Stats:", "统计：")
+  , ("Steered (", "已注入（")
+  , ("Stopped ", "已停止 ")
+  , ("Switch providers in the TUI (/provider or ctrl+x p).", "请在 TUI 中切换 Provider（/provider 或 ctrl+x p）。")
+  , ("Switched to ", "已切换到 ")
+  , ("Thinking...", "思考中...")
+  , ("Todos: ", "待办：")
+  , ("Transcribed", "已转写")
+  , ("Usage:", "用法：")
+  , ("Usage: /ask-timeout <seconds>", "用法：/ask-timeout <秒>")
+  , ("Usage: /btw <question>", "用法：/btw <问题>")
+  , ("Usage: /currency set <CODE> <rate> | /currency base <CODE>", "用法：/currency set <代码> <汇率> | /currency base <代码>")
+  , ("Usage: /loop <30s|5m|1h> <prompt> | /loop stop", "用法：/loop <30s|5m|1h> <提示> | /loop stop")
+  , ("Usage: /output-style [default|concise|detailed]", "用法：/output-style [default|concise|detailed]")
+  , ("Usage: /queue <message>", "用法：/queue <消息>")
+  , ("Usage: /reasoning-language [auto|zh-Hans|zh-Hant|en]", "用法：/reasoning-language [auto|zh-Hans|zh-Hant|en]")
+  , ("Usage: /remember <text>", "用法：/remember <文本>")
+  , ("Usage: /steer <prompt>", "用法：/steer <提示>")
+  , ("Verbose off", "详细模式已关闭")
+  , ("Verbose on", "详细模式已开启")
+  , ("Workflows:", "工作流：")
+  , ("fontconfig unavailable", "fontconfig 不可用")
+  , ("git not available: ", "git 不可用：")
+  , ("model default", "模型默认")
+  , ("never", "从未")
+  , ("no agents", "没有代理会话")
+  , ("ok", "正常")
+  , ("tool: ", "工具：")
+  , ("unavailable", "不可用")
+  , ("unreachable", "无法连接")
+  ]
+
+-- | Japanese skeleton (high-frequency shell strings; others fall back to En).
+
+-- | Korean skeleton.
+
+-- | French skeleton.
+frDict :: M.Map Text Text
+frDict = M.fromList
+  [ ("Show this help", "Afficher cette aide")
+  , ("Exit the application", "Quitter l'application")
+  , ("Session: ", "Session : ")
+  , ("Model: ", "Modèle : ")
+  , ("Ready", "Prêt")
+  , ("Error", "Erreur")
+  , ("Commands:", "Commandes :")
+  , ("Show current session/model status", "Afficher l'état de la session/du modèle")
+  , ("Settings:", "Paramètres :")
+  , ("Commands", "Commandes")
+  , ("Error", "Erreur")
+  , ("Workspace: ", "Espace de travail : ")
+  , ("Git branch: ", "Branche Git : ")
+  , ("context ", "contexte ")
+  , ("compact ", "compression ")
+  , ("turn hit ", "touché ce tour ")
+  , ("Available keys:", "Clés disponibles :")
+  , ("Unknown setting key: ", "Clé de réglage inconnue : ")
+  , ("Tokens: ", "Tokens : ")
+  , ("Show current session/model status", "Afficher l'état de la session/du modèle")
+  ]
+
+-- | German skeleton.
+
+-- | Spanish skeleton.
+esDict :: M.Map Text Text
+esDict = M.fromList
+  [ ("Show this help", "Mostrar esta ayuda")
+  , ("Exit the application", "Salir de la aplicación")
+  , ("Session: ", "Sesión: ")
+  , ("Model: ", "Modelo: ")
+  , ("Ready", "Listo")
+  , ("Error", "Error")
+  , ("Commands:", "Comandos:")
+  , ("Show current session/model status", "Mostrar el estado de la sesión/modelo")
+  , ("Settings:", "Ajustes:")
+  , ("Commands", "Comandos")
+  , ("Error", "Error")
+  , ("Workspace: ", "Espacio de trabajo: ")
+  , ("Git branch: ", "Rama Git: ")
+  , ("context ", "contexto ")
+  , ("compact ", "compresión ")
+  , ("turn hit ", "aciertos ")
+  , ("Available keys:", "Claves disponibles:")
+  , ("Unknown setting key: ", "Clave de ajuste desconocida: ")
+  , ("Tokens: ", "Tokens: ")
+  , ("Show current session/model status", "Mostrar el estado de la sesión/modelo")
+  ]
+
+ruDict, thDict :: M.Map Text Text
+ruDict = M.fromList
+  [ ("Show this help", "Показать справку")
+  , ("Exit the application", "Выйти из приложения")
+  , ("Session: ", "Сеанс: ")
+  , ("Ready", "Готово")
+  , ("Model: ", "Модель: ")
+  , ("Error", "Ошибка")
+  , ("Commands:", "Команды:")
+  , ("Show current session/model status", "Показать состояние сеанса/модели")
+  , ("Settings:", "Настройки:")
+  , ("Commands", "Команды")
+  , ("Error", "Ошибка")
+  , ("Workspace: ", "Рабочая область: ")
+  , ("Git branch: ", "Ветка Git: ")
+  , ("context ", "контекст ")
+  , ("compact ", "сжатие ")
+  , ("turn hit ", "попаданий ")
+  , ("Available keys:", "Доступные ключи:")
+  , ("Unknown setting key: ", "Неизвестный ключ настройки: ")
+  , ("Tokens: ", "Токены: ")
+  , ("Show current session/model status", "Показать состояние сеанса/модели")
+  ]
+thDict = M.fromList
+  [ ("Show this help", "แสดงความช่วยเหลือนี้")
+  , ("Exit the application", "ออกจากแอปพลิเคชัน")
+  , ("Session: ", "เซสชัน: ")
+  , ("Ready", "พร้อม")
+  , ("Model: ", "โมเดล: ")
+  , ("Error", "ข้อผิดพลาด")
+  , ("Commands:", "คำสั่ง:")
+  , ("Show current session/model status", "แสดงสถานะเซสชัน/โมเดล")
+  , ("Settings:", "การตั้งค่า:")
+  , ("Commands", "คำสั่ง")
+  , ("Workspace: ", "พื้นที่ทำงาน: ")
+  , ("Git branch: ", "สาขา Git: ")
+  , ("context ", "บริบท ")
+  , ("compact ", "การบีบอัด ")
+  , ("turn hit ", "ตรงรอบนี้ ")
+  , ("Available keys:", "คีย์ที่ใช้ได้:")
+  , ("Unknown setting key: ", "ไม่รู้จักคีย์การตั้งค่า: ")
+  , ("Tokens: ", "โทเค็น: ")
+  , ("Show current session/model status", "แสดงสถานะเซสชัน/โมเดล")
+  ]
+boDict, iiDict, myDict :: M.Map Text Text
+-- 缅甸文：骨架 + 常用界面词（待母语校对）。
+myDict = M.fromList
+  [ ("Show this help", "ဤအကူအညီကို ပြပါ")
+  , ("Exit the application", "အက်ပ်မှ ထွက်ပါ")
+  , ("Session: ", "စက်ရှင်: ")
+  , ("Ready", "အသင့်")
+  , ("Error", "အမှား")
+  , ("Model: ", "မော်ဒယ်: ")
+  , ("Commands:", "အမိန့်များ:")
+  , ("Commands", "အမိန့်များ")
+  , ("Settings:", "ဆက်တင်များ:")
+  , ("Workspace: ", "အလုပ်နေရာ: ")
+  , ("Git branch: ", "Git ဌာနခွဲ: ")
+  , ("context ", "အကြောင်းအရာ ")
+  , ("compact ", "ကျစ်လျစ် ")
+  , ("turn hit ", "ဤအကြိမ် ထိမှန် ")
+  , ("Available keys:", "ရနိုင်သော သော့များ:")
+  , ("Unknown setting key: ", "မသိသော ဆက်တင်သော့: ")
+  , ("Tokens: ", "တိုကင်များ: ")
+  , ("Show current session/model status", "လက်ရှိ စက်ရှင်/မော်ဒယ် အခြေအနေကို ပြပါ")
+  ]
+-- 藏文：只收录能确认的常用词；其余回退英文，避免伪造翻译（待母语校对）。
+boDict = M.fromList
+  [ ("Show this help", "རོགས་རམ་འདི་སྟོན")
+  , ("Exit the application", "མཉེན་ཆས་ལས་ཕྱིར་ཐོན")
+  , ("Ready", "གྲ་སྒྲིག")
+  , ("Error", "ནོར་འཁྲུལ")
+  ]
+-- 彝文（Nuosu）：骨架；术语待母语者校对前全部回退英文。
+iiDict = M.fromList
+  [ ("Ready", "ꄀꄉ")
+  , ("Error", "ꆏꃅ")
   ]

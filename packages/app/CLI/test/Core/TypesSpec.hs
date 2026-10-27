@@ -5,9 +5,11 @@ module Core.TypesSpec (spec) where
 import Test.Hspec
 import Core.Types
   ( ToolEvent(..), ToolRunStatus(..), PlanView(..), PlanStepView(..)
-  , ProviderInfo(..), ModelInfo(..), Usage(..)
+  , ProviderInfo(..), ModelInfo(..), Usage(..), mkUsage
   , providerStoreToList, providerModelInfos, modelForProvider
-  , splitPlanSteps, parsePlanView, planStepOut, renderPlanBrief )
+  , splitPlanSteps, parsePlanView, planStepOut, renderPlanBrief
+  , defaultCLIConfig, configMouseCapture, effectiveReasoningLanguage
+  , configLang, configReasoningLanguage )
 import Data.Aeson (Result(..), Value(..), object, toJSON, (.=), fromJSON)
 import Data.Aeson.Types (Pair)
 import Data.Either (isLeft)
@@ -20,6 +22,25 @@ toolEv = object
 
 spec :: Spec
 spec = do
+  describe "defaultCLIConfig" $
+    it "captures the mouse by default" $
+      configMouseCapture defaultCLIConfig `shouldBe` False
+
+  describe "effectiveReasoningLanguage" $ do
+    it "follows the interface language when the setting is auto" $
+      effectiveReasoningLanguage defaultCLIConfig `shouldBe` Just "zh-Hans"
+    it "follows an explicit interface language (en UI -> English)" $
+      effectiveReasoningLanguage defaultCLIConfig { configLang = "en" } `shouldBe` Just "en"
+    it "lets an explicit reasoning language win over the interface" $
+      effectiveReasoningLanguage defaultCLIConfig
+        { configLang = "zh-Hans", configReasoningLanguage = "en" } `shouldBe` Just "en"
+    it "treats auto case-insensitively and ignores surrounding space" $
+      effectiveReasoningLanguage defaultCLIConfig
+        { configReasoningLanguage = "  AUTO " } `shouldBe` Just "zh-Hans"
+    it "sends nothing when both fields are empty" $
+      effectiveReasoningLanguage defaultCLIConfig
+        { configLang = "", configReasoningLanguage = "" } `shouldBe` Nothing
+
   describe "ToolEvent FromJSON" $ do
     it "decodes a running event" $ do
       fromJSON (toolEv [ "name" .= ("bash" :: String)
@@ -167,13 +188,13 @@ spec = do
       providerStoreToList (String "x") `shouldSatisfy` isLeft
 
     it "turns a provider's models into picker rows with its context window" $ do
-      let p = ProviderInfo "deepseek" "openai" "https://x" ["a", "b"] "a" True True (Just 4096)
+      let p = ProviderInfo "deepseek" "openai" "https://x" ["a", "b"] "a" True True (Just 4096) "" True False [] [] Nothing Nothing "" ""
       map modelName (providerModelInfos p) `shouldBe` ["a", "b"]
       map modelContextSize (providerModelInfos p) `shouldBe` [4096, 4096]
 
     it "keeps a model the provider offers, else falls back to its default" $ do
       let p = ProviderInfo "deepseek" "openai" "https://x" ["deepseek-flash", "deepseek-v4-pro"]
-                                "deepseek-flash" True True Nothing
+                                "deepseek-flash" True True Nothing "" True False [] [] Nothing Nothing "" ""
       modelForProvider p "deepseek-v4-pro" `shouldBe` "deepseek-v4-pro"
       modelForProvider p "gpt-4" `shouldBe` "deepseek-flash"
 
@@ -186,13 +207,13 @@ spec = do
             , "cacheMissTokens" .= (10 :: Int)
             , "cumulativeTokens" .= (99 :: Int) ]
       case fromJSON v of
-        Success u -> u `shouldBe` Usage 10 5 99
+        Success u -> u `shouldBe` Usage 10 5 99 0 10 0
         Error e -> expectationFailure e
 
     it "derives prompt+completion when no total is present" $ do
       let v = object [ "promptTokens" .= (10 :: Int), "completionTokens" .= (5 :: Int) ]
       case fromJSON v of
-        Success u -> u `shouldBe` Usage 10 5 15
+        Success u -> u `shouldBe` mkUsage 10 5 15
         Error e -> expectationFailure e
 
     it "still accepts the full shape" $ do
@@ -200,6 +221,6 @@ spec = do
             [ "promptTokens" .= (1 :: Int), "completionTokens" .= (2 :: Int)
             , "totalTokens" .= (3 :: Int) ]
       case fromJSON v of
-        Success u -> u `shouldBe` Usage 1 2 3
+        Success u -> u `shouldBe` mkUsage 1 2 3
         Error e -> expectationFailure e
 

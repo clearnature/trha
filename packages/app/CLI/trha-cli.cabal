@@ -15,13 +15,26 @@ executable trha
   other-modules:
     Bridge.Scheduler
     Config.Settings
+    Config.Home
     Core.Args
     UI.Commands.Registry
     Core.HTTP
     Core.Transcript
+    Core.Memory
+    Core.PlanStore
+    Core.ProjectStore
+    Core.RunLog
+    Core.RunState
+    Core.StatePaths
     Core.SessionSummary
     Core.Replay
     Core.SSE
+    Core.Clipboard
+    Core.Currency
+    Core.Export
+    Core.Fonts
+    Core.TurnStats
+    Core.EffortContract
     Core.Types
     UI.Brick
     UI.Event
@@ -33,16 +46,30 @@ executable trha
     UI.Render.Markdown
     UI.InputHistory
     UI.Dialog
+    UI.Interaction
     UI.Layout
     UI.Completion
     UI.Keys
     UI.Skills
+    UI.Selection
+    UI.TimeStamp
+    UI.Stash
+    UI.Frecency
+    UI.ModelPrefs
     UI.Render.Diff
     UI.Render.Sidebar
     UI.Render.Picker
     UI.Render.ToolCard
+    UI.Render.ToolSummary
+    UI.Render.Message
     UI.Theme
+    UI.Setup
+    UI.SetupWizard
+    UI.IndexCache
+    UI.CustomCommands
     UI.Render.Footer
+    UI.TextWidth
+    UI.ProviderPresets
   ghc-options:      -rtsopts -threaded
   build-depends:    base ^>=4.22
                   , trha:trha-api
@@ -51,6 +78,7 @@ executable trha
                   , bytestring
                   , http-client
                   , http-client-tls
+                  , connection
                   , http-types
                   , directory
                   , filepath
@@ -76,6 +104,8 @@ test-suite trha-cli-test
   hs-source-dirs:   ., test
   other-modules:
     Config.Settings
+    Config.Home
+    Config.HomeSpec
     Config.SettingsSpec
     Core.Args
     Core.ArgsSpec
@@ -85,9 +115,23 @@ test-suite trha-cli-test
     BridgeDeltaSpec
     Core.SSE
     Core.SSESpec
+    Core.Memory
+    Core.MemorySpec
+    Core.RunLog
+    Core.RunLogSpec
+    Core.RunState
+    Core.RunStateSpec
+    Core.ProjectStore
+    Core.ProjectStoreSpec
+    Core.StatePaths
+    Core.StatePathsSpec
     Core.TypesSpec
     Core.Replay
     Core.ReplaySpec
+    Core.Export
+    Core.ExportSpec
+    Core.TurnStatsSpec
+    Core.EffortContractSpec
     Core.SessionSummary
     Core.SessionSummarySpec
     Core.Types
@@ -97,8 +141,19 @@ test-suite trha-cli-test
     UI.Render.PickerSpec
     UI.Render.ToolCard
     UI.Render.ToolCardSpec
+    UI.Render.ToolSummary
+    UI.Render.ToolSummarySpec
+    UI.Render.Message
+    UI.Render.MessageSpec
     UI.Theme
     UI.ThemeSpec
+    UI.Setup
+    UI.SetupSpec
+    UI.IndexCache
+    UI.IndexCacheSpec
+    UI.CustomCommands
+    UI.CustomCommandsSpec
+    UI.ProviderPresets
     UI.Render.Footer
     UI.Render.FooterSpec
     UI.CommandsSpec
@@ -108,6 +163,8 @@ test-suite trha-cli-test
     UI.InputHistorySpec
     UI.Dialog
     UI.DialogSpec
+    UI.Interaction
+    UI.InteractionSpec
     UI.Layout
     UI.LayoutSpec
     UI.Completion
@@ -116,6 +173,14 @@ test-suite trha-cli-test
     UI.KeysSpec
     UI.Skills
     UI.SkillsSpec
+    UI.SelectionSpec
+    UI.TimeStampSpec
+    UI.Stash
+    UI.StashSpec
+    UI.Frecency
+    UI.FrecencySpec
+    UI.ModelPrefs
+    UI.ModelPrefsSpec
     UI.Render.Diff
     UI.Render.DiffSpec
     UI.Render.Sidebar
@@ -134,6 +199,7 @@ test-suite trha-cli-test
                   , optparse-applicative >= 0.18
                   , http-client
                   , http-client-tls
+                  , connection
                   , http-types
                   , network
   default-language: Haskell2010

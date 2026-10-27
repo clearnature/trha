@@ -4,19 +4,24 @@
 > 版本：契约 v1（2026-09）。
 
 ## 派生与握手
-- Electron main 派生编排：`node <scheduler dist>`, env `TRHA_TOKEN`/`TRHA_PORT`/`TRHA_LEASE_STDIN=1`。
+- Electron main **先复用**：若 `~/.trha/run/scheduler.pid` 指向一个存活的 scheduler，
+  直接使用它（TUI / Web / Desktop 共享），不再派生第二个。
+- 否则派生编排：`node <scheduler dist>`, env `TRHA_TOKEN`/`TRHA_PORT`（**不再传 `TRHA_LEASE_STDIN`**）。
+- 派生的子进程是 **detached** 的：关闭 Desktop 只关壳，不带走 scheduler 与内核。
+  - stdout 仅用于握手；stderr 重定向到 `~/.trha/logs/desktop-scheduler.log`（父进程退出后仍可写）。
 - scheduler 默认监听 **环回 127.0.0.1**（`ServerConfig.host` 可覆盖）。
 - 子进程 **stdout 首行**必须是一行版本化 JSON：
   `{"v":1,"name":"trha-scheduler","port":N}`
-- 宿主解析首行：`v!==1` 或 `name!=='trha-scheduler'` → **拒启**（记 stderr、释放 stdin、杀子进程）。
+- 宿主解析首行：`v!==1` 或 `name!=='trha-scheduler'` → **拒启**（记 stderr、杀子进程）。
 - 首行之后 stdout 被忽略（契约：仅一行）；**一切日志走 stderr**。
+- scheduler 启动时把外层 token 写入 `~/.trha/run/scheduler.token`（0600）；
+  Desktop 的 `get-token` 优先读它，因此复用外部 scheduler 时认证一致。
 
-## 租约
-- stdin 为租约：宿主 `stdin.end()`（before-quit / 崩溃清理）→ 子进程排空后 `exit 0`。
-- 三平台不依赖信号；`kill()` 仅作 3s 未退的兜底。
-
-## 生命周期
-- `app.on('before-quit')` → `releaseScheduler()`（end stdin + 兜底 kill）。
+## 生命周期与停止
+- **Quit（关窗口 / `app.quit`）只退出壳**：不停 scheduler、不停内核，其他入口继续工作。
+- **Stop**：`Services → Stop kernel and scheduler…`（`Ctrl+Shift+Q`）→ 原生确认框 →
+  读 `~/.trha/run/{kernel,scheduler}.pid`、校验 `/proc/<pid>/cmdline`、SIGTERM →
+  显示结果 → `app.quit()`。与 `trha stop` / TUI `/stop confirm` 同一语义。
 - 子进程 `exit` 事件清引用；异常退出日志走 stderr。
 
 ## 与 Reasonix DESKTOP_HOOKS 的差异（本期不实现，仅记录）

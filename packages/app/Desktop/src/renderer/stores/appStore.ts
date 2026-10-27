@@ -5,7 +5,7 @@ import { setApiRuntime } from '../port/runtime.js';
 
 // ── API client ──────────────────────────────────────────────────────────
 
-let cfg: ApiConfig = { base: 'http://localhost:3456', useToken: false };
+let cfg: ApiConfig = { base: 'https://localhost:28433', useToken: false };
 let apiToken = '';
 
 /** Detect the hosting mode and set the API base/token policy. */

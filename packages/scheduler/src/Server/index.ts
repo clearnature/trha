@@ -6,20 +6,32 @@ import express from 'express';
 import cors from 'cors';
 import { HaskellBridge } from '../Bridge/Haskell.js';
 import type { BridgeToolSpec, ToolCallData } from '../Bridge/Haskell.js';
-import { canonicalToolName, toToolSpecs } from './toolCatalog.js';
+import { canonicalToolName, toolCatalog, toToolSpecs } from './toolCatalog.js';
 import { confineWritePath, limitOutput } from './toolGuard.js';
 import { decidePermission, setPermissionRules, compileRules, getPermissionRules } from '../Permission/permissionRules.js';
+import {
+  applyPermissionMode, toggleYolo, modeLabel, MODE_CYCLE,
+  type PermissionMode,
+} from '../Permission/modes.js';
 import { EventEmitter } from '../Utils/EventEmitter.js';
+import { SSE_EVENTS } from '../Core/EventRegistry.js';
 import { Plugin, PluginManager } from '../Plugins/Plugin.js';
 import { loadPluginsFrom } from '../Plugins/loader.js';
 import { fileURLToPath } from 'node:url';
-import { readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { createServer as createHttpsServer } from 'node:https';
+import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { loadPin, loadSessionsSync, removeSessionFile, savePin, saveSession } from './stateStore.js';
 import { govern, DEFAULT_GOVERNANCE, type GovernanceConfig } from './contextGovernor.js';
+import { withRetry } from './retry.js';
 import { envCap, envInt } from './env.js';
 import { isSessionBusy, withSessionLock } from './sessionLock.js';
 import { browserClose } from './browser.js';
+import { mcpStatus } from './mcp.js';
+import { fetchBalance } from './balance.js';
+import { transcribeWav, AsrNotConfigured } from './transcribe.js';
+import { lspStatus } from './lsp.js';
 import { isExtraTool, runExtraTool, type ExtraHost, type Terminal } from './extraTools.js';
 import {
   isStandardTool, runStandardTool, startJob,
@@ -28,7 +40,12 @@ import {
 } from './standardTools.js';
 import { startPluginWatcher } from '../Plugins/watcher.js';
 import { resolveWorkspace } from './workspace.js';
-import { mkdir, readdir, readFile, writeFile, appendFile } from 'node:fs/promises';
+import { execShell } from './shell.js';
+import { snapshotFile } from './fileHistory.js';
+import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
+import { resolveTls } from './tls.js';
+import { resolveKernelToken } from '../Core/KernelToken.js';
+import { mkdir, readdir, readFile, stat, writeFile, appendFile } from 'node:fs/promises';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
@@ -55,11 +72,11 @@ export interface ServerConfig {
 }
 
 export const defaultServerConfig: ServerConfig = {
-  port: 3456,
+  port: 28433,
   host: '127.0.0.1',
   token: process.env.TRHA_TOKEN || 'dev-token',
   haskellHost: 'localhost',
-  haskellPort: 8080,
+  haskellPort: 19433,
 };
 
 // ── Tool definitions ──────────────────────────────────────────────────────
@@ -71,96 +88,30 @@ interface ToolDef {
   schema: Record<string, string>;
 }
 
-const ALL_TOOLS: ToolDef[] = [
-  // Shell & Filesystem
-  { name: 'bash',              description: 'Execute shell commands in a bash shell',            enabled: true, schema: { command: 'string' } },
-  { name: 'read',              description: 'Read a file (with optional offset/limit)',          enabled: true, schema: { path: 'string', offset: 'number?', limit: 'number?' } },
-  { name: 'write',             description: 'Write a file (create or overwrite)',                enabled: true, schema: { path: 'string', content: 'string' } },
-  { name: 'edit',              description: 'Edit a file with exact string find/replace',        enabled: true, schema: { file_path: 'string', old_string: 'string', new_string: 'string' } },
-  { name: 'grep',              description: 'Search file contents with ripgrep regex',           enabled: true, schema: { pattern: 'string', path: 'string?', include: 'string?' } },
-  { name: 'glob',              description: 'Find files by glob pattern',                        enabled: true, schema: { pattern: 'string', path: 'string?' } },
-  { name: 'web_search',        description: 'Search the web (1-4 queries)',                      enabled: true, schema: { queries: 'string[]' } },
-  { name: 'web_fetch',         description: 'Fetch a URL and return text/markdown',              enabled: true, schema: { url: 'string', prompt: 'string?' } },
-  { name: 'describe_image',    description: 'OCR/analyze an image file or URL',                  enabled: true, schema: { image: 'string', prompt: 'string' } },
-
-  // Agent & Delegation
-  { name: 'subagent',          description: 'Delegate task to a background sub-agent',           enabled: true, schema: { description: 'string', prompt: 'string' } },
-  { name: 'subagent_fork',     description: 'Fork current conversation to a sub-agent',          enabled: true, schema: { description: 'string', prompt: 'string' } },
-  { name: 'workflow',          description: 'Run a multi-step workflow across sub-agents',        enabled: true, schema: { script: 'string', meta: 'object' } },
-  { name: 'ralph',             description: 'Fresh-agent iterative loop toward an objective',     enabled: true, schema: { objective: 'string', maxRounds: 'number?' } },
-  { name: 'ask_user',          description: 'Ask the user a question',                            enabled: true, schema: { questions: 'object[]' } },
-
-  // Session & State
-  { name: 'todo',              description: 'Write/update structured task list',                  enabled: true, schema: { todos: 'object[]' } },
-  { name: 'plan',              description: 'Enter plan mode (non-mutating exploration)',         enabled: true, schema: { plan: 'string' } },
-  { name: 'checkpoint',        description: 'Create a unified workspace/session checkpoint',      enabled: true, schema: { note: 'string?' } },
-  { name: 'memory_remember',   description: 'Persist a fact to cross-session memory vault',       enabled: true, schema: { content: 'string', tags: 'string[]?' } },
-  { name: 'memory_recall',     description: 'Search cross-session memory vault',                  enabled: true, schema: { query: 'string', limit: 'number?' } },
-  { name: 'memory_forget',     description: 'Delete entries from memory vault',                   enabled: true, schema: { id: 'string?', tag: 'string?' } },
-
-  // PTC Mode
-  { name: 'run_code',          description: 'PTC: execute model-authored program against tools',  enabled: true, schema: { code: 'string', description: 'string' } },
-
-  // Skills & Plugins
-  { name: 'skill',             description: 'Load and execute a skill by name',                   enabled: true, schema: { name: 'string' } },
-
-  // Remote & SSH
-  { name: 'remote_host_add',   description: 'Register a remote compute host',                    enabled: true, schema: { host: 'string', alias: 'string?' } },
-  { name: 'remote_exec',       description: 'Execute a short command on a remote host',           enabled: true, schema: { host: 'string', command: 'string' } },
-  { name: 'remote_run',        description: 'Submit a background job to a remote host',           enabled: true, schema: { host: 'string', script: 'string', title: 'string?' } },
-  { name: 'remote_status',     description: 'Check remote job status',                            enabled: true, schema: { job: 'string?' } },
-  { name: 'remote_pull',       description: 'Pull remote job output to local',                    enabled: true, schema: { job: 'string' } },
-  { name: 'remote_cancel',     description: 'Cancel a remote job',                                enabled: true, schema: { job: 'string' } },
-  { name: 'remote_logs',       description: 'View remote job logs',                               enabled: true, schema: { job: 'string', stream: 'string?' } },
-  { name: 'ssh_exec',          description: 'Execute command on configured SSH host',             enabled: true, schema: { alias: 'string', command: 'string' } },
-  { name: 'ssh_download',      description: 'Download file from SSH host',                        enabled: true, schema: { alias: 'string', remotePath: 'string', localPath: 'string' } },
-  { name: 'ssh_upload',        description: 'Upload file to SSH host',                            enabled: true, schema: { alias: 'string', localPath: 'string', remotePath: 'string' } },
-  { name: 'ssh_tunnel',        description: 'Manage local port-forward tunnels to SSH host',      enabled: true, schema: { action: 'string', alias: 'string?', remotePort: 'number?' } },
-  { name: 'ssh_cluster',       description: 'Run command concurrently across SSH hosts',          enabled: true, schema: { command: 'string', aliases: 'string[]?' } },
-
-  // Browser & Pilot
-  { name: 'pilot_open',        description: 'Open URL in controlled browser',                     enabled: true, schema: { url: 'string' } },
-  { name: 'pilot_click',       description: 'Click element in browser',                           enabled: true, schema: { ref: 'number?', selector: 'string?' } },
-  { name: 'pilot_type',        description: 'Type text into browser input',                       enabled: true, schema: { text: 'string', ref: 'number?', selector: 'string?' } },
-  { name: 'pilot_snapshot',    description: 'Read browser page as text snapshot',                  enabled: true, schema: {} },
-  { name: 'pilot_screenshot',  description: 'Capture browser page screenshot',                    enabled: true, schema: { path: 'string?' } },
-
-  // GitHub
-  { name: 'github_repo',       description: 'Get GitHub repository metadata',                     enabled: true, schema: { owner: 'string', repo: 'string' } },
-  { name: 'github_issues',     description: 'List GitHub issues',                                 enabled: true, schema: { owner: 'string', repo: 'string', state: 'string?' } },
-  { name: 'github_prs',        description: 'List GitHub pull requests',                          enabled: true, schema: { owner: 'string', repo: 'string', state: 'string?' } },
-  { name: 'github_create_issue', description: 'Create a GitHub issue',                            enabled: true, schema: { owner: 'string', repo: 'string', title: 'string', body: 'string?' } },
-  { name: 'github_create_pr',  description: 'Create a GitHub pull request',                       enabled: true, schema: { owner: 'string', repo: 'string', title: 'string', head: 'string', base: 'string' } },
-  { name: 'github_search',     description: 'Search GitHub repositories/code/issues',             enabled: true, schema: { query: 'string', type: 'string?' } },
-
-  // Research & Deep Read
-  { name: 'deepread',          description: 'Deep-read books/articles/PDFs with analysis',        enabled: true, schema: { path: 'string?', url: 'string?', depth: 'string?' } },
-
-  // Compressor (context management)
-  { name: 'compressor_retrieve', description: 'Retrieve compressed conversation text',            enabled: true, schema: { locator: 'string' } },
-
-  // Artifacts (versioned outputs)
-  { name: 'artifact_save',     description: 'Save analysis/chart/data as versioned artifact',     enabled: true, schema: { name: 'string', sources: 'string[]' } },
-  { name: 'artifact_list',     description: 'List all versioned artifacts',                       enabled: true, schema: {} },
-  { name: 'artifact_show',     description: 'Show artifact metadata and provenance',              enabled: true, schema: { name: 'string' } },
-
-  // Background Jobs
-  { name: 'job_output',        description: 'Read background job output',                         enabled: true, schema: { job_id: 'string', wait: 'boolean?' } },
-  { name: 'job_kill',          description: 'Cancel a running background job',                    enabled: true, schema: { job_id: 'string' } },
-
-  // Double-check Discipline
-  { name: 'doublecheck_spec',  description: 'Record grilled requirements spec',                   enabled: true, schema: { goal: 'string', scope: 'string', acceptanceCriteria: 'string' } },
-  { name: 'doublecheck_report', description: 'Generate delivery proof report',                    enabled: true, schema: { filePath: 'string?' } },
-
-  // Research Loop
-  { name: 'research_init',     description: 'Initialize research project',                        enabled: true, schema: { title: 'string?', domain: 'string?', question: 'string?' } },
-  { name: 'research_hypothesis', description: 'Register a research hypothesis',                   enabled: true, schema: { text: 'string', question: 'string?' } },
-  { name: 'research_experiment', description: 'Register an experiment',                           enabled: true, schema: { title: 'string', objective: 'string', plan: 'string[]' } },
-  { name: 'research_findings', description: 'Record experiment findings',                         enabled: true, schema: { experiment: 'string', finding: 'string', conclusion: 'string?' } },
-
-  // Logic Verification
-  { name: 'logicprobe_verify', description: 'Run executable state-machine verification',          enabled: true, schema: { model: 'object' } },
-];
+/**
+ * The tool list the *HTTP* surface advertises (`/api/tools`, `/api/modes`),
+ * derived from `toolCatalog` — the same list the model is offered and the
+ * executor dispatches — so "advertised" and "executable" cannot drift again.
+ *
+ * The hand-written `ALL_TOOLS` array this route used to serve is gone: it named
+ * 44 tools with no executor at all and disagreed with the executor on 10 more
+ * (`edit` wanted `file_path`, `web_search` wanted `queries`, `run_code` had no
+ * `language`, `job_output`/`job_kill` wanted `job_id`, …), so a client that
+ * followed /api/tools got either `ERROR: unknown tool` or a missing-argument
+ * error on a perfectly valid call.
+ */
+const catalogToolDefs = (): ToolDef[] => toolCatalog.map(def => {
+  const required = new Set(def.parameters.required);
+  const schema: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(def.parameters.properties)) {
+    const prop = raw as { type?: string; items?: { type?: string }; enum?: unknown[] };
+    const type = prop.type === 'array'
+      ? `${prop.items?.type ?? 'string'}[]`
+      : (prop.enum ? 'string' : prop.type ?? 'string');
+    schema[key] = required.has(key) ? type : `${type}?`;
+  }
+  return { name: def.name, description: def.description, enabled: true, schema } satisfies ToolDef;
+});
 
 // ── Tool lifecycle event (Phase 2 S2) ─────────────────────────────────
 // Pushed to /api/events/:sessionId as `tool:update`; mirrors CLI ToolEvent.
@@ -184,6 +135,26 @@ const outputPreview = (output: string): string => {
   return tail.length > OUTPUT_PREVIEW_BYTES ? '…' + tail.slice(-OUTPUT_PREVIEW_BYTES) : tail;
 };
 
+/**
+ * Unified diff for the edit tool's result: the TUI renders it as a patch card
+ * (MiMo parity) instead of just "1 replacement".  Line numbers come from the
+ * pre-edit content; `replace_all` shows the first occurrence.
+ */
+const EDIT_DIFF_MAX = 4096;
+const editDiff = (before: string, oldString: string, newString: string): string => {
+  const idx = before.indexOf(oldString);
+  if (idx < 0) return '';
+  const line = before.slice(0, idx).split('\n').length;
+  const oldLines = oldString.split('\n');
+  const newLines = newString.split('\n');
+  const body = [
+    `@@ -${line},${oldLines.length} +${line},${newLines.length} @@`,
+    ...oldLines.map(l => `-${l}`),
+    ...newLines.map(l => `+${l}`),
+  ].join('\n');
+  return body.length > EDIT_DIFF_MAX ? body.slice(0, EDIT_DIFF_MAX) + '\n… (diff truncated)' : body;
+};
+
 // ── Session shape ───────────────────────────────────────────────────────
 // One server-side session.  `pendingApproval` holds a plan request waiting
 // for a host decision (Phase 2 S1 approval gate).
@@ -197,10 +168,44 @@ interface SessionMessage {
 }
 
 /** The per-turn provider/model choice forwarded to the kernel. */
+/** Role-specific effort overrides: TRHA_ROLE_EFFORTS="planner=high,coder=low". */
+export const roleEffort = (role?: string): string | undefined => {
+  if (!role) return undefined;
+  const hit = (process.env.TRHA_ROLE_EFFORTS ?? '')
+    .split(',')
+    .map(s => s.split('=').map(x => x.trim()))
+    .find(([r]) => !!r && r.toLowerCase() === role.toLowerCase());
+  const level = hit?.[1];
+  return level && level.toLowerCase() !== 'auto' ? level : undefined;
+};
+
+/** Per-profile subagent overrides: TRHA_SUBAGENT_EFFORTS="reviewer=max,task=high". */
+export const subagentEfforts = (profile?: string): string | undefined => {
+  if (!profile) return undefined;
+  const hit = (process.env.TRHA_SUBAGENT_EFFORTS ?? '')
+    .split(',')
+    .map(s => s.split('=').map(x => x.trim()))
+    .find(([r]) => !!r && r.toLowerCase() === profile.toLowerCase());
+  const level = hit?.[1];
+  return level && level.toLowerCase() !== 'auto' ? level : undefined;
+};
+
+/** Sub-agent reasoning depth override (Reasonix's agent.subagent_effort). */
+export const subagentEffort = (): string | undefined => {
+  const e = (process.env.TRHA_SUBAGENT_EFFORT ?? '').trim();
+  return e && e.toLowerCase() !== 'auto' ? e : undefined;
+};
+
 interface TurnTarget {
   provider?: string | undefined;
   model?: string | undefined;
-  genParams?: { temperature?: number | undefined; topP?: number | undefined; maxTokens?: number | undefined } | undefined;
+  genParams?: { temperature?: number | undefined; topP?: number | undefined; maxTokens?: number | undefined; effort?: string | undefined } | undefined;
+  /** Language the model should reason in (absent / "auto" = default). */
+  reasoningLanguage?: string | undefined;
+  /** Agent-definition allow-list: when set, only these tools are offered. */
+  toolsAllow?: string[] | undefined;
+  /** Extra system instructions from an agent definition. */
+  extraInstructions?: string | undefined;
 }
 
 interface SchedulerSession {
@@ -211,6 +216,16 @@ interface SchedulerSession {
   // uses the same provider/model the user had selected (otherwise it would
   // silently fall back to the kernel's in-use provider).
   pendingApproval: ({ message: string } & TurnTarget) | null;
+  /** When the gate was parked, so /ask-timeout can expire it. */
+  pendingApprovalAt?: string | null;
+  /** Approval wait for this session (ms); overrides TRHA_APPROVAL_TIMEOUT_MS. */
+  askTimeoutMs?: number;
+  /** The last turn, so /retry can replay it exactly. */
+  lastRequest?: ({ message: string } & TurnTarget) | null;
+  /** Messages queued with /queue; drained after the current turn. */
+  queued?: { message: string; target?: TurnTarget }[];
+  /** Instructions injected with /steer; consumed at the next model call. */
+  steer?: string[];
   createdAt: Date;
   /** Provider-reported prompt tokens of the previous request (ground truth). */
   lastPromptTokens?: number;
@@ -235,6 +250,13 @@ interface SchedulerSession {
   cwd?: string;
   /** Cards shown to the user; never part of the model's history. */
   presentations?: Array<{ card: string; at: string }>;
+  /** User-facing title and tags (rename/tag; absent until set). */
+  title?: string;
+  tags?: string[];
+  /** Session permission posture (Shift+Tab cycle / Ctrl+Y YOLO). */
+  permissionMode?: PermissionMode;
+  planMode?: boolean;
+  yoloRestore?: PermissionMode | null;
 }
 
 // ── Context governance (window / thresholds) ──────────────────────────────
@@ -285,12 +307,83 @@ function systemMessageFor(mode: ModeConfig, model: string, cwd: string): string 
   return text.slice(0, mode.persona.maxBytes || text.length);
 }
 
+/** Human-readable names for the BCP 47 tags the shell sends.  A bare tag is
+ *  understandable, but naming the language is what actually steers a model. */
+const REASONING_LANGUAGE_NAMES: Record<string, string> = {
+  'zh-hans': 'Simplified Chinese (简体中文)',
+  'zh-hant': 'Traditional Chinese (繁體中文)',
+  en: 'English',
+  fr: 'French',
+  es: 'Spanish',
+  ru: 'Russian',
+  th: 'Thai',
+  my: 'Burmese',
+  bo: 'Tibetan',
+  ii: 'Nuosu Yi',
+};
+
+/** A reasoning-language tag from the wire: trimmed, short, tag-shaped. */
+function reasoningLanguageTag(v: unknown): string | undefined {
+  if (typeof v !== 'string') return undefined;
+  const t = v.trim();
+  return t && t.length <= 32 && /^[A-Za-z0-9-]+$/.test(t) ? t : undefined;
+}
+
+function reasoningLanguageName(tag: string): string {
+  return REASONING_LANGUAGE_NAMES[tag.toLowerCase()] ?? tag;
+}
+
+/** Upper bound for the rules text appended to the system prompt. */
+const RULES_MAX_BYTES = 65536;
+
+/**
+ * Rules dropped in `~/.trha/rules/*.md`, appended to the system prompt.
+ *
+ * Global rules are the user-level counterpart of a project's `AGENTS.md`
+ * (reference CLIs keep them in `~/.claude/rules`, `~/.codex/rules`, …).
+ * Read per request so an edit takes effect on the next turn; unreadable
+ * files and a missing directory are skipped silently.
+ */
+async function loadRuleFiles(): Promise<string> {
+  const dir = process.env.TRHA_RULES_DIR?.trim() || path.join(homedir(), '.trha', 'rules');
+  let names: string[];
+  try {
+    names = (await readdir(dir)).filter(n => n.endsWith('.md')).sort();
+  } catch {
+    return '';
+  }
+  const chunks: string[] = [];
+  for (const name of names) {
+    try {
+      const body = (await readFile(path.join(dir, name), 'utf8')).trim();
+      if (body) chunks.push(`# ${path.basename(name, '.md')}\n\n${body}`);
+    } catch {
+      /* an unreadable rule must not break the turn */
+    }
+  }
+  if (!chunks.length) return '';
+  return `\n\nGlobal rules (~/.trha/rules):\n\n${chunks.join('\n\n')}`.slice(0, RULES_MAX_BYTES);
+}
+
 /** Session messages as the model should see them: a system message first, then the rest. */
-function withSystemPrompt(
+async function withSystemPrompt(
   mode: ModeConfig, model: string, cwd: string,
   messages: Array<{ role: string; content: string }>,
-): Array<Record<string, unknown>> {
-  const system = systemMessageFor(mode, model, cwd);
+  reasoningLanguage?: string,
+  extraInstructions?: string,
+): Promise<Array<Record<string, unknown>>> {
+  const base = systemMessageFor(mode, model, cwd);
+  const code = (reasoningLanguage ?? '').trim();
+  const langSuffix = code && code.toLowerCase() !== 'auto'
+    ? `\n\nReason about the problem in ${reasoningLanguageName(code)}; answer in the user's language.`
+    : '';
+  const agentSuffix = extraInstructions?.trim()
+    ? `\n\nAgent instructions:\n\n${extraInstructions.trim()}`
+    : '';
+  const rules = await loadRuleFiles();
+  const system = base
+    ? base + agentSuffix + langSuffix + rules
+    : ((agentSuffix + langSuffix + rules).trim() || null);
   // Computed per request instead of stored: a stored system message would be
   // rewritten by maintenance and would pollute the transcript the shell shows.
   return system
@@ -298,11 +391,42 @@ function withSystemPrompt(
     : [...messages];
 }
 
+// Built-in workflow templates (/workflow).  Each one is a prompt the current
+// session runs as a normal turn, so it inherits mode/model/tools.
+export const WORKFLOW_TEMPLATES: { name: string; description: string; prompt: string }[] = [
+  {
+    name: 'init',
+    description: 'Create an AGENTS.md contributor guide',
+    prompt:
+      'Analyse this repository and write an AGENTS.md contributor guide: layout, build/test commands, ' +
+      'conventions, and the traps a new contributor would hit.',
+  },
+  {
+    name: 'review',
+    description: 'Review the working-tree changes',
+    prompt:
+      'Review the current working-tree changes for correctness, regressions and missing tests. ' +
+      'Report findings as file:line with a one-line fix suggestion each.',
+  },
+  {
+    name: 'dream',
+    description: 'Brainstorm improvements',
+    prompt:
+      'Brainstorm concrete improvements for this project: dead code, unclear abstractions, missing tests, ' +
+      'and one larger idea. Rank by value and effort.',
+  },
+  {
+    name: 'deep-research',
+    description: 'Research a question and write a cited report',
+    prompt: 'Research the following question, cross-check sources, and write a concise cited report:\n',
+  },
+];
+
 const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
   standard: {
     name: 'standard',
     description: 'Full coding agent with all tools and capabilities',
-    tools: ALL_TOOLS.filter(t => t.name !== 'run_code').map(t => t.name),
+    tools: catalogToolDefs().map(t => t.name).filter(n => n !== 'run_code'),
     persona: {
       enabled: true,
       template: 'You are a coding agent powered by the {{model}} model.\nYour working directory is {{cwd}}.',
@@ -317,7 +441,7 @@ const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
   ptc: {
     name: 'ptc',
     description: 'Program-the-code: model writes a program, one call multi-tool',
-    tools: ALL_TOOLS.filter(t => !['workflow', 'todo', 'plan'].includes(t.name)).map(t => t.name),
+    tools: catalogToolDefs().map(t => t.name).filter(n => !['workflow', 'todo', 'plan'].includes(n)),
     persona: {
       enabled: true,
       template: 'You are a coding agent powered by the {{model}} model.\nYour working directory is {{cwd}}.\n\n`run_code` is the only tool you can call directly — a tool call naming any other tool fails.\nReach every tool the SDK declares below from inside the program.',
@@ -336,7 +460,10 @@ const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
   minimal: {
     name: 'minimal',
     description: 'Lightweight: basic tools only, no compaction or plan',
-    tools: ['bash', 'read', 'write', 'grep', 'glob', 'edit', 'web_fetch', 'describe_image', 'ask_user'],
+    // Real catalog names only: the old list advertised `describe_image` and
+    // `ask_user`, neither of which has ever had a handler.
+    tools: catalogToolDefs().map(t => t.name)
+      .filter(n => ['bash', 'read', 'write', 'grep', 'glob', 'edit', 'web_fetch', 'ask_user_question'].includes(n)),
     persona: { enabled: false, template: '', maxBytes: 0 },
     compaction: { enabled: false, prunerEnabled: false, thresholdChars: 0, headChars: 0, tailChars: 0 },
     delegation: { enabled: false, forkEnabled: false, ralphEnabled: false, maxRounds: 0 },
@@ -373,6 +500,15 @@ function cookieValue(header: string | undefined, name: string): string | undefin
   return undefined;
 }
 
+/**
+ * The Web UI build (packages/app/Web/dist), when present. `/studio` serves it
+ * in preference to the legacy Desktop export.
+ */
+function webUiBuildDir(): string | null {
+  const candidate = path.join(__dirname, '..', '..', '..', 'app', 'Web', 'dist');
+  return existsSync(path.join(candidate, 'index.html')) ? candidate : null;
+}
+
 /** Best-effort scheduler version from package.json (dev fallback). */
 export function schedulerVersion(): string {
   try {
@@ -388,7 +524,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   const app = express();
   const events = new EventEmitter();
   const sessionSecret = randomBytes(24).toString('hex');
-  const bridge = new HaskellBridge({ host: config.haskellHost, port: config.haskellPort });
+  const bridge = new HaskellBridge({ host: config.haskellHost, port: config.haskellPort, tokenProvider: resolveKernelToken });
 
   // ── Plugin runtime (Phase 3) ────────────────────────────────────────────
   // Hooks fire asynchronously; plugin failures are logged, never fatal.
@@ -454,17 +590,32 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 
   // ── Health ────────────────────────────────────────────────────────────
 
+  // Root is not an API route: send browsers to the studio pages. The API
+  // lives under /api/*, so "Cannot GET /" was what users saw before.
+  app.get('/', (_req, res) => {
+    res.redirect(302, '/studio/');
+  });
+
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', version: '0.1.0', modes: Object.keys(MODES) });
   });
 
   // ── /studio pages + version surface (loopback host; one routing rule:
   // /studio* -> static page assets, everything else stays on the API) ──
+  //
+  // Preference: explicit config / TRHA_STUDIO_DIR → the Web UI build
+  // (packages/app/Web/dist) → the legacy Desktop export (studio-public).
   const studioDir = config.studioDir
+    ?? process.env.TRHA_STUDIO_DIR?.trim()
+    ?? webUiBuildDir()
     ?? path.join(__dirname, '..', '..', 'studio-public');
   app.use('/studio', (req, res, next) => {
-    if ((req.method === 'GET' || req.method === 'HEAD')
-        && cookieValue(req.headers.cookie, SESSION_COOKIE) === undefined) {
+    // Refresh the credential when it is missing *or stale*: a browser keeps
+    // the cookie from a previous scheduler process, whose secret no longer
+    // matches — without this every write from the reloaded page 401s with
+    // "session required" until the user clears cookies by hand.
+    const current = cookieValue(req.headers.cookie, SESSION_COOKIE);
+    if ((req.method === 'GET' || req.method === 'HEAD') && current !== sessionSecret) {
       res.setHeader('Set-Cookie',
         `${SESSION_COOKIE}=${sessionSecret}; HttpOnly; SameSite=Strict; Path=/`);
     }
@@ -524,6 +675,58 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
   });
 
+  // ── Workspace files (web sidebar "Files") ─────────────────────────────
+  //
+  // Top-level listing of the session workspace: cheap, bounded, and free of
+  // build/VCS noise. `sessionId` picks that session's cwd; otherwise the
+  // scheduler workspace is used.
+  app.get('/api/workspace/files', async (req, res) => {
+    const sid = typeof req.query.sessionId === 'string' ? req.query.sessionId : '';
+    const rawLimit = Number(req.query.limit);
+    const limit = Math.max(1, Math.min(100, Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : 20));
+    const root = (sid ? sessions.get(sid)?.cwd : undefined) ?? WORKSPACE;
+    const IGNORE = new Set([
+      '.git', 'node_modules', 'dist-newstyle', '.stack-work',
+      '__pycache__', '.venv', 'target',
+    ]);
+    try {
+      const entries = await readdir(root, { withFileTypes: true });
+      const files = entries
+        .filter(e => !IGNORE.has(e.name))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .slice(0, limit)
+        .map(e => ({ path: e.name + (e.isDirectory() ? '/' : ''), dir: e.isDirectory() }));
+      res.json({ root, files });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  // ── Workspace file content (web right panel preview) ──────────────────
+  //
+  // Reads one file inside the session workspace. Directory traversal is
+  // rejected, and the payload is capped so a preview can never pull a
+  // build artefact into the browser.
+  app.get('/api/workspace/file', async (req, res) => {
+    const raw = typeof req.query.path === 'string' ? req.query.path : '';
+    if (!raw.trim()) return res.status(400).json({ error: 'path is required' });
+    const sid = typeof req.query.sessionId === 'string' ? req.query.sessionId : '';
+    const root = (sid ? sessions.get(sid)?.cwd : undefined) ?? WORKSPACE;
+    const target = path.resolve(root, raw);
+    if (target !== root && !target.startsWith(root + path.sep)) {
+      return res.status(403).json({ error: 'path escapes the workspace' });
+    }
+    try {
+      const info = await stat(target);
+      if (!info.isFile()) return res.status(400).json({ error: 'not a file' });
+      if (info.size > 256 * 1024) return res.status(413).json({ error: 'file too large' });
+      const text = await readFile(target, 'utf8');
+      res.json({ path: raw, size: info.size, text });
+    } catch {
+      res.status(404).json({ error: 'not found' });
+    }
+  });
+
   app.get('/api/services', (_req, res) => {
     res.json(plugins.describeServices());
   });
@@ -555,9 +758,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     const modeName = req.query.mode as string;
     if (modeName && MODES[modeName]) {
       const modeTools = MODES[modeName].tools;
-      res.json(ALL_TOOLS.filter(t => modeTools.includes(t.name)));
+      res.json(catalogToolDefs().filter(t => modeTools.includes(t.name)));
     } else {
-      res.json(ALL_TOOLS);
+      res.json(catalogToolDefs());
     }
   });
 
@@ -584,6 +787,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 
   const kernelBase = () => `http://${config.haskellHost}:${config.haskellPort}`;
 
+  /** The kernel gate wants a Bearer token on every route; resolve it per
+   *  request because the kernel may mint `~/.trha/kernel-token` after we boot. */
+  const kernelAuthHeaders = (): Record<string, string> => {
+    const token = resolveKernelToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
   async function forwardToKernel(
     res: import('express').Response,
     method: 'GET' | 'POST',
@@ -591,11 +801,15 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     body?: unknown,
   ): Promise<void> {
     try {
-      const r = await fetch(`${kernelBase()}${path}`, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      });
+      const doFetch = (): Promise<globalThis.Response> =>
+        fetch(`${kernelBase()}${path}`, {
+          method,
+          headers: { 'Content-Type': 'application/json', ...kernelAuthHeaders() },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        });
+      let r = await doFetch();
+      // A kernel restart rotates the shared token; retry once with the new one.
+      if (r.status === 401) r = await doFetch();
       const text = await r.text();
       res.status(r.status).type('application/json').send(text || '{}');
     } catch (e) {
@@ -738,6 +952,40 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     res.json({ roots: extraWriteRoots });
   });
 
+  // ── Service status (sidebar: LSP / MCP) ───────────────────────────────
+  app.get('/api/balance', async (_req, res) => {
+    try {
+      res.json(await fetchBalance());
+    } catch (e) {
+      res.status(503).json({ error: String(e) });
+    }
+  });
+
+  // ── Voice transcription (MiMo ASR contract) ───────────────────────────
+  app.post('/api/transcribe', async (req, res) => {
+    const file = typeof req.body?.path === 'string' ? req.body.path.trim() : '';
+    if (!file) return res.status(400).json({ error: 'path is required' });
+    try {
+      res.json({ text: await transcribeWav(file) });
+    } catch (e) {
+      if (e instanceof AsrNotConfigured) {
+        return res.status(503).json({ error: (e as Error).message });
+      }
+      res.status(502).json({ error: String(e) });
+    }
+  });
+
+  app.get('/api/mcp/status', async (_req, res) => {
+    try {
+      res.json(await mcpStatus());
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+  app.get('/api/lsp/status', (_req, res) => {
+    res.json(lspStatus());
+  });
+
   app.get('/api/permissions', (_req, res) => {
     res.json({ rules: getPermissionRules() });
   });
@@ -763,6 +1011,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   app.post('/api/providers/edit', (req, res) => { void forwardToKernel(res, 'POST', '/providers/edit', req.body); });
   app.post('/api/providers/websearch', (req, res) => { void forwardToKernel(res, 'POST', '/providers/websearch', req.body); });
   app.post('/api/providers/thinking', (req, res) => { void forwardToKernel(res, 'POST', '/providers/thinking', req.body); });
+  app.post('/api/providers/in-use', (req, res) => { void forwardToKernel(res, 'POST', '/providers/in-use', req.body); });
 
   // ── Sessions ──────────────────────────────────────────────────────────
 
@@ -790,6 +1039,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           ...(Array.isArray(r.teamTasks) ? { teamTasks: r.teamTasks as TeamTask[] } : {}),
           ...(typeof r.parentId === 'string' ? { parentId: r.parentId } : {}),
           ...(typeof r.cwd === 'string' ? { cwd: r.cwd } : {}),
+          ...(typeof r.title === 'string' ? { title: r.title } : {}),
+          ...(Array.isArray(r.tags) ? { tags: r.tags as string[] } : {}),
+          ...(typeof r.permissionMode === 'string'
+            ? { permissionMode: r.permissionMode as PermissionMode } : {}),
+          ...(typeof r.planMode === 'boolean' ? { planMode: r.planMode } : {}),
+          ...(r.yoloRestore !== undefined
+            ? { yoloRestore: r.yoloRestore as PermissionMode | null } : {}),
         });
         // A restarted kernel may have an empty session map; re-register so the
         // restored conversation keeps its projections and FSM state going.
@@ -817,8 +1073,26 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   app.post('/api/session/start', (req, res) => {
     const mode = req.body.mode || 'standard';
     if (!MODES[mode]) return res.status(400).json({ error: `Unknown mode: ${mode}` });
+    // Headless/CI callers can open a session directly in a posture; the
+    // default stays the safe read-only (Shift+Tab / /mode change it later).
+    const requested = req.body.permissionMode;
+    if (requested !== undefined && !MODE_CYCLE.includes(requested)) {
+      return res.status(400).json({ error: `Unknown permissionMode: ${requested}` });
+    }
+    const posture = (requested as PermissionMode | undefined) ?? 'read-only';
+    const planMode = posture === 'plan';
+    const approval: PermissionMode = planMode ? 'ask' : posture;
     const sessionId = `session-${Date.now()}`;
-    const created = { id: sessionId, mode, messages: [] as SessionMessage[], pendingApproval: null, createdAt: new Date() };
+    const askTimeout = typeof req.body.askTimeout === 'number' && req.body.askTimeout > 0
+      ? Math.round(req.body.askTimeout * 1000)
+      : undefined;
+    const created = {
+      id: sessionId, mode, messages: [] as SessionMessage[],
+      pendingApproval: null, createdAt: new Date(),
+      permissionMode: approval, planMode,
+      yoloRestore: null as PermissionMode | null,
+      ...(askTimeout !== undefined ? { askTimeoutMs: askTimeout } : {}),
+    };
     sessions.set(sessionId, created);
     persistSession(created);
     // Register the same id kernel-side so projections (t6state/constraint) and
@@ -865,6 +1139,20 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     res.json(Array.from(sessions.values()));
   });
 
+  // Rename / tag a session.  Both fields are user-facing only (never part of
+  // the model's history) and persisted alongside the rest of the state.
+  app.post('/api/session/:id/meta', (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    const body = req.body ?? {};
+    if (typeof body.title === 'string') session.title = body.title.trim();
+    if (Array.isArray(body.tags)) {
+      session.tags = body.tags.filter((t: unknown): t is string => typeof t === 'string');
+    }
+    persistSession(session);
+    res.json({ id: session.id, title: session.title ?? null, tags: session.tags ?? [] });
+  });
+
   // ── Agent step ────────────────────────────────────────────────────────
 
   // Run one full agent step and return the (aggregated) reply text.
@@ -875,18 +1163,63 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // emits assistant tool_calls; we execute them and feed results back as
   // tool messages until the model answers without tool calls.
   // Host-side tools live under the orchestration workspace so file mutations
-  // cannot escape it.  Resolution order: TRHA_WORKSPACE, a `.trha/workspace`
-  // marker (cwd, then $HOME), then the directory the scheduler was started in
-  // — i.e. the shell's cwd, not a hard-coded /tmp path.
+  // cannot escape it.  Resolution order (see `workspace.ts`): TRHA_WORKSPACE,
+  // then the nearest `.trha/workspace` marker walking *up* from the cwd (then
+  // $HOME), then the nearest `.git` root, then a build manifest, and only then
+  // the directory the scheduler was started in.  Without the upward walk a
+  // scheduler launched from `packages/<pkg>` reported that subpackage as the
+  // workspace — and the system prompt's `{{cwd}}` moved with it.
   const WORKSPACE = resolveWorkspace({
     env: process.env.TRHA_WORKSPACE,
     cwd: process.cwd(),
     home: process.env.HOME,
   });
-  // `exec` picks the platform shell itself (`/bin/sh -c` on POSIX,
-  // `cmd.exe /d /s /c` on win32) — that platform behaviour is the contract; the
-  // explicit bash spawns elsewhere go through Server/shell.ts instead.
-  const runShell = promisify(exec);
+  // The `bash` tool must really be bash: it is offered to the model under that
+  // name, and a coding agent writes `[[ ]]`, arrays and `pipefail` without
+  // thinking about it.  Previously this used Node's `exec` default, which is
+  // `/bin/sh` on POSIX (dash on Debian) — those all failed.
+  //
+  // Deliberately NOT `bash -lc`: a *login* shell re-runs the profile, which
+  // rebuilds PATH.  Measured on this repo's dev box, `bash -lc` swapped an
+  // fnm-managed node v26.12.1 for the system v22.22.1 — a tool call must never
+  // silently change the toolchain version.  `bash -c` keeps the inherited env
+  // and still gives bash syntax.  The shell comes from Server/shell.ts; win32
+  // keeps Node's default (`cmd.exe /d /s /c`).
+  //
+  // Contract unchanged: 120 s timeout, 4 MiB of output, `exit <code>` first.
+  const SHELL_TIMEOUT_MS = 120_000;
+  const SHELL_MAX_BUFFER = 4 * 1024 * 1024;
+  const execAsync = promisify(exec);
+  const runShell = async (
+    cmd: string,
+    opts: { cwd: string },
+  ): Promise<{ code: number; stdout: string; stderr: string; note: string }> => {
+    const shell = execShell();
+    try {
+      const { stdout, stderr } = await execAsync(cmd, {
+        cwd: opts.cwd,
+        timeout: SHELL_TIMEOUT_MS,
+        maxBuffer: SHELL_MAX_BUFFER,
+        ...(shell ? { shell } : {}),
+      });
+      return { code: 0, stdout, stderr, note: '' };
+    } catch (e) {
+      const err = e as {
+        code?: number | string; stdout?: string; stderr?: string;
+        message: string; killed?: boolean;
+      };
+      const code = typeof err.code === 'number' ? err.code : (err.killed ? 124 : 1);
+      const stdout = err.stdout ?? '';
+      const stderr = err.stderr ?? '';
+      // A kill is a timeout (exec's own message would just repeat the command);
+      // otherwise exec's "Command failed: …" only adds noise once the command
+      // produced output, so keep it for the empty case (ENOENT / bad cwd).
+      const note = err.killed
+        ? `timed out after ${SHELL_TIMEOUT_MS / 1000} s`
+        : (stdout || stderr ? '' : err.message);
+      return { code, stdout, stderr, note };
+    }
+  };
   // Background jobs cannot outlive this process, so they are process-local on
   // purpose (the tool tells the model exactly that).
   const jobsBySession = new Map<string, Map<string, JobRecord>>();
@@ -1000,6 +1333,49 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   const workspaceRelative = (raw: string, base = WORKSPACE): string =>
     path.isAbsolute(raw) ? raw : path.join(base, raw);
 
+  // A provider requires each assistant(tool_calls) message to be answered by
+  // one tool message per call id before anything else.  Incomplete groups
+  // happen when the loop is interrupted, a tool is parked for approval, or a
+  // tool throws; repairing keeps the conversation usable instead of 400-ing
+  // forever ("messages following tool_calls message").
+  const repairToolPairs = (messages: SessionMessage[]): SessionMessage[] => {
+    const out: SessionMessage[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      if (!m) continue;
+      out.push(m);
+      if (m.role !== 'assistant') continue;
+      const calls = (m as { tool_calls?: Array<{ id?: string }> }).tool_calls;
+      if (!Array.isArray(calls) || calls.length === 0) continue;
+      const answered = new Set<string>();
+      let j = i + 1;
+      while (j < messages.length && messages[j]?.role === 'tool') {
+        const id = (messages[j] as { tool_call_id?: string }).tool_call_id;
+        if (typeof id === 'string') answered.add(id);
+        out.push(messages[j] as SessionMessage);
+        j++;
+      }
+      for (const c of calls) {
+        if (typeof c?.id === 'string' && !answered.has(c.id)) {
+          out.push({
+            role: 'tool', tool_call_id: c.id,
+            content: 'ERROR: interrupted before the tool produced a result',
+          });
+        }
+      }
+      i = j - 1;
+    }
+    return out;
+  };
+
+  // Everyday shell probes that only read.  A broad `Bash(command:*)` ask rule
+  // must not turn `curl`/`ls`/`cat` into an approval prompt: that is the
+  // "tool cannot be called" experience users hit on a simple weather query.
+  const isReadOnlyShell = (cmd: string): boolean =>
+    cmd.length > 0
+    && !/[;>]|&&|\brm\b|\bsudo\b|\bmv\b|\bcp\b|\bchmod\b|\bkill\b|\btee\b|\bdd\b/.test(cmd)
+    && /^(ls|cat|head|tail|wc|pwd|date|whoami|uname|which|echo|printf|curl|wget|rg|grep|find|file|stat|du|df|env|printenv|git\s+(status|log|diff|show|branch|remote|rev-parse))\b/i.test(cmd);
+
   const executeTool = async (c: ToolCallData, sessionId?: string): Promise<string> => {
     let argsObj: Record<string, unknown> = {};
     try {
@@ -1013,10 +1389,22 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // One cwd per call: a session may have switched directories, and every fs
     // operation must agree on which one it is.
     const cwd = (sessionId ? sessions.get(sessionId)?.cwd : undefined) ?? WORKSPACE;
-    // 权限规则引擎：deny > ask > allow（显式规则覆盖，沙箱兜底文件边界）
-    const verdict = decidePermission(name, argsObj);
+    // 权限规则引擎 + 会话姿态：deny 永远优先；read-only/plan 只放行只读工具；
+    // ask 模式要求确认；YOLO 跳过 ask 规则（Reasonix 的 danger-full-access）。
+    const permSession = sessionId ? sessions.get(sessionId) : undefined;
+    const posture: PermissionMode = permSession?.planMode
+      ? 'plan'
+      // No session (direct tool execution in tests / approval replay): keep
+      // the old rule-engine behaviour instead of the session default.
+      : (permSession?.permissionMode ?? 'auto');
+    const verdict = applyPermissionMode(posture, name, decidePermission(name, argsObj));
     if (verdict.action === 'deny') return `ERROR: ${verdict.reason}`;
-    if (verdict.action === 'ask') return `REQUIRE_APPROVAL: ${verdict.reason}`;
+    if (verdict.action === 'ask') {
+      const cmd = typeof argsObj.command === 'string' ? argsObj.command.trim() : '';
+      if (!(name === 'bash' && isReadOnlyShell(cmd))) {
+        return `REQUIRE_APPROVAL: ${verdict.reason}`;
+      }
+    }
     if (name === 'bash') {
       const cmd = typeof argsObj.command === 'string' ? argsObj.command : '';
       if (!cmd.trim()) return 'ERROR: missing command';
@@ -1028,16 +1416,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         );
         return `OK: started ${id} (use job_output to read it)`;
       }
-      try {
-        const { stdout, stderr } = await runShell(cmd, {
-          cwd, timeout: 120_000, maxBuffer: 4 * 1024 * 1024,
-        });
-        return limitOutput(`exit 0\n${stdout}${stderr ? `\n[stderr]\n${stderr}` : ''}`);
-      } catch (e) {
-        const err = e as { code?: number; stdout?: string; stderr?: string; message: string };
-        return limitOutput(`exit ${err.code ?? 1}\n${err.stdout ?? ''}${err.stderr ? `\n[stderr]\n${err.stderr}` : ''}`
-          + (err.stdout || err.stderr ? '' : `\n${err.message}`));
-      }
+      const r = await runShell(cmd, { cwd });
+      const body = `exit ${r.code}\n${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ''}`;
+      return limitOutput(r.note ? `${body}\n${r.note}` : body);
     }
     if (name === 'read') {
       const target = resolveReadPath(argsObj.path, cwd);
@@ -1068,8 +1449,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       try {
         if (name === 'write') {
           await mkdir(path.dirname(target), { recursive: true });
+          await snapshotFile(target);
           await writeFile(target, content, 'utf8');
         } else {
+          await snapshotFile(target);
           await appendFile(target, content, 'utf8');
         }
         return `OK: ${name} -> ${target} (${content.length} chars)`;
@@ -1096,8 +1479,11 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         const after = argsObj.replace_all === true
           ? parts.join(newString)
           : [parts[0], ...parts.slice(1)].join(newString);
+        await snapshotFile(target);
         await writeFile(target, after, 'utf8');
-        return `OK: edit -> ${target} (${hits} replacement${hits === 1 ? '' : 's'})`;
+        const summary = `OK: edit -> ${target} (${hits} replacement${hits === 1 ? '' : 's'})`;
+        const diff = editDiff(before, oldString, newString);
+        return diff ? `${summary}\n\n${diff}` : summary;
       } catch (e) {
         return `ERROR: ${(e as Error).message}`;
       }
@@ -1108,7 +1494,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       }
       const root = typeof argsObj.path === 'string' ? argsObj.path : '.';
       const dir = resolveReadPath(root, cwd);
-      if (!dir) return 'ERROR: path escapes the workspace';
+      if (!dir) return 'ERROR: path must be a string';
       try {
         const found = await walkFiles(dir, 4000);
         const re = globToRegExp(argsObj.pattern);
@@ -1130,7 +1516,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         return `ERROR: invalid pattern: ${(e as Error).message}`;
       }
       const dir = resolveReadPath(typeof argsObj.path === 'string' ? argsObj.path : '.', cwd);
-      if (!dir) return 'ERROR: path escapes the workspace';
+      if (!dir) return 'ERROR: path must be a string';
       const only = typeof argsObj.glob === 'string' ? globToRegExp(argsObj.glob) : null;
       try {
         const files = await walkFiles(dir, 4000);
@@ -1210,6 +1596,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           },
         },
         spawnFresh: (task, label) => spawnAgent(session, task, label),
+        extraWriteRoots: () => extraWriteRoots,
       };
       const out = await runExtraTool(name, argsObj, host).catch((e: unknown) => `ERROR: ${String(e)}`);
       if (out !== null) {
@@ -1247,6 +1634,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     target: TurnTarget = {},
     onDelta?: (text: string) => void,
   ): Promise<string> => {
+    session.lastRequest = { message, ...target };
     const mode = MODES[session.mode] ?? MODES.standard;
     // Plugins may intercept the whole step (approval / short-circuit) by
     // bailing on 'agent:step:before' with a reply.
@@ -1260,7 +1648,12 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       return intercepted;
     }
     // Plugins may rewrite the tool set offered to the model.
-    const toolsBase = (plugins.service('tools') as { list(): BridgeToolSpec[] }).list();
+    const allTools = (plugins.service('tools') as { list(): BridgeToolSpec[] }).list();
+    // An agent definition can narrow the tool set. Without one, behaviour is
+    // unchanged (every tool the mode exposes).
+    const toolsBase = target.toolsAllow?.length
+      ? allTools.filter(t => target.toolsAllow!.includes(t.name))
+      : allTools;
     const toolsCfg = (await plugins.runWaterfall('agent:tools', toolsBase)) as BridgeToolSpec[];
     session.messages.push({ role: 'user', content: message });
     events.emit('agent:message', { sessionId: session.id, role: 'user', content: message });
@@ -1269,6 +1662,16 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     let lastCallKey = '';
     let sameCallRepeats = 0;
     for (let round = 0; round < maxToolRounds; round++) {
+      // /steer: instructions injected while the turn runs take effect at the
+      // next model call, without starting a new turn.
+      if (session.steer && session.steer.length > 0) {
+        for (const steer of session.steer.splice(0)) {
+          session.messages.push({ role: 'user', content: steer });
+          events.emit('agent:message', { sessionId: session.id, role: 'user', content: steer });
+          emitSafe(plugins.emitMessageSend(session.id, { role: 'user', content: steer }));
+        }
+        persistSession(session);
+      }
       if (session.abortRequested) {
         session.abortRequested = false;
         const stopped = '(interrupted)';
@@ -1301,9 +1704,17 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           });
           persistSession(session);
         }
+        // Repair an incomplete tool_calls group before it reaches the provider
+        // (interrupt / approval park / throwing tool).
+        session.messages = repairToolPairs(session.messages);
+        const promptMessages = await withSystemPrompt(
+          mode, target.model ?? 'deepseek-flash',
+          session.cwd ?? WORKSPACE, session.messages,
+          target.reasoningLanguage,
+          target.extraInstructions,
+        );
         const request = {
-          messages: withSystemPrompt(mode, target.model ?? 'deepseek-flash',
-                                     session.cwd ?? WORKSPACE, session.messages),
+          messages: promptMessages,
           tools: toolsCfg,
           model: target.model, provider: target.provider,
           genParams: target.genParams,
@@ -1313,11 +1724,20 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         };
         // A kernel without the streaming endpoint — or a wire that cannot
         // stream — still answers: fall back to the blocking call instead of
-        // failing the whole step.
-        response = onDelta
-          ? await bridge.queryModelStream(request, onDelta)
-              .catch(() => bridge.queryModel(request))
-          : await bridge.queryModel(request);
+        // failing the whole step.  Transient provider failures (429 / 5xx /
+        // timeout) are retried once or twice before the offline fallback.
+        const callModel = () => onDelta
+          ? bridge.queryModelStream(
+              request,
+              onDelta,
+              text => events.emit('agent:reasoning', { sessionId: session.id, reasoning: text }),
+            ).catch(() => bridge.queryModel(request))
+          : bridge.queryModel(request);
+        response = await withRetry(callModel, (attempt, delayMs, reason) => {
+          events.emit('agent:retry', {
+            sessionId: session.id, attempt, delayMs, reason,
+          });
+        });
         if (response.constraint) stepConstraint = response.constraint;
         if (response.usage?.promptTokens !== undefined) {
           session.lastPromptTokens = response.usage.promptTokens;
@@ -1387,11 +1807,21 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       for (const call of calls) {
         const started = Date.now();
         await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'running');
-        const output = await executeTool(call, session.id);
+        const output = await executeTool(call, session.id).catch(
+          (e: unknown) => `ERROR: ${String(e)}`,
+        );
         // ask 权限规则：暂停执行并发起确认（批准后重放该工具）
         if (output.startsWith('REQUIRE_APPROVAL:')) {
           await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'failed', started, output);
+          // Park the call, but keep the history valid: the provider rejects an
+          // assistant(tool_calls) message that has no tool reply.  The approval
+          // replay replaces this placeholder with the real output.
+          session.messages.push({
+            role: 'tool', tool_call_id: call.id,
+            content: 'ERROR: awaiting user approval',
+          });
           session.pendingApproval = { message: output, ...target };
+          session.pendingApprovalAt = new Date().toISOString();
           (session as { pendingToolCall?: ToolCallData | undefined }).pendingToolCall = call;
           events.emit('agent:plan', { sessionId: session.id, status: 'awaiting_approval', message: output });
           return `awaiting_approval: ${output}`;
@@ -1449,9 +1879,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   };
 
   app.post('/api/agent/step', async (req, res) => {
-    const { sessionId, message, requireApproval, provider, model, temperature, topP, maxTokens } = req.body;
-    const genParams = temperature !== undefined || topP !== undefined || maxTokens !== undefined
-      ? { temperature, topP, maxTokens }
+    const { sessionId, message, requireApproval, provider, model, temperature, topP, maxTokens, effort, askTimeout } = req.body;
+    // The shell sends the reasoning language on every step (auto = follow the
+    // interface language, resolved shell-side).  It used to be dropped here,
+    // so /reasoning-language had no effect at all.
+    const reasoningLanguage = reasoningLanguageTag(req.body.reasoningLanguage);
+    const genParams = temperature !== undefined || topP !== undefined || maxTokens !== undefined || effort !== undefined
+      ? { temperature, topP, maxTokens, effort }
       : undefined;
     const session = sessions.get(sessionId);
     if (!session) return res.status(404).json({ error: 'Session not found' });
@@ -1467,8 +1901,12 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // `awaiting_approval`, which it persists and enforces as a barrier), so
     // tell it first. A kernel that is down must not break the shell, hence the
     // local `pendingApproval` stays authoritative for the response shape.
+    if (typeof askTimeout === 'number' && askTimeout > 0) {
+      session.askTimeoutMs = Math.round(askTimeout * 1000);
+    }
     if (requireApproval) {
-      session.pendingApproval = { message, provider, model, genParams };
+      session.pendingApproval = { message, provider, model, genParams, reasoningLanguage };
+      session.pendingApprovalAt = new Date().toISOString();
       void bridge.requestApproval(sessionId, message).catch(e =>
         console.error(`kernel approval request ${sessionId}:`, e));
       events.emit('agent:plan', { sessionId, status: 'awaiting_approval', message });
@@ -1492,7 +1930,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       comp: session.completionTokens ?? 0,
     };
     const reply = await withSessionLock(session.id, () =>
-      runTurn(session, message, { provider, model, genParams },
+      runTurn(session, message, { provider, model, genParams, reasoningLanguage },
         text => events.emit('agent:delta', { sessionId: session.id, text })));
     // Usage echo for shell footers: `promptTokens` is the provider's own
     // last prompt size (in, incl. cache), the deltas are this turn's out,
@@ -1511,6 +1949,288 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     });
   });
 
+  // ── Session permission posture (Shift+Tab cycle / Ctrl+Y YOLO) ────────
+  //
+  // The posture is session state, not a global switch: two sessions may run
+  // under different permissions.  `planMode` is a separate flag so Ctrl+Y in
+  // Plan can toggle YOLO without silently leaving the plan (Reasonix parity).
+  const modeState = (session: SchedulerSession) => {
+    const mode = session.permissionMode ?? 'read-only';
+    return {
+      mode,
+      // Plan is its own posture in the cycle (read-only → ask → auto → YOLO →
+      // plan); the underlying approval mode stays ask so tools still confirm.
+      label: session.planMode ? 'Plan' : modeLabel(mode),
+      planMode: session.planMode === true,
+      yoloRestore: session.yoloRestore ?? null,
+      cycle: MODE_CYCLE,
+    };
+  };
+
+  app.get('/api/session/:id/mode', (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    res.json(modeState(session));
+  });
+
+  // ── Workflow templates (/workflow) ────────────────────────────────────
+  app.get('/api/workflows', (_req, res) => {
+    res.json({ workflows: WORKFLOW_TEMPLATES.map(w => ({ name: w.name, description: w.description })) });
+  });
+  app.post('/api/session/:id/workflow', async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'no session' });
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const input = typeof req.body?.input === 'string' ? req.body.input.trim() : '';
+    const wf = WORKFLOW_TEMPLATES.find(w => w.name === name);
+    if (!wf) return res.status(400).json({ error: `unknown workflow: ${name}` });
+    const prompt = wf.prompt + (input ? '\n\n' + input : '');
+    try {
+      const reply = await runTurn(session, prompt, {});
+      await persistSession(session);
+      res.json({ reply });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // ── Recurring prompt (/loop) ──────────────────────────────────────────
+  app.get('/api/session/:id/loop', (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'no session' });
+    res.json({
+      loops: (session.schedules ?? [])
+        .filter(s => s.status === 'active' && s.repeatMs)
+        .map(s => ({ id: s.id, prompt: s.prompt, at: s.at, repeatMs: s.repeatMs, runs: s.runs ?? 0 })),
+    });
+  });
+  app.post('/api/session/:id/loop', async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'no session' });
+    if (req.body?.stop === true) {
+      let cancelled = 0;
+      for (const s of session.schedules ?? []) {
+        if (s.status === 'active' && s.repeatMs) { s.status = 'cancelled'; cancelled++; }
+      }
+      await persistSession(session);
+      return res.json({ cancelled });
+    }
+    const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+    const interval = typeof req.body?.interval === 'number' ? req.body.interval : 0;
+    if (!prompt) return res.status(400).json({ error: 'prompt is required' });
+    if (!Number.isFinite(interval) || interval < 1000) {
+      return res.status(400).json({ error: 'interval must be at least 1000 ms' });
+    }
+    const loop: Schedule = {
+      id: `loop-${Date.now()}`,
+      prompt,
+      at: new Date(Date.now() + interval).toISOString(),
+      repeatMs: interval,
+      status: 'active',
+      runs: 0,
+    };
+    session.schedules = [...(session.schedules ?? []), loop];
+    await persistSession(session);
+    res.json({ id: loop.id, at: loop.at, interval });
+  });
+
+  // ── Fork / branch (/fork, /branch) ────────────────────────────────────
+  app.post('/api/session/:id/fork', async (req, res) => {
+    const parent = sessions.get(req.params.id);
+    if (!parent) return res.status(404).json({ error: 'no session' });
+    const upto = typeof req.body?.upto === 'number' ? req.body.upto : parent.messages.length;
+    try {
+      const id = await forkSession(parent, upto, 'fork');
+      res.json({ id, messages: sessions.get(id)?.messages.length ?? 0 });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post('/api/session/:id/branch', async (req, res) => {
+    const parent = sessions.get(req.params.id);
+    if (!parent) return res.status(404).json({ error: 'no session' });
+    // Branch = fork just before the last user turn, so the last prompt can be
+    // sent again with a different approach.
+    let upto = parent.messages.length;
+    for (let i = parent.messages.length - 1; i >= 0; i--) {
+      if (parent.messages[i]?.role === 'user') { upto = i; break; }
+    }
+    try {
+      const id = await forkSession(parent, upto, 'branch');
+      res.json({ id, messages: sessions.get(id)?.messages.length ?? 0 });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // ── Steering (/steer): inject into the running turn ───────────────────
+  app.post('/api/session/:id/steer', (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'no session' });
+    const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+    if (!prompt) return res.status(400).json({ error: 'prompt is required' });
+    session.steer = [...(session.steer ?? []), prompt];
+    res.json({ steered: session.steer.length, running: inFlight.has(session.id) });
+  });
+
+  // ── Message queue (/queue) ────────────────────────────────────────────
+  app.get('/api/session/:id/queue', (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'no session' });
+    res.json({ queued: (session.queued ?? []).map(q => ({ message: q.message })) });
+  });
+  app.post('/api/session/:id/queue', (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'no session' });
+    const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+    if (!message) return res.status(400).json({ error: 'message is required' });
+    session.queued = [...(session.queued ?? []), { message }];
+    const depth = session.queued.length;
+    // A queued message starts immediately when nothing is running.
+    if (!inFlight.has(session.id) && !isSessionBusy(session.id)) {
+      session.abortRequested = false;
+      const next = session.queued.shift()!;
+      void runTurn(session, next.message, next.target ?? {});
+    }
+    res.json({ queued: depth });
+  });
+
+  // ── Session recap (/recap): summarize without touching the convo ──────
+  app.post('/api/session/:id/recap', async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'no session' });
+    if (session.messages.length === 0) return res.json({ summary: '' });
+    const mode = MODES[session.mode] ?? MODES.standard;
+    const model = session.lastRequest?.model ?? 'deepseek-flash';
+    const messages = await withSystemPrompt(mode, model, session.cwd ?? WORKSPACE, [
+      ...session.messages,
+      {
+        role: 'user',
+        content:
+          'Summarize this conversation so far: key decisions, open questions, and the next step. ' +
+          'Keep it under 10 bullet points.',
+      },
+    ]);
+    let summary = '';
+    try {
+      await bridge.queryModelStream(
+        {
+          messages: messages as Parameters<typeof bridge.queryModelStream>[0]['messages'],
+          genParams: { sessionId: session.id },
+        },
+        d => { summary += d; },
+      );
+      res.json({ summary });
+    } catch (e) {
+      res.status(502).json({ error: String(e) });
+    }
+  });
+
+  // ── Side question (/btw): answers without touching the conversation ────
+  app.post('/api/session/:id/btw', async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'no session' });
+    const question = typeof req.body?.question === 'string' ? req.body.question.trim() : '';
+    if (!question) return res.status(400).json({ error: 'question is required' });
+    const mode = MODES[session.mode] ?? MODES.standard;
+    const model = session.lastRequest?.model ?? 'deepseek-flash';
+    const messages = await withSystemPrompt(mode, model, session.cwd ?? WORKSPACE, [
+      ...session.messages,
+      { role: 'user', content: question },
+    ]);
+    let answer = '';
+    try {
+      await bridge.queryModelStream(
+        { messages: messages as Parameters<typeof bridge.queryModelStream>[0]['messages'], genParams: { sessionId: session.id } },
+        d => { answer += d; },
+      );
+      res.json({ answer });
+    } catch (e) {
+      res.status(502).json({ error: String(e) });
+    }
+  });
+
+  // ── Retry the last turn (/retry) ──────────────────────────────────────
+  app.post('/api/session/:id/retry', async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'no session' });
+    const last = session.lastRequest;
+    if (!last) return res.status(400).json({ error: 'nothing to retry' });
+    // Drop the user turn being retried so the replay does not duplicate it.
+    const tail = session.messages[session.messages.length - 1];
+    if (tail && tail.role === 'user' && tail.content === last.message) session.messages.pop();
+    try {
+      const reply = await runTurn(session, last.message, last);
+      await persistSession(session);
+      res.json({ reply });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // ── Manual context compaction (/compact) ──────────────────────────────
+  app.post('/api/session/:id/compact', async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'no session' });
+    const governed = govern(session.messages, session.lastPromptTokens ?? 0, governanceConfig());
+    session.messages = governed.messages;
+    session.lastMaintenance = { trigger: governed.trigger, savedTokens: governed.savedTokens };
+    await persistSession(session);
+    events.emit('agent:context', {
+      sessionId: session.id, trigger: governed.trigger,
+      savedTokens: governed.savedTokens, prefixChanged: governed.prefixChanged,
+    });
+    res.json({ trigger: governed.trigger, savedTokens: governed.savedTokens });
+  });
+
+  app.post('/api/session/:id/mode', (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    const action = typeof req.body?.action === 'string' ? req.body.action : 'cycle';
+    if (action === 'yolo') {
+      const swapped = toggleYolo(session.permissionMode ?? 'read-only', session.yoloRestore ?? null);
+      session.permissionMode = swapped.mode;
+      session.yoloRestore = swapped.restore;
+      // planMode is deliberately untouched: YOLO inside a plan changes the
+      // approval posture, not the plan itself.
+    } else if (action === 'set' && typeof req.body?.mode === 'string') {
+      const wanted = req.body.mode as PermissionMode;
+      if (!MODE_CYCLE.includes(wanted)) return res.status(400).json({ error: `Unknown mode: ${wanted}` });
+      // Plan is a flag: entering it keeps the approval mode at `ask`, exactly
+      // like the Shift+Tab cycle (one state shape, two entry points).
+      session.permissionMode = wanted === 'plan' ? 'ask' : wanted;
+      session.planMode = wanted === 'plan';
+      session.yoloRestore = null;
+      if (wanted === 'plan') session.goal = null;
+    } else {
+      // Shift+Tab (Studio order): plan → read-only → ask → auto → YOLO → plan.
+      // Entering plan lands on the ask posture; leaving plan lands on read-only.
+      const mode = (session.permissionMode ?? 'read-only') as PermissionMode;
+      if (session.planMode) {
+        session.planMode = false;
+        session.permissionMode = 'read-only';
+      } else if (mode === 'read-only') {
+        session.permissionMode = 'ask';
+      } else if (mode === 'ask') {
+        session.permissionMode = 'auto';
+      } else if (mode === 'auto') {
+        session.yoloRestore = 'auto';
+        session.permissionMode = 'yolo';
+      } else if (mode === 'yolo') {
+        session.yoloRestore = null;
+        session.planMode = true;
+        session.permissionMode = 'ask';
+      } else {
+        session.permissionMode = 'auto';
+      }
+      if (session.planMode) session.goal = null;
+    }
+    persistSession(session);
+    events.emit('session:mode', { sessionId: session.id, ...modeState(session) });
+    res.json(modeState(session));
+  });
+
   // ── Approval decisions (Phase 2 S1) ───────────────────────────────────
 
   app.post('/api/session/:id/decision', async (req, res) => {
@@ -1521,9 +2241,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // it before the local gate keeps the two machines from both answering.
     const planAction = req.body?.action;
     if (typeof planAction === 'string') {
+      const reason = typeof req.body?.reason === 'string' ? req.body.reason : undefined;
       try {
-        const answer = await bridge.decidePlan(session.id, planAction);
-        events.emit('agent:decision', { sessionId: session.id, action: planAction });
+        const answer = await bridge.decidePlan(session.id, planAction, reason);
+        events.emit('agent:decision', {
+          sessionId: session.id, action: planAction,
+          ...(reason ? { reason } : {}),
+        });
         return res.json({ ...answer, mode: session.mode });
       } catch (e) {
         return res.status(502).json({ error: `kernel plan decision failed: ${String(e)}` });
@@ -1533,12 +2257,16 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     const pending = session.pendingApproval;
     if (!pending) return res.status(400).json({ error: 'No pending approval' });
     const approve = req.body?.approve === true;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason : undefined;
     session.pendingApproval = null;
     // Release the kernel's barrier before running anything: if it kept the
     // session parked, the next step would be refused.
-    void bridge.decideApproval(session.id, approve).catch(e =>
+    void bridge.decideApproval(session.id, approve, reason).catch(e =>
       console.error(`kernel approval decision ${session.id}:`, e));
-    events.emit('agent:decision', { sessionId: session.id, approve });
+    events.emit('agent:decision', {
+      sessionId: session.id, approve,
+      ...(reason ? { reason } : {}),
+    });
     if (!approve) {
       return res.json({ status: 'denied', mode: session.mode });
     }
@@ -1547,7 +2275,14 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     if (pendingCall) {
       const output = await executeTool(pendingCall);
       (session as { pendingToolCall?: ToolCallData | undefined }).pendingToolCall = undefined;
-      session.messages.push({ role: 'tool', tool_call_id: pendingCall.id, content: output });
+      // The parked call already has a placeholder tool message; replace it so
+      // the history keeps exactly one reply per tool_call_id.
+      const last = session.messages[session.messages.length - 1];
+      if (last && last.role === 'tool' && last.tool_call_id === pendingCall.id) {
+        last.content = output;
+      } else {
+        session.messages.push({ role: 'tool', tool_call_id: pendingCall.id, content: output });
+      }
       const reply = await runTurn(session, pending.message, pending);
       return res.json({ status: 'approved', tool: pendingCall.name, output, reply, messages: session.messages, mode: session.mode });
     }
@@ -1637,21 +2372,58 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       // An abort that arrived too late for the loop's round check must not
       // leak into the next turn.
       session.abortRequested = false;
+      // /queue: a message parked during this turn starts one now.
+      const next = session.queued?.shift();
+      if (next && !session.abortRequested) {
+        setTimeout(() => { void runTurn(session, next.message, next.target ?? {}); }, 0);
+      }
     }
   };
 
+  /** Copy a session (optionally truncated) into a new child session. */
+  const forkSession = async (
+    parent: SchedulerSession, upto: number, label: string,
+  ): Promise<string> => {
+    const id = `session-${Date.now()}-${label}`;
+    const child: SchedulerSession = {
+      id,
+      mode: parent.mode,
+      messages: parent.messages.slice(0, Math.max(0, upto)).map(m => ({ ...m })),
+      pendingApproval: null,
+      createdAt: new Date(),
+      parentId: parent.id,
+      depth: parent.depth ?? 0,
+      permissionMode: parent.permissionMode ?? 'read-only',
+      planMode: parent.planMode ?? false,
+      yoloRestore: parent.yoloRestore ?? null,
+      ...(parent.cwd ? { cwd: parent.cwd } : {}),
+    };
+    sessions.set(id, child);
+    await persistSession(child);
+    void bridge.startKernelSession(id, child.mode).catch(e =>
+      console.error(`kernel session create ${id}:`, e));
+    events.emit('session:created', { sessionId: id, mode: child.mode });
+    return id;
+  };
+
   const spawnAgent = async (
-    parent: SchedulerSession, task: string, name?: string,
+    parent: SchedulerSession, task: string, name?: string, agentName?: string,
   ): Promise<{ id: string; reply: string }> => {
     const depth = (parent.depth ?? 0) + 1;
     if (depth > maxSubagentDepth) {
       throw new Error(`subagent depth limit reached (${maxSubagentDepth})`);
     }
-    const slug = (name ?? 'sub').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'sub';
+    // A named agent definition supplies mode/model/effort/tools/instructions.
+    const def = agentName
+      ? (await loadAgentDefinitions(agentDirs(parent.cwd ?? WORKSPACE)))
+          .find(d => d.name === agentName)
+      : undefined;
+    if (agentName && !def) throw new Error(`unknown agent: ${agentName}`);
+    const slug = (agentName ?? name ?? 'sub').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'sub';
     const id = `${parent.id}#${slug}-${++subagentSeq}`;
     const child: SchedulerSession = {
       id,
-      mode: parent.mode,
+      mode: def?.mode && MODES[def.mode] ? def.mode : parent.mode,
       messages: [],
       pendingApproval: null,
       createdAt: new Date(),
@@ -1662,7 +2434,17 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     await persistSession(child);
     events.emit('agent:spawn', { sessionId: parent.id, child: id, task: task.slice(0, 160) });
     try {
-      const reply = await runTurn(child, task);
+      // Reasonix's ResolveModelEffort order: subagent_efforts[profile] >
+      // role_efforts[<profile>] > role_efforts["subagent"] > subagent_effort.
+      const eff = def?.effort ?? subagentEfforts(name) ?? roleEffort(name)
+        ?? roleEffort('subagent') ?? subagentEffort();
+      const model = def?.model && def.model !== 'inherit' ? def.model : undefined;
+      const reply = await runTurn(child, task, {
+        ...(eff ? { genParams: { effort: eff } } : {}),
+        ...(model ? { model } : {}),
+        ...(def?.tools?.length ? { toolsAllow: def.tools } : {}),
+        ...(def?.instructions ? { extraInstructions: def.instructions } : {}),
+      });
       await persistSession(child);
       return { id, reply };
     } finally {
@@ -1671,7 +2453,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   };
 
   const agentHooksFor = (session: SchedulerSession): AgentHooks => ({
-    spawn: (task, name) => spawnAgent(session, task, name),
+    spawn: (task, name, agent) => spawnAgent(session, task, name, agent),
     list: () => [...sessions.values()].map(s2 => ({
       id: s2.id,
       ...(s2.parentId ? { parentId: s2.parentId } : {}),
@@ -1742,10 +2524,31 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
   };
 
+  const approvalTimeoutMs = (): number =>
+    envInt('TRHA_APPROVAL_TIMEOUT_MS', 300_000, { min: 1 });
+
+  /** Auto-reject gates parked longer than the session's /ask-timeout. */
+  const expireApprovals = async (): Promise<void> => {
+    const now = Date.now();
+    for (const session of sessions.values()) {
+      if (!session.pendingApproval) continue;
+      const at = session.pendingApprovalAt ? new Date(session.pendingApprovalAt).getTime() : now;
+      const limit = session.askTimeoutMs ?? approvalTimeoutMs();
+      if (now - at < limit) continue;
+      session.pendingApproval = null;
+      session.pendingApprovalAt = null;
+      events.emit('agent:plan', {
+        sessionId: session.id, status: 'rejected', message: 'approval timed out',
+      });
+      await persistSession(session);
+    }
+  };
+
   const tickSchedules = async (): Promise<void> => {
     if (ticking) return;
     ticking = true;
     try {
+      await expireApprovals();
       const now = Date.now();
       for (const session of sessions.values()) {
         for (const s of session.schedules ?? []) {
@@ -1857,17 +2660,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
-    events.on('agent:message', handler);
-    events.on('agent:delta', handler);
-    events.on('agent:plan', handler);
-    events.on('agent:decision', handler);
-    events.on('tool:update', handler);
+    // P-11: one registry, used for both subscribe and unsubscribe.
+    for (const name of SSE_EVENTS) events.on(name, handler);
     req.on('close', () => {
-      events.off('agent:message', handler);
-      events.off('agent:delta', handler);
-      events.off('agent:plan', handler);
-      events.off('agent:decision', handler);
-      events.off('tool:update', handler);
+      for (const name of SSE_EVENTS) events.off(name, handler);
     });
   });
 
@@ -2333,19 +3129,21 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 //    exit or crash of the parent) makes the scheduler drain and exit.
 export function startServer(config: ServerConfig = defaultServerConfig) {
   const { app } = createServer(config);
+  const tls = resolveTls();
   return new Promise<void>((resolve) => {
     const onListen = () => {
+      const scheme = tls ? 'https' : 'http';
       const handshake = config.socketPath
         ? { v: 1, name: 'trha-scheduler', port: 0, socket: config.socketPath }
-        : { v: 1, name: 'trha-scheduler', port: config.port };
+        : { v: 1, name: 'trha-scheduler', port: config.port, scheme };
       process.stdout.write(JSON.stringify(handshake) + '\n');
       if (config.socketPath) {
         console.error(`Scheduler listening on ${config.socketPath}`);
       } else {
-        console.error(`Scheduler listening on port ${config.port}`);
+        console.error(`Scheduler listening on ${scheme}://${config.host ?? '127.0.0.1'}:${config.port}`);
       }
       console.error(`Modes: ${Object.keys(MODES).join(', ')}`);
-      console.error(`Tools: ${ALL_TOOLS.length} registered`);
+      console.error(`Tools: ${catalogToolDefs().length} registered`);
       resolve();
     };
     if (config.socketPath) {
@@ -2355,6 +3153,8 @@ export function startServer(config: ServerConfig = defaultServerConfig) {
       process.on('exit', () => {
         try { rmSync(config.socketPath ?? ''); } catch { /* ignore */ }
       });
+    } else if (tls) {
+      createHttpsServer(tls, app).listen(config.port, config.host ?? '127.0.0.1', onListen);
     } else {
       app.listen(config.port, config.host ?? '127.0.0.1', onListen);
     }

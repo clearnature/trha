@@ -135,7 +135,7 @@ describe('tool-loop history invariants', () => {
 
   async function start(base: string): Promise<string> {
     const res = await fetch(`${base}/api/session/start`, {
-      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard' }),
+      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard', permissionMode: 'yolo' }),
     });
     return ((await res.json()) as { sessionId: string }).sessionId;
   }

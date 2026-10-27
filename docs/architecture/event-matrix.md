@@ -11,10 +11,13 @@
 | `session:created` | `/api/session/start` | 插件 `ctx.on` | — | CLI transcript `session`（/new 侧）|
 | `session:deleted` | `/api/session/delete` | 插件 | — | — |
 | `agent:message` | `runStep`（user 入/assistant 出、拦截回、超轮）| SSE `/api/events/:sessionId`、插件 | ✅ | CLI transcript `user`/`assistant` |
+| `agent:reasoning` | `runStep`（`queryModelStream` 的 reasoning 回调）| SSE、CLI（`EvNotice` → thinking 卡）| ✅ | —（只有 final 文本入 transcript）|
+| `agent:model-request` | `runStep`（**每次** `queryModel` 前）| SSE、CLI（step 分隔行）、插件 | ✅ | CLI transcript `model-request` |
+| `agent:context` | `runStep`（contextGovernor 改写前缀时）| SSE、CLI（compaction 卡）| ✅ | — |
+| `agent:retry` | `runStep`（`withRetry` 退避前）| SSE、CLI（retry 行）| ✅ | — |
 | `agent:plan` | `/api/agent/plan`（awaiting_approval）| SSE、CLI（EvPlan）| ✅ | CLI transcript（plan 决策流）|
 | `agent:decision` | `/api/agent/approve|deny` | SSE、CLI（EvVerdict）| ✅ | — |
 | `tool:update` | `runStep`（工具 running/succeeded）| SSE、CLI（EvTool→`tool` 卡）| ✅ | CLI transcript `tool`（running/succeeded）|
-| `agent:model-request` | `runStep`（**每次** `queryModel` 前）| 插件 `ctx.on`（“模型可见即记录”）| — | CLI transcript `model-request` |
 
 ## CLI transcript 事件（`Core.Transcript`，事件注册表单一来源）
 

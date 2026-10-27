@@ -61,7 +61,12 @@ osLine = do
 
 -- | Base URL of the orchestration scheduler: @http://host:port@.
 baseUrlLine :: CLIConfig -> Text
-baseUrlLine cfg = "http://" <> configHost cfg <> ":" <> T.pack (show (configPort cfg))
+baseUrlLine cfg =
+  let host = configHost cfg
+      -- Show the loopback address the scheduler actually binds to.
+      shown = if T.toLower (T.strip host) == "localhost" then "127.0.0.1" else host
+      scheme = if T.toLower (T.strip (configScheme cfg)) == "http" then "http" else "https"
+  in scheme <> "://" <> shown <> ":" <> T.pack (show (configPort cfg)) <> "/"
 
 -- | Memory usage of this process in megabytes (RSS), read from
 -- @/proc/self/statm@ on Linux; 'Nothing' elsewhere.

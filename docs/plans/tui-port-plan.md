@@ -20,7 +20,7 @@
 | **M3 审批与 diff** | 权限审批对话框 + unified diff 渲染 + once/always/reject | 审批到达时消息流锁定；diff 正确配色；once/always/reject 走 scheduler `decision` API | 主链路已落地；删除类 always 已移除；diff 行号/宽度阈值已在 M3.5-8 补齐 |
 | **M3.5 纠偏与收口**（新增） | 移除 drain window、双击 esc 修正、真实中断、审批安全特例、文档真实性、人工验收 | 下列 8 项逐条通过；文档勾选与代码一致 | **进行中（7/8，仅剩人工验收）** |
 | **M4 侧栏与高级** | 侧栏（token/成本/TODO）、@文件补全、leader 键、truecolor 主题、鼠标 | 侧栏 ≥80 列停靠、窄屏浮层；`@` 触发文件补全；主题含 truecolor 调色板 | **完成（M4-1/2/3）** |
-| **M5 存量补齐**（新增，不承诺） | fork/timeline/recovery、审批 diff 全屏、卡片焦点折叠、toast、reject 原因、成本/TPS | 每项启动时再细化 | backlog |
+| **M5–M10 完整移植**（2026-10-25 重定范围） | MiMo TUI 全形态面：消息流 Part、工具特化渲染、Home/Toast/导出、对话框全集、编辑器 extmark、侧栏九节；建议不移植项单列 | 每阶段纯模块 spec + pty 人工验收；需后端能力的项先落 API 再回填 UI（不做空壳） | **计划已细化（见 §M5–M10），实施待排期** |
 
 ---
 
@@ -248,6 +248,22 @@
   cabal 372/372 + 内核 308/0；scheduler typecheck + approval/interrupt/workspace 12/12；
   `KERNEL_BUILD=1 vitest provider-stream` 通过。
 
+### 技能选择语义（2026-10-25 修复）
+
+- **选中 ≠ 发送**：`/` 列表里按 Enter 选技能，现在只把 `/skill:<name> ` 填进输入框
+  （MiMo `DialogSkill` 的 `input.setText("/"+name+" ")` 语义），**不再**读文件并立刻起轮；
+  再按 Enter 才执行。触发词带空格后列表即关闭（MiMo autocomplete 同一规则）。
+- **执行时的可见面**：transcript/消息流显示可见触发词 `/skill:<name> <args>`，
+  技能正文（SKILL.md）作为模型上下文发送 —— 与 MiMo 的「可见文本 + 正文注入」切分一致；
+  文件读不到时给系统提示而不是发一轮空内容。
+- 证据：`UI.SkillsSpec` 新增 `parseSkillInvocation` / `skillTurn` 6 例；`cabal test trha-cli-test` **383/0**。
+- **内核侧同源（2026-10-25）**：`skill` 工具改走 `packages/scheduler/src/Server/skills.ts`，扫描链与 CLI
+  的 `UI.Skills.skillDirList` 完全一致（项目 `.agents/skills` → 项目 `.trha/skills` → `$HOME/.agents/skills`
+  → `$HOME/.trha/skills` → `TRHA_SKILLS_DIR`），支持 `<name>/SKILL.md` 与 `<name>.md`、frontmatter
+  `name`/`description`，同名项目优先；`TRHA_SKILLS_DIR` 由「覆盖默认目录」改为「追加」。
+  证据：`test/skills.test.ts` 12 例；`vitest run test/skills.test.ts test/standard-tools.test.ts
+  test/standard-tools-guards.test.ts` → **30/0**；`tsc --noEmit` EXIT=0。
+
 ## M4-4 供应商 / 模型切换（2026-10-25）——**已落地，设置面待补齐**
 
 - [x] **请求下发**：`sendMessageWithTarget` 在 `/api/agent/step` 里带 `provider`/`model`
@@ -276,22 +292,156 @@
 
 
 
-## M5：存量补齐（新增，不承诺，启动时逐个细化）
+## M5–M10：完整移植 MiMo TUI 形态面（2026-10-25 重定范围）
 
-分析文档 §5 里仍判"简陋/缺失"但不在 M0–M4 承诺内的项，登记备查：
+> 依据：`../reference/mimocode-tui-analysis.md`（五路源码直读）+ 本轮对
+> `/data/training/cli/MiMo-Code/packages/cli/src/cli/cmd/tui`（203 文件）的目录清单核对。
+> 口径：**先做不需要后端改动的形态**，需要 scheduler/内核新能力的项单列依赖，不做空壳 UI。
+> 归属：`A` = 纯 CLI（Haskell/brick）；`B` = 需 scheduler（TS）新端点/事件；`C` = 需内核改动；`D` = 建议不移植。
 
-- 会话管理：fork / timeline / recovery（当前只有列表 + resume 回放）
-- 审批 diff 全屏（MiMo `ctrl+f` Portal）与审批期间 diff 查阅
-- 逐卡折叠（卡片焦点/命中测试）替代"最近一张"
-- Toast 通知、成本/TPS 统计（footer 目前只有 token）
-- reject 原因（若 M3.5-5 选 B）
-- i18n 扩到多 locale（当前 zh/en）
+### 进度（2026-10-25 第二批）：M5-1/2/3 已接
+
+- **M5-1 reasoning 卡**：内核已有 `ChunkReasoning` → 内核 SSE `reasoning_content`；scheduler
+  `queryModelStream` 新增第三个回调实时转发 → `agent:reasoning`（载荷 `{sessionId, reasoning}`）；
+  CLI `Core.SSE` 分类为 `SseReasoning`，累积到 `PendingMsg.pmThinking`，轮末生成
+  `role="thinking"` 消息（前 3 行 + 字数）。
+- **M5-2 step 分隔**：`agent:model-request` 加入 SSE 白名单；CLI 渲染
+  `── round N · X msgs · Y tools ──`（新一轮开始时先落定上一轮内容）。
+- **M5-3 compaction 卡**：`agent:context`（trigger / savedTokens）加入白名单，CLI 渲染
+  `[context]` 卡。
+- **M5-4 retry 卡**：✅ scheduler 新增 `Server/retry.ts`（429/5xx/timeout 退避重试，
+  ECONNREFUSED 不重试以保住离线回退），发出 `agent:retry`；CLI 渲染 `role="retry"` 行
+  （`retry 1/3 in 500ms — reason`）。证据：`test/retry.test.ts` 7 例、`Core.SSESpec` 2 例。
+
+### M5 消息流完整形态（A，少量 B）
+
+> **进度（2026-10-25 第一批）**：M5-5 错误分类 ✅、M5-6 patch 卡 ✅（edit 结果现在附
+> unified diff，展开态走 `diffWidget`，折叠态显示 `+N/−M`）、M5-8 present/structured
+> 卡 ✅、M5-9 消息 footer ✅（model + in/out）。M5-1/2/3/4（reasoning / step /
+> compaction / retry）**需 scheduler 事件**，未做；M5-7 file part 后置（与 M9 附件同批）。
+
+| # | 原子 | MiMo 对照 | 现状 | 依赖 |
+|---|---|---|---|---|
+| M5-1 | reasoning/thinking 卡（折叠 + 时长 + subtle 配色） | `ReasoningPart`、`Thinking` spinner→Thought | 内核有 `reasoning_content`/`ChunkReasoningSignature`，CLI 未消费 | B：SSE/step 需要 reasoning 增量事件 |
+| M5-2 | step 分隔与每轮元信息（round、token、duration、model） | `step-start`/`step-finish` Part + message footer | 只有 footer 累计 usage | B：scheduler 需发 round 边界事件 |
+| M5-3 | compaction 卡（摘要 + `prefixResets` 代价） | `CompactionPart` | 无 UI | B：contextGovernor 触发时发事件 |
+| M5-4 | retry 卡（失败原因/退避） | `RetryPart` | 无 | B：scheduler 重试路径 |
+| M5-5 | 错误分类卡（rate-limit vs 普通 error） | `errorKind()` | 只有 `error` 角色 | A |
+| M5-6 | patch 卡（edit/write 的 diff 结果） | `PatchPart` + `<diff>` | `UI.Render.Diff` 已能渲染 diff | A |
+| M5-7 | file part（附件/图片引用） | `FilePart` + `source` | 无 | A（粘贴图片另见 M9） |
+| M5-8 | structured output 折叠卡 | `StructuredOutput` | 无 | A |
+| M5-9 | 消息级 footer（时间/agent/model/queued 标记） | message footer | 时间有 | A |
+
+### M6 工具渲染特化 + 逐卡折叠（A）
+
+> **进度（2026-10-25 第一批）**：M6-1…M6-6 ✅（`UI.Render.ToolSummary`：shell/read/
+> search/edit/write/net/agent/ask/skill/present/plan 十一类，折叠态家族化摘要、展开态
+> 详情行、present 卡跳过原始载荷）；M6-8 ✅ 逐卡折叠（`appCardFocus` + `alt+↑/↓` 移动 +
+> `ctrl+o`/空输入 Enter 切换，纯函数 `nextCardFocus` 有 spec）。M6-7 的
+> `shouldHideTool`（完成后隐藏低噪音工具）未做。
+
+MiMo 的 17 个 `Match`（`routes/session/index.tsx:2278-2326`）在 trha 的对应工具名：
+
+| # | 原子 | MiMo 工具 | trha 工具 | 渲染 |
+|---|---|---|---|---|
+| M6-1 | shell 卡（输出折叠、退出码、耗时） | `bash`/`exec_command` | `bash` | 命令 + 尾部输出 + exit |
+| M6-2 | 读/搜卡（行数、命中数、路径高亮） | `read`/`glob`/`grep`/`codesearch` | 同名 | 单行摘要 + 展开内容 |
+| M6-3 | 编辑卡（diff 上色，窄屏 inline / 宽屏行号） | `edit`/`apply_patch`/`write` | `edit`/`write`/`unified_edit` | 复用 `UI.Render.Diff` |
+| M6-4 | 网络卡（状态码/域名/字符数） | `webfetch`/`websearch` | `web_fetch`/`web_search` | 摘要行 |
+| M6-5 | 子智能体卡（任务树、跳转子会话） | `task`/`actor`/`workflow` | `subagent`/`workflow`/`team_task_*` | 摘要 + 会话 id |
+| M6-6 | 提问/技能/计划卡 | `question`/`skill`/`exit_plan_mode` | `ask_user_question`/`skill`/`exit_plan_mode` | 复用现有卡 |
+| M6-7 | 通用兜底 + `shouldHideTool`（完成后可隐藏） | `GenericTool` | 现有通用卡 | 保留为默认 |
+| M6-8 | **逐卡折叠**（卡片焦点/命中测试，替代"最近一张"） | 卡片焦点模型 | `toggleRecentFold` | `appFolds :: Map Int ToolFold` 已就位，补焦点与键位 |
+
+### M7 外壳结构（A；rename/tag 为 B）
+
+| # | 原子 | 内容 | 依赖 |
+|---|---|---|---|
+| M7-1 | Home 路由（logo、最近会话、tips、欢迎、`--prompt` 自动提交） | 双路由（Home ↔ Session） | ✅ 已落地：`Route` + `drawHome`（logo/最近会话/提示）；非空提交切到 Session；`/home` 返回并刷新 |
+| M7-2 | Toast 通知（info/warn/error，3s 自动消失） | `ui/toast.tsx` | ✅ 已落地：`appToast` + `showToast`（3s 定时器带时间戳防旧定时器）；触发点：模式切换、provider 保存、删除会话、`/clear`、`/export` |
+| M7-3 | 导出转写（markdown / json，对话框选格式与范围） | `dialog-export-options` | ✅ 已落地：`Core.Export`（`exportMarkdown`/`exportJson`/`defaultExportName`）+ `/export [json\|md] [path]`（默认 `~/.trha/exports/`） |
+| M7-4 | 草稿 stash（手动暂存 + 路由切换自动暂存） | `prompt/stash.tsx`、`dialog-stash` | ✅ 已落地：`UI.Stash`（push/pop/list、去重、50 条上限、`~/.trha/stash.jsonl` 原子写）+ `/stash [pop\|list]` |
+| M7-5 | 恢复流（失败候选提示，而非只打印一行） | ✅ 已落地：`resumeSession` 失败时给出最近会话候选 + 建议，并 Toast 提示 | A |
+| M7-6 | 会话 rename / tag / delete 确认 | ✅ rename/tag/delete 全部落地：scheduler `POST /api/session/:id/meta`（`title`/`tags`，随 stateDir 持久化）+ CLI `/rename <title>`、`/tag <tag...>`；`/delete <id>` 弹 `DialogConfirm`，确认后才删除（`appPendingDelete`） | A/B |
+| M7-7 | 窗口标题（会话名 + busy 标记） | ✅ 已落地：`setWindowTitle`（OSC 0），会话创建/恢复写 `trha · <id>`，发送时写 `● trha · <id>` | A |
+
+### M8 对话框与设置补全（A/B 混合）
+
+| # | 原子 | 依赖 |
+|---|---|---|
+| M8-1 | 模型选择：Favorites/Recent 分区、模糊搜索、收藏持久化 | ✅ 已落地：`UI.ModelPrefs`（`~/.trha/models.json`）+ `/fav [model]` + 对话框 `★` 标记与 favourite→recent→其余排序 |
+| M8-2 | 主题列表对话框（含预览、持久化） | ✅ 已落地：`/theme` 无参打开 `DialogThemes`（32 套、↑/↓、Enter 切换并写 settings、当前项标 `current`）；颜色预览未做 |
+| M8-3 | 命令面板：frecency 排序、分类、拼音匹配 | ✅ frecency 已落地（`UI.Frecency`、`~/.trha/frecency.json`、`handleSlash`/`submitSkill` 计数、稳定排序）；分类/拼音未做 |
+| M8-4 | 上下文限额 / 审批超时档（写入 settings） | A（键已在 `settings.yaml`） |
+| M8-5 | 技能对话框（替代内联列表；当前内联列表保留） | ✅ 已落地：`DialogSkills` 浮层（`/skills`，↑/↓ 选择、Enter 填入 `/skill:<name> `） |
+| M8-6 | 状态面板（LSP/MCP 连接状态） | **B**：scheduler 需状态端点 |
+| M8-7 | MCP 开关（增删/启停 server） | **B**：scheduler 需管理端点 |
+| M8-8 | Timeline / fork / rewind | **B**：scheduler 需会话分支 API |
+| M8-9 | 子 agent 对话框（列表、消息、状态） | **B**：scheduler 需 agent 视图端点（`list_agents` 已有部分） |
+| M8-10 | provider/agent/variant/worktree/workspace 对话框 | B（部分已有 provider） |
+| M8-11 | reject 附原因（跨壳契约变更） | ✅ 已落地：内核 `DecisionReq.reason`（响应回显）→ scheduler `/decision` 透传 → CLI `/deny <reason>`（`denyPlanWithReason`）；`plan-forwarding` 断言内核收到 reason | A/B |
+| M8-12 | 权限姿态（Shift+Tab 五态 / Ctrl+Y YOLO） | ✅ 已落地：scheduler `Permission/modes.ts` + `/api/session/:id/mode`；CLI 状态栏与键位见 M10-4 |
+
+### M9 编辑器增强（A；ghost/predict 为 B）
+
+| # | 原子 | 依赖 |
+|---|---|---|
+| M9-1 | extmark 风格占位：`@文件`、`/命令`、`$agent` 作为不可分割 token | A |
+| M9-2 | 大段粘贴折叠为占位，提交时展开 | A |
+| M9-3 | 补全 frecency 排序 + `file.ts#L10-L20` 行号 | A |
+| M9-4 | shell 模式（`!` 前缀，直接跑 bash 不进模型） | ✅ 已落地：`shellCommandOf` + `runShellCommand`（`bash -lc`，120s/20k 上限，非零退出码显示） |
+| M9-5 | `$agent` 补全与子会话派发 | B（agents 端点） |
+| M9-6 | ghost 预测（idle 时预测下一句，Tab 接受） | **B**：scheduler 需 `predict` |
+| M9-7 | `ctrl+e` 外部编辑器 | ✅ 已落地：临时文件 + `$EDITOR`/`$VISUAL`（默认 `vi`），`suspendAndResume` 交还终端，保存后回填输入框 |
+| M9-8 | 剪贴板图片（粘贴为附件）+ 终端图片协议 | 🟡 粘贴已落地：`ctrl+v` 依次尝试 `wl-paste`/`xclip`/`pngpaste` → 保存到 `~/.trha/paste/*.png` 并在输入框插入 `[image: path]`；模型多模态通道与终端图片协议未接 | A/B |
+| M9-9 | 语音输入 / VAD / voice-edit | 🟡 录音入口已落地：`ctrl+r` 用 `arecord` 录 5s（16 kHz mono）到 `~/.trha/voice/*.wav`，插入 `[voice: path]`；VAD、voice-edit 与转写需外部服务 | B+ |
+
+### M10 侧栏九节与高级（A/B 混合）
+
+| # | 原子 | 现状 | 依赖 |
+|---|---|---|---|
+| M10-1 | Sidebar：CWD / Files / Goal / Instructions | 只有 Context/TODO/Session | ✅ 已落地七节：Context / CWD / Files / Goal / Instructions / TODO / Session（`EvSidebarInfo` + `fetchSessionInfo`） |
+| M10-2 | Sidebar：Task 树（team task / subagent 树） | ✅ 已落地：`Agents` 节 + `fetchAgents`（`/api/sessions` 的 `parentId`）+ `agentTreeLines`（缩进树、当前会话 ●、上限 8 行）；team tasks 仍在 TODO 节 | A |
+| M10-3 | Sidebar：LSP / MCP 状态 | ✅ 已落地：scheduler `GET /api/mcp/status`（configured/connected）与 `GET /api/lsp/status`（running/diagnostics）+ 侧栏 `Services` 节 | A |
+| M10-4 | Sidebar：TPS / 成本（footer 已有 token） | ✅ TPS 已落地：`FooterLive.flTps` + `tps` metric（completion tokens / 本轮耗时）；成本需定价表，未做 | A |
+| M10-4b | 状态栏缓存/上下文/压缩三段 + 权限姿态标签（Reasonix 形态） | ✅ 已落地：`Footer` 新增 `mode/cache/ctx/compact`；`/api/session/:id/mode`；另加**每轮统计行**（`Core.TurnStats.turnSummary`：`本轮 … tok · in · cached · new · out · reasoning · ≈¥… · 低峰/高峰`，TUI 与 REPL 均显示） | A |
+| M10-5 | 鼠标选区/复制、滚动加速、滚动条 | 只有滚轮滚动 | A（vty 能力所限，能做的做） |
+| M10-6 | 声音反馈（成功/失败 bell，可配） | ✅ 已落地：`configBell`；回复完成与出错时各响一次（`\a`） | A |
+| M10-7 | 主题 32 套 / locale 17 种 | ✅ 主题 32/32；locale 支持集（2026-10-26 用户裁定）= **En / zh-Hans / zh-Hant / Français / Español / Русский / ไทย / မြန်မာ**；藏语（Bo）与彝文（Ii）为骨架；**ja / ko / de / it / pt / pl / tr / vi / id / uk 已剔除** | A |
+
+> **时间显示规范（2026-10-26）**：本地时间带系统时区缩写（`07:31:12 CST`，无缩写时 `UTC+08:00`）；transcript 存储保持 ISO `…Z`（UTC，可解析）；`/export` 头部注明 `Times are UTC (Z)`；低峰判断固定 UTC+8 00:30–08:30。
+
+> **2026-10-25 两主分支对比**（`/home/yanli/work/DeepSeek-Reasonix`）：
+> `fork/studio` 当前树已无 `internal/cli`（338 文件在 `refactor: the kernel's packages live in the layer they belong to` 中整体移除），因此交互以 `origin/main-v2` 为准。
+> main-v2 有 52 个 slash 命令、30 个键位；本轮补齐 `/copy`（剪贴板，xclip/wl-copy/pbcopy 回退）、`/verbose`（全展开工具卡）、`/todo`（团队任务）、`/tree`（代理会话树）。
+
+### 建议不移植（D，逐条等确认）
+
+> 2026-10-25 用户选择：**语音与图片协议保留**（见 M9-8 / M9-9），其余按下表建议不移植。
+
+| 项 | 理由 |
+|---|---|
+| 登录 / 商业 upsell（`dialog-mimo-login`、`dialog-go-upsell`、`dialog-agreement`、`dialog-console-org`） | MiMo 产品特有 |
+| 品牌装饰（`logo-design`、`background-image`、`starry-background`、`bg-pulse`） | 非功能形态；可用 1–2 个静态 logo 替代 |
+| MiMo worker/RPC 与 `--port` 双模 | trha 已有 HTTP/SSE + scheduler 架构，不重复造 |
+| `tui-migrate` / `tui-schema` | trha 用 `settings.yaml` 分层配置，等价能力已有 |
+| `win32.ts`（TUI 层 Windows 特化） | shell 语义已在 scheduler `shell.ts` 统一（M0–M2 of windows-shell-port-plan） |
+
+### 执行顺序与推荐
+
+依赖最少、收益最大的第一刀是 **M5 + M6**（纯外壳，不阻塞于后端）：
+消息流形态（reasoning/step/compaction/retry/error/patch/structured/footer）
+与工具特化渲染（17 → 8 组合并）+ 逐卡折叠。之后 M7（Home/Toast/导出/stash）、
+M8（对话框；B 项单独排期）、M9（编辑器）、M10（侧栏）。
+
+每个原子的验收沿用本仓纪律：纯模块 spec（`trha-cli-test`）+ 必要时 pty 人工验收；
+B/C 项在 scheduler/内核侧先落端点与事件，再回填 UI（不做空壳）。
 
 ---
 
 ## 自检记录
 
-- 覆盖度：分析文档 §5 判定表逐行有落点——硬伤→M0，简陋(输入/markdown/工具卡/token)→M1，缺失(对话框)→M2，(diff 审批)→M3，(侧栏/补全/leader/主题/鼠标)→M4，安全特例/真实中断/drain window→M3.5，会话管理与成本/TPS 等剩余「简陋」项→M5 backlog。
-- 占位符：无 TODO；M4/M5 为显式的「启动时细化」范围声明。唯一决策点：M3.5-5（reject 原因）给出 A/B 两条路径与默认值，不阻塞其余排期。
+- 覆盖度：分析文档 §5 判定表逐行有落点——硬伤→M0，简陋(输入/markdown/工具卡/token)→M1，缺失(对话框)→M2，(diff 审批)→M3，(侧栏/补全/leader/主题/鼠标)→M4，安全特例/真实中断/drain window→M3.5；**MiMo 全量形态面（203 文件清单逐项核对）→ M5–M10**（2026-10-25 重定范围，含依赖标注与不移植建议）。
+- 占位符：无 TODO；M5–M10 每个原子都有 MiMo 对照、现状、依赖三列；需后端能力的项显式标 `B`/`C`，不以 UI 空壳充数。
 - 类型一致：`applyChunk`/`PendingMsg`/`StreamChunk` 在任务 1 定义，任务 2/3 引用同名。
 - **状态纪律（2026-10-25 新增）**：勾选以代码核对为准，不凭记忆；完成一项须写明落地证据（文件 + 行号或模块名），未做的不勾。

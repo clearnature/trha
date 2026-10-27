@@ -112,13 +112,18 @@ copy_files() {
         # Create default config
         cat > "$INSTALL_DIR/config/production.yaml" << EOF
 # trha production configuration
+# 安全约定：只绑 loopback；端口/token 以 ~/.trha/runtime.json 为运行真相。
 server:
-  host: 0.0.0.0
-  port: 8080
+  host: 127.0.0.1
+  port: 28433
   workers: 8
 
+kernel:
+  host: 127.0.0.1
+  port: 19433
+
 model:
-  path: /opt/trha/models/Qwen3.8-27B-IQ3_M.gguf
+  path: /opt/trha/models
   context_size: 4096
   gpu_layers: 999
   threads: 8

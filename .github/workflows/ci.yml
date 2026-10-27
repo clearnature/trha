@@ -152,6 +152,40 @@ jobs:
         npm run build:main
         npm run build:renderer
 
+  web:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Use Node.js 20
+      uses: actions/setup-node@v3
+      with:
+        node-version: 20
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        cd packages/app/Web
+        npm install
+
+    - name: Typecheck
+      run: |
+        cd packages/app/Web
+        npm run typecheck
+
+    - name: Test
+      run: |
+        cd packages/app/Web
+        npm test
+
+    # Web is an independent client (P-10, 2026-10-27): its dist must be
+    # reproducible in CI, not only built on a developer machine.
+    - name: Build (dist)
+      run: |
+        cd packages/app/Web
+        npm run build
+
   benchmarks:
     runs-on: ubuntu-latest
     

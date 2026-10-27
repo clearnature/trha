@@ -1,0 +1,873 @@
+{
+  "ꀀ": {
+    "char": "ꀀ",
+    "strokes": [
+      "horizontal",
+      "vertical"
+    ],
+    "bagua": "哎",
+    "meaning": "天",
+    "wuxing_pose": 1,
+    "phase_index": 3,
+    "seven_stage": 0,
+    "local_chern": 13,
+    "trit_sequence": [
+      1,
+      0,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀁ": {
+    "char": "ꀁ",
+    "strokes": [
+      "circle",
+      "dot"
+    ],
+    "bagua": "哺",
+    "meaning": "地",
+    "wuxing_pose": 4,
+    "phase_index": 11,
+    "seven_stage": 6,
+    "local_chern": 15,
+    "trit_sequence": [
+      1,
+      1,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀂ": {
+    "char": "ꀂ",
+    "strokes": [
+      "horizontal",
+      "slant"
+    ],
+    "bagua": "采",
+    "meaning": "日",
+    "wuxing_pose": 1,
+    "phase_index": 7,
+    "seven_stage": 1,
+    "local_chern": 14,
+    "trit_sequence": [
+      1,
+      0,
+      0,
+      1,
+      -1,
+      1,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀃ": {
+    "char": "ꀃ",
+    "strokes": [
+      "curve",
+      "vertical"
+    ],
+    "bagua": "舍",
+    "meaning": "月",
+    "wuxing_pose": 4,
+    "phase_index": 3,
+    "seven_stage": 3,
+    "local_chern": 16,
+    "trit_sequence": [
+      1,
+      1,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀄ": {
+    "char": "ꀄ",
+    "strokes": [
+      "bend",
+      "dot"
+    ],
+    "bagua": "鲁",
+    "meaning": "雷",
+    "wuxing_pose": 0,
+    "phase_index": 7,
+    "seven_stage": 4,
+    "local_chern": 16,
+    "trit_sequence": [
+      0,
+      0,
+      0,
+      1,
+      -1,
+      1,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀅ": {
+    "char": "ꀅ",
+    "strokes": [
+      "circle",
+      "horizontal"
+    ],
+    "bagua": "朵",
+    "meaning": "风",
+    "wuxing_pose": 0,
+    "phase_index": 10,
+    "seven_stage": 2,
+    "local_chern": 16,
+    "trit_sequence": [
+      0,
+      0,
+      0,
+      -1,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀆ": {
+    "char": "ꀆ",
+    "strokes": [
+      "triangle",
+      "vertical"
+    ],
+    "bagua": "哼",
+    "meaning": "山",
+    "wuxing_pose": 2,
+    "phase_index": 4,
+    "seven_stage": 5,
+    "local_chern": 19,
+    "trit_sequence": [
+      -1,
+      1,
+      0,
+      1,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀇ": {
+    "char": "ꀇ",
+    "strokes": [
+      "square",
+      "dot"
+    ],
+    "bagua": "哈",
+    "meaning": "泽",
+    "wuxing_pose": 3,
+    "phase_index": 6,
+    "seven_stage": 2,
+    "local_chern": 18,
+    "trit_sequence": [
+      0,
+      1,
+      0,
+      0,
+      -1,
+      1,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀈ": {
+    "char": "ꀈ",
+    "strokes": [
+      "horizontal"
+    ],
+    "bagua": "哎",
+    "meaning": "一",
+    "wuxing_pose": 1,
+    "phase_index": 1,
+    "seven_stage": 0,
+    "local_chern": 6,
+    "trit_sequence": [
+      1,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 1
+  },
+  "ꀉ": {
+    "char": "ꀉ",
+    "strokes": [
+      "horizontal",
+      "horizontal"
+    ],
+    "bagua": "哎",
+    "meaning": "二",
+    "wuxing_pose": 1,
+    "phase_index": 2,
+    "seven_stage": 0,
+    "local_chern": 12,
+    "trit_sequence": [
+      1,
+      0,
+      0,
+      -1,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀊ": {
+    "char": "ꀊ",
+    "strokes": [
+      "slant",
+      "slant",
+      "slant"
+    ],
+    "bagua": "采",
+    "meaning": "三",
+    "wuxing_pose": 1,
+    "phase_index": 0,
+    "seven_stage": 1,
+    "local_chern": 24,
+    "trit_sequence": [
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 3
+  },
+  "ꀋ": {
+    "char": "ꀋ",
+    "strokes": [
+      "vertical",
+      "horizontal"
+    ],
+    "bagua": "哼",
+    "meaning": "十",
+    "wuxing_pose": 2,
+    "phase_index": 10,
+    "seven_stage": 5,
+    "local_chern": 13,
+    "trit_sequence": [
+      -1,
+      1,
+      0,
+      -1,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀌ": {
+    "char": "ꀌ",
+    "strokes": [
+      "circle"
+    ],
+    "bagua": "舍",
+    "meaning": "圆",
+    "wuxing_pose": 4,
+    "phase_index": 2,
+    "seven_stage": 3,
+    "local_chern": 10,
+    "trit_sequence": [
+      1,
+      1,
+      0,
+      -1,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 1
+  },
+  "ꀍ": {
+    "char": "ꀍ",
+    "strokes": [
+      "curve"
+    ],
+    "bagua": "朵",
+    "meaning": "弧",
+    "wuxing_pose": 0,
+    "phase_index": 8,
+    "seven_stage": 2,
+    "local_chern": 9,
+    "trit_sequence": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 1
+  },
+  "ꀎ": {
+    "char": "ꀎ",
+    "strokes": [
+      "horizontal",
+      "circle"
+    ],
+    "bagua": "采",
+    "meaning": "日",
+    "wuxing_pose": 1,
+    "phase_index": 9,
+    "seven_stage": 1,
+    "local_chern": 16,
+    "trit_sequence": [
+      1,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀏ": {
+    "char": "ꀏ",
+    "strokes": [
+      "curve",
+      "dot"
+    ],
+    "bagua": "舍",
+    "meaning": "月",
+    "wuxing_pose": 4,
+    "phase_index": 1,
+    "seven_stage": 3,
+    "local_chern": 14,
+    "trit_sequence": [
+      1,
+      1,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀐ": {
+    "char": "ꀐ",
+    "strokes": [
+      "vertical",
+      "horizontal",
+      "dot"
+    ],
+    "bagua": "哎",
+    "meaning": "星",
+    "wuxing_pose": 1,
+    "phase_index": 3,
+    "seven_stage": 0,
+    "local_chern": 18,
+    "trit_sequence": [
+      1,
+      0,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 3
+  },
+  "ꀑ": {
+    "char": "ꀑ",
+    "strokes": [
+      "horizontal",
+      "curve"
+    ],
+    "bagua": "采",
+    "meaning": "火",
+    "wuxing_pose": 1,
+    "phase_index": 8,
+    "seven_stage": 1,
+    "local_chern": 15,
+    "trit_sequence": [
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀒ": {
+    "char": "ꀒ",
+    "strokes": [
+      "curve",
+      "curve"
+    ],
+    "bagua": "舍",
+    "meaning": "水",
+    "wuxing_pose": 4,
+    "phase_index": 5,
+    "seven_stage": 3,
+    "local_chern": 18,
+    "trit_sequence": [
+      1,
+      1,
+      0,
+      -1,
+      -1,
+      1,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀓ": {
+    "char": "ꀓ",
+    "strokes": [
+      "triangle"
+    ],
+    "bagua": "哼",
+    "meaning": "山",
+    "wuxing_pose": 2,
+    "phase_index": 2,
+    "seven_stage": 5,
+    "local_chern": 12,
+    "trit_sequence": [
+      -1,
+      1,
+      0,
+      -1,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 1
+  },
+  "ꀔ": {
+    "char": "ꀔ",
+    "strokes": [
+      "vertical",
+      "slant"
+    ],
+    "bagua": "哎",
+    "meaning": "人",
+    "wuxing_pose": 1,
+    "phase_index": 5,
+    "seven_stage": 0,
+    "local_chern": 15,
+    "trit_sequence": [
+      1,
+      0,
+      0,
+      -1,
+      -1,
+      1,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀕ": {
+    "char": "ꀕ",
+    "strokes": [
+      "horizontal",
+      "dot"
+    ],
+    "bagua": "哼",
+    "meaning": "头",
+    "wuxing_pose": 2,
+    "phase_index": 8,
+    "seven_stage": 5,
+    "local_chern": 11,
+    "trit_sequence": [
+      -1,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀖ": {
+    "char": "ꀖ",
+    "strokes": [
+      "curve",
+      "vertical"
+    ],
+    "bagua": "朵",
+    "meaning": "手",
+    "wuxing_pose": 0,
+    "phase_index": 10,
+    "seven_stage": 2,
+    "local_chern": 16,
+    "trit_sequence": [
+      0,
+      0,
+      0,
+      -1,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀗ": {
+    "char": "ꀗ",
+    "strokes": [
+      "vertical",
+      "vertical"
+    ],
+    "bagua": "哼",
+    "meaning": "足",
+    "wuxing_pose": 2,
+    "phase_index": 11,
+    "seven_stage": 5,
+    "local_chern": 14,
+    "trit_sequence": [
+      -1,
+      1,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀘ": {
+    "char": "ꀘ",
+    "strokes": [
+      "horizontal",
+      "circle",
+      "dot"
+    ],
+    "bagua": "鲁",
+    "meaning": "牛",
+    "wuxing_pose": 0,
+    "phase_index": 7,
+    "seven_stage": 4,
+    "local_chern": 21,
+    "trit_sequence": [
+      0,
+      0,
+      0,
+      1,
+      -1,
+      1,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 3
+  },
+  "ꀙ": {
+    "char": "ꀙ",
+    "strokes": [
+      "curve",
+      "slant"
+    ],
+    "bagua": "鲁",
+    "meaning": "马",
+    "wuxing_pose": 0,
+    "phase_index": 8,
+    "seven_stage": 4,
+    "local_chern": 17,
+    "trit_sequence": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀚ": {
+    "char": "ꀚ",
+    "strokes": [
+      "circle",
+      "dot",
+      "dot"
+    ],
+    "bagua": "舍",
+    "meaning": "鱼",
+    "wuxing_pose": 4,
+    "phase_index": 2,
+    "seven_stage": 3,
+    "local_chern": 20,
+    "trit_sequence": [
+      1,
+      1,
+      0,
+      -1,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 3
+  },
+  "ꀛ": {
+    "char": "ꀛ",
+    "strokes": [
+      "slant",
+      "curve"
+    ],
+    "bagua": "采",
+    "meaning": "鸟",
+    "wuxing_pose": 1,
+    "phase_index": 10,
+    "seven_stage": 1,
+    "local_chern": 17,
+    "trit_sequence": [
+      1,
+      0,
+      0,
+      -1,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀜ": {
+    "char": "ꀜ",
+    "strokes": [
+      "square",
+      "horizontal"
+    ],
+    "bagua": "哼",
+    "meaning": "鼎",
+    "wuxing_pose": 2,
+    "phase_index": 4,
+    "seven_stage": 5,
+    "local_chern": 19,
+    "trit_sequence": [
+      -1,
+      1,
+      0,
+      1,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀝ": {
+    "char": "ꀝ",
+    "strokes": [
+      "circle",
+      "circle"
+    ],
+    "bagua": "哈",
+    "meaning": "车",
+    "wuxing_pose": 3,
+    "phase_index": 8,
+    "seven_stage": 2,
+    "local_chern": 20,
+    "trit_sequence": [
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀞ": {
+    "char": "ꀞ",
+    "strokes": [
+      "bend",
+      "dot"
+    ],
+    "bagua": "哈",
+    "meaning": "戈",
+    "wuxing_pose": 3,
+    "phase_index": 4,
+    "seven_stage": 2,
+    "local_chern": 16,
+    "trit_sequence": [
+      0,
+      1,
+      0,
+      1,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 2
+  },
+  "ꀟ": {
+    "char": "ꀟ",
+    "strokes": [
+      "horizontal"
+    ],
+    "bagua": "哎",
+    "meaning": "天",
+    "wuxing_pose": 1,
+    "phase_index": 1,
+    "seven_stage": 0,
+    "local_chern": 6,
+    "trit_sequence": [
+      1,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 1
+  },
+  "ꀠ": {
+    "char": "ꀠ",
+    "strokes": [
+      "vertical"
+    ],
+    "bagua": "哺",
+    "meaning": "地",
+    "wuxing_pose": 4,
+    "phase_index": 8,
+    "seven_stage": 6,
+    "local_chern": 7,
+    "trit_sequence": [
+      1,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 1
+  },
+  "ꀡ": {
+    "char": "ꀡ",
+    "strokes": [
+      "slant"
+    ],
+    "bagua": "采",
+    "meaning": "阳",
+    "wuxing_pose": 1,
+    "phase_index": 6,
+    "seven_stage": 1,
+    "local_chern": 8,
+    "trit_sequence": [
+      1,
+      0,
+      0,
+      0,
+      -1,
+      1,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 1
+  },
+  "ꀢ": {
+    "char": "ꀢ",
+    "strokes": [
+      "curve"
+    ],
+    "bagua": "舍",
+    "meaning": "阴",
+    "wuxing_pose": 4,
+    "phase_index": 1,
+    "seven_stage": 3,
+    "local_chern": 9,
+    "trit_sequence": [
+      1,
+      1,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "stroke_count": 1
+  }
+}

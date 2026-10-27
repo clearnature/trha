@@ -48,7 +48,7 @@ function fakeKernel(calls: Call[]) {
     res.json({ plan: planJson(), agentState: { state: phase } });
   });
   kernel.post('/session/:id/decision', (req, res) => {
-    const body = req.body as { action?: string; approve?: boolean };
+    const body = req.body as { action?: string; approve?: boolean; reason?: string };
     calls.push({ method: 'POST', path: 'decision', body });
     if (body.action === 'approve') {
       const step = pending();
@@ -165,6 +165,36 @@ describe('multi-step plan forwarding', () => {
       method: 'POST', headers: auth, body: JSON.stringify({ steps: [] }),
     });
     expect(unknown.status).toBe(404);
+
+    kernelServer.server.close();
+    schedulerServer.server.close();
+  });
+
+  it('forwards a reject reason to the kernel', async () => {
+    const calls: Call[] = [];
+    const kernelServer = await listen(fakeKernel(calls));
+    const { app } = createServer({
+      port: 0, token: 'dev-token',
+      haskellHost: '127.0.0.1', haskellPort: kernelServer.port,
+    });
+    const schedulerServer = await listen(app);
+    const base = `http://127.0.0.1:${schedulerServer.port}`;
+
+    const start = await fetch(`${base}/api/session/start`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard' }),
+    });
+    const { sessionId } = (await start.json()) as { sessionId: string };
+
+    const res = await fetch(`${base}/api/session/${sessionId}/decision`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ action: 'reject', reason: 'too risky' }),
+    });
+    expect(res.status).toBe(200);
+
+    const call = calls.find(c => c.path === 'decision');
+    const body = (call?.body ?? {}) as { action?: string; reason?: string };
+    expect(body.action).toBe('reject');
+    expect(body.reason).toBe('too risky');
 
     kernelServer.server.close();
     schedulerServer.server.close();

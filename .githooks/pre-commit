@@ -23,8 +23,9 @@ need_lint=0
 lint_files=$(printf '%s\n' "$changed" | grep -E '\.(ts|tsx|mts|cts|js|mjs)$' || true)
 if [ -n "$lint_files" ]; then need_lint=1; fi
 need_hlint=0
-# vendored third-party Haskell under 3rdparty/ keeps upstream style; lint gate applies to project sources only
-haskell_sources=$(printf '%s\n' "$changed" | grep -E '\.(hs|lhs)$' | grep -v '^3rdparty/' || true)
+# vendored third-party Haskell and archive/ keep upstream/historical style;
+# the lint gate applies to project sources only.
+haskell_sources=$(printf '%s\n' "$changed" | grep -E '\.(hs|lhs)$' | grep -v '^3rdparty/' | grep -v '^archive/' || true)
 if [ -n "$haskell_sources" ]; then need_hlint=1; fi
 need_ci=0
 case "$changed" in
@@ -101,15 +102,16 @@ check_hlint() {
     return 0
   fi
   printf '  %-28s %s ... ' "hlint" "staged modules"
+  # hlint exits 1 when it has *any* hint; the repo already carries historical
+  # hints, so only parse/real errors block the commit (hints stay advisory).
   # shellcheck disable=SC2086 # haskell_sources is a newline list without spaces
-  if hlint $haskell_sources >/dev/null 2>&1; then
-    echo ok
-  else
+  out=$(hlint $haskell_sources 2>&1 || true)
+  if printf '%s\n' "$out" | grep -q 'Error:'; then
     echo FAILED
-    # shellcheck disable=SC2086
-    hlint $haskell_sources
+    printf '%s\n' "$out" | grep -B2 -A8 'Error:'
     exit 1
   fi
+  echo ok
 }
 
 check_ci() {

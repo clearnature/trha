@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { Server } from 'http';
 import type { AddressInfo } from 'net';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createServer } from '../src/Server/index.js';
@@ -81,7 +82,7 @@ describe('working_directory applies to the other tools', () => {
     const base = `http://127.0.0.1:${schedulerServer.port}`;
 
     const start = await fetch(`${base}/api/session/start`, {
-      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard' }),
+      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard', permissionMode: 'yolo' }),
     });
     const { sessionId } = (await start.json()) as { sessionId: string };
     const step = await fetch(`${base}/api/agent/step`, {
@@ -99,6 +100,48 @@ describe('working_directory applies to the other tools', () => {
 
     stop(); kernelServer.server.close(); schedulerServer.server.close();
   });
+
+  // The tool is offered to the model as `bash`; it used to run under Node's
+  // default `/bin/sh` (dash on Debian), where bash syntax is a syntax error.
+  it.skipIf(process.platform === 'win32')(
+    'bash is really bash, and it keeps the inherited PATH',
+    async () => {
+      const kernel = scriptKernel([
+        { name: 'bash', args: { command: '[[ -n x ]] && echo bashy-ok' } },
+        { name: 'bash', args: { command: 'echo "ver=${BASH_VERSION:-none}"' } },
+        { name: 'bash', args: { command: 'command -v node' } },
+      ]);
+      const kernelServer = await listen(kernel);
+      const { app, stop } = createServer({
+        port: 0, token: 'dev-token', haskellHost: '127.0.0.1', haskellPort: kernelServer.port,
+        stateDir: path.join(dir, 'state'),
+      });
+      const schedulerServer = await listen(app);
+      const base = `http://127.0.0.1:${schedulerServer.port}`;
+
+      const start = await fetch(`${base}/api/session/start`, {
+        method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard', permissionMode: 'yolo' }),
+      });
+      const { sessionId } = (await start.json()) as { sessionId: string };
+      const step = await fetch(`${base}/api/agent/step`, {
+        method: 'POST', headers: auth, body: JSON.stringify({ sessionId, message: 'bash checks' }),
+      });
+      const body = (await step.json()) as { messages: Array<{ role: string; content: string }> };
+      const results = body.messages.filter(m => m.role === 'tool').map(m => m.content);
+
+      // bash-only syntax, and a clean exit (dash reported `not found`, 127)
+      expect(results[0]).toContain('bashy-ok');
+      expect(results[0]).toMatch(/^exit 0/);
+      // BASH_VERSION is set by bash itself
+      expect(results[1]).not.toContain('ver=none');
+      // ...and the shell is NOT a login shell: a profile must not rewrite PATH,
+      // which on this machine swaps an fnm node for the system one.
+      const which = (results[2] ?? '').replace(/^exit \d+\n/, '').trim();
+      expect(realpathSync(which)).toBe(realpathSync(process.execPath));
+
+      stop(); kernelServer.server.close(); schedulerServer.server.close();
+    },
+  );
 });
 
 /** macOS-style /private symlinks are not an issue here, but keep it honest. */

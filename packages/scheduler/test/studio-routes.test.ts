@@ -42,7 +42,10 @@ describe('/studio hosting and version surface', () => {
     const res = await fetch(`${base}/studio/`);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('trha Desktop'); // the exported React SPA
+    // Two builds can win here: `packages/app/Web/dist` when it exists, else the
+    // legacy Desktop export in `studio-public` (see `webUiBuildDir`). They carry
+    // different <title>s, so assert the SPA mount point both of them have.
+    expect(html).toContain('<div id="root">');
   });
 
   it('reports current and pinned versions', async () => {

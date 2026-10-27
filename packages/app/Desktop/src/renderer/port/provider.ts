@@ -1,5 +1,5 @@
 // Provider registry types (mirror of the kernel's shapes in
-// src/Core/Provider/Types.hs — the UI must not invent fields).
+// src/api/Core/Provider/Types.hs — the UI must not invent fields).
 
 export interface ProviderEntry {
   name: string;

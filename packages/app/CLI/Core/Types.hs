@@ -12,7 +12,9 @@ module Core.Types
   , Tool(..)
   , ModelInfo(..)
   , Usage(..)
+  , mkUsage
   , StreamChunk(..)
+  , SessionMode(..)
   , PlanSubmit(..)
   , PlanVerdict(..)
   , PlanStepView(..)
@@ -25,7 +27,11 @@ module Core.Types
   , ToolEvent(..)
   , TodoStatus(..)
   , TodoItem(..)
+  , SessionInfo(..)
+  , AgentEntry(..)
+  , Balance(..)
   , ProviderInfo(..)
+  , ProviderProbe(..)
   , providerStoreToList
   , providerModelInfos
   , modelForProvider
@@ -34,6 +40,7 @@ module Core.Types
     -- * Configuration
   , CLIConfig(..)
   , defaultCLIConfig
+  , effectiveReasoningLanguage
   
     -- * Errors
   , CLIError(..)
@@ -125,12 +132,21 @@ instance FromJSON PluginInfo where
     <*> o .: "version"
     <*> o .: "description"
 
--- | Usage statistics
+-- | Usage statistics.  The cache split is what makes the status line honest:
+-- DeepSeek bills cached prompt tokens at a discount, so "hit / (hit+miss)" is
+-- the rate users care about (turn and session average).
 data Usage = Usage
   { usagePromptTokens     :: Int
   , usageCompletionTokens :: Int
   , usageTotalTokens      :: Int
+  , usageCacheHitTokens   :: Int
+  , usageCacheMissTokens  :: Int
+  , usageReasoningTokens  :: Int -- ^ thinking tokens inside the completion
   } deriving (Show, Eq, Generic)
+
+-- | Usage without cache accounting (older kernels / tests).
+mkUsage :: Int -> Int -> Int -> Usage
+mkUsage p c t = Usage p c t 0 0 0
 
 instance ToJSON Usage
 -- The scheduler echoes provider numbers as promptTokens/completionTokens
@@ -144,7 +160,32 @@ instance FromJSON Usage where
     c <- o .:? "completionTokens" .!= 0
     t <- o .:? "totalTokens"
     cum <- o .:? "cumulativeTokens"
-    pure $ Usage p c (fromMaybe (p + c) (t <|> cum))
+    hit <- o .:? "cacheHitTokens" .!= 0
+    miss <- o .:? "cacheMissTokens" .!= 0
+    rsn <- o .:? "reasoningTokens" .!= 0
+    pure $ Usage p c (fromMaybe (p + c) (t <|> cum)) hit miss rsn
+
+-- | Session permission posture (Shift+Tab cycle / Ctrl+Y YOLO).
+data SessionMode = SessionMode
+  { smMode        :: Text   -- ^ read-only | ask | auto | yolo | plan
+  , smLabel       :: Text   -- ^ display label ("Read only", "YOLO", …)
+  , smPlanMode    :: Bool   -- ^ plan flag (separate from the approval mode)
+  , smYoloRestore :: Maybe Text -- ^ posture Ctrl+Y returns to
+  } deriving (Show, Eq)
+
+instance FromJSON SessionMode where
+  parseJSON = withObject "SessionMode" $ \o ->
+    SessionMode
+      <$> o .: "mode"
+      <*> o .:? "label" .!= ""
+      <*> o .:? "planMode" .!= False
+      <*> o .:? "yoloRestore"
+
+-- | Goal + team tasks of one session (sidebar data).
+data SessionInfo = SessionInfo
+  { siGoal  :: Maybe Text
+  , siTodos :: [TodoItem]
+  } deriving (Show, Eq)
 
 -- | Stream chunks from the LLM
 data StreamChunk
@@ -308,6 +349,35 @@ instance ToJSON TodoItem where
     , "status" .= todoStatus t
     ]
 
+-- | What an endpoint turned out to be, after probing it (kernel @POST
+-- /api/providers/probe@).  Every field is a guess the user confirms.
+data ProviderProbe = ProviderProbe
+  { ppKind       :: Text
+  , ppKinds      :: [Text]
+  , ppAuthHeader :: Bool
+  , ppModels     :: [Text]
+  , ppDefault    :: Text
+  , ppEfforts    :: [Text]
+  , ppEffort     :: Text
+  , ppVision     :: [Text]
+  , ppAmbiguous  :: Bool
+  , ppNoProxy    :: Bool
+  } deriving (Show, Eq)
+
+instance FromJSON ProviderProbe where
+  parseJSON = withObject "ProviderProbe" $ \o ->
+    ProviderProbe
+      <$> (o .:? "kind"       .!= "openai")
+      <*> (o .:? "kinds"      .!= [])
+      <*> (o .:? "authHeader" .!= True)
+      <*> (o .:? "models"     .!= [])
+      <*> (o .:? "default"    .!= "")
+      <*> (o .:? "efforts"    .!= [])
+      <*> (o .:? "effort"     .!= "")
+      <*> (o .:? "vision"     .!= [])
+      <*> (o .:? "ambiguous"  .!= False)
+      <*> (o .:? "noProxy"    .!= False)
+
 -- | One entry of the kernel's provider registry (@GET /api/providers@ via
 -- the scheduler).  The key itself never crosses this boundary.
 data ProviderInfo = ProviderInfo
@@ -319,6 +389,15 @@ data ProviderInfo = ProviderInfo
   , piInUse         :: Bool        -- ^ the kernel's default when no provider is named
   , piHasKey        :: Bool
   , piContextWindow :: Maybe Int
+  , piEffort        :: Text
+  , piAuthHeader    :: Bool
+  , piNoProxy       :: Bool
+  , piVision        :: [Text]
+  , piEfforts       :: [Text]
+  , piHeaders       :: Maybe Value
+  , piExtraBody     :: Maybe Value
+  , piThinking      :: Text
+  , piResponsesMode :: Text
   } deriving (Show, Eq)
 
 instance FromJSON ProviderInfo where
@@ -332,6 +411,15 @@ instance FromJSON ProviderInfo where
       <*> (o .:? "inUse" .!= False)
       <*> (o .:? "hasKey" .!= False)
       <*> o .:? "contextWindow"
+      <*> (o .:? "effort"     .!= "")
+      <*> (o .:? "authHeader" .!= True)
+      <*> (o .:? "noProxy"    .!= False)
+      <*> (o .:? "visionModels" .!= [])
+      <*> (o .:? "efforts"      .!= [])
+      <*> o .:? "headers"
+      <*> o .:? "extraBody"
+      <*> (o .:? "thinking"      .!= "")
+      <*> (o .:? "responsesMode" .!= "")
 
 -- | Parse the @{"providers":[…]}}@ envelope the registry endpoints return.
 providerStoreToList :: Value -> Either CLIError [ProviderInfo]
@@ -377,17 +465,27 @@ data CLIConfig = CLIConfig
   , configProvider   :: Text -- ^ preferred provider name ("" = kernel inUse)
   , configToken      :: Text
   , configMaxTokens  :: Int
+  , configCtxSize    :: Maybe Int -- ^ override for the model's context window
   , configTimeout    :: Int
   , configRetries    :: Int
   , configVerbose    :: Bool
   , configTheme      :: Text
-  , configLang       :: Text -- ^ "zh" (default) or "en" interface language
+  , configLang       :: Text -- ^ BCP 47 tag: "zh-Hans" (default), "zh-Hant", "en", …
+  , configEffort     :: Text -- ^ reasoning effort: auto|minimal|low|medium|high
   , configMetrics    :: Text -- ^ status-line metric keys (comma separated)
   , configMarkdown   :: Bool -- ^ render assistant replies as markdown
   , configTimestamps :: Bool -- ^ show message timestamps
   , configHints      :: Bool -- ^ show the footer key hints
   , configBell       :: Bool -- ^ ring the terminal bell when a reply completes
+  , configMouseCapture :: Bool -- ^ capture the mouse in-app (wheel becomes app-driven); off = terminal-native wheel + selection
+  , configOutputStyle :: Text -- ^ reply style: default | concise | detailed
+  , configAskTimeout :: Int -- ^ seconds to wait for a tool approval
+  , configReasoningLanguage :: Text -- ^ language for the model's reasoning (auto | zh-Hans | en …)
   , configProxy      :: Text -- ^ "" (default: env proxy for remote, direct for loopback) | "none" | "http://host:port"
+  , configPriceInput  :: Double -- ^ CNY per 1M cache-miss prompt tokens
+  , configPriceCached :: Double -- ^ CNY per 1M cache-hit prompt tokens
+  , configPriceOutput :: Double -- ^ CNY per 1M completion tokens
+  , configScheme     :: Text -- ^ scheduler transport: "https" (default) | "http"
   } deriving (Show, Eq, Generic)
 
 instance ToJSON CLIConfig
@@ -402,39 +500,76 @@ instance FromJSON CLIConfig where
     <*> v .:? "configProvider" .!= ""
     <*> v .:? "configToken" .!= "dev-token"
     <*> v .: "configMaxTokens"
+    <*> v .:? "configCtxSize"
     <*> v .: "configTimeout"
     <*> v .: "configRetries"
     <*> v .: "configVerbose"
     <*> v .:? "configTheme" .!= "tokyo-night"
-    <*> v .:? "configLang" .!= "zh"
-    <*> v .:? "configMetrics" .!= "model,git,context,session"
+    <*> v .:? "configLang" .!= "zh-Hans"
+    <*> v .:? "configEffort" .!= "auto"
+    <*> v .:? "configMetrics" .!= "model,mode,cache,ctx,compact,session"
     <*> v .:? "configMarkdown" .!= True
     <*> v .:? "configTimestamps" .!= True
     <*> v .:? "configHints" .!= True
     <*> v .:? "configBell" .!= False
+    <*> v .:? "configMouseCapture" .!= False
+    <*> v .:? "configOutputStyle" .!= "default"
+    <*> v .:? "configAskTimeout" .!= 300
+    <*> v .:? "configReasoningLanguage" .!= "auto"
     <*> v .:? "configProxy" .!= ""
+    <*> v .:? "configPriceInput" .!= 0
+    <*> v .:? "configPriceCached" .!= 0
+    <*> v .:? "configPriceOutput" .!= 0
+    <*> v .:? "configScheme" .!= "https"
 
 -- | Default CLI configuration
 defaultCLIConfig :: CLIConfig
 defaultCLIConfig = CLIConfig
   { configHost      = "localhost"
-  , configPort      = 3456
+  , configPort      = 28433
   , configModel     = "deepseek-chat"
   , configProvider  = ""
   , configToken     = "dev-token"
   , configMaxTokens = 4096
+  , configCtxSize   = Nothing
   , configTimeout   = 120000
   , configRetries   = 3
   , configVerbose   = False
   , configTheme     = "tokyo-night"
-  , configLang      = "zh"
-  , configMetrics   = "model,git,context,session"
+  , configLang      = "zh-Hans"
+  , configEffort    = "auto"
+  , configMetrics   = "model,mode,cache,ctx,compact,session"
   , configMarkdown  = True
   , configTimestamps = True
   , configHints     = True
   , configBell      = False
+  , configMouseCapture = False
+  , configOutputStyle = "default"
+  , configAskTimeout = 300
+  , configReasoningLanguage = "auto"
   , configProxy     = ""
+  , configPriceInput  = 0
+  , configPriceCached = 0
+  , configPriceOutput = 0
+  , configScheme     = "https"
   }
+
+-- | Language the model is asked to reason in.
+--
+-- @auto@ (the default) follows the interface language, so a Chinese UI gets
+-- Chinese reasoning without a second setting; an explicit tag
+-- (@zh-Hans@, @en@, …) always wins.  'Nothing' means the request carries no
+-- language instruction at all (both fields empty).
+effectiveReasoningLanguage :: CLIConfig -> Maybe Text
+effectiveReasoningLanguage cfg
+  | T.null code            = uiLang
+  | T.toLower code == "auto" = uiLang
+  | otherwise              = Just code
+  where
+    code = T.strip (configReasoningLanguage cfg)
+    uiLang =
+      let l = T.strip (configLang cfg)
+      in if T.null l then Nothing else Just l
 
 -- | CLI errors
 data CLIError
@@ -465,3 +600,24 @@ renderPlanBrief pv = T.unlines $
     mark "approved" = "+"
     mark "rejected" = "r"
     mark _          = "."
+
+-- | Provider account balance (status line "余额").
+data Balance = Balance
+  { balanceCurrency :: Text
+  , balanceTotal    :: Double
+  } deriving (Show, Eq)
+
+instance FromJSON Balance where
+  parseJSON = withObject "Balance" $ \o ->
+    Balance <$> o .:? "currency" .!= "CNY"
+            <*> o .:? "total" .!= 0
+
+-- | One session in the agent tree (subagent view): id + parent link.
+data AgentEntry = AgentEntry
+  { aeId     :: Text
+  , aeParent :: Maybe Text
+  } deriving (Show, Eq)
+
+instance FromJSON AgentEntry where
+  parseJSON = withObject "AgentEntry" $ \o ->
+    AgentEntry <$> o .: "id" <*> o .:? "parentId"

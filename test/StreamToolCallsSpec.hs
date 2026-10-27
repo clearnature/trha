@@ -80,7 +80,7 @@ streamToolCallsSpec = describe "parallel tool calls" $ do
       events <- newIORef ([] :: [StreamChunk])
       turn <- Stream.openAICompatStreamCall
         ("http://127.0.0.1:" <> show port <> "/v1/chat/completions")
-        "test-key"
+        [("Authorization", "Bearer test-key")]
         (object ["model" .= ("test" :: String), "stream" .= True])
         (\c -> modifyIORef' events (c :))
       let calls = ctToolCalls turn

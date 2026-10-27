@@ -4,7 +4,7 @@ import { resolveApiConfig } from '../src/renderer/stores/apiConfig.js';
 describe('resolveApiConfig', () => {
   it('uses the preload token path inside the Electron shell', () => {
     const cfg = resolveApiConfig({ hasPreload: true, schedulerPort: 3456, isStudioPath: false });
-    expect(cfg).toEqual({ base: 'http://localhost:3456', useToken: true });
+    expect(cfg).toEqual({ base: 'https://localhost:3456', useToken: true });
   });
 
   it('uses the same-origin no-token path under /studio', () => {
@@ -14,7 +14,7 @@ describe('resolveApiConfig', () => {
 
   it('falls back to the default local port for a plain browser', () => {
     const cfg = resolveApiConfig({ hasPreload: false, isStudioPath: false });
-    expect(cfg).toEqual({ base: 'http://localhost:3456', useToken: false });
+    expect(cfg).toEqual({ base: 'https://localhost:28433', useToken: false });
   });
 
   it('prefers the shell path even when loaded under /studio-like dev URL', () => {

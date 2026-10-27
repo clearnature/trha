@@ -10,8 +10,11 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "test": "vitest",
-    "lint": "eslint src",
+    "lint": "oxlint src",
     "clean": "rm -rf dist"
+  },
+  "engines": {
+    "node": ">=22.4.0"
   },
   "keywords": [
     "scheduler",

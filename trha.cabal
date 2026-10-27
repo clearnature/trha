@@ -9,9 +9,8 @@ build-type:         Simple
 -- Core Engine (Haskell/GHC)
 library trha-core
   exposed-modules:
-    Core.Plugin.Free
-    Core.Plugin.Types
     Core.Session.Types
+    Core.Session.Projection
     Core.Session.Manager
     Core.Agent.Types
     Core.Agent.Modes
@@ -24,7 +23,7 @@ library trha-core
     Core.Cache.Types
     -- 内核载体：C[A₄] 函数空间 + Plancherel 内积（数学实现在 sov-math）
     Kernel.Carrier
-  hs-source-dirs:   src
+  hs-source-dirs:   src/core
   build-depends:    base ^>=4.22
                   , sov-math
                   , free
@@ -39,7 +38,6 @@ library trha-core
 -- LLM Adapters + CPU Backend (merged to avoid GHC 9.14 internal-lib linking bug)
 library trha-llm
   exposed-modules:  
-    Core.HTTPProxy
     LLM.Adapter.Types
     LLM.Adapter.Interface
     LLM.Providers.DeepSeek
@@ -75,7 +73,7 @@ library trha-llm
     Infrastructure.CPU.Inference
     Infrastructure.CPU.GGUF
     Infrastructure.CPU.Dequant
-  hs-source-dirs:   src
+  hs-source-dirs:   src/llm
   build-depends:    base ^>=4.22
                   , trha:trha-core
                   , trha:trha-infra
@@ -90,7 +88,7 @@ library trha-llm
                   , stm
                   , network
   default-language: Haskell2010
-  c-sources:        cbits/gf27_avx2.c
+  c-sources:        src/llm/cbits/gf27_avx2.c
   cc-options:       -O2 -fopenmp
   ld-options:       -fopenmp
 
@@ -101,105 +99,22 @@ library trha-api
   visibility:        public
   exposed-modules:
     API.Server
+    API.Security
     API.Providers
     API.ProviderProbe
     API.ProviderRuntime
     Core.Provider.Types
 
-  --------------------------------------------------------------------------
-  -- ⚠️⚠️  禁 止 删 除 本 节 —— 下面 27 项是【必需】的，不是冗余  ⚠️⚠️
-  --------------------------------------------------------------------------
-  --
-  -- 为什么必须列在这里：
-  -- 本库与 trha-llm **共享 `hs-source-dirs: src`**。GHC 带 `-isrc` 时会在同一目录找到这些
-  -- 源文件，并把它们当成本库要引用的模块。若不在 other-modules 里列出，cabal 就**不编译**
-  -- 它们 —— 于是「引用了却没人编」，并且失败发生在**链接期**（不是编译期），极易被误判成
-  -- "冗余项，可以删掉优化"。
-  --
-  -- 实测证据（2026-09-13，本仓）：
-  -- 删掉本节后：
-  -- cabal build trha-api  → EXIT=0        ★ 单库构建**骗过了**，看不出问题
-  -- cabal build all       → EXIT=1，链接器报
-  -- undefined reference to
-  -- `...inplacezmtrhazmapi_LLMziProvidersziDeepSeek_parseDeepSeekChatTurn_closure`
-  -- （符号前缀 `...trhazmapi_` 表明 trha-api 在找 DeepSeek，但没人编译它）
-  -- cabal build trha-api 的产物此时只剩 4 个 .o（API/*），Infrastructure.*/LLM.*/Core.* 全消失
-  -- 随后已完整回滚（`git diff` 为空，四个套件全绿）。请不要重蹈：**先看本注释再动**。
-  --
-  -- 【已评估：决定 **不** 拆分（2026-09-13，用户裁定，见 commit 记录）】
-  -- 曾提议"拆分 `hs-source-dirs`"（把 `src/` 按库拆开，本节随之消失）。**已撤回**，理由：
-  --   ① 提出它的理由是"消除重复编译" —— 但那影响的是**构建时间**，而本项目的判据是
-  --      **数学/理论正确性**，构建时间**不是判据**（用户 2026-09-13 明确纠正过这一取向）；
-  --   ② 唯一可能算实质的理由是"trha-api 与 trha-llm 的 LLMAdapter 是两个不同类型"，
-  --      但**尚未验证**它是否仍阻碍任何该做的事 —— 要动架构，应先写注入测试证明真有障碍；
-  --   ③ 动它需要挪源文件（含 `src/Core/Provider/Types.hs`），而本轮已实测"动本节 ⇒ 链接失败"。
-  -- 结论：**维持现状** —— 本节保持 27 项完整，**不再提议拆分**。
-  --
-  -- 分类（**仅**当将来有人拿出"真有障碍"的证据、坚持要拆时，用它做核对清单）：
-  -- · 24 项 = trha-llm 的 exposed-modules：20 × `Infrastructure.CPU.*` + 4 × `LLM.*`
-  -- ·  5 项 = trha-core 的 exposed-modules：`Core.Agent.Modes` / `Core.Agent.StateMachine`
-  -- / `Core.Agent.Types` / `Core.Session.Manager` / `Core.Session.Types`
-  --   （后两项 StateMachine/Types 是 D-3 接内核 FSM 后新增的 —— 会话层依赖它们）
-  -- ⚠️ 注意 `build-depends` 里**已经**列了 `trha:trha-core` 与 `trha:trha-llm` ——
-  -- 所以这不是"依赖没写"，而是"共享 src/ 导致的被迫重编"。两者不是一回事。
-  -- ⚠️ 若将来把 `src/` 拆开，本节应随之**大幅缩短**（甚至清空）；届时用这 27 项做核对清单。
-  --
-  other-modules:
-    Core.Agent.Modes
-    Core.Agent.StateMachine
-    Core.HTTPProxy
-    Core.Agent.Types
-    Core.Session.Manager
-    Core.Session.Types
-    Infrastructure.CPU.ConstraintVerdict
-    Infrastructure.CPU.HolographicSpace
-    Infrastructure.CPU.S2Geometry
-    Infrastructure.CPU.GF3Ops
-    Infrastructure.CPU.Christoffel
-    Infrastructure.CPU.GF3Intrinsic
-    Infrastructure.CPU.SovereignIntrinsic
-    Infrastructure.CPU.SovereignModel
-    Infrastructure.CPU.SovereignPhase12
-    Infrastructure.CPU.SovereignGF27
-    Infrastructure.CPU.SovereignLossGain
-    Infrastructure.CPU.SovereignSection
-    Infrastructure.CPU.SovereignTypes
-    Infrastructure.CPU.SovereignWuxingLayer
-    Infrastructure.CPU.Z12Sys
-    Infrastructure.CPU.BLAS
-    Infrastructure.CPU.Inference
-    Infrastructure.CPU.SovereignFull
-    Infrastructure.CPU.B1Window
-    Infrastructure.CPU.GF27SIMD
-    Infrastructure.CPU.Ops
-    Infrastructure.CPU.SOV3
-    Infrastructure.CPU.SIMD
-    Infrastructure.CPU.Types
-    LLM.Adapter.Interface
-    LLM.Adapter.Types
-    LLM.Providers.DeepSeek
-    LLM.Stream
-    -- 会话快照落盘（API.Server 直接调用；与 Core.*/LLM.* 同理需在本库重编一份）
-    Infrastructure.Storage.SessionStore
-    -- ⚠️ trha-gpu-infer 依赖链把 WebGPU 模块带进共享 src 编译面：
-    -- 与 trha-llm 的 27 项同理，必须列入否则链接期失败
-    Infrastructure.WebGPU.Raw.Types
-    Infrastructure.WebGPU.Raw.Enums
-    Infrastructure.WebGPU.Raw.Structs
-    Infrastructure.WebGPU.Raw.FFI
-    Infrastructure.WebGPU.Raw.Async
-    Infrastructure.WebGPU.Context
-    Infrastructure.WebGPU.Buffer
-    Infrastructure.WebGPU.Kernel
-    Infrastructure.WebGPU.Error
-  hs-source-dirs:   src
-  include-dirs:     3rdparty/wgpu-native/include
-  c-sources:        cbits/wgpu_callback_shim.c
+  -- 2026-10-27：按库拆分后本库只看 src/api，44 项 other-modules 已删除。
+  -- 类型唯一性回归见 docs/plans/improvement-plan-2026-10-27.md P-01。
+  hs-source-dirs:   src/api
   extra-libraries:         wgpu_native
   extra-lib-dirs-static:   3rdparty/wgpu-native/lib
   build-depends:    base ^>=4.22
                   , trha:trha-core
                   , trha:trha-llm
+                  , trha:trha-infra
+                  , trha:trha-webgpu
                   , trha:trha-gpu-infer
                   , servant
                   , servant-server
@@ -219,18 +134,21 @@ library trha-api
                   , async
                   , directory
                   , filepath
+                  , random
+                  , unix
   default-language: Haskell2010
 
 -- Infrastructure Layer
 library trha-infra
   exposed-modules:  
+    Core.HTTPProxy
     Infrastructure.Storage.JSON
     Infrastructure.Storage.SessionStore
     Infrastructure.Storage.SQLite
     Infrastructure.Network.HTTP
     Infrastructure.Sandbox.Process
     Infrastructure.Telemetry.Metrics
-  hs-source-dirs:   src
+  hs-source-dirs:   src/infra
   build-depends:    base ^>=4.22
                   , trha:trha-core
                   , text
@@ -263,9 +181,9 @@ library trha-webgpu
     Infrastructure.WebGPU.Buffer
     Infrastructure.WebGPU.Kernel
     Infrastructure.WebGPU.Error
-  hs-source-dirs:   src
+  hs-source-dirs:   src/webgpu
   include-dirs:     3rdparty/wgpu-native/include
-  c-sources:        cbits/wgpu_callback_shim.c
+  c-sources:        src/webgpu/cbits/wgpu_callback_shim.c
   extra-libraries:         wgpu_native
   -- 库目录用 extra-lib-dirs-static（Cabal 规范 3.8+：接受相对路径，适合仓库内 3rdparty/）。
   -- 运行时查找 .so 由 LD_LIBRARY_PATH 或 rpath 负责，见 webgpu-wiring-plan.md 的 W4/W6。
@@ -278,13 +196,13 @@ library trha-webgpu
   default-language: Haskell2010
 
 -- GPU 推理桥接层：CPU 推理（trha-llm）+ WebGPU 前向（trha-webgpu）的汇合点。
--- 独立库避免 trha-llm ↔ trha-webgpu 依赖环（两者共享 hs-source-dirs: src）。
+-- 独立目录（src/llm / src/webgpu 自 2026-10-27 拆分后不再共享 src）。
 library trha-gpu-infer
   exposed-modules:
     Infrastructure.CPU.InferenceGPU
-  hs-source-dirs:   gpu-infer
+  hs-source-dirs:   src/gpu-infer
   include-dirs:     3rdparty/wgpu-native/include
-  c-sources:        cbits/wgpu_callback_shim.c
+  c-sources:        src/webgpu/cbits/wgpu_callback_shim.c
   extra-libraries:         wgpu_native
   extra-lib-dirs-static:   3rdparty/wgpu-native/lib
   build-depends:    base ^>=4.22
@@ -399,12 +317,24 @@ executable trha-webgpu-layerprobe
 test-suite trha-webgpu-test
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
-  hs-source-dirs:   test-webgpu
+  hs-source-dirs:   test/webgpu
   build-depends:    base ^>=4.22
                   , trha:trha-webgpu
                   , trha:trha-llm
                   , hspec
   ghc-options:      -rtsopts -threaded
+  default-language: Haskell2010
+
+
+-- P-12 门禁：紧凑权重单 token 计时 + 常驻内存（仅记录，不阻断）
+executable trha-cpu-braintoken
+  main-is:          BrainTokenBench.hs
+  hs-source-dirs:   benchmarks/cpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-llm
+                  , directory
+                  , filepath
+  ghc-options:      -rtsopts -threaded -O2
   default-language: Haskell2010
 
 -- GF(27) 行点积 AVX2 的对拍与基准
@@ -545,7 +475,7 @@ executable trha-cpu-gf27matmul-probe
 test-suite trha-cpu-test
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
-  hs-source-dirs:   test-cpu
+  hs-source-dirs:   test/cpu
   build-depends:    base ^>=4.22
                   , trha:trha-llm
                   , hspec
@@ -564,10 +494,17 @@ executable trha
   other-modules:
     Bridge.Scheduler
     Config.Settings
+    Config.Home
     Core.Args
     UI.Commands.Registry
     Core.HTTP
     Core.Transcript
+    Core.Memory
+    Core.PlanStore
+    Core.ProjectStore
+    Core.RunLog
+    Core.RunState
+    Core.StatePaths
     Core.SessionSummary
     Core.Replay
     Core.SSE
@@ -605,7 +542,13 @@ executable trha
     UI.Render.ToolSummary
     UI.Render.Message
     UI.Theme
+    UI.Setup
+    UI.SetupWizard
+    UI.IndexCache
+    UI.CustomCommands
     UI.Render.Footer
+    UI.TextWidth
+    UI.ProviderPresets
   ghc-options:      -rtsopts -threaded
   build-depends:    base ^>=4.22
                   , trha:trha-api
@@ -614,6 +557,7 @@ executable trha
                   , bytestring
                   , http-client
                   , http-client-tls
+                  , connection
                   , http-types
                   , directory
                   , filepath
@@ -637,13 +581,17 @@ executable trha
 test-suite trha-test
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
-  other-modules:    PluginSpec, CoreContractSpec, SessionPersistSpec, ApprovalSpec, PlanSpec
+  other-modules:    CoreContractSpec, SessionPersistSpec, ApprovalSpec, PlanSpec
+                  , GoldenGF27Spec
                   , DeepSeekCacheSpec
                   , StreamToolCallsSpec
                   , HTTPProxySpec
                   , WireGuardsSpec
                   , StreamTimeoutSpec
                   , SessionGateSpec
+                  , ServerBindSpec
+                  , SecuritySpec
+                  , SessionTruthSpec
   hs-source-dirs:   test
   build-depends:    base ^>=4.22
                   , directory
@@ -663,6 +611,7 @@ test-suite trha-test
                   , bytestring
                   , hashable
                   , aeson
+                  , scientific
                   -- HTTP 端到端装配测试：起真实 server + 发真实请求
                   , warp
                   , wai

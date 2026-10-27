@@ -10,8 +10,8 @@
 
 | | 内容 |
 |---|---|
-| **目标** | `src/Infrastructure/WebGPU/**`（1344 行）真正进入构建并**在真实 GPU 后端上跑通**：Instance → Adapter → Device → Queue → Buffer → WGSL ComputePipeline → Dispatch → 读回 |
-| **约束 1（强类型）** | 用 **GHC 强类型**重构绑定层：句子柄用不透明标签类型 + `Handle`/`Nullable` typeclass（见 `src/Infrastructure/WebGPU/Raw/Types.hs`），**不沿用现状的裸 `Ptr ()`** —— 裸指针下 `Device`/`Buffer`/`Queue` 可互传，错用只在运行时段错误暴露 |
+| **目标** | `src/webgpu/Infrastructure/WebGPU/**`（1344 行）真正进入构建并**在真实 GPU 后端上跑通**：Instance → Adapter → Device → Queue → Buffer → WGSL ComputePipeline → Dispatch → 读回 |
+| **约束 1（强类型）** | 用 **GHC 强类型**重构绑定层：句子柄用不透明标签类型 + `Handle`/`Nullable` typeclass（见 `src/webgpu/Infrastructure/WebGPU/Raw/Types.hs`），**不沿用现状的裸 `Ptr ()`** —— 裸指针下 `Device`/`Buffer`/`Queue` 可互传，错用只在运行时段错误暴露 |
 | **约束 2（第三方代码进仓）** | 外部库与参考源码**一律复制进仓库 `3rdparty/`**，**不在仓库外引用**（不再依赖 `/data/trit/BitNet/...` 路径） |
 | **约束 3（参考实现）** | 流程与 WGSL 参考 `3rdparty/llama-webgpu/`（**旧写作 `ref-llama.cpp-ggml-webgpu/`，实际入库名不同**）；但**其代码不可照搬** —— 它用 C++ 封装头 `<webgpu/webgpu_cpp.h>`（`wgpu::Instance` / `device.createBuffer(...)`），我们走 Haskell FFI（C ABI），权威来源是 `3rdparty/wgpu-native/include/webgpu/webgpu.h` |
 | **非目标** | 不追求性能对齐；不改动 CPU 三值推理路径 |
@@ -67,7 +67,7 @@
 ### 3.1 现状（断链）
 
 ```
-src/Infrastructure/WebGPU/**（1344 行）
+src/webgpu/Infrastructure/WebGPU/**（1344 行）
    ├─ WGSL.hs / ShaderLib.hs / Types.hs …   ← 纯 Haskell，真实可用
    ├─ Buffer.hs:49                          ← simulation 占位（map 未实现）
    └─ FFI.hs                                ← foreign import "webgpu_create_device" …
@@ -167,7 +167,7 @@ ls /usr/lib/x86_64-linux-gnu/libvulkan* ; ls /usr/lib/x86_64-linux-gnu/libEGL*
 | 日期 | 变更 |
 |---|---|
 | 2026-09-13 | 初版：现状实测（1344 行不在构建、`FFI.hs` 符号经 `nm` 证伪、本机有 Vulkan）、数据流程图、原子分解 W1–W7、决策点 4 项；**W1 完成** |
-| 2026-09-17 | **§2 目录名更正**：原写 `3rdparty/ref-llama.cpp-ggml-webgpu/`，实际入库名是 `llama-webgpu/`（并补上 `llama-vulkan/`）。同时补记：本层**仍未接入生产推理路径**（`grep -rn "Infrastructure.WebGPU" --include=*.hs src/ | grep -v "^src/Infrastructure/WebGPU/"` → 无输出），引用只出现在 `benchmarks/`、`test-webgpu/`、`test-cpu/negative/` |
+| 2026-09-17 | **§2 目录名更正**：原写 `3rdparty/ref-llama.cpp-ggml-webgpu/`，实际入库名是 `llama-webgpu/`（并补上 `llama-vulkan/`）。同时补记：本层**仍未接入生产推理路径**（`grep -rn "Infrastructure.WebGPU" --include=*.hs src/ | grep -v "^src/webgpu/Infrastructure/WebGPU/"` → 无输出），引用只出现在 `benchmarks/`、`test/webgpu/`、`test/cpu/negative/` |
 | 2026-09-13 | 所有者裁定：库入 `3rdparty/`（不在仓库外引用）／新建 `library trha-webgpu`／首批先 hello-compute／**用 GHC 强类型重构**。据此：库与参考源码落位 `3rdparty/`；新写 `Raw/Types.hs`（12 个不透明标签 + `Handle`/`Nullable`，构造子不导出）＝ W2a；确认 llama.cpp 参考用的是 **C++ API（`webgpu_cpp.h`）**、代码不可照搬（WGSL 与流程可复用）；补齐 v29 API 风格（`WGPUStringView` + `*CallbackInfo`，`wgpuDevicePoll` 已移除） |
 
 ---
@@ -286,7 +286,7 @@ ls /usr/lib/x86_64-linux-gnu/libvulkan* ; ls /usr/lib/x86_64-linux-gnu/libEGL*
 - **hspec 的 pending 分支未实测**：本机有 GPU，`createContext` 失败 → `pendingWith`
     这条路径只有代码逻辑，没跑过（CI 无 GPU 时才会走到）。
 - **Profile 只有 2 个数据点**，且含固定开销；"交叉点 300" 是**合理外推**而非测量。
-- **新发现待处置**：`src/Infrastructure/CPU/Backend.hs:52,59` 里有与已归档旧 WebGPU 层
+- **新发现待处置**：`src/llm/Infrastructure/CPU/Backend.hs:52,59` 里有与已归档旧 WebGPU 层
     **同款**的 `threadDelay 1000` / `threadDelay 100` 假计时 —— 那是另一个"看起来在算、
     其实在睡"的位置，需要定夺（它是否在构建路径上、是否该照旧 WebGPU 层处理）。
 - **未做**：纯 GPU 内核计时、tile + 共享内存优化（路径 B）、更大规模的 matmul、

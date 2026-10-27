@@ -74,6 +74,32 @@ spec = do
       case classifyPayload (BC.pack "{\"weird\":true}") of
         SseUnknown raw -> raw `shouldBe` "{\"weird\":true}"
         other -> expectationFailure ("expected unknown, got " <> show other)
+
+    it "recognises reasoning deltas by their key" $ do
+      classifyPayload (BC.pack "{\"sessionId\":\"s1\",\"reasoning\":\"think\"}")
+        `shouldBe` SseReasoning "think"
+
+    it "recognises a step boundary (agent:model-request)" $ do
+      classifyPayload (BC.pack "{\"sessionId\":\"s1\",\"round\":2,\"messageCount\":7,\"toolCount\":3}")
+        `shouldBe` SseStep 2 7 3
+
+    it "recognises a context compaction (agent:context)" $ do
+      classifyPayload (BC.pack "{\"sessionId\":\"s1\",\"trigger\":\"fold\",\"savedTokens\":420,\"prefixChanged\":true}")
+        `shouldBe` SseCompaction "fold" 420
+
+    it "maps only the side-channel shapes to notices" $ do
+      toNotice (SseReasoning "t") `shouldBe` Just (ReasoningDelta "t")
+      toNotice (SseStep 1 2 3)    `shouldBe` Just (StepStarted 1 2 3)
+      toNotice (SseCompaction "fold" 9) `shouldBe` Just (ContextCompacted "fold" 9)
+      toNotice (SseMessage "assistant") `shouldBe` Nothing
+      toNotice SsePlan `shouldBe` Nothing
+
+    it "recognises a retry notice (agent:retry)" $ do
+      classifyPayload (BC.pack "{\"sessionId\":\"s1\",\"attempt\":1,\"delayMs\":500,\"reason\":\"429\"}")
+        `shouldBe` SseRetry 1 500 "429"
+
+    it "maps the retry shape to a notice" $
+      toNotice (SseRetry 2 1000 "503") `shouldBe` Just (RetryScheduled 2 1000 "503")
   where
     isDelta (SseTextDelta _) = True
     isDelta _                = False

@@ -11,7 +11,7 @@
 | `bash` | 在工作区跑 shell；`background: true` 转后台 job | 进程内 |
 | `read` | 读文件，支持 `offset`/`limit`，返回行号 | – |
 | `write` | 写文件（自动建父目录，覆盖） | 工作区 |
-| `edit` | 精确串替换，要求唯一匹配（`replace_all` 可放宽） | 工作区 |
+| `edit` | 精确串替换，要求唯一匹配（`replace_all` 可放宽）；**结果附 unified diff**（供 TUI patch 卡与模型自查） | 工作区 |
 | `glob` | 按 glob 列文件（跳过 node_modules/.git/dist/.lake/target） | – |
 | `grep` | 正则搜内容，返回 `path:line:text`，可带 `glob` 过滤 | – |
 | `append_file` | 追加写 | 工作区 |
@@ -24,7 +24,7 @@
 | `create_goal` / `get_goal` / `update_goal` | 会话目标（objective/status/budget） | 会话（持久化 v2） |
 | `schedule_create/list/update/delete` | 会话定时提示；**到点自动触发一轮**（`repeat_ms` 可重复） | 会话（持久化 v2）+ 驱动 |
 | `job_list` / `job_output` / `job_kill` | 后台命令的列表/输出/终止 | 进程内（子进程不跨重启） |
-| `skill` | 列出/加载 `TRHA_SKILLS_DIR`（默认 `<workspace>/.trha/skills`）下的 markdown | 文件系统 |
+| `skill` | 列出/加载技能 markdown；扫描顺序与 CLI 相同：项目 `.agents/skills` → 项目 `.trha/skills` → `$HOME/.agents/skills` → `$HOME/.trha/skills` → `TRHA_SKILLS_DIR`（支持 `<name>/SKILL.md` 与 `<name>.md`，frontmatter 的 `name`/`description`，同名项目优先） | 文件系统 |
 | `web_fetch` | 取 URL 文本（HTML 去标签/脚本，15s 超时，20k 字符上限） | – |
 | `subagent` | 起一个**子会话**跑任务并返回最终答复（真实 `runStep`，非拼接文本） | 子会话（持久化） |
 | `list_agents` | 列出会话：id、busy/idle、消息数、父会话 | – |
@@ -52,8 +52,9 @@
 | `stagehand_navigate/extract/screenshot/tabs/act/observe` | stagehand 语义的别名 + `act`（click/type）与 `observe`（交互动元素） | 共用 CDP 浏览器 |
 | `ralph` | Ralph 循环：每轮**全新子会话**，共享工作区，直到 DONE/BLOCKED | 子会话 |
 
-配置：`TRHA_WORKSPACE`（工作区，默认读 `.trha/workspace`（cwd → `$HOME`），
-没有则用启动时的 shell cwd）、`TRHA_SKILLS_DIR`、
+配置：`TRHA_WORKSPACE`（工作区。解析顺序：显式值 → 从 cwd **向上**最近的
+`.trha/workspace` → `$HOME/.trha/workspace` → 最近的 `.git` 根 → 最近的构建清单
+（`cabal.project`/`package.json`/`Cargo.toml`/`go.mod`）→ 启动时的 shell cwd）、`TRHA_SKILLS_DIR`、
 `TRHA_MAX_TOOL_ROUNDS`（0/未设 = 不限轮；同一调用连续重复 3 次判停）、
 `TRHA_SCHEDULE_TICK_MS`（驱动轮询，默认 5000，0 = 关闭）、
 `TRHA_SCHEDULE_GRACE_MS`（重启补跑窗口，默认 5 分钟）。
@@ -75,8 +76,8 @@
 
 | 变量 | 作用 | 默认 |
 |---|---|---|
-| `TRHA_WORKSPACE` | 工具工作区（读写边界） | `.trha/workspace` 或启动时的 shell cwd |
-| `TRHA_SKILLS_DIR` | `skill` 的额外 markdown 目录 | `<workspace>/.trha/skills` |
+| `TRHA_WORKSPACE` | 工具工作区（读写边界） | 向上最近的 `.trha/workspace` → `.git` 根 → 构建清单 → 启动的 shell cwd |
+| `TRHA_SKILLS_DIR` | `skill` 的**额外** markdown 目录（追加在四个默认根之后，不替代它们） | 未设（默认根：项目 `.agents/skills`、`.trha/skills`，`$HOME` 下同名两项） |
 | `TRHA_SEARX_URL` | `web_search` 的 SearXNG 根地址（json 格式）；未设则回退 DuckDuckGo HTML | 未设 |
 | `TRHA_MAX_TOOL_ROUNDS` | 工具轮上限 | 不限（同一调用连续重复 3 次判停） |
 | `TRHA_MAX_SUBAGENT_DEPTH` | 子智能体嵌套深度 | 2 |
@@ -86,6 +87,18 @@
 | `TRHA_BROWSER` | 浏览器可执行文件 | `chromium` |
 | `TRHA_SEARX_URL` | `web_search` 的 SearXNG 地址 | 未设＝DuckDuckGo HTML |
 | `TRHA_PLUGIN_MARKET` | 插件市场 URL 或 JSON 文件 | 未设＝报错说明 |
+
+## 权限姿态（会话级，2026-10-25）
+
+`executeTool` 在规则引擎之前按会话姿态裁决（`/api/session/:id/mode`，Shift+Tab 循环）：
+
+| 姿态 | 行为 |
+|---|---|
+| `read-only` | 只放行只读工具（`Permission/modes.ts` 白名单）；文件写/shell/进程类直接 `ERROR: read-only mode…` |
+| `ask` | 非只读工具要求确认（复用审批闸门 `REQUIRE_APPROVAL:`） |
+| `auto` | 原规则引擎：deny > ask > allow，未命中默认 allow（默认姿态） |
+| `yolo` | 跳过 ask 规则（`deny` 仍生效），即 Reasonix 的 danger-full-access |
+| `plan` | 与 `read-only` 同（计划姿态，不执行副作用） |
 
 ## 为什么没有直接 `npm i` dsh 的工具包
 

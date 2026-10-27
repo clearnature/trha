@@ -6,7 +6,7 @@
 // Everything is pure: the platform is injected, so no real Windows is needed.
 
 import { describe, it, expect } from 'vitest';
-import { resolveShell, interactiveShell, powerShellCandidates, shellRunner, hardenedEnv } from '../src/Server/shell.js';
+import { resolveShell, interactiveShell, powerShellCandidates, shellRunner, hardenedEnv, execShell } from '../src/Server/shell.js';
 
 describe('resolveShell', () => {
   it('preserves the POSIX contract byte-for-byte', () => {
@@ -86,5 +86,29 @@ describe('hardenedEnv', () => {
   it('defaults the base to process.env', () => {
     const env = hardenedEnv('win32');
     expect(env.NoDefaultCurrentDirectoryInExePath).toBe('1');
+  });
+});
+
+describe('execShell', () => {
+  it('pins bash on POSIX so the `bash` tool really is bash', () => {
+    // `exec` builds `-c` itself; we only choose the executable.
+    expect(execShell('linux', () => true)).toBe('/bin/bash');
+    expect(execShell('darwin', () => true)).toBe('/bin/bash');
+  });
+
+  it('keeps Node\'s default (undefined) on win32', () => {
+    // cmd.exe /d /s /c is what Node picks; execShell must not override it.
+    expect(execShell('win32', () => true)).toBeUndefined();
+  });
+
+  it('falls back to the POSIX default when bash is not installed', () => {
+    // Alpine-style images have no /bin/bash: spawn must still work.
+    expect(execShell('linux', () => false)).toBeUndefined();
+  });
+
+  it('is not a login shell (a profile must not rewrite PATH)', () => {
+    // Regression guard for the measured fnm-node-v26 -> system-node-v22 swap.
+    expect(execShell('linux', () => true)).not.toContain(' -l');
+    expect(execShell('linux', () => true)).toMatch(/^\/bin\/bash$/);
   });
 });

@@ -19,6 +19,7 @@ module UI.InputHistory
   , entryFromLine
   , historyEntriesFromLines
   , defaultHistoryPath
+  , historyFilePath
   , loadHistory
   , appendHistory
   ) where
@@ -29,8 +30,9 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import System.Directory (doesFileExist, getHomeDirectory)
+import System.Directory (doesFileExist)
 import System.FilePath ((</>))
+import Core.StatePaths (migrateLegacy, stateReadPath, stateWritePath)
 
 -- | Input history state.  @hsHistory@ is newest-first (front = the most
 -- recently submitted entry); @hsIndex@ is the position while navigating
@@ -99,11 +101,17 @@ historyEntriesFromLines ls =
   take maxHistEntries
     (reverse (map entryFromLine (filter (not . T.null) ls)))
 
--- | The shared REPL history file path (@~\/.trha\/history@).
+-- | The shared history file path (@~\/.trha\/state\/history@; a legacy
+-- @~\/.trha\/history@ is still read).
 defaultHistoryPath :: IO FilePath
-defaultHistoryPath = do
-  home <- getHomeDirectory
-  return (home </> ".trha" </> "history")
+defaultHistoryPath = stateReadPath "history"
+
+-- | Path haskeline should open for reading *and* writing: the new location,
+-- with a one-time copy of the legacy file so old entries survive an upgrade.
+historyFilePath :: IO FilePath
+historyFilePath = do
+  migrateLegacy "history"
+  stateWritePath "history"
 
 -- | Load the shared history file; best effort — a missing or unreadable
 -- file yields an empty history.
@@ -121,5 +129,5 @@ loadHistory = do
 -- are ignored.
 appendHistory :: Text -> IO ()
 appendHistory entry = void $ (try :: IO () -> IO (Either IOException ())) $ do
-  path <- defaultHistoryPath
+  path <- stateWritePath "history"
   TIO.appendFile path (entryToLine entry <> "\n")

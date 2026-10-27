@@ -85,8 +85,8 @@ grep -rhoP '^\s*\{-#\s*LANGUAGE\s*\K[^#]+' src | tr ',' '\n' | sed 's/^ *//' | s
 **这 2 处 `class`、3 处 `TypeFamilies` 全在同两个文件里**：
 
 ```bash
-grep -rn '^class ' src                  # → 仅 src/Infrastructure/WebGPU/Raw/Types.hs:137,146
-sed -n '135,155p' src/Infrastructure/WebGPU/Raw/Types.hs
+grep -rn '^class ' src                  # → 仅 src/webgpu/Infrastructure/WebGPU/Raw/Types.hs:137,146
+sed -n '135,155p' src/webgpu/Infrastructure/WebGPU/Raw/Types.hs
 #   class Handle a where
 #     type ObjectOf a :: Type      ← 唯一真用到的关联类型，在 FFI 层
 ```
@@ -135,7 +135,7 @@ sed -n '135,155p' src/Infrastructure/WebGPU/Raw/Types.hs
 
 1. **移植「约束层」**：把 `ConstraintVerdict` + `t6Verify` + `causalGraphStep` + `wuxingForward` 用仓颉重写。
    这一层只需**幻影类型 + ADT + 模式匹配 + 约束泛型** —— §2 实测全部支持，**恰好避开仓颉的三个短板（无 HKT/GADT/STM）**。
-2. **验收方式**：沿用 trha 现有 `test-cpu/Spec.hs` 那套"以 Agda 权威文件为注释出处、逐条对拍"，**比较 Haskell 版与仓颉版对同一批输入的输出是否逐元素一致**（正好用上 C3 判据"跨实现相等"）。**这是可自动判定的。**
+2. **验收方式**：沿用 trha 现有 `test/cpu/Spec.hs` 那套"以 Agda 权威文件为注释出处、逐条对拍"，**比较 Haskell 版与仓颉版对同一批输入的输出是否逐元素一致**（正好用上 C3 判据"跨实现相等"）。**这是可自动判定的。**
 3. **只有第 1–2 步给出"输出一致 + 代码量可控"的硬数据**，再讨论插件层（effect handlers）与 STM 的替换。
 4. **网络性能单独处理**：不是语言问题。先量生产桥（`packages/scheduler/src/Bridge/Haskell.ts` ↔ 内核 HTTP/SSE）到底哪个指标不够，再考虑 Unix domain socket / 二进制帧 / 消除边界。**换语言不解决它。**
 5. **若目标是"内核自带推理更快"**：那是**数据布局**问题（222 s/token 来自每 token 重读 `.sov` + 重解包 300 块权重，纯计算仅 ~18 s）。**换语言不解决，`Data.Vector.Unboxed` 紧凑化（~2GB）才解决。**

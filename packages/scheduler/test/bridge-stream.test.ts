@@ -72,4 +72,29 @@ describe('HaskellBridge.queryModelStream (A3)', () => {
     await expect(bridge.queryModelStream({ messages: [['user', 'hi']] }, () => {}))
       .rejects.toThrow(/HTTP 502/);
   });
+
+  it('streams reasoning deltas to the second sink', async () => {
+    const port = await runStub((_url, _body, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'thin' } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'king' } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'answer' } }] })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+
+    const text: string[] = [];
+    const reasoning: string[] = [];
+    const bridge = new HaskellBridge({ host: '127.0.0.1', port });
+    const out = await bridge.queryModelStream(
+      { messages: [['user', 'hi']] },
+      t => text.push(t),
+      t => reasoning.push(t),
+    );
+
+    expect(reasoning).toEqual(['thin', 'king']);
+    expect(text).toEqual(['answer']);
+    expect(out.reasoningContent).toBe('thinking');
+    expect(out.reply).toBe('answer');
+  });
 });

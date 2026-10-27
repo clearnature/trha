@@ -43,8 +43,6 @@ import Data.Maybe (fromMaybe, isJust)
 import qualified Data.ByteString as BS
 import Infrastructure.CPU.Quant (QuantType(..))
 import System.Directory (doesFileExist)
-import Core.Plugin.Types
-import Core.Plugin.Free
 import Core.Session.Types
 import Core.Session.Manager
 import Core.Agent.StateMachine (AgentCommand (..))
@@ -60,7 +58,7 @@ import LLM.Adapter.Types
 import qualified LLM.Adapter.Types as LLM
 import LLM.Adapter.Interface
 import LLM.Providers.DeepSeek (buildDeepSeekChatRequest, createDeepSeekProvider, parseDeepSeekChatTurn)
-import API.Server (OpenAIRequest(..), parseOpenAIRequest, mkApp, mkStubApp, mkCPUApp)
+import API.Server (OpenAIRequest(..), parseOpenAIRequest, mkApp, mkStubApp, mkCPUApp, genParamsWithDefaultEffort)
 import Network.Wai (Application)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Network.HTTP.Client (Manager, newManager, defaultManagerSettings, parseRequest,
@@ -68,7 +66,7 @@ import Network.HTTP.Client (Manager, newManager, defaultManagerSettings, parseRe
                             requestHeaders, RequestBody(..))
 import Network.HTTP.Types (statusCode)
 import API.ProviderProbe (classifyListing, parseModelIds)
-import API.ProviderRuntime (adapterFor, cpuAdapterCacheSize)
+import API.ProviderRuntime (adapterFor, cpuAdapterCacheSize, invalidateProviderCaches, providerCacheFingerprint, mergeExtraBody, withEffort, withResponseEffort)
 import Core.Provider.Types
 import Data.IORef
 import Data.Word (Word8)
@@ -88,17 +86,20 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map as Map
 import Control.Monad.Free (liftF)
-import PluginSpec (pluginSpec)
 import CoreContractSpec (coreContractSpec)
 import SessionPersistSpec (sessionPersistSpec)
 import ApprovalSpec (approvalSpec)
 import PlanSpec (planSpec)
+import GoldenGF27Spec (goldenGF27Spec)
 import DeepSeekCacheSpec (deepSeekCacheSpec)
 import StreamToolCallsSpec (streamToolCallsSpec)
 import HTTPProxySpec (spec)
 import WireGuardsSpec (wireGuardsSpec)
 import StreamTimeoutSpec (streamTimeoutSpec)
 import SessionGateSpec (sessionGateSpec)
+import ServerBindSpec (serverBindSpec)
+import SecuritySpec (securitySpec)
+import SessionTruthSpec (sessionTruthSpec)
 
 subsetOf :: (Eq a) => [a] -> [a] -> Bool
 subsetOf xs ys = all (`elem` ys) xs
@@ -120,17 +121,20 @@ tailCycle frames = listToMaybe [ d | d <- [1 .. 120], d < n, holdsFor d ]
 
 main :: IO ()
 main = hspec $ do
-  pluginSpec
   coreContractSpec
   sessionPersistSpec
   approvalSpec
   planSpec
+  goldenGF27Spec
   deepSeekCacheSpec
   streamToolCallsSpec
   HTTPProxySpec.spec
   wireGuardsSpec
   streamTimeoutSpec
   sessionGateSpec
+  serverBindSpec
+  securitySpec
+  sessionTruthSpec
   describe "Infrastructure.CPU.GGUF (A6/M1)" $ do
     it "reads a real GGUF: version, alignment, metadata and tensor directory" $ do
       let path = "/home/yanli/work/9060xt/llama.cpp/models/ggml-vocab-baichuan.gguf"
@@ -1920,7 +1924,7 @@ main = hspec $ do
     it "samples the CPU engine one token at a time, matching the blocking path" $ do
       (_, adapter) <- createCPUAdapter "/dev/null"
       ref <- newIORef []
-      _ <- llmChatToolsStream adapter [ChatUser "hi"] [] $ \c -> case c of
+      _ <- llmChatToolsStream adapter [ChatUser "hi"] [] defaultGenParams $ \c -> case c of
              ChunkDelta t -> modifyIORef' ref (t :)
              _            -> return ()
       pieces <- reverse <$> readIORef ref
@@ -1929,15 +1933,6 @@ main = hspec $ do
       length pieces `shouldBe` 100
       -- and they concatenate to exactly what the blocking call returns
       T.concat pieces `shouldBe` ctContent blocking
-
-  describe "Core.Plugin" $ do
-    it "can create and run a plugin" $ do
-      env <- Env <$> newIORef Map.empty <*> newIORef Map.empty <*> newIORef []
-      let plugin = do
-            liftF $ RegisterService "test" (toDyn (42 :: Int)) ()
-      disposer <- runPlugin env plugin
-      services <- readIORef (envServices env)
-      Map.member "test" services `shouldBe` True
 
   describe "Core.Session" $ do
     it "can create a session and append events" $ do
@@ -2139,12 +2134,93 @@ main = hspec $ do
         Nothing  -> expectationFailure "parse failed"
 
   -- Provider registry (P1): pure config logic, no IO.
+  describe "provider adapter cache" $ do
+    let mkc name kind = ProviderEntry
+          { peName = name, peKind = kind, peBaseUrl = "https://api.example.com/v1"
+          , peModels = ["m1"], peDefault = "m1", peHasKey = False, peKeyEnv = Nothing
+          , peVisionModels = [], pePreset = False, peInUse = False, peContextWindow = Nothing
+          , peWebSearch = Nothing, peSendsThinking = Nothing
+          , peEffort = "", peEfforts = [], peAuthHeader = True, peNoProxy = False, peHeaders = Nothing, peExtraBody = Nothing
+          , peThinking = "", peResponsesMode = "" }
+    it "reuses the adapter for the same fingerprint and rebuilds when the key changes" $ do
+      invalidateProviderCaches
+      let e = mkc "cacheprobe" "openai"
+      _ <- adapterFor e "k1"
+      fp1 <- providerCacheFingerprint "cacheprobe"
+      _ <- adapterFor e "k1"
+      fp2 <- providerCacheFingerprint "cacheprobe"
+      fp1 `shouldBe` fp2
+      _ <- adapterFor e "k2"
+      fp3 <- providerCacheFingerprint "cacheprobe"
+      fp3 `shouldSatisfy` (/= fp1)
+    it "drops cached adapters on invalidate" $ do
+      invalidateProviderCaches
+      _ <- adapterFor (mkc "cacheprobe2" "openai") "k"
+      fpA <- providerCacheFingerprint "cacheprobe2"
+      fpA `shouldSatisfy` (/= Nothing)
+      invalidateProviderCaches
+      fpB <- providerCacheFingerprint "cacheprobe2"
+      fpB `shouldBe` Nothing
+
+  describe "provider effort precedence" $ do
+    -- GenParams comes from trha-api here (the kernel package), which is a
+    -- distinct type from trha-llm's; assert on the rendered value instead of
+    -- importing the other package's accessor.
+    it "prefers the explicit genParams effort" $
+      show (genParamsWithDefaultEffort (Just "low")
+              (Just (object ["effort" .= ("high" :: String)])))
+        `shouldContain` "high"
+    it "uses the provider default when the request says auto" $
+      show (genParamsWithDefaultEffort (Just "high")
+              (Just (object ["effort" .= ("auto" :: String)])))
+        `shouldContain` "high"
+    it "leaves the env fallback alone when neither side sets an effort" $ do
+      show (genParamsWithDefaultEffort Nothing Nothing)
+        `shouldNotContain` "gpEffort = Just"
+      show (genParamsWithDefaultEffort (Just "auto") Nothing)
+        `shouldNotContain` "gpEffort = Just"
+
+  describe "extraBody deep merge" $ do
+    let base = object
+          [ "reasoning" .= object [ "effort" .= ("low" :: String)
+                                  , "summary" .= ("auto" :: String) ]
+          , "model" .= ("m" :: String) ]
+    it "keeps sibling nested fields while the relay wins at leaves" $
+      mergeExtraBody
+        (Just (object [ "reasoning" .= object [ "effort" .= ("high" :: String) ] ]))
+        base
+        `shouldBe` object
+          [ "reasoning" .= object [ "effort" .= ("high" :: String)
+                                  , "summary" .= ("auto" :: String) ]
+          , "model" .= ("m" :: String) ]
+    it "returns the base unchanged without extras" $
+      mergeExtraBody Nothing base `shouldBe` base
+
+  describe "stream request effort" $ do
+    let m = ("m" :: String)
+    it "adds reasoning_effort to an OpenAI body" $
+      withEffort (Just "high") (object ["model" .= m])
+        `shouldBe` object ["model" .= m, "reasoning_effort" .= ("high" :: String)]
+    it "does not overwrite an existing reasoning_effort" $
+      withEffort (Just "low") (object ["reasoning_effort" .= ("high" :: String)])
+        `shouldBe` object ["reasoning_effort" .= ("high" :: String)]
+    it "treats auto as unset" $
+      withEffort (Just "auto") (object ["model" .= m])
+        `shouldBe` object ["model" .= m]
+    it "spells effort as reasoning.effort on the Responses wire" $
+      withResponseEffort (Just "high") (object ["model" .= m])
+        `shouldBe` object
+          [ "model" .= m
+          , "reasoning" .= object ["effort" .= ("high" :: String)] ]
+
   describe "Core.Provider.Types" $ do
     let mk name kind = ProviderEntry
           { peName = name, peKind = kind, peBaseUrl = "https://api.example.com/v1"
           , peModels = ["m1", "m2"], peDefault = "m1", peHasKey = False, peKeyEnv = Nothing
           , peVisionModels = [], pePreset = False, peInUse = False, peContextWindow = Nothing
-          , peWebSearch = Nothing, peSendsThinking = Nothing }
+          , peWebSearch = Nothing, peSendsThinking = Nothing
+          , peEffort = "", peEfforts = [], peAuthHeader = True, peNoProxy = False, peHeaders = Nothing, peExtraBody = Nothing
+          , peThinking = "", peResponsesMode = "" }
 
     it "drops nameless entries and coerces unknown kinds" $ do
       let s = normalizeStore (ProviderStore [mk "a" "openai", mk "  " "openai", mk "b" "weird"])
@@ -2274,8 +2350,20 @@ main = hspec $ do
     let draft = ProviderDraft
           { pdName = "  my gw  ", pdKind = "openai", pdBaseUrl = " https://gw.example/v1 "
           , pdApiKey = "sk-123", pdModels = ["m1", "m2"], pdDefault = ""
-          , pdAuthHeader = True, pdNoProxy = False, pdEffort = "", pdVision = [] }
+          , pdAuthHeader = True, pdNoProxy = False, pdEffort = "", pdVision = []
+          , pdEfforts = [], pdHeaders = Nothing, pdExtraBody = Nothing
+          , pdThinking = "", pdResponsesMode = "", pdContextWindow = Nothing }
         entry = draftToEntry draft
+
+    it "carries a context window override into the entry" $
+      peContextWindow (draftToEntry draft { pdContextWindow = Just 200000 })
+        `shouldBe` Just 200000
+
+    it "normalises an unknown responses mode to the vendor default" $ do
+      peResponsesMode (draftToEntry draft { pdResponsesMode = "statefull" })
+        `shouldBe` ""
+      peResponsesMode (draftToEntry draft { pdResponsesMode = " Stateful " })
+        `shouldBe` "stateful"
 
     it "strips whitespace and derives keyEnv from the name" $ do
       peName entry    `shouldBe` "my gw"
@@ -2535,7 +2623,9 @@ main = hspec $ do
             { peName = "local-cpu", peKind = "cpu", peBaseUrl = "/dev/null"
             , peModels = ["cpu"], peDefault = "cpu", peHasKey = False, peKeyEnv = Nothing
             , peVisionModels = [], pePreset = False, peInUse = False, peContextWindow = Nothing
-            , peWebSearch = Nothing, peSendsThinking = Nothing }
+            , peWebSearch = Nothing, peSendsThinking = Nothing
+            , peEffort = "", peEfforts = [], peAuthHeader = True, peNoProxy = False, peHeaders = Nothing, peExtraBody = Nothing
+            , peThinking = "", peResponsesMode = "" }
       BLC.writeFile pfile (encode (ProviderStore [entry]))
       setEnv "TRHA_PROVIDERS_FILE" pfile
       r <- adapterFor entry ""

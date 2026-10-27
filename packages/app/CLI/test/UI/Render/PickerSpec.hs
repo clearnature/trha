@@ -19,6 +19,51 @@ items =
 
 spec :: Spec
 spec = do
+  describe "buildPalette" $ do
+    let skills =
+          [ PickerItem "/skill:zeta" "zeta" "skill"
+          , PickerItem "/skill:alpha" "alpha" "skill" ]
+        grouped =
+          [ ("session", "会话 session", [ PickerItem "/new" "/new" "new session" ])
+          , ("help", "帮助与退出 help", [ PickerItem "/help" "/help" "help" ])
+          ]
+    it "puts the recent slices first, then each group, then skills" $
+      map piId (buildPalette
+                  [ PickerItem "/skill:zeta" "zeta" "skill" ]
+                  [ PickerItem "/new" "/new" "new session" ]
+                  grouped skills)
+        `shouldBe` [ "#recent", "/skill:zeta", "/new"
+                   , "#session", "/new"
+                   , "#help", "/help"
+                   , "#skills", "/skill:alpha", "/skill:zeta" ]
+    it "drops empty groups" $
+      map piId (buildPalette [] []
+                  [ ("session", "session", [])
+                  , ("help", "help", [ PickerItem "/help" "/help" "help" ]) ]
+                  [])
+        `shouldBe` ["#recent", "#help", "/help", "#skills"]
+    it "marks section headers as non-selectable" $
+      all isSection (filter isSection (buildPalette [] [] grouped skills))
+        `shouldBe` True
+
+  describe "selection helpers" $ do
+    let withSections =
+          [ sectionItem "a" "a"
+          , PickerItem "/one" "/one" ""
+          , PickerItem "/two" "/two" ""
+          , sectionItem "b" "b"
+          , PickerItem "/three" "/three" "" ]
+    it "firstSelectable skips the leading heading" $
+      firstSelectable withSections `shouldBe` 1
+    it "firstSelectable is 0 for an empty list" $
+      firstSelectable [] `shouldBe` 0
+    it "moveSelectionSkipping never lands on a heading" $ do
+      moveSelectionSkipping 1 1 withSections `shouldBe` 2
+      moveSelectionSkipping 1 2 withSections `shouldBe` 4
+      moveSelectionSkipping (-1) 4 withSections `shouldBe` 2
+    it "moveSelectionSkipping clamps at the ends" $ do
+      moveSelectionSkipping 1 4 withSections `shouldBe` 4
+      moveSelectionSkipping (-1) 1 withSections `shouldBe` 1
   describe "filterItems" $ do
     it "returns everything for an empty query" $ do
       filterItems "" items `shouldBe` items

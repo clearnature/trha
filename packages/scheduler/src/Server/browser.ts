@@ -34,8 +34,43 @@ interface Browser {
 let browser: Browser | undefined;
 let starting: Promise<Browser> | undefined;
 
-const browserBin = (): string => process.env.TRHA_BROWSER ?? 'chromium';
+/**
+ * Binaries tried in order.  The old default was a bare `chromium`, which is
+ * absent on Debian/Ubuntu images that ship `chromium-browser` (a wrapper) or a
+ * preinstalled Google Chrome under /opt — so every browser_* tool failed there
+ * with "browser did not start (chromium)".  TRHA_BROWSER, when set, is the only
+ * candidate: an explicit override must fail loudly instead of silently using
+ * something else.
+ */
+export function browserCandidates(): string[] {
+  const forced = process.env.TRHA_BROWSER?.trim();
+  if (forced) return [forced];
+  if (process.platform === 'win32') {
+    return [
+      'chrome.exe',
+      'msedge.exe',
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    ];
+  }
+  if (process.platform === 'darwin') {
+    return [
+      'google-chrome',
+      'chromium',
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    ];
+  }
+  return [
+    'chromium',
+    'chromium-browser',
+    'google-chrome',
+    'google-chrome-stable',
+    '/opt/google/chrome/chrome',
+  ];
+}
 
+/** An ephemeral loopback port for the CDP endpoint. */
 async function freePort(): Promise<number> {
   const net = await import('node:net');
   return new Promise((resolve, reject) => {
@@ -49,64 +84,93 @@ async function freePort(): Promise<number> {
   });
 }
 
-async function launch(): Promise<Browser> {
-  const port = await freePort();
-  const profile = await mkdtemp(path.join(tmpdir(), 'trha-chrome-'));
-  const child = spawn(browserBin(), [
-    '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
-    `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, 'about:blank',
-  ], { stdio: ['ignore', 'ignore', 'pipe'] });
-  child.stderr?.on('data', () => { /* chrome is chatty; ignore */ });
+/** Identical for every candidate: only the port and profile differ. */
+const launchArgs = (port: number, profile: string): string[] => [
+  '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
+  `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, 'about:blank',
+];
 
-  let launchError: string | undefined;
-  child.on('error', e => { launchError = e.message; });
-  child.on('exit', code => {
-    if (code !== null && code !== 0 && !launchError) launchError = `browser exited (${code})`;
-  });
-
-  // Browser-level endpoint: targets are created through it, so one connection
-  // serves every session's tab.
-  const deadline = Date.now() + 15_000;
-  let wsUrl = '';
+/** Poll the CDP endpoint until it answers, the attempt fails, or time is up. */
+async function waitForCdp(port: number, failed: () => string | undefined, timeoutMs: number): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    const err = failed();
+    if (err) throw new Error(err);
     try {
       const res = await fetch(`http://127.0.0.1:${port}/json/version`);
       const info = (await res.json()) as { webSocketDebuggerUrl?: string };
-      if (info.webSocketDebuggerUrl) { wsUrl = info.webSocketDebuggerUrl; break; }
+      if (info.webSocketDebuggerUrl) return info.webSocketDebuggerUrl;
     } catch { /* not up yet */ }
-    if (launchError) break;
     await new Promise(r => setTimeout(r, 150));
   }
-  if (!wsUrl) {
-    child.kill('SIGKILL');
-    await rm(profile, { recursive: true, force: true }).catch(() => {});
-    throw new Error(`browser did not start (${browserBin()})${launchError ? `: ${launchError}` : ''}`);
-  }
+  throw new Error(`no CDP endpoint on port ${port} after ${timeoutMs} ms`);
+}
 
-  const ws = new WebSocket(wsUrl);
-  const b: Browser = { child, ws, nextId: 1, pending: new Map(), pages: new Map(), loadWaiters: new Map(), profile };
-  await new Promise<void>((resolve, reject) => {
-    ws.addEventListener('open', () => resolve(), { once: true });
-    ws.addEventListener('error', () => reject(new Error('browser websocket failed')), { once: true });
-  });
-  ws.addEventListener('message', event => {
-    const msg = JSON.parse(String((event as MessageEvent).data)) as {
-      id?: number; method?: string; sessionId?: string; result?: unknown; error?: { message: string };
-    };
-    if (msg.method === 'Page.loadEventFired' && msg.sessionId) {
-      b.loadWaiters.get(msg.sessionId)?.();
-      return;
+async function launch(): Promise<Browser> {
+  const failures: string[] = [];
+  for (const bin of browserCandidates()) {
+    // Fresh port and profile per attempt: a half-started browser from an earlier
+    // candidate must not make the next one look broken.
+    const port = await freePort();
+    const profile = await mkdtemp(path.join(tmpdir(), 'trha-chrome-'));
+    const child = spawn(bin, launchArgs(port, profile), { stdio: ['ignore', 'ignore', 'pipe'] });
+    child.stderr?.on('data', () => { /* chrome is chatty; ignore */ });
+
+    let launchError: string | undefined;
+    child.on('error', e => { launchError = e.message; });
+    child.on('exit', code => {
+      if (code !== null && code !== 0 && !launchError) launchError = `exited (${code})`;
+    });
+
+    // Browser-level endpoint: targets are created through it, so one connection
+    // serves every session's tab.
+    let wsUrl = '';
+    try {
+      wsUrl = await waitForCdp(port, () => launchError, 6_000);
+    } catch (e) {
+      child.kill('SIGKILL');
+      await rm(profile, { recursive: true, force: true }).catch(() => {});
+      failures.push(`${bin}: ${(e as Error).message}`);
+      continue;
     }
-    if (msg.id === undefined) return;
-    const waiter = b.pending.get(msg.id);
-    if (!waiter) return;
-    b.pending.delete(msg.id);
-    if (msg.error) waiter.reject(new Error(msg.error.message));
-    else waiter.resolve(msg.result);
-  });
-  child.on('exit', () => { browser = undefined; });
-  browser = b;
-  return b;
+
+    const ws = new WebSocket(wsUrl);
+    const b: Browser = { child, ws, nextId: 1, pending: new Map(), pages: new Map(), loadWaiters: new Map(), profile };
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ws.addEventListener('open', () => resolve(), { once: true });
+        ws.addEventListener('error', () => reject(new Error('browser websocket failed')), { once: true });
+      });
+    } catch (e) {
+      child.kill('SIGKILL');
+      await rm(profile, { recursive: true, force: true }).catch(() => {});
+      failures.push(`${bin}: ${(e as Error).message}`);
+      continue;
+    }
+    ws.addEventListener('message', event => {
+      const msg = JSON.parse(String((event as MessageEvent).data)) as {
+        id?: number; method?: string; sessionId?: string; result?: unknown; error?: { message: string };
+      };
+      if (msg.method === 'Page.loadEventFired' && msg.sessionId) {
+        b.loadWaiters.get(msg.sessionId)?.();
+        return;
+      }
+      if (msg.id === undefined) return;
+      const waiter = b.pending.get(msg.id);
+      if (!waiter) return;
+      b.pending.delete(msg.id);
+      if (msg.error) waiter.reject(new Error(msg.error.message));
+      else waiter.resolve(msg.result);
+    });
+    // Only the *live* browser may clear the singleton: an earlier candidate's
+    // SIGKILLed child exits later and must not blank the one that worked.
+    child.on('exit', () => { if (browser?.child === child) browser = undefined; });
+    browser = b;
+    return b;
+  }
+  throw new Error(
+    `no usable browser (tried ${failures.join('; ')}) — install Chrome/Chromium or set TRHA_BROWSER to one`,
+  );
 }
 
 async function ensure(): Promise<Browser> {

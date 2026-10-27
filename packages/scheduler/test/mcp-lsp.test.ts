@@ -6,7 +6,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runStandardTool, type StandardToolHost } from '../src/Server/standardTools.js';
-import { shutdownLsp } from '../src/Server/lsp.js';
+import { shutdownLsp, lspQuery } from '../src/Server/lsp.js';
 import { shutdownMcp } from '../src/Server/mcp.js';
 
 const MCP_SERVER = `#!/usr/bin/env node
@@ -84,6 +84,26 @@ process.stdin.on('data', (c) => {
     } else if (msg.method === 'textDocument/documentSymbol') {
       send({ jsonrpc: '2.0', id: msg.id, result: [
         { name: 'main', kind: 12, range: { start: { line: 6, character: 0 } } },
+      ] });
+    } else if (msg.method === 'workspace/symbol') {
+      send({ jsonrpc: '2.0', id: msg.id, result: [
+        { name: 'workspaceFn', kind: 12, location: { uri: 'file:///tmp/ws.ts', range: { start: { line: 9, character: 0 } } } },
+      ] });
+    } else if (msg.method === 'textDocument/implementation') {
+      send({ jsonrpc: '2.0', id: msg.id, result: [
+        { uri: 'file:///tmp/impl.ts', range: { start: { line: 3, character: 1 } } },
+      ] });
+    } else if (msg.method === 'textDocument/prepareCallHierarchy') {
+      send({ jsonrpc: '2.0', id: msg.id, result: [
+        { name: 'caller', kind: 12, uri: 'file:///tmp/a.ts', range: {}, selectionRange: {} },
+      ] });
+    } else if (msg.method === 'callHierarchy/incomingCalls') {
+      send({ jsonrpc: '2.0', id: msg.id, result: [
+        { from: { name: 'main', uri: 'file:///tmp/a.ts' }, fromRanges: [] },
+      ] });
+    } else if (msg.method === 'callHierarchy/outgoingCalls') {
+      send({ jsonrpc: '2.0', id: msg.id, result: [
+        { to: { name: 'helper', uri: 'file:///tmp/b.ts' }, fromRanges: [] },
       ] });
     } else {
       send({ jsonrpc: '2.0', id: msg.id, error: { message: 'unknown method' } });
@@ -175,5 +195,48 @@ describe('LSP client', () => {
   it('rejects an unknown operation instead of guessing', async () => {
     const out = await runStandardTool('lsp', { file: 'a.ts', operation: 'rename' }, host(dir));
     expect(out).toMatch(/operation must be/);
+  });
+});
+
+describe('missing language server', () => {
+  it('fails the tool instead of crashing the scheduler', async () => {
+    const prev = process.env.TRHA_LSP_COMMAND;
+    process.env.TRHA_LSP_COMMAND = 'trha-no-such-lsp-binary --stdio';
+    try {
+      await expect(lspQuery({ operation: 'hover', file: 'x.ts' })).rejects.toThrow();
+    } finally {
+      if (prev === undefined) delete process.env.TRHA_LSP_COMMAND;
+      else process.env.TRHA_LSP_COMMAND = prev;
+      shutdownLsp();
+    }
+  });
+});
+
+describe('LSP parity with MiMo (workspace symbols, implementation, call hierarchy)', () => {
+  it('answers the operations the MiMo lsp tool exposes', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'trha-lsp2-'));
+    const script = path.join(dir, 'lsp-server.mjs');
+    await writeFile(script, LSP_SERVER, { mode: 0o755 });
+    await writeFile(path.join(dir, 'a.ts'), 'const x = 1;\n');
+    process.env.TRHA_LSP_COMMAND = `${process.execPath} ${script}`;
+    process.env.TRHA_LSP_ROOT = dir;
+    const h = host(dir);
+    try {
+      const ws = await runStandardTool('lsp', { file: 'a.ts', operation: 'workspaceSymbol', query: 'work' }, h);
+      expect(ws).toContain('workspaceFn');
+      const impl = await runStandardTool('lsp', { file: 'a.ts', operation: 'implementation', line: 2 }, h);
+      expect(impl).toContain('/tmp/impl.ts:4:2');
+      const ch = await runStandardTool('lsp', { file: 'a.ts', operation: 'callHierarchy', line: 2 }, h);
+      expect(ch).toContain('caller');
+      const inc = await runStandardTool('lsp', { file: 'a.ts', operation: 'incomingCalls', line: 2 }, h);
+      expect(inc).toContain('main');
+      const out = await runStandardTool('lsp', { file: 'a.ts', operation: 'outgoingCalls', line: 2 }, h);
+      expect(out).toContain('helper');
+    } finally {
+      shutdownLsp();
+      delete process.env.TRHA_LSP_COMMAND;
+      delete process.env.TRHA_LSP_ROOT;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

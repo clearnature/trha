@@ -9,6 +9,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { confineWritePath } from './toolGuard.js';
 import { browserEvaluate, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 import { hardenedEnv, interactiveShell, powerShellCandidates, resolveShell } from './shell.js';
 import type { StandardToolHost, TeamTask } from './standardTools.js';
@@ -38,6 +39,8 @@ export interface ExtraHost extends StandardToolHost {
   };
   /** Spawn a fresh child (used by ralph, one per round). */
   spawnFresh?: (task: string, name?: string) => Promise<{ id: string; reply: string }>;
+  /** Extra trusted write roots from the sandbox settings page (same as write/edit). */
+  extraWriteRoots?: () => string[];
 }
 
 export const EXTRA_TOOL_NAMES = [
@@ -102,6 +105,12 @@ export async function runExtraTool(
     const rawPath = typeof args.path === 'string' ? args.path : '';
     if (!rawPath) return 'ERROR: path is required';
     const file = path.resolve(host.cwd(), rawPath);
+    // Every write below is confined exactly like `write`/`edit`
+    // (Server/toolGuard): this alias used to resolve an absolute path verbatim,
+    // so `create` could write anywhere on disk while the documented `write`
+    // tool would have refused the same path.
+    const writeTarget = async (): Promise<string | null> =>
+      confineWritePath(host.workspace, file, host.extraWriteRoots?.() ?? []);
     if (command === 'view') {
       try {
         const text = await readFile(file, 'utf8');
@@ -118,32 +127,38 @@ export async function runExtraTool(
       }
     }
     if (command === 'create') {
+      const target = await writeTarget();
+      if (!target) return `ERROR: path escapes the workspace: ${rawPath}`;
       const body = typeof args.file_text === 'string' ? args.file_text : '';
-      await mkdir(path.dirname(file), { recursive: true });
-      await writeFile(file, body, 'utf8');
-      return `OK: created ${file} (${body.length} chars)`;
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, body, 'utf8');
+      return `OK: created ${target} (${body.length} chars)`;
     }
     if (command === 'str_replace') {
       const oldStr = typeof args.old_str === 'string' ? args.old_str : '';
       const newStr = typeof args.new_str === 'string' ? args.new_str : '';
       if (!oldStr) return 'ERROR: old_str is required';
+      const target = await writeTarget();
+      if (!target) return `ERROR: path escapes the workspace: ${rawPath}`;
       let text: string;
-      try { text = await readFile(file, 'utf8'); } catch (e) { return `ERROR: ${(e as Error).message}`; }
+      try { text = await readFile(target, 'utf8'); } catch (e) { return `ERROR: ${(e as Error).message}`; }
       const count = text.split(oldStr).length - 1;
       if (count === 0) return 'ERROR: old_str not found';
       if (count > 1) return `ERROR: old_str appears ${count} times; make it unique`;
-      await writeFile(file, text.replace(oldStr, newStr), 'utf8');
-      return `OK: replaced 1 occurrence in ${file}`;
+      await writeFile(target, text.replace(oldStr, newStr), 'utf8');
+      return `OK: replaced 1 occurrence in ${target}`;
     }
     if (command === 'insert') {
       const line = typeof args.insert_line === 'number' ? args.insert_line : 0;
       const text = typeof args.new_str === 'string' ? args.new_str : '';
+      const target = await writeTarget();
+      if (!target) return `ERROR: path escapes the workspace: ${rawPath}`;
       let body: string;
-      try { body = await readFile(file, 'utf8'); } catch (e) { return `ERROR: ${(e as Error).message}`; }
+      try { body = await readFile(target, 'utf8'); } catch (e) { return `ERROR: ${(e as Error).message}`; }
       const lines = body.split('\n');
       const at = Math.max(0, Math.min(lines.length, line));
       lines.splice(at, 0, ...text.split('\n'));
-      await writeFile(file, lines.join('\n'), 'utf8');
+      await writeFile(target, lines.join('\n'), 'utf8');
       return `OK: inserted ${text.split('\n').length} line(s) at ${at + 1}`;
     }
     return `ERROR: unknown command "${command}" (view|create|str_replace|insert)`;
@@ -327,7 +342,15 @@ export async function runExtraTool(
       });
       if (r.code !== 127) break; // executable missing -> try the next candidate
     }
-    if (r.code === 127) return `ERROR: neither pwsh nor powershell.exe is installed (${r.out})`;
+    if (r.code === 127) {
+      // Keep the historical "neither pwsh nor powershell.exe is installed"
+      // wording (tests and docs key on it) but say which candidates were tried
+      // and, off Windows, that no candidate can exist at all.
+      const note = process.platform === 'win32'
+        ? ''
+        : ' — PowerShell is Windows-only; use run_code (bash/python/node) here';
+      return `ERROR: neither pwsh nor powershell.exe is installed (tried ${powerShellCandidates().join(' / ')})${note}: ${r.out}`;
+    }
     return clip(`exit ${r.code}\n${r.out}`);
   }
 
@@ -336,34 +359,61 @@ export async function runExtraTool(
     const query = typeof args.query === 'string' ? args.query.trim() : '';
     if (!query) return 'ERROR: query is required';
     const searx = process.env.TRHA_SEARX_URL;
-    const url = searx
-      ? `${searx.replace(/\/$/, '')}/search?q=${encodeURIComponent(query)}&format=json`
-      : `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-    try {
-      const res = await fetch(url, { headers: { 'User-Agent': 'trha/1.0' } });
-      const body = await res.text();
-      if (searx) {
-        const data = JSON.parse(body) as { results?: Array<{ title?: string; url?: string; content?: string }> };
-        const rows = (data.results ?? []).slice(0, 10)
-          .map(r => `${r.title ?? ''}\n${r.url ?? ''}\n${(r.content ?? '').slice(0, 200)}`);
-        return rows.length ? clip(rows.join('\n\n')) : '(no results)';
+    const ua = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
+    const strip = (s: string): string =>
+      s.replace(/<[^>]+>/g, ' ')
+        .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#x27;/g, "'")
+        .replace(/\s+/g, ' ').trim();
+    const fromBing = (html: string): string[] => {
+      const out: string[] = [];
+      const re = /<li class="b_algo"[\s\S]*?<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:<p[^>]*>([\s\S]*?)<\/p>)?/gi;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(html)) && out.length < 10) {
+        out.push(`${strip(m[2] ?? '')}\n${m[1] ?? ''}\n${strip(m[3] ?? '').slice(0, 200)}`);
       }
-      const stripped = body
-        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&amp;/g, '&')
-        .replace(/\s+/g, ' ')
-        .trim();
-      return clip(`HTTP ${res.status}\n${stripped.slice(0, 4000)}`);
-    } catch (e) {
-      // Raw undici errors ("fetch failed") hide the real setup problem: with
-      // no search backend configured the DuckDuckGo HTML fallback is the only
-      // path, and a network that cannot reach it looks like a crash.
-      const hint = searx
-        ? ''
-        : ' — TRHA_SEARX_URL is not set and the DuckDuckGo fallback is unreachable; point TRHA_SEARX_URL at a SearXNG instance (json format)';
-      return `ERROR: ${(e as Error).message}${hint}`;
+      return out;
+    };
+    const fromDdg = (html: string): string[] => {
+      const out: string[] = [];
+      const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(html)) && out.length < 10) {
+        out.push(`${strip(m[2] ?? '')}\n${m[1] ?? ''}`);
+      }
+      return out;
+    };
+    if (searx) {
+      try {
+        const url = `${searx.replace(/\/$/, '')}/search?q=${encodeURIComponent(query)}&format=json`;
+        const res = await fetch(url, { headers: { 'User-Agent': ua } });
+        const body = await res.text();
+        if (res.ok) {
+          const data = JSON.parse(body) as { results?: Array<{ title?: string; url?: string; content?: string }> };
+          const rows = (data.results ?? []).slice(0, 10)
+            .map(r => `${r.title ?? ''}\n${r.url ?? ''}\n${(r.content ?? '').slice(0, 200)}`);
+          if (rows.length) return clip(rows.join('\n\n'));
+        }
+      } catch { /* fall through to the HTML backends */ }
     }
+    // DuckDuckGo now answers machine traffic with a 202 challenge page, so Bing
+    // is the primary HTML fallback.  Both must return a real 200 with parsed
+    // rows; a challenge page is never reported as a result.
+    const backends: Array<{ name: string; url: string; parse: (h: string) => string[] }> = [
+      { name: 'bing', url: `https://www.bing.com/search?q=${encodeURIComponent(query)}`, parse: fromBing },
+      { name: 'duckduckgo', url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, parse: fromDdg },
+    ];
+    for (const b of backends) {
+      try {
+        const res = await fetch(b.url, {
+          headers: { 'User-Agent': ua, 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
+        });
+        const body = await res.text();
+        if (!res.ok) continue; // 202 = DuckDuckGo challenge, 403 = blocked
+        const rows = b.parse(body);
+        if (rows.length) return clip(rows.join('\n\n'));
+      } catch { /* try the next backend */ }
+    }
+    return `ERROR: no search backend answered for "${query}" — set TRHA_SEARX_URL to a SearXNG instance (json format), or check the network/proxy`;
   }
   if (name === 'list_subagent_models') {
     const models = host.models?.() ?? [];

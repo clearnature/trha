@@ -1,6 +1,6 @@
 # docs/ 导览
 
-> 本目录共 **47 份文档**（2026-09-21 复核；计数规则 = `reference/` 下按**条目**计，其余按 `.md` 文件计），按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
+> 本目录共 **53 份文档**（2026-10-27 追加；计数规则 = `reference/` 下按**条目**计，其余按 `.md` 文件计），按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
 >
 > **结构权威**是 `../QWEN.md`（§Architecture Layers / §Development Conventions / §Documentation）与 `architecture/architecture.md`。本文件只是**浏览用导览**，如有冲突，一律以 `QWEN.md` 为准。
 
@@ -18,6 +18,7 @@
 
 1. `../QWEN.md` —— 开发约定、层表、完整文档索引
 2. **`architecture/project-overview.md`** —— **要全貌先读这份**：技术栈 / 构建拓扑 / 现状架构图 / **逐计划完成度** / 未完成·未验证清单 / 文档漂移清单 / 复核命令
+2b. **`architecture/architecture-snapshot-2026-10-27.md`** —— **要「现在长什么样」读这份**：实测分层图、每层模块细分、一次 turn 的数据流、问题索引（S1–S3 / C1–C3 / D1–D4）
 3. **`architecture/architecture-intended-vs-actual.md`** —— **要理解意图读这份**：项目**意图**（推理内核）vs 现状、偏差 D-1…D-9、状态分档
 4. `architecture/architecture.md` —— 分层与数据流（注意其 §6 包结构规划与现状不符）
 5. `contracts/protocol-shell-kernel.md` —— 跨端协议总账（端点 / SSE 帧 / 凭证）
@@ -27,24 +28,31 @@
 
 ## 索引
 
-### `architecture/` — 结构权威与项目意图（7）
+### `architecture/` — 结构权威与项目意图（8）
 
 - **`project-overview.md`** — **技术栈 · 架构 · 计划完成度** 的一页综合视图：分层技术表、构建拓扑（cabal stanza）、依赖清单、`3rdparty/`、现状架构图、职责分界、跨端协议、逐计划完成度总账、未完成/未验证清单、**文档漂移清单**、复核命令与机器回执 id。想**快速建立全貌**或查「某项到底做完没有」从这份进（它是视图，不是权威 —— 冲突时以本文其余各份为准）
 
 - **`architecture-intended-vs-actual.md`** — **意图 vs 现状**：规范基座链（Agda「律算合一」→ pyBitNet《架构宪法》→ 本仓 CPU 实现）· 意图架构图 · 现状架构图（带 ✅/⚠️/❌）· 偏差 D-1…D-9 · 状态分档 A–E · 待澄清项。**项目愿景此前未写入任何文档，导致过一次严重误读，故新会话应先读本文**
 - `architecture.md` — 分层、核心模块、数据流、技术选型。⚠️ §6「包结构规划」写的是"每包独立目录"，与现状不符（见 `plans/code-docs-reconciliation.md` §6）
+- **`architecture-snapshot-2026-10-27.md`** — **当前架构快照（实测）**：一页分层图（L0 规范基座 → L1 内核 → L2 编排 → L3 壳 → Provider）、各层模块细分、一次 turn 的数据流、关键契约、**问题索引**（S1–S3 结构性 / C1–C3 一致性 / D1–D4 债务）与「不是问题的取舍」。要「现在长什么样」先看这份；问题编号与 `reference/trha-architecture-benchmark-review.md` 的 A1–A8 互为索引
 - `presentation-layer.md` — Presentation 层（Desktop / Web / TUI）设计；**该层代码尚未接入构建**
 - `event-matrix.md` — 每个事件的 producer / consumer / SSE 转发 / 持久化位置
 - `agent-lifecycle-notes.md` — 一次 step → 多个模型轮次 → 工具执行的可观测面（含遥测缺口标注）
 - `dsh-capability-seams.md` — 能力缝（`ctx.<key>` 服务）与「加 X → 机制」速查表
 
-### `contracts/` — 跨端契约（3）
+### `contracts/` — 跨端契约（4）
 
-- `protocol-shell-kernel.md` — 外壳（CLI/TUI/桌面/Web）↔ 编排层（`packages/scheduler`，默认 :3456，Bearer token）↔ 内核 的端点、SSE 帧、凭证总账（Phase 3 三端基线）
+- **`session-truth.md`** — **会话真相契约（2026-10-27）**：两类权威——A 类「模型可见历史」以内核事件日志为准，B 类「UI 元数据」（title/tags/todos/goal/permissionMode）以 scheduler `stateStore` 为准；CLI `transcript.jsonl` 只读回放。含恢复规则、一致性要求与三阶段迁移
+
+- `protocol-shell-kernel.md` — 外壳（CLI/TUI/桌面/Web）↔ 编排层（`packages/scheduler`，默认 :28433，Bearer token）↔ 内核 的端点、SSE 帧、凭证总账（Phase 3 三端基线）
 - `desktop-port-contract.md` — UI ↔ 后端 `Port` 契约（组件只经 `port/` 访问后端，禁止直接 `fetch`）
 - `desktop-host-contract.md` — Desktop ↔ Scheduler 宿主契约 v1（握手 / 租约 / 日志 stderr / 安全基线）
 
-### `plans/` — 进行中（11）
+### `plans/` — 进行中（13）
+
+- **`compact-weights-plan.md`** — **紧凑权重（2026-10-27，P-12 已完成）**：默认走 `SovereignIntWeightsC` + `sovereignForwardFullCompact`；`trha-cpu-braintoken` 实测 **2.5s/token、RSS 8.6GB**（旧流式 222s/40GB 仅作对照）；C1–C5 已落地，门禁 ≤5s / ≤12GB
+
+- **`improvement-plan-2026-10-27.md`** — **改进计划（2026-10-27）**：合并 qwen 2026-09-20 的独立评价（S1–S6）与本次对照评审（A1–A8），并**重新核实**现状（44 个重复模块、sdk 已并入根构建、haskell-network 已归档（2026-10-27 处置；旧记录 92 文件/11,781 行误把 dist-newstyle 计入）、Presentation 8 文件、26 executable）。含 P0/P1/P2 路线、两项需用户裁定（重复模块归属、死代码去留）、与「不建议做」清单
 
 - `desktop-provider-design.md` — Provider 三层体系（内核 registry + scheduler 透传 + Desktop UI）；P1–P8 / A1–A5 完成；A6（自研 CPU 推理）M1–M2 完成、M3–M6 未做。**「共享 `src/` 模块唯一归属」规则的原始出处就在这里**（第 60/63 行的结构注意）
 - `desktop-ui-execution-plan.md` — Desktop UI 移植的原子表与预算（T1–T12；`T5b` resume、`T12a` 清理未完成）
@@ -58,16 +66,18 @@
 - `file-completion-tracking.md` — 逐**文件**的完成状态 + 验证方式 + 证据（按计划项核对见 `plan-reconciliation.md`）
 - `webgpu-wiring-plan.md` — WebGPU 后端接线：数据流程、W1–W7 / T1–T4 原子分解（均已跑通）、12 条「照文档写会踩」的坑；**未接生产推理路径**
 
-### `reference/` — 参考、研究、运维（14）
+### `reference/` — 参考、研究、运维（16）
 
-- `source-code-analysis.md` — 四个来源项目（DeepSeek-Harness / Pi / Reasonix / trha）的结构与融合映射
+- `source-code-analysis.md` — 四个来源项目（DeepSeek-Harness / Pi / Reasonix / trha）的结构与融合映射。⚠️ 2026-10-27 起标注为**早期分析**，现状以 `architecture/architecture-snapshot-2026-10-27.md` 为准
+- `microkernel-lineage.md` — **微内核谱系**（2026-10-27）：概念来自 deepseek-harness/Cordis（进程内插件树、可逆副作用），Haskell 手法来自 Yi 的 `dynamic-state`（`HashMap ConcreteTypeRep Dynamic` 类型索引状态），进程外模型参考 Reasonix Extension Protocol v2（sidecar + NDJSON JSON-RPC + manifest）。**§3.5 另收 Haskell 侧完整 harness 参考**：`/data/work/functional-programming/hs` 的 haskell-agent（30+ 包、runtime daemon、agent-server）、langchain-hs（RunnableTree / StateGraph）、tricorder（daemon + TUI + MCP 插件）。含四者对照表与 trha 的实际落点（`Core.Plugin` 生产零引用、真正扩展面在 scheduler）
 - `reasonix-architecture-analysis.md` — Reasonix Studio v2.11.0 架构剖析（内核-外壳分离、通信、发布线、安全模型）
 - `reasonix-cli-tui-architecture-analysis.md` — Reasonix CLI/TUI → trha 移植基线（能力矩阵 F1–F10）
 - `cordis-plugin-notes.md` — settings 命令与 Cordis 插件架构对照笔记
 - `dsh-docs-alignment-plan.md` — deepseek-harness 十份概念文档的对齐计划与落地状态
 - `electron-desktop-plan.md` — Electron 壳对齐（E2 原子）+ 打包线（P1–P5 linux）
 - `layer-integration-report.md` — Phase 1 分层集成报告。⚠️ 第 3 行含未渲染的模板变量 `$(date)`
-- `trha-architecture-review.md` — **外部独立复核**（2026-09-21）：构建拓扑实测（41 处同名不同类型、~13.6k 行构建外代码、Go 桥无人引用、Presentation 死代码、36 探针缺聚合）、逐项技术栈评价、建议优先级。⚠️ 判据是**工程可维护性**，与项目 C1–C5（数学正确性）不同，勿混用
+- `trha-architecture-review.md` — **外部独立复核**（2026-09-21）：构建拓扑实测（41 处同名不同类型、~13.6k 行构建外代码、Go 桥无人引用、Presentation 未接线、36 探针缺聚合）、逐项技术栈评价、建议优先级。⚠️ 判据是**工程可维护性**，与项目 C1–C5（数学正确性）不同，勿混用；文中「死代码」一词按项目规划应读作「未接线」
+- `trha-architecture-benchmark-review.md` — **架构形状对照审核**（2026-10-27）：对照 DeepSeek-Harness（Cordis 插件树 / capability seams）、Reasonix 2.x（单二进制四壳 / 可信执行）、opencode（server + 多客户端）。发现 A1 会话真相三份、A2 内核 0.0.0.0 无认证、A3 插件层名实不符、A4 内核职责与裁定冲突、A5 端口/配置漂移。⚠️ 判据是**架构一致性与可演进性**，不与 C1–C5、也与上一份的构建可维护性混用
 - `cangjie-replacement-feasibility.md` — **"用仓颉替代 Haskell"可行性**（2026-09-21）：仓颉生态与类型系统实测、内核实际依赖 GHC 的面（`class` 仅 2 处、`type family` 0 处、GADT 语法命中全是注释里的 Agda）、最小可行实验路径。含对两处初判错误的更正
 - `cangjie-typing-probes/` — 上文的**可复现探针**（9 个 `.cj` + `run.sh`，`bash run.sh` → 9/9 断言）
 - `github-secrets-setup.md` — CI 密钥配置

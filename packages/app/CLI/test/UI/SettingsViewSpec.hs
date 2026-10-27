@@ -13,7 +13,7 @@ spec = do
   describe "settingsEntries" $ do
     it "exposes all canonical keys in order" $ do
       map seKey (settingsEntries En defaultCLIConfig)
-        `shouldBe` ["host", "port", "token", "proxy", "model", "maxTokens", "timeout", "retries", "theme", "lang", "verbose", "metrics", "markdown", "timestamps", "hints", "bell"]
+        `shouldBe` ["host", "port", "token", "proxy", "scheme", "model", "maxTokens", "timeout", "retries", "theme", "lang", "reasoningLanguage", "verbose", "metrics", "markdown", "timestamps", "hints", "bell"]
     it "carries kind metadata for each row" $ do
       let byKey k = head [ e | e <- settingsEntries En defaultCLIConfig, seKey e == k ]
       seKind (byKey "port") `shouldBe` "int"
@@ -22,7 +22,9 @@ spec = do
     it "echoes effective values from the passed config" $ do
       let cfg = defaultCLIConfig
           byKey k = head [ e | e <- settingsEntries En cfg, seKey e == k ]
-      seVal (byKey "lang") `shouldBe` "zh"
+      seVal (byKey "lang") `shouldBe` "zh-Hans"
+      -- auto is the default and means "follow the interface language"
+      seVal (byKey "reasoningLanguage") `shouldBe` "auto"
 
   describe "maskSecret" $ do
     it "hides short secrets fully" $ do
@@ -42,15 +44,16 @@ spec = do
 
   describe "filterEntries" $ do
     it "returns everything for an empty query" $ do
-      length (filterEntries "" (settingsEntries En defaultCLIConfig)) `shouldBe` 16
+      length (filterEntries "" (settingsEntries En defaultCLIConfig)) `shouldBe` 18
     it "filters by key substring (case-insensitive)" $ do
       map seKey (filterEntries "max" (settingsEntries En defaultCLIConfig))
         `shouldBe` ["maxTokens"]
       map seKey (filterEntries "Theme" (settingsEntries En defaultCLIConfig))
         `shouldBe` ["theme"]
     it "also matches the hint text" $ do
+      -- both hints mention the interface language now (auto follows it)
       map seKey (filterEntries "界面" (settingsEntries Zh defaultCLIConfig))
-        `shouldBe` ["lang"]
+        `shouldBe` ["lang", "reasoningLanguage"]
 
   describe "isOverridden" $ do
     it "flags values that differ from the default" $ do
@@ -62,6 +65,8 @@ spec = do
       let byKey l k = head [ e | e <- settingsEntries l defaultCLIConfig, seKey e == k ]
       seLabel (byKey En "theme") `shouldBe` "Theme"
       seLabel (byKey En "lang") `shouldBe` "Interface language"
+      seLabel (byKey En "reasoningLanguage") `shouldBe` "Reasoning language"
+      seLabel (byKey Zh "reasoningLanguage") `shouldBe` "思考语言"
       seLabel (byKey Zh "theme") `shouldBe` "主题"
       seLabel (byKey Zh "port") `shouldBe` "端口"
 
@@ -69,10 +74,12 @@ spec = do
     it "exposes enum choices for theme and lang" $ do
       let byKey k = head [ e | e <- settingsEntries En defaultCLIConfig, seKey e == k ]
       seOptions (byKey "theme") `shouldBe` ["tokyo-night", "light"]
-      seOptions (byKey "lang") `shouldBe` ["zh", "en"]
+      seOptions (byKey "lang") `shouldBe` ["zh-Hans", "zh-Hant", "fr", "es", "ru", "th", "bo", "ii", "my", "en"]
+      seOptions (byKey "reasoningLanguage")
+        `shouldBe` ["auto", "zh-Hans", "zh-Hant", "fr", "es", "ru", "th", "bo", "ii", "my", "en"]
       seOptions (byKey "host") `shouldBe` []
 
   describe "defaultHint" $ do
     it "wraps the value in a localized label" $ do
       defaultHint Zh "tokyo-night" `shouldBe` "（默认：tokyo-night）"
-      defaultHint En "zh" `shouldBe` "(default: zh)"
+      defaultHint En "zh-Hans" `shouldBe` "(default: zh-Hans)"

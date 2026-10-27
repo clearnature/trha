@@ -2,6 +2,16 @@
 
 基于 Cordis 微内核思想的 Haskell 实现，参考 DeepSeek-Reasonix Studio v2.11.0 架构，实现前后端解耦、CLI/Desktop 共享核心。
 
+> **「微内核」的出处（2026-10-27 补）**
+>
+> - **概念**：deepseek-harness 的 Cordis —— 一切皆插件、类型化事件、可逆副作用（`ctx.effect`）。
+> - **Haskell 手法**：Yi 编辑器的 `dynamic-state` —— `HashMap ConcreteTypeRep Dynamic` 的类型索引可扩展状态。
+> - **进程外模型**：Reasonix Extension Protocol v2 —— sidecar + NDJSON JSON-RPC + manifest 校验。
+>
+> **当前实现状态**：`Core.Plugin`（Free monad + `Dynamic` + `Disposer`）已于 **2026-10-27 归档**到
+> `archive/haskell-plugin/`（生产零引用、仅测试引用）；真正在用的扩展面是 scheduler 的 Cordis 式 `ctx` 与 MCP/LSP。
+> 三者对照与建议见 [`docs/reference/microkernel-lineage.md`](../reference/microkernel-lineage.md)。
+
 ## 1. 设计原则
 
 | 原则 | 实现方式 |
@@ -49,7 +59,9 @@
 
 ## 3. 核心模块详解
 
-### 3.1 Plugin System (`Core.Plugin`)
+### 3.1 Plugin System (`Core.Plugin`) —— 已于 2026-10-27 归档
+
+> 源码移入 `archive/haskell-plugin/`；本文保留设计说明仅供追溯。当前扩展面见 `dsh-capability-seams.md`。
 
 ```haskell
 -- Free Monad DSL
@@ -124,7 +136,8 @@ data AgentCommand
 
 - **屏障是真的**：`AwaitingApproval` 下 `StartCommand`/`ToolCallCommand`/…全部落到
   「保持不变」分支，且 `/agent/step` 直接返回 409 `approval.pending`；
-  `/v1/chat/completions` 的内核触点也不推进 FSM。待决期间没有命令能偷跑。
+  `/v1/chat/completions` 仅在带 `sessionId` 时经 `touchKernelSession` 推进 FSM（并遵守同一屏障）；
+  无 `sessionId` 时为无状态兼容路径，不碰 FSM。待决期间没有命令能偷跑。
 - **放行 ≠ 执行**：批准与否决都回到 `Idle`。批准只是「这条命令现在可以跑了」，
   执行归宿主（scheduler 拿到 `approved` 后自己跑工具）。否决不置 `Error` ——
   拒绝是一条决策，不是会话故障。
@@ -471,4 +484,4 @@ trha/                      ← 以下为**未采用的规划**
 
 > 另注：本文 §4.3 的 `trha-desktop（GTK/Qt）` 与 §4.4 的 `trha-web（Warp）` **均非现状** ——
 > Desktop 是 Electron + React，Web 是 React + Vite。真实前端在 `packages/app/{Desktop,Web}`，
-> 不在 `src/Presentation/**`（该层从未参与编译，见 `presentation-layer.md` 头部标注）。
+> 不在 `src/presentation/**`（该层从未参与编译，见 `presentation-layer.md` 头部标注）。

@@ -88,7 +88,7 @@ describe('filesystem tools (ported from deepseek-harness)', () => {
     const base = `http://127.0.0.1:${schedulerServer.port}`;
 
     const start = await fetch(`${base}/api/session/start`, {
-      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard' }),
+      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard', permissionMode: 'yolo' }),
     });
     const { sessionId } = (await start.json()) as { sessionId: string };
     const step = await fetch(`${base}/api/agent/step`, {
@@ -99,6 +99,11 @@ describe('filesystem tools (ported from deepseek-harness)', () => {
 
     // the file on disk really changed
     expect(await readFile(file, 'utf8')).toBe('alpha\nBETA\ngamma\n');
+
+    // the edit result carries a unified diff, so the TUI can render a patch card
+    expect(results[1]).toContain('@@ -2,1 +2,1 @@');
+    expect(results[1]).toContain('-beta');
+    expect(results[1]).toContain('+BETA');
 
     // read(offset=2, limit=1) returned exactly line 2, numbered
     expect(results[2]).toContain('2\tBETA');
@@ -128,7 +133,7 @@ describe('filesystem tools (ported from deepseek-harness)', () => {
     const base = `http://127.0.0.1:${schedulerServer.port}`;
 
     const start = await fetch(`${base}/api/session/start`, {
-      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard' }),
+      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard', permissionMode: 'yolo' }),
     });
     const { sessionId } = (await start.json()) as { sessionId: string };
     await fetch(`${base}/api/agent/step`, {
@@ -156,7 +161,7 @@ describe('filesystem tools (ported from deepseek-harness)', () => {
     const base = `http://127.0.0.1:${schedulerServer.port}`;
 
     const start = await fetch(`${base}/api/session/start`, {
-      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard' }),
+      method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard', permissionMode: 'yolo' }),
     });
     const { sessionId } = (await start.json()) as { sessionId: string };
     const step = await fetch(`${base}/api/agent/step`, {

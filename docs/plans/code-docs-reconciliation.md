@@ -65,10 +65,10 @@ ls archive/orchestration/          # 原 src/Orchestration 6 模块已于 2026-0
 
 | 项 | 规模 | 实测状态 |
 |---|---|---|
-| ~~`src/Infrastructure/WebGPU/**`~~ | ~~14 文件 / 1344 行~~ | **已失效（2026-09-17 更正）**：旧层（simulation，1344 行）已归档 → `archive/webgpu-legacy/`；**新高层已在构建** —— `library trha-webgpu`（`trha.cabal:222`，`Raw/Types` `Raw/Enums` `Raw/Structs` `Raw/FFI` `Raw/Async` `Context` `Buffer` `Kernel` `Error` 共 9 模块 + `cbits/wgpu_callback_shim.c`），另有 5 个探针可执行（`trha-webgpu-{hello,compute,errorprobe,gf27,gf27matmul}`）与 `trha-webgpu-test`（真机 AMD Navi 44 + Vulkan/radv，3 例）。**仍缺**：未接入**生产推理路径**（`grep -rn "Infrastructure.WebGPU" --include=*.hs src/ \| grep -v "^src/Infrastructure/WebGPU/"` → 无输出）。详见 `plans/webgpu-wiring-plan.md` 与 `architecture/project-overview.md` §5-1 |
-| `src/Presentation/**` | 8 文件（Desktop 6 / Web 1 / TUI 1） | **不在任何 cabal**；无外部引用。`docs/architecture/presentation-layer.md` 定义了该层，但从未接线 |
+| ~~`src/webgpu/Infrastructure/WebGPU/**`~~ | ~~14 文件 / 1344 行~~ | **已失效（2026-09-17 更正）**：旧层（simulation，1344 行）已归档 → `archive/webgpu-legacy/`；**新高层已在构建** —— `library trha-webgpu`（`trha.cabal:222`，`Raw/Types` `Raw/Enums` `Raw/Structs` `Raw/FFI` `Raw/Async` `Context` `Buffer` `Kernel` `Error` 共 9 模块 + `src/webgpu/cbits/wgpu_callback_shim.c`），另有 5 个探针可执行（`trha-webgpu-{hello,compute,errorprobe,gf27,gf27matmul}`）与 `trha-webgpu-test`（真机 AMD Navi 44 + Vulkan/radv，3 例）。**仍缺**：未接入**生产推理路径**（`grep -rn "Infrastructure.WebGPU" --include=*.hs src/ \| grep -v "^src/webgpu/Infrastructure/WebGPU/"` → 无输出）。详见 `plans/webgpu-wiring-plan.md` 与 `architecture/project-overview.md` §5-1 |
+| `src/presentation/**` | 8 文件（Desktop 6 / Web 1 / TUI 1） | **不在任何 cabal**；无外部引用。`docs/architecture/presentation-layer.md` 定义了该层，但从未接线 |
 | ~~`library trha-orchestration`~~ | ~~6 模块 / 199 行~~ | **已归档（2026-09-13）** → `archive/orchestration/`。处置理由：零使用者 + `verifyType` 假实现（恒返 `True`）+ 与「编排归外壳、内核不持决策态」裁定冲突。**不是"空库"**：有真实类型骨架，但实现平凡（`parallel = mapConcurrently id`）或为假（`spawnSubAgent` 只写一条 Idle 记录、不启动任何东西） |
-| `src/Infrastructure/CPU/Main.hs`、`WebGPU/Main.hs` | 2 文件 | 随层目录存在，未被任何 stanza 声明（不参与编译） |
+| `src/llm/Infrastructure/CPU/Main.hs`、`WebGPU/Main.hs` | 2 文件 | 随层目录存在，未被任何 stanza 声明（不参与编译） |
 
 ---
 
@@ -80,7 +80,7 @@ ls archive/orchestration/          # 原 src/Orchestration 6 模块已于 2026-0
 |---|---|---|
 | 特性 6 **WebGPU 加速 ✅（Phase 3）** | 代码在，但**不在构建**、simulation、FFI 未接库 | ❌ 未接线 |
 | 特性 7 **CPU 优化：多线程 + SIMD + BLAS ✅（Phase 4）** | 三值推理已实现（`docs/plans/pybitnet-ternary-inference-blueprint.md` M1–M20 的测试全绿）；**入口已于 2026-09-13 接通（D-2）**：`"cpu"` 为合法 provider kind，`adapterFor`/`providerStream` 可达 `createCPUAdapter`，引擎按模型路径 memo（`cpuAdapterCache`）；BLAS/SIMD 按 A6 记录仅有"检测 + 标量回退" | 🟡 能力有、性能待办 |
-| 特性 4 **99%+ 缓存命中率** | `wc -l src/Core/Cache/*.hs` = **70 行**（Engine 54 + Types 16）；测试 1 例 | ❌ 无对应实现 |
+| 特性 4 **99%+ 缓存命中率** | `wc -l src/core/Core/Cache/*.hs` = **70 行**（Engine 54 + Types 16）；测试 1 例 | ❌ 无对应实现 |
 | 特性 5 **完整 SDK ✅（Phase 2）** | `packages/sdk` 存在（4 库 + exe + test），但**不在根构建** | 🟡 存在、未纳入 |
 | 特性 3/9 极致并行 / 多 Agent 协作 | TS 侧完成（scheduler 115 用例）；Haskell 侧原 `trha-orchestration` 已归档出构建（2026-09-13） | 🟡 仅 TS 侧 |
 | 技术栈 **静态编译（Alpine + musl）** | `Dockerfile.static` 存在，未验证 | 🟡 未验证 |
@@ -123,7 +123,7 @@ ls archive/orchestration/          # 原 src/Orchestration 6 模块已于 2026-0
 
 | 文档 | 它描述的结构 | 与现状 |
 |---|---|---|
-| `QWEN.md` §Architecture Layers / §Module naming | `src/Core/`、`src/LLM/`…**层目录，5 库共享 `src` 为层根** | ✅ **与代码一致** |
+| `QWEN.md` §Architecture Layers / §Module naming | `src/core/Core/`、`src/llm/LLM/`…**层目录，5 库共享 `src` 为层根** | ✅ **与代码一致** |
 | `README.md` §项目结构 | `src/{Core,LLM,API,Infrastructure,Presentation}` | ✅ **已同步（2026-09-13）**：补上 `API/`、去掉已归档的 `Orchestration/` |
 | `docs/architecture/architecture.md` §6 | `trha-core/`、`trha-desktop/`、`trha-web/`、`trha-storage/`（**每包独立目录**） | ❌ 现状不是 |
 | `docs/archive/implementation-roadmap.md` §1.2 | `pi-trha/{core-engine,orchestration,presentation,shared}` | ❌ 从未采用 |
@@ -178,12 +178,12 @@ ls archive/orchestration/                                   # → 归档位置�
 grep -rn "^import.*Orchestration\." --include=*.hs src test packages   # → 无输出
 grep -rn "WebGPU\|Presentation" --include=*.cabal . | grep -v dist-newstyle
 grep -rn "Infrastructure.WebGPU\|Presentation\." --include=*.hs . | grep -v dist-newstyle
-wc -l src/Core/Cache/*.hs
-sed -n '45,52p' src/Infrastructure/WebGPU/Buffer.hs
-head -14 src/Infrastructure/WebGPU/README.md
+wc -l src/core/Core/Cache/*.hs
+sed -n '45,52p' src/webgpu/Infrastructure/WebGPU/Buffer.hs
+head -14 src/webgpu/Infrastructure/WebGPU/README.md
 # 原生推理接入（D-2，已闭合）
-grep -n '"cpu"' src/Core/Provider/Types.hs
-grep -n "cpuAdapterFor\|cpuAdapterCache" src/API/ProviderRuntime.hs
+grep -n '"cpu"' src/api/Core/Provider/Types.hs
+grep -n "cpuAdapterFor\|cpuAdapterCache" src/api/API/ProviderRuntime.hs
 diff <(sed -n '/^executable trha$/,/ghc-options/p' trha.cabal | grep "^    ") \
      <(sed -n '/^executable trha$/,/ghc-options/p' packages/app/CLI/trha-cli.cabal | grep "^    ")
 # docs 归置后的引用体检（应只命中新路径）

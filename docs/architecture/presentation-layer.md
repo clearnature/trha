@@ -2,8 +2,8 @@
 
 > ## ⚠️ 状态：**设计稿，未接线**（2026-09-13 核）
 >
-> - `src/Presentation/**`（8 个文件）**不在任何 cabal 组件**，全仓**无 `import Presentation.*`** → 该层**从未参与编译**。
-> - 本文的**文件清单与现状不符**：下文列出的 `Web/{API,WebSocket,Static}.hs` 与 `TUI/{Render,Input,Theme}.hs` **共 6 个文件并不存在**（`[ -f ]` 逐项实测缺失）；`src/Presentation/Web/` 实际只有 `Main.hs`，`src/Presentation/TUI/` 实际只有 `Main.hs`。
+> - `src/presentation/**`（8 个文件）**不在任何 cabal 组件**，全仓**无 `import Presentation.*`** → 该层**从未参与编译**。
+> - 本文的**文件清单与现状不符**：下文列出的 `Web/{API,WebSocket,Static}.hs` 与 `TUI/{Render,Input,Theme}.hs` **共 6 个文件并不存在**（`[ -f ]` 逐项实测缺失）；`src/presentation/Web/` 实际只有 `Main.hs`，`src/presentation/TUI/` 实际只有 `Main.hs`。
 > - **TUI 的真实实现不在本层**，而在外壳包 `packages/app/CLI/UI/**`（`UI.Render.*` / `UI.Theme` / `UI.Commands.Registry` / `UI.Brick`，由 `trha-cli-test` 覆盖；流式契约见 `Bridge.Scheduler.subscribeSessionEventsWith` 与 `packages/scheduler/README.md`）。
 > - **Desktop 的真实实现也不在本层**，而在 `packages/app/Desktop`（Electron + React）。
 > - **Web 的真实实现同样不在本层**：源码 `packages/app/Web`（React + Vite），构建产物经 `export:studio` 落到 `packages/scheduler/studio-public`、由调度器 `/studio` 路由服务。
@@ -27,7 +27,7 @@ Presentation 层负责用户界面交互，包含三个子模块：
 
 ## 1. Desktop (Electron)
 
-**位置**: `src/Presentation/Desktop/`
+**位置**: `src/presentation/Desktop/`
 
 **职责**:
 - Electron 桌面应用
@@ -43,7 +43,7 @@ Presentation 层负责用户界面交互，包含三个子模块：
 
 **关键文件**:
 ```
-src/Presentation/Desktop/
+src/presentation/Desktop/
 ├── Main.hs                    # 主进程入口
 ├── Window.hs                  # 窗口管理
 ├── Menu.hs                    # 菜单系统
@@ -54,7 +54,7 @@ src/Presentation/Desktop/
 
 ## 2. Web
 
-**位置**: `src/Presentation/Web/`
+**位置**: `src/presentation/Web/`
 
 **职责**:
 - Web UI (React)
@@ -64,7 +64,7 @@ src/Presentation/Desktop/
 
 **关键文件**:
 ```
-src/Presentation/Web/
+src/presentation/Web/
 ├── Main.hs                    # Web 服务器入口
 ├── API.hs                     # REST API
 ├── WebSocket.hs               # WebSocket 处理
@@ -73,7 +73,7 @@ src/Presentation/Web/
 
 ## 3. TUI
 
-**位置**: `src/Presentation/TUI/`
+**位置**: `src/presentation/TUI/`
 
 **职责**:
 - 终端 UI (Pi 风格)
@@ -83,7 +83,7 @@ src/Presentation/Web/
 
 **关键文件**:
 ```
-src/Presentation/TUI/
+src/presentation/TUI/
 ├── Main.hs                    # TUI 入口
 ├── Render.hs                  # 渲染引擎
 ├── Input.hs                   # 输入处理

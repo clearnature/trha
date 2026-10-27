@@ -21,6 +21,8 @@ module UI.Skills
   , skillDirList
   , skillDirs
   , scanSkills
+  , parseSkillInvocation
+  , skillTurn
   ) where
 
 import Control.Exception (IOException, catch)
@@ -121,3 +123,31 @@ scanSkills dirs = skillsFromFiles . concat <$> mapM scanOne dirs
         one path = do
           body <- TIO.readFile path `catch` \(_ :: IOException) -> pure ""
           pure [ (path, body) ]
+
+-- | Recognise the trigger the palette inserts: @/skill:<name> [request]@.
+--
+-- MiMo parity: picking a skill in the list only writes this line into the
+-- prompt (@DialogSkill@ / the @/@ autocomplete both call @setText@ and stop).
+-- The submit key is what actually runs it; browsing the list must never send
+-- a turn by itself.
+parseSkillInvocation :: Text -> Maybe (Text, Text)
+parseSkillInvocation raw =
+  case T.stripPrefix "/skill:" (T.strip raw) of
+    Just rest ->
+      let (name, args) = T.break isSpace rest
+      in if T.null name then Nothing else Just (name, T.strip args)
+    Nothing -> Nothing
+  where
+    isSpace c = c == ' ' || c == '\t' || c == '\n' || c == '\r'
+
+-- | The user turn that runs a skill: the skill's instructions (its SKILL.md
+-- body) followed by whatever the user typed after the trigger.
+--
+-- The body goes to the model as context; the message shown in the transcript
+-- stays the @/skill:<name>@ trigger (see 'UI.Brick.submitSkill').
+skillTurn :: Skill -> Text -> Text -> Text
+skillTurn sk body args =
+  T.intercalate "\n\n" (header : T.strip body : extra)
+  where
+    header = "Use the skill \"" <> skName sk <> "\":"
+    extra = [ args | not (T.null (T.strip args)) ]

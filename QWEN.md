@@ -10,13 +10,13 @@ Microkernel agent harness in Haskell with TypeScript orchestration, multi-protoc
 
 | Layer | Tech | Location |
 |---|---|---|
-| **Core** | Haskell, Free monad, STM | `src/Core/` |
-| **LLM Adapters** | Haskell, http-client | `src/LLM/` |
-| **API Server** | Haskell, Servant, Warp | `src/API/` |
-| **Infrastructure** | Haskell (SQLite, HTTP, Sandbox) | `src/Infrastructure/` |
-| **WebGPU Backend** | Haskell FFI → wgpu-native (Vulkan) | `src/Infrastructure/WebGPU/` |
+| **Core** | Haskell, Free monad, STM | `src/core/Core/` |
+| **LLM Adapters** | Haskell, http-client | `src/llm/LLM/` |
+| **API Server** | Haskell, Servant, Warp | `src/api/API/` |
+| **Infrastructure** | Haskell (SQLite, HTTP, Sandbox) | `src/infra/Infrastructure/` |
+| **WebGPU Backend** | Haskell FFI → wgpu-native (Vulkan) | `src/webgpu/Infrastructure/WebGPU/` |
 | **Scheduler Bridge** | TypeScript HTTP client to the kernel | `packages/scheduler/src/Bridge/` |
-| **CPU Backend** | Haskell (SIMD/BLAS/Inference) | `src/Infrastructure/CPU/` |
+| **CPU Backend** | Haskell (SIMD/BLAS/Inference) | `src/llm/Infrastructure/CPU/` |
 | **Scheduler** | TypeScript, Express, Zod, Winston | `packages/scheduler/` |
 | **SDK** | Haskell | `packages/sdk/` |
 | **Desktop App** | Electron + React | `packages/app/Desktop/` |
@@ -91,12 +91,16 @@ The Servant server (`API.Server.startServer`) listens on a configurable port and
 ## Development Conventions
 
 - **Language**: Haskell 2010 with GHC extensions (OverloadedStrings, DataKinds, TypeOperators, DeriveGeneric, ScopedTypeVariables). TypeScript with strict mode.
-- **Module naming**: Follows the cabal internal library structure — e.g. `Core.Plugin.Types` lives under `src/Core/Plugin/Types.hs`.
-- **Shared `src/` module ownership (read before touching `trha.cabal` or `src/`)**: All five internal libraries (`trha-core`, `trha-llm`, `trha-api`, `trha-infra`, `trha-webgpu`) declare `hs-source-dirs: src`, so GHC treats a file under `src/` as belonging to the package that imports it. Every module must therefore be owned by **exactly one** library:
-  - listed in **two** libraries ⇒ two incompatible types of the same name (already happened once: `Infrastructure.CPU.GGUF` / `Dequant` were briefly in both `trha-llm` and `trha-api` — `visibility: public` exposes `other-modules` downstream; recorded in `docs/plans/desktop-provider-design.md`);
-  - listed in **neither** ⇒ link failure `undefined reference to trha…-inplace_<MangledModule>_…` — reproduced 2026-09-13 by deleting `trha-api`'s `other-modules` (`cabal build all`: all three executables failed to link);
-  - current ownership: `Core.Provider.Types` → **trha-api only**; `LLM.*` + `Infrastructure.CPU.*` → **trha-llm only**; `Infrastructure.{Storage,Network,Sandbox,Telemetry}.*` → **trha-infra only**; `Infrastructure.WebGPU.*` → **trha-webgpu only**; `Core.{Plugin,Session,Agent,Tools,Event,Cache}.*` → **trha-core only**.
-  Do **not** remove `other-modules` entries as "duplicates" — they are required by this layout. Do not re-organise `src/` per package without updating this table and `docs/architecture/architecture.md` (see `docs/plans/code-docs-reconciliation.md`).
+- **Module naming**: Follows the cabal internal library structure — e.g. `Core.Plugin.Types` lives under `archive/haskell-plugin/Core/Plugin/Types.hs`.
+- **Per-library source directories (2026-10-27 拆分，取代原共享 `src/`)**: each internal library now owns its own `hs-source-dirs`; a module is visible to exactly one library and every other library imports it through `build-depends`:
+  - `src/core/` → **trha-core**：`Core.{Session,Agent,Tools,Event,Cache}.*` + `Kernel.Carrier`（`Core.Plugin.*` 已于 2026-10-27 归档到 `archive/haskell-plugin/`）；
+  - `src/llm/` → **trha-llm**：`LLM.*` + `Infrastructure.CPU.*`；
+  - `src/infra/` → **trha-infra**：`Infrastructure.{Storage,Network,Sandbox,Telemetry}.*` + `Core.HTTPProxy`；
+  - `src/webgpu/` → **trha-webgpu**：`Infrastructure.WebGPU.*`（含 `Raw/*.hsc`）；
+  - `src/api/` → **trha-api**：`API.*` + `Core.Provider.Types`；
+  - `src/gpu-infer/` → **trha-gpu-infer**（一直是独立目录）。
+  **Why the split**：共用 `hs-source-dirs: src` 时，同一个文件会被两个库各编一份，产生 44 处「同名不同类型」（`LLMAdapter` 在 `trha-llm` 与 `trha-api` 互不兼容）。项目第一判据是强类型，类型唯一性优先于构建时间 —— 2026-10-27 用户重新裁定，执行全拆，重复模块归零（`cabal build all` EXIT=0，`trha-test` / `trha-cli-test` 全绿）。
+  **Do not** put two libraries on the same `hs-source-dirs`, and do not add a module to two libraries; that silently reintroduces the duplicate-type problem. Ownership changes must update this table, `docs/architecture/architecture.md` and `docs/architecture/project-overview.md`.
 - **No sed for code edits**: Use the `edit` tool for all code modifications (project convention).
 - **Imports**: Qualified imports preferred for large modules (`Data.Text`, `Data.Map`, `Data.Vector`). Unqualified for small/focused imports.
 - **Test naming**: Hspec `describe` blocks match module names (`Core.Plugin`, `LLM.Adapter`, etc.).

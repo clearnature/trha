@@ -6,9 +6,11 @@ import { SchedulerError } from './Types.js';
 export class HttpClient {
   private client: AxiosInstance;
   private baseUrl: string;
+  private tokenProvider: (() => string | null) | undefined;
 
-  constructor(host: string, port: number) {
+  constructor(host: string, port: number, tokenProvider?: () => string | null) {
     this.baseUrl = `http://${host}:${port}`;
+    this.tokenProvider = tokenProvider;
     this.client = axios.create({
       baseURL: this.baseUrl,
       timeout: 300000,
@@ -18,40 +20,48 @@ export class HttpClient {
     });
   }
 
-  async get<T>(path: string): Promise<T> {
+  /** Resolved per request: the kernel may mint its token after we boot. */
+  private authHeaders(): Record<string, string> {
+    const token = this.tokenProvider?.() ?? null;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  /**
+   * One request, with the kernel's restart handshake: every kernel launch
+   * rotates `~/.trha/kernel-token`, so a 401 means "we sent the previous
+   * launch's token" — re-read and retry once before giving up.
+   */
+  private async send<T>(
+    fn: (headers: Record<string, string>) => Promise<AxiosResponse<T>>,
+  ): Promise<T> {
     try {
-      const response: AxiosResponse<T> = await this.client.get(path);
-      return response.data;
+      return (await fn(this.authHeaders())).data;
     } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
+        try {
+          return (await fn(this.authHeaders())).data;
+        } catch (retryError) {
+          throw this.handleError(retryError);
+        }
+      }
       throw this.handleError(error);
     }
+  }
+
+  async get<T>(path: string): Promise<T> {
+    return this.send(h => this.client.get(path, { headers: h }));
   }
 
   async post<T>(path: string, data: unknown): Promise<T> {
-    try {
-      const response: AxiosResponse<T> = await this.client.post(path, data);
-      return response.data;
-    } catch (error) {
-      throw this.handleError(error);
-    }
+    return this.send(h => this.client.post(path, data, { headers: h }));
   }
 
   async put<T>(path: string, data: unknown): Promise<T> {
-    try {
-      const response: AxiosResponse<T> = await this.client.put(path, data);
-      return response.data;
-    } catch (error) {
-      throw this.handleError(error);
-    }
+    return this.send(h => this.client.put(path, data, { headers: h }));
   }
 
   async delete<T>(path: string): Promise<T> {
-    try {
-      const response: AxiosResponse<T> = await this.client.delete(path);
-      return response.data;
-    } catch (error) {
-      throw this.handleError(error);
-    }
+    return this.send(h => this.client.delete(path, { headers: h }));
   }
 
   private handleError(error: unknown): SchedulerError {

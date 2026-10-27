@@ -12,7 +12,7 @@
 | | 内容 |
 |---|---|
 | **意图** | 内核是**带类型论与因果约束的推理中枢**。**本地 CPU/WebGPU 三值/声子模型 =「大脑」—— 自带的、不依赖 API 的神经网络推理能力**（草稿质量，但真实可算）；外部模型（API）只是补充输入。内核对推理过程做**感知与约束**。 |
-| **现状** | 推理基座（本地三值，M1–M21 全绿）与约束原语（T⁶ 验证 / 6×6 因果图 / 五行四步链）**都已实现**：① ~~本地推理在内核启动路径上不可达~~ → **已闭合（D-2，2026-09-13）**：`"cpu"` 为一等 provider kind，本地引擎在内核可达；② 约束原语与**外部 API 推理通道仍完全不相交**（D-1，批次 3 待启动）。「大脑」现状（2026-09-17）：**产 token 闭环已通**（B3c/B4：真实 .sov + `brainStepToken` → 合法 token id，不依赖 API）；**性能受限**——60 层单 token 流式 ≈ 222s（每 token 重读 .sov + 重解包 300 块权重所致；纯计算仅 ~18s），且整包装箱 ~40GB 超本机 32GB commit 上限 ⇒ **紧凑数组化（`Data.Vector.Unboxed`，~2GB）在案**（台账 `opt-b-compact-weights`）；生成已改逐 token 前向（O(N²)→O(N)）。WebGPU **已接生产推理路径（2026-09-19）**：`engineGPU` 弱耦合句柄 + `TRHA_GPU=1` 走 GPU-only 60 层闭环（q 上 WGSL，353ms/60 层 ≈5.1x CPU，hidden 与 CPU reportL 逐元素一致）。 |
+| **现状** | 推理基座（本地三值，M1–M21 全绿）与约束原语（T⁶ 验证 / 6×6 因果图 / 五行四步链）**都已实现**：① ~~本地推理在内核启动路径上不可达~~ → **已闭合（D-2，2026-09-13）**：`"cpu"` 为一等 provider kind，本地引擎在内核可达；② 约束原语与**外部 API 推理通道仍完全不相交**（D-1，批次 3 待启动）。「大脑」现状（2026-09-17）：**产 token 闭环已通**（B3c/B4：真实 .sov + `brainStepToken` → 合法 token id，不依赖 API）；**性能受限（旧路径）**——60 层单 token 流式 ≈ 222s（每 token 重读 .sov + 重解包 300 块权重所致；纯计算仅 ~18s），且整包装箱 ~40GB 超本机 32GB commit 上限。**2026-10-27 已关闭**：紧凑 C 链（`loadWeightsSovC` + `sovereignForwardFullCompact`）成为默认路径，`trha-cpu-braintoken` 实测 **2.5s/token、RSS 8.6GB**（旧流式/40GB 仅作对照）；生成已改逐 token 前向（O(N²)→O(N)）。WebGPU **已接生产推理路径（2026-09-19）**：`engineGPU` 弱耦合句柄 + `TRHA_GPU=1` 走 GPU-only 60 层闭环（q 上 WGSL，353ms/60 层 ≈5.1x CPU，hidden 与 CPU reportL 逐元素一致）。 |
 | **工程手段** | TS 全功能编排（对现有技术的利用）与 Electron（跨平台渲染）是**手段**，不是核心。 |
 
 ---
@@ -25,7 +25,7 @@
 |---|---|---|---|
 | 规范（形式化） | `/data/work/discrete-mathematics` | **律算合一**（Agda）：`L0 模2硬件 → L1 GF(3) → L2 Z/3¹¹Z → 桥LCM → L3 手征离合 → L4 T⁶环面(144×46=6624) → L5 纳音孤子 → L6 仲吕倍频 → L7 陈数守卫(C=±2) → L8 全息观测(46 驻波)` | 该仓 `README.md`；含 `Makefile`/`_build`/`Generated` |
 | 参考实现 + 宪法 | `/data/trit/pyBitNet` | 三值/声子模型参考实现；**《架构宪法 v1.1》**：刚性常量不可变、**数学结构不可简化**（"LLM 的简化本能在此项目中是破坏性的"）、Christoffel 平行移动替代注意力 | 该仓 `ARCHITECTURE_CONSTITUTION.md` |
-| Haskell 实现 | 本仓 `src/Infrastructure/CPU/**` | GGUF/SOV3 容器、8 种反量化、S² 几何、GF(3) 算子、Christoffel 运输、60 层前向、五行层 | `docs/plans/pybitnet-ternary-inference-blueprint.md`（759 行，逐条标参考行号） |
+| Haskell 实现 | 本仓 `src/llm/Infrastructure/CPU/**` | GGUF/SOV3 容器、8 种反量化、S² 几何、GF(3) 算子、Christoffel 运输、60 层前向、五行层 | `docs/plans/pybitnet-ternary-inference-blueprint.md`（759 行，逐条标参考行号） |
 
 **对拍方式**：`test/Spec.hs` 中大量以"权威 `GF9.agda` / `GF27.agda` / `GF81.agda` / `LCM.agda` / `IhC60Vibration.agda` / `Zhonglv.lengToNat`"为注释出处的全量对拍测试。
 **但**：Agda 证明流程**未集成进本仓 CI**（本仓不构建 Agda，仅作对拍目标）。
@@ -65,7 +65,7 @@
 ║ 会话态 · plan/approval 决策门 · Cordis 插件服务化 · 并行/子代理 · ║
 ║ 事件总线+SSE · 工具裁决与执行 · provider 透传 · /studio 托管      ║
 ╚═══════════════════════════╤═══════════════════════════════════════╝
-                            │ HTTP + SSE（:3456，Bearer）
+                            │ HTTP + SSE（:28433，Bearer）
                             ▼
 ╔═══════ 外壳 Shell —— Electron 解决跨平台渲染 ════════════════════╗
 ║ CLI（brick/haskeline）· Desktop（Electron+React）· Web（React）   ║
@@ -142,8 +142,8 @@
 | **D-4** | 依赖类型论 / Liquid Haskell | 0 处代码 | 未开始 | 大 |
 | **D-5** | ~~草稿模型（speculative draft）~~ → **定义已修正（2026-09-17 用户裁定）**：**草稿模型 = 本地 CPU/WebGPU 三值推理「大脑」** —— 不依赖 API 的神经网络推理能力（草稿质量）。**产 token 闭环已打通（2026-09-17，B3c/B4）**：`loadWuxingFromSov`/`brainStepToken`/`loadWeightsFromSov` + `InferenceEngine(Brain)`，真实 .sov 端到端产出合法 token id（trha-test 194/0/4）。**tokenizer 升级完成（2026-09-18）**：`tokenize`/`detokenize` 从词级 hash 占位升级为**真 token 化**（白名单 1:1 + base-1536 escape，可逆、零越界 [0,1536)，支持数学符号与全 Unicode；`r-mu6p0yuj-1kmxri`，111 例全套件）。**待办**：性能（紧凑数组，见台账 `opt-b-compact-weights`）、草稿模型微调（训练链，用户裁定方向）。 | 闭环已通；tokenizer 已升级；性能/微调待办 | 部分 | 中 |
 | **D-6** | WebGPU 后端 | **已更新（2026-09-19）**：旧层（simulation，1344 行）**已归档**；新高层 9 模块在构建 + 5 探针 + 真机对拍；**生产推理路径已接入**——`engineGPU` 字段（弱耦合函数句柄）+ `createCPUAdapterWith`/`setEngineGPU` + ProviderRuntime `TRHA_GPU=1` → `gpuForwardFactory` → GPU-only 60 层（q/christoffel 上 WGSL，cur/nxt 轮换，353ms/60 层 ≈5.1x，hidden 与 CPU reportL 逐元素一致；失败回退 CPU）。 | ✅ 已接线 | 中 |
-| **D-7** | Agda 作证明流程 | **已更新（2026-09-13 核实）**：对拍**已系统化**（非"仅注释目标"）—— `test-cpu/Spec.hs` 引用 Agda 权威 17 处，每个判据主题都标注权威文件（如 `Sovereign.MetaStructure.WuXing`、`HolographicPi.agda`、`FiniteInnerProduct.agda`）并逐条验证，含穷举与边界。**仍缺**：Agda 代码本身**未参与执行**（不编译、不进 CI），维持「外部规范源」定位 —— 即 §7 待澄清④ | 对拍已成体系；Agda 未进 CI | 中 |
-| **D-8** | 缓存 | **已更新（2026-09-13 核实）**：`src/Core/Cache/*.hs` 约 70 行，实现 `cacheLookup`/`cacheInsert`/`cacheStats` 且**有** hits/misses/hitRate 统计（原记"无命中率实现"不准确）；问题仅在 README 凭空宣称 **99%+** —— 已改为不写具体数字 | ✅ 已修正（README 与实现一致） | 小 |
+| **D-7** | Agda 作证明流程 | **已更新（2026-09-13 核实）**：对拍**已系统化**（非"仅注释目标"）—— `test/cpu/Spec.hs` 引用 Agda 权威 17 处，每个判据主题都标注权威文件（如 `Sovereign.MetaStructure.WuXing`、`HolographicPi.agda`、`FiniteInnerProduct.agda`）并逐条验证，含穷举与边界。**仍缺**：Agda 代码本身**未参与执行**（不编译、不进 CI），维持「外部规范源」定位 —— 即 §7 待澄清④ | 对拍已成体系；Agda 未进 CI | 中 |
+| **D-8** | 缓存 | **已更新（2026-09-13 核实）**：`src/core/Core/Cache/*.hs` 约 70 行，实现 `cacheLookup`/`cacheInsert`/`cacheStats` 且**有** hits/misses/hitRate 统计（原记"无命中率实现"不准确）；问题仅在 README 凭空宣称 **99%+** —— 已改为不写具体数字 | ✅ 已修正（README 与实现一致） | 小 |
 | ~~**D-9**~~ | ~~Haskell 侧 Orchestration 层~~ | **已处置（2026-09-13）**：199 行遗迹归档出构建 → `archive/orchestration/` | 归档 | 小 |
 
 ---
@@ -192,9 +192,9 @@
 | 草稿模型 | 与约束是**同一机制的两面**：草稿输出必须先过约束；外部输出与草稿走**同一条** `verdictOf` 入口 |
 
 实现：
-  · `src/Infrastructure/CPU/ConstraintVerdict.hs` —— `projectToGF27`（投影桥，确定性）+
+  · `src/llm/Infrastructure/CPU/ConstraintVerdict.hs` —— `projectToGF27`（投影桥，确定性）+
     `verdictOf`（唯一判定入口，外部与草稿共用）
-  · `src/API/Server.hs` —— `constraintField` 共享字段构造；`openaiCompletion` /
+  · `src/api/API/Server.hs` —— `constraintField` 共享字段构造；`openaiCompletion` /
     `openaiToolCompletion`（/v1/chat/completions 两条路径）、三个外部 provider 端点的
     流式响应、以及本地 adapter（草稿）路径都已带上判定
 
@@ -215,7 +215,7 @@
 
 | 事项 | 动议内容 | 决定 | 理由 |
 |---|---|---|---|
-| **拆分 `hs-source-dirs`**（消除 `trha-api`/`trha-llm` 的重复编译） | 把 `src/` 按库拆成独立目录，使 `trha-api` 的 27 项 `other-modules` 自然消失 | ❌ **撤回，维持现状**（用户裁定 2026-09-13） | ① 动议理由是"消除重复编译"，但那影响**构建时间** —— 本项目判据是**数学/理论正确性**，构建时间**不是判据**（用户同日明确纠正过这一取向）；② 唯一可能算实质的理由是"`trha-api` 与 `trha-llm` 的 `LLMAdapter` 是两个不同类型"，但**未验证**它是否仍阻碍任何该做的事；③ 动它需挪源文件（含 `src/Core/Provider/Types.hs`），且已实测"动那 27 项 ⇒ 链接失败"。 |
+| **拆分 `hs-source-dirs`**（消除 `trha-api`/`trha-llm` 的重复编译） | 把 `src/` 按库拆成独立目录，使 `trha-api` 的 27 项 `other-modules` 自然消失 | ❌ **撤回，维持现状**（用户裁定 2026-09-13） | ① 动议理由是"消除重复编译"，但那影响**构建时间** —— 本项目判据是**数学/理论正确性**，构建时间**不是判据**（用户同日明确纠正过这一取向）；② 唯一可能算实质的理由是"`trha-api` 与 `trha-llm` 的 `LLMAdapter` 是两个不同类型"，但**未验证**它是否仍阻碍任何该做的事；③ 动它需挪源文件（含 `src/api/Core/Provider/Types.hs`），且已实测"动那 27 项 ⇒ 链接失败"。 |
 
 **保留状态**：`trha.cabal` 中 `library trha-api` 的 27 项 `other-modules` 保持完整，其警示注释已相应改写为「已评估：决定不拆分」。
 
@@ -245,11 +245,11 @@ ls /data/work/discrete-mathematics | head; head -25 /data/work/discrete-mathemat
 head -70 /data/trit/pyBitNet/ARCHITECTURE_CONSTITUTION.md
 
 # 约束原语（在 CPU 层内部）
-grep -nE "^(t6Verify|causalGraphStep|wuxingForward) ::" -A3 src/Infrastructure/CPU/SovereignWuxingLayer.hs
+grep -nE "^(t6Verify|causalGraphStep|wuxingForward) ::" -A3 src/llm/Infrastructure/CPU/SovereignWuxingLayer.hs
 
 # 原生推理接入（D-2，已闭合）
-grep -n '"cpu"' src/Core/Provider/Types.hs
-grep -n "cpuAdapterFor\|cpuAdapterCache" src/API/ProviderRuntime.hs
+grep -n '"cpu"' src/api/Core/Provider/Types.hs
+grep -n "cpuAdapterFor\|cpuAdapterCache" src/api/API/ProviderRuntime.hs
 git show --stat 9a6dd6f          # D-2 的实现提交
 
 # WebGPU 未接线
@@ -259,5 +259,5 @@ grep -rn "WebGPU" --include=*.cabal . | grep -v dist-newstyle   # → 无输出
 grep -rniE "draft model|speculative|草稿模型" --include=*.hs --include=*.ts src packages
 
 # 缓存实为 70 行
-wc -l src/Core/Cache/*.hs
+wc -l src/core/Core/Cache/*.hs
 ```

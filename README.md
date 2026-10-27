@@ -6,28 +6,28 @@ A microkernel agent harness written in Haskell, inspired by the Cordis architect
 
 ```
 trha/
-├── src/                        # 核心引擎源代码 (Haskell)
-│   ├── Core/                   # 核心引擎层
-│   ├── LLM/                    # LLM 适配器层
-│   ├── API/                    # 协议面 (servant: HTTP/SSE)
-│   ├── Infrastructure/         # 基础设施层
-│   └── Presentation/           # 表示层
+├── src/
+│   ├── core/                   # 内核库 trha-core（Core.* + Kernel.Carrier）
+│   ├── llm/                    # LLM 库 trha-llm（LLM.* + Infrastructure.CPU.*；cbits/gf27_avx2.c）
+│   ├── api/                    # 协议库 trha-api（API.* + Core.Provider.Types）
+│   ├── infra/                  # 基础设施库 trha-infra
+│   ├── webgpu/                 # WebGPU 库 trha-webgpu（cbits/wgpu_callback_shim.c）
+│   ├── gpu-infer/              # GPU 推理桥接库 trha-gpu-infer
+│   └── presentation/           # 表示层（规划中，未接入构建）
 ├── packages/                   # 可安装包
 │   ├── app/                    # 应用程序
 │   │   ├── CLI/                # CLI 应用
 │   │   ├── Desktop/            # 桌面应用 (Electron + React)
 │   │   └── Web/                # Web 应用
 │   ├── scheduler/              # 调度层 (TypeScript)
-│   ├── sdk/                    # SDK 封装 (Haskell)
-│   ├── go-haskell-bridge/      # Go-Haskell 桥接
-│   └── haskell-network/        # Haskell 网络库
-├── scripts/                    # 脚本
-│   ├── benchmark/              # 基准测试
+│   └── sdk/                    # SDK 封装 (Haskell，已并入根构建)
+├── scripts/                    # 构建 / 生产脚本
 │   ├── build/                  # 构建脚本
 │   └── production/             # 生产环境脚本
-├── benchmarks/                 # 冒烟测试
-├── docs/                       # 文档
-├── maps/                       # 架构图
+├── benchmarks/                 # 探针与基准（scripts/ 为原 scripts/benchmark）
+├── test/                       # 内核套件；test/cpu/、test/webgpu/ 为独立套件
+├── docs/                       # 文档（架构图在 docs/architecture/*.mmd，原 maps/）
+├── archive/                    # 归档（legacy-probes/、go-haskell-bridge/、haskell-network/ 等）
 └── trha.cabal                  # 核心引擎构建配置
 ```
 
@@ -65,9 +65,9 @@ npm test
 ### SDK (Haskell)
 
 ```bash
-cd packages/sdk
-cabal build
-cabal test
+# packages/sdk 已并入根构建（2026-10-27，P-02）
+cabal build all
+cabal test trha-sdk-test
 ```
 
 ### 桌面应用 (Electron + React)
@@ -91,9 +91,14 @@ cabal build
 ```bash
 trha                 # 默认：全屏 TUI（需要交互终端）
 trha cli             # 行式 REPL（可用于管道/脚本）
-trha serve           # 内核 OpenAI 兼容 API，默认 :3333
+trha serve           # 内核 OpenAI 兼容 API，默认 :19433
+trha status          # 内核 / scheduler 的 pid 与存活状态
+trha stop            # 停掉内核与 scheduler（SIGTERM，先确认 pid 身份）
+trha stop scheduler  # 只停其中一个；加 --force 才会在超时后 SIGKILL
 trha --help          # 全局选项 + 子命令
 ```
+
+TUI 里 `/quit`（或 Ctrl+Q）只退出当前壳；`Ctrl+C` 是「中断优先」（空闲连按两次才退出），`Ctrl+D` 在空输入时退出；`/stop` 需要再输入 `/stop confirm`，会停掉内核与 scheduler 并退出 TUI。
 
 TUI 直接驱动终端，stdin 不是终端时会明确报错并提示改用 `trha cli`，而不是抛 `hWaitForInput: end of file`。
 
@@ -134,10 +139,10 @@ TUI 直接驱动终端，stdin 不是终端时会明确报错并提示改用 `tr
 | Phase | 内容 | 进度 | 实测状态 |
 |---|---|---|---|
 | 1 | 核心引擎 (Haskell) | ✅ | ✅ 已建成且可达（引擎原语 + 协议面 + provider 注册表） |
-| 2 | SDK 封装 | ✅ | 🟡 `packages/sdk` 存在，但**不在根构建**（需 `cd packages/sdk` 单独 build） |
-| 3 | WebGPU 后端 | ✅ | 🟡 **已建成、未接生产**（2026-09-13 核实并更新）：旧 simulation 层（1344 行）已归档 `archive/webgpu-legacy/`；新高层 `Infrastructure.WebGPU.*`（9 模块）**在构建**，另有 5 个探针可执行与 `test-webgpu` **真机对拍**（AMD Navi 44 + Vulkan/radv，GF(27) 乘法 729 组、matmul、四实现同批全等）；**未接入生产推理路径** |
+| 2 | SDK 封装 | ✅ | ✅ 已并入根构建（2026-10-27，P-02）：`cabal build all` 含 `trha-sdk-*` |
+| 3 | WebGPU 后端 | ✅ | 🟡 **已建成、未接生产**（2026-09-13 核实并更新）：旧 simulation 层（1344 行）已归档 `archive/webgpu-legacy/`；新高层 `Infrastructure.WebGPU.*`（9 模块）**在构建**，另有 5 个探针可执行与 `test/webgpu` **真机对拍**（AMD Navi 44 + Vulkan/radv，GF(27) 乘法 729 组、matmul、四实现同批全等）；**未接入生产推理路径** |
 | 4 | CPU 后端 | ✅ | 🟡 能力完整（M1–M20 全绿）、入口已通（provider `kind="cpu"`，2026-09-13）；BLAS/SIMD 仅有"检测 + 标量回退" |
 | 5 | 调度层 (TypeScript) | ✅ | ✅ TS scheduler 完整（115 vitest 用例） |
 | 6 | 并行子代理 (Pi) | ✅ | 🟡 仅 TS 侧；Haskell 侧原 `trha-orchestration` 已归档出构建（2026-09-13） |
 | 7 | 桌面应用 (Electron + React) | ✅ | 🟡 linux deb 已验；win/mac 未验；GUI 冒烟待宿主 |
-| — | （§核心特性 声称）缓存 **99%+ 命中率** | — | ⚠️ **数字未经验证**：`src/Core/Cache/*.hs` 约 70 行，实现 lookup/insert 与 hits/misses/hitRate 统计，但**没有基准测试支撑「99%+」**。§核心特性已改为不写具体数字 |
+| — | （§核心特性 声称）缓存 **99%+ 命中率** | — | ⚠️ **数字未经验证**：`src/core/Core/Cache/*.hs` 约 70 行，实现 lookup/insert 与 hits/misses/hitRate 统计，但**没有基准测试支撑「99%+」**。§核心特性已改为不写具体数字 |

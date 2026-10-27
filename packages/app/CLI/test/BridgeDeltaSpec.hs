@@ -45,14 +45,16 @@ spec = describe "Bridge.Scheduler.subscribeSessionEvents" $ do
       bridge <- createSchedulerBridge testConfig { configPort = port }
       doneVar <- newEmptyMVar
       cancel <- subscribeSessionEventsWithTerminal bridge "s2"
-                  (const (return ())) (const (return ())) (putMVar doneVar ())
+                  (const (return ())) (const (return ())) (putMVar doneVar ()) (const (return ()))
       _ <- getWithin 3000000 doneVar
       cancel `catch` \(_ :: SomeException) -> return ()
       pure ()
   where
     testConfig = defaultCLIConfig
       { configHost = "127.0.0.1", configToken = "test-token"
-      , configTimeout = 3000, configProxy = "" }
+      , configTimeout = 3000, configProxy = ""
+      -- the fixture below is a plain TCP socket, not TLS
+      , configScheme = "http" }
 
     -- One tool event, then one text delta — the two shapes the shells care about.
     sseBody = BC.concat

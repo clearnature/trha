@@ -1,83 +1,31 @@
-# trha production configuration
-server:
-  host: 0.0.0.0
-  port: 8080
+# trha production configuration (2026-10-27)
+#
+# 安全约定：内核与 scheduler 默认只绑 loopback（127.0.0.1），不做公网监听。
+# 端口与 token 以 ~/.trha/runtime.json 为运行真相
+# （见 docs/contracts/protocol-shell-kernel.md §1.1）。
+server:            # scheduler
+  host: 127.0.0.1
+  port: 28433
   workers: 8
   timeout: 30
   keep_alive: 75
 
+kernel:
+  host: 127.0.0.1
+  port: 19433
+
 model:
-  path: /opt/trha/models/Qwen3.8-27B-IQ3_M.gguf
+  # 本地三元模型的权重目录；部署时按实际路径覆盖。
+  # （旧版的 /opt/trha/models/Qwen3.8-27B-IQ3_M.gguf 已不适用。）
+  path: /opt/trha/models
   context_size: 4096
   gpu_layers: 999
   threads: 8
   batch_size: 2048
   ubatch_size: 512
   flash_attn: auto
+  engine: cpu        # cpu | webgpu（TRHA_GPU=1 时走 GPU）
 
 logging:
   level: info
   format: json
-  output: /opt/trha/logs/trha.log
-  rotation: daily
-  retention: 14
-  max_size: 10MB
-
-monitoring:
-  enabled: true
-  port: 9090
-  metrics_path: /metrics
-  scrape_interval: 5s
-
-cache:
-  enabled: true
-  size: 1000
-  ttl: 3600
-  strategy: lru
-
-security:
-  tls:
-    enabled: false
-    cert_file: /opt/trha/config/cert.pem
-    key_file: /opt/trha/config/key.pem
-  auth:
-    enabled: false
-    token: ""
-
-performance:
-  max_connections: 10000
-  max_requests_per_connection: 1000
-  request_timeout: 30
-  response_timeout: 60
-  buffer_size: 8192
-
-storage:
-  data_dir: /opt/trha/data
-  models_dir: /opt/trha/models
-  logs_dir: /opt/trha/logs
-  temp_dir: /tmp/trha
-
-network:
-  tcp:
-    keepalive: true
-    keepalive_time: 300
-    keepalive_probes: 5
-    keepalive_intvl: 15
-    fin_timeout: 15
-    tw_reuse: true
-  buffer:
-    rmem_max: 16777216
-    wmem_max: 16777216
-    rmem_default: 1048576
-    wmem_default: 1048576
-
-resources:
-  memory:
-    limit: 16GB
-    reservation: 8GB
-  cpu:
-    limit: 8
-    reservation: 4
-  disk:
-    limit: 100GB
-    reservation: 50GB

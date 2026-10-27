@@ -6,6 +6,12 @@
 > 那份是**项目自己的**（且质量很高）；本文是**独立核出来的、它没写的东西**。
 >
 > ⚠️ 本文的判据是**工程可维护性**，与项目的 C1–C5 判据（数学正确性）**不同**。两者不冲突，但不要混用。
+>
+> **2026-10-27 注**：项目仍在开发中。本文多处使用的「死代码」一词，按各模块的规划出处应读作**「未接线」**——
+> `Presentation/` 有 `architecture/presentation-layer.md`、`Core.Plugin` 有 `architecture.md §3.1`、
+> `sdk`/`haskell-network` 是 `project-overview.md:66` 记录的独立构建包。真正的「无规划出处」只有
+> `packages/go-haskell-bridge` 已于 2026-10-27 **归档到 `archive/go-haskell-bridge/`**（原计划复用 Reasonix 的 Go 桥，现不需要）。
+> 详见 `plans/improvement-plan-2026-10-27.md` §0.1。
 
 ---
 
@@ -99,15 +105,15 @@ done
 
 | 目录 | 规模 | 在根构建中被引用 | 能否独立构建 |
 |---|---:|---:|---|
-| `packages/sdk` | **92 文件 / 11,781 行** | **0 次** | 有 `trha-sdk.cabal` |
+| `packages/sdk` | **15 文件 / 1,059 行**（2026-10-27 复核；旧值 92 文件 / 11,781 行含 `dist-newstyle`） | **0 次** | 有 `trha-sdk.cabal` |
 | `packages/haskell-network` | 19 文件 / 1,306 行 | **0 次** | 有 `gh-haskell-network.cabal` |
 | `packages/go-haskell-bridge` | 9 文件 / 499 行（Haskell 侧） | **0 次** | 有 `haskell/gh-haskell-go-bridge.cabal`（嵌套） |
 | `packages/app/Desktop` | TS 11,180 行 | 0 次（走 npm） | — |
 | **合计 Haskell** | **~13,586 行** | **0** | — |
 
-**占全项目 Haskell 约 43%**（分母 `src/` 11,497 + app 6,322 + sdk 11,781 + network 1,306 + bridge 499 ≈ 31,405）。
+**占全项目 Haskell 约 6%**（2026-10-27 复核更正：sdk 真实源码 15 文件 / 1,059 行；旧值 11,781 行把 `dist-newstyle` 计入）（分母 `src/` 11,497 + app 6,322 + sdk 11,781 + network 1,306 + bridge 499 ≈ 31,405）。
 
-**最刺眼的是 `packages/sdk`：11,781 行 > 内核 `src/`（11,497 行），却不在构建、不在 CI、不在类型检查内。** 一个「类型驱动设计」的项目里，体量最大的那部分不受类型检查 —— 这不是技术债，是**门禁失效**。
+**最刺眼的是 `packages/sdk`：1,059 行（2026-10-27 复核），不在构建、不在 CI、不在类型检查内。** 一个「类型驱动设计」的项目里，体量最大的那部分不受类型检查 —— 这不是技术债，是**门禁失效**。
 
 ---
 
@@ -191,5 +197,5 @@ C1–C5 明确写 *"Performance is explicitly not a criterion"*。
 
 - **`222s/token`、`40GB 装箱`、`353ms/60层 ≈5.1×` 是项目自己的记录，本文没有跑。** 核实的是"它们被写在文档里"，**不是"数字正确"**。跑它们需要 `.sov` 模型和很长时间。
 - **`cabal build all` 是否真能过，本文没跑**（GHC 9.14.1 / cabal 3.17 已在位，但全量构建耗时长）。
-- **`packages/sdk` 那 11,781 行的代码质量，本文只看了行数**，未读实现。
+- **`packages/sdk` 那 1,059 行（复核后）的代码质量，本文只看了行数**，未读实现。
 - 本文核实的是**构建拓扑与模块归属**（cabal 文件解析 + grep 计数），这部分是硬事实。

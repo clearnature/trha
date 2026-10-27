@@ -1,7 +1,7 @@
 -- | GF(27) 乘法 kernel：把项目的三值代数搬到 GPU，与 CPU 实现全 729 组对拍。
 --
 -- GF(27) = GF(3³)，不可约多项式约定 α³ = α + 2（见
--- src/Infrastructure/CPU/SovereignGF27.hs:14）。元素编码为三位三进制：
+-- src/llm/Infrastructure/CPU/SovereignGF27.hs:14）。元素编码为三位三进制：
 --   n = n0 + 3·n1 + 9·n2   （n0,n1,n2 ∈ GF(3)）
 -- 乘法 = 常规多项式乘（次数 0..4）+ 归约（α³ → α+2，α⁴ → α²+2α）。
 --

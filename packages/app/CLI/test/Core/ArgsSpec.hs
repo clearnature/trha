@@ -43,12 +43,25 @@ spec = describe "command line" $ do
   it "selects the REPL for `cli`" $
     commandOf ["cli"] `shouldBe` Just CmdCLI
 
-  it "selects serve, defaulting the kernel port to 3333" $
-    explicitOf ["serve"] `shouldBe` Just (Just (CmdServe 3333 Nothing))
+  it "selects setup for `setup`" $ do
+    commandOf ["setup"] `shouldBe` Just (CmdSetup False)
+    commandOf ["setup", "--yes"] `shouldBe` Just (CmdSetup True)
+
+  it "selects serve, defaulting the kernel port to 19433" $
+    explicitOf ["serve"] `shouldBe` Just (Just (CmdServe 19433 Nothing))
 
   it "takes the kernel port and state dir when given" $
     explicitOf ["serve", "--kernel-port", "4000", "--state-dir", "/tmp/s"]
       `shouldBe` Just (Just (CmdServe 4000 (Just "/tmp/s")))
+
+  it "parses stop with an optional service and --force" $ do
+    explicitOf ["stop"] `shouldBe` Just (Just (CmdStop Nothing False))
+    explicitOf ["stop", "kernel"] `shouldBe` Just (Just (CmdStop (Just "kernel") False))
+    explicitOf ["stop", "scheduler", "--force"]
+      `shouldBe` Just (Just (CmdStop (Just "scheduler") True))
+
+  it "parses status" $
+    explicitOf ["status"] `shouldBe` Just (Just CmdStatus)
 
   it "lets global options precede the default TUI" $ do
     case parseArgs ["--host", "10.0.0.2", "-p", "9999"] of
