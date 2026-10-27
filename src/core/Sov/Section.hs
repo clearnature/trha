@@ -18,7 +18,7 @@
 --
 -- 这是 M7 里 @crt12@（模 12 的加法投影）所缺的层级：真正的环是
 -- @Z/(3¹¹·2¹⁶)Z@，由 CRT 分解为 @Z/3¹¹ × Z/2¹⁶@（@gcd(3¹¹,2¹⁶)=1@）。
-module Infrastructure.CPU.SovereignSection
+module Sov.Section
   ( sovereignLCM
   , pow3_11
   , pow2_16

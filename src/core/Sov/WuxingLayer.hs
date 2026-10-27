@@ -30,7 +30,7 @@
 -- > −1e9 不可达    → 'Bool' 标记（False = 几何不可达，永不被选）
 --
 -- ⚠️ 维度用可配置的小值（真实模型 dim=1440 / heads=12 / steps=4），以便端到端可测。
-module Infrastructure.CPU.SovereignWuxingLayer
+module Sov.WuxingLayer
   ( WuxingConfig(..)
   , WuxingLayerW(..)
   , T6State(..)
@@ -43,12 +43,12 @@ module Infrastructure.CPU.SovereignWuxingLayer
   , wuxingForward
   ) where
 
-import Infrastructure.CPU.GF3Intrinsic (tritMul)
-import Infrastructure.CPU.SovereignGF27 (gf27Matmul)
-import qualified Infrastructure.CPU.SovereignTypes as ST
-import Infrastructure.CPU.SovereignTypes (GF27, Trit, mkTrit, gf27ToInt)
-import Infrastructure.CPU.SovereignLossGain (polarWinding, toroidalWinding)
-import Infrastructure.CPU.SovereignPhase12 (Phase12(..), phase12Init, step12)
+import Sov.GF3Intrinsic (tritMul)
+import Sov.GF27 (gf27Matmul)
+import qualified Sov.Types as ST
+import Sov.Types (GF27, Trit, mkTrit, gf27ToInt)
+import Sov.LossGain (polarWinding, toroidalWinding)
+import Sov.Phase12 (Phase12(..), phase12Init, step12)
 
 -- | 配置：@scDim@ 对应 dim，@wcHeads@ 对应 NUM_HEADS，@wcSteps@ 对应 REASONING_STEPS，
 -- @wcHex@ = N_HEX = 6，@wcTrit@ = N_TRIT = 3。

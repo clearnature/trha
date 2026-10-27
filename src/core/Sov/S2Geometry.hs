@@ -16,7 +16,7 @@
 --     to @floor(geodesic) mod 3@ (gf3_s2_lattice.py:553-561).  The geodesic
 --     values are 1.107…, 2.034… and π radians, so that fallback ranges over
 --     {0,1,2} — it is **not** always zero.
-module Infrastructure.CPU.S2Geometry
+module Sov.S2Geometry
   ( s2NumCells
   , s2Neighbors
   , s2C3Orbits

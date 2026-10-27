@@ -17,7 +17,7 @@
 -- ⭐ 一处关键语义变化：归一化不再用 Q16 定点缩放，而是**沿 ⟨α⟩ 旋转**
 -- （@x ⊗ α^m@，@m@ 由非零计数给出）。GF(27)* 是 26 阶循环群 —— 对应
 -- 「泛音级联」的音级推进，也让每步都停在域内（有界且可逆）。
-module Infrastructure.CPU.SovereignGF27
+module Sov.GF27
   ( gf27Zero
   , gf27One
   , gf27Alpha
@@ -42,17 +42,17 @@ module Infrastructure.CPU.SovereignGF27
 
 import Data.List (foldl')
 import qualified Data.Vector.Unboxed as V
-import Infrastructure.CPU.GF3Intrinsic (AlphaPower(..), DuodecPoint, gf27Decode, gf27Encode, gf27Mul)
-import Infrastructure.CPU.SovereignIntrinsic
+import Sov.GF3Intrinsic (AlphaPower(..), DuodecPoint, gf27Decode, gf27Encode, gf27Mul)
+import Sov.Intrinsic
   ( MixMode(..)
   , SovereignIntLayer(..)
   , SovereignIntWeights(..)
   , christoffelInt
   )
-import Infrastructure.CPU.SovereignModel (SovereignConfig(..), layerStep)
+import Sov.Model (SovereignConfig(..), layerStep)
 -- ⚠️ 只引入**类型与边界转换**，不引入同名算子（gf27Zero/gf27One 等在本模块
 -- 已有 Int 版定义，公开 API 保持不变）。
-import Infrastructure.CPU.SovereignTypes (GF27, Trit, gf27ToInt, mkGF27, mkTrit, tritToInt)
+import Sov.Types (GF27, Trit, gf27ToInt, mkGF27, mkTrit, tritToInt)
 
 gf27Zero, gf27One, gf27Alpha :: Int
 gf27Zero  = 0        -- (0,0,0)

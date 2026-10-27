@@ -31,7 +31,7 @@
 --
 -- 这是 C1「代数结构 ↔ 权威规范」的一部分：本模块的每个定义都能在权威文件里找到逐字
 -- 对应，对拍见 @test-cpu/Spec.hs@ 的 C1 · HolographicSpace 一节。
-module Infrastructure.CPU.HolographicSpace
+module Sov.HolographicSpace
   ( -- * 向量空间
     VectorSpace
   , zeroVec
@@ -52,7 +52,7 @@ module Infrastructure.CPU.HolographicSpace
   , gOrder
   ) where
 
-import Infrastructure.CPU.SovereignTypes (GF9, gf9One, gf9Zero, gf9ToPair, mkGF9, plusGF9, mulGF9)
+import Sov.Types (GF9, gf9One, gf9Zero, gf9ToPair, mkGF9, plusGF9, mulGF9)
 
 --------------------------------------------------------------------------------
 -- 向量空间

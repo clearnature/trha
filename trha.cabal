@@ -9,6 +9,23 @@ build-type:         Simple
 -- Core Engine (Haskell/GHC)
 library trha-core
   exposed-modules:
+    Sov.Types
+    Sov.GF3Ops
+    Sov.Section
+    Sov.Z12Sys
+    Sov.LossGain
+    Sov.Phase12
+    Sov.S2Geometry
+    Sov.HoloPi
+    Sov.WuXing
+    Sov.HolographicSpace
+    Sov.Christoffel
+    Sov.GF3Intrinsic
+    Sov.GF27
+    Sov.Model
+    Sov.WuxingLayer
+    Sov.Intrinsic
+    Sov.ConstraintVerdict
     Core.Session.Types
     Core.Session.Projection
     Core.Session.Manager
@@ -33,6 +50,7 @@ library trha-core
                   , bytestring
                   , hashable
                   , aeson
+                  , vector
   default-language: Haskell2010
 
 -- LLM Adapters + CPU Backend (merged to avoid GHC 9.14 internal-lib linking bug)

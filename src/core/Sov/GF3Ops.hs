@@ -9,7 +9,7 @@
 -- normalisation's mean-square is the *integer* count of non-zero entries.  The
 -- reference still routes it through @round(mean_sq * dim)@ (gf3_rmsnorm.py:57-61);
 -- both agree exactly, and the integer form cannot drift.
-module Infrastructure.CPU.GF3Ops
+module Sov.GF3Ops
   ( gf3RmsNormLut
   , gf3RmsNorm
   , gf3SqrtGate

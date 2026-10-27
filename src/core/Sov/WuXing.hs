@@ -17,7 +17,7 @@
 --
 -- 缠绕常数（@Structology/Winding.agda@）：POLAR = 144 = 120(I_h) + 24(手征正四面体)，
 -- TOROIDAL = 46。pyBitNet 的 @WUXING_MODS = [4,8,6,2,5]@（金木水火土）与此一致。
-module Infrastructure.CPU.SovereignWuXing
+module Sov.WuXing
   ( wuXingMods
   , wuXingNames
   , platonicsOrders

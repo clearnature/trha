@@ -20,7 +20,7 @@
 --   LossGain 用整除：(64 × 2) / 3 = 42
 --   Zhonglv 的表是    ：64 × 2/3 = 42.67 → 43（四舍五入）
 -- 因此两种都实现，并以 Zhonglv 的 12 项表作为 round 版的判据。
-module Infrastructure.CPU.SovereignLossGain
+module Sov.LossGain
   ( sunOpDiv
   , yiOpDiv
   , sunOpRound

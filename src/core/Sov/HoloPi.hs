@@ -25,7 +25,7 @@
 --
 -- 为什么不能用裸 @Int@（本仓此前的形态）：@Int@ 上的一切运算都合法，"144/46 是原子对"
 -- 这条约束就只剩注释，编译器管不了 —— 见 @test-cpu/negative/HoloPiArithmetic.hs@。
-module Infrastructure.CPU.HoloPi
+module Sov.HoloPi
   ( -- * 原子（构造子**不导出**）
     PolarRep
   , ToroidalRep

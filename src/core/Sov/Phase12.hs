@@ -12,7 +12,7 @@
 -- 与 M7g 的区别：M7g 用 @DuodecClock@ 的 @mixedOp@ 走 @crt12@（模 12 的加法投影）；
 -- 这里换成 @Zhonglv@ 的时序 —— **损-益交替，每 12 步应用桥（仲吕对齐）**，
 -- 而 @cell/target@ 取自 @b % 12@（真实十二律，不是抽象计数器）。
-module Infrastructure.CPU.SovereignPhase12
+module Sov.Phase12
   ( Phase12(..)
   , phase12Init
   , step12
@@ -24,9 +24,9 @@ module Infrastructure.CPU.SovereignPhase12
   , breatheCount
   ) where
 
-import Infrastructure.CPU.SovereignLossGain (HoloState(..), holoGain, holoLoss)
-import Infrastructure.CPU.SovereignSection (zhonglvAlign)
-import Infrastructure.CPU.Z12Sys (Q(..), Z12(..), qnum)
+import Sov.LossGain (HoloState(..), holoGain, holoLoss)
+import Sov.Section (zhonglvAlign)
+import Sov.Z12Sys (Q(..), Z12(..), qnum)
 
 -- | 十二律相位机：相位 @HoloState@ + 累加器（整数坐标）+ 步数。
 data Phase12 = Phase12

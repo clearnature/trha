@@ -18,7 +18,7 @@
 --
 -- @chiral_gate = [0,1,2]@ makes step 4 the identity, but it is written out so
 -- the code still says what the model says.
-module Infrastructure.CPU.Christoffel
+module Sov.Christoffel
   ( transportTryte
   , chiralGate
   , tryteOf
@@ -26,9 +26,9 @@ module Infrastructure.CPU.Christoffel
   , christoffelForward
   ) where
 
-import Infrastructure.CPU.SovereignTypes (Trit, mkTrit, tritToInt)
-import Infrastructure.CPU.GF3Ops (ternaryLinear)
-import Infrastructure.CPU.S2Geometry (getDirection, gf3Shift)
+import Sov.Types (Trit, mkTrit, tritToInt)
+import Sov.GF3Ops (ternaryLinear)
+import Sov.S2Geometry (getDirection, gf3Shift)
 
 -- | @chiral_gate@ — the GF(3) multiplication gate (gf3_s2_lattice.py:500).
 chiralGate :: [Int]

@@ -84,6 +84,9 @@ import qualified LLM.Adapter.Types as LLM
 import LLM.Adapter.Interface (LLMAdapter(..))
 import LLM.Adapter.Types (ChatMessage(..), ChatTurn(..), StreamChunk(..), ToolCall(..), ToolSpec, Usage(..), mkUsage)
 import qualified LLM.Stream as Stream
+import Sov.ConstraintVerdict
+  ( ConstraintVerdict (..), T6State (..), VerdictStatus (..)
+  , verdictOf, verdictOfWithState )
 
 --------------------------------------------------------------------------------
 -- 1. Full API type: custom + OpenAI + Anthropic + Responses (stream + non-stream)
@@ -590,8 +593,16 @@ agentStepHandler adapter sessionsVar stateDir req = do
       ----------------------------------------------------------------------
       -- D-3：推理状态上浮为**会话投影**。
       --
+      -- 推理内核（T⁶ 几何 / 6×6 因果图 / 五行四步链）的状态此前只活在 CPU 层，内核
+      -- 看不到"推理过程"。这里把每步的**末态 T6State** 与**约束判定**写入
+      -- session.projections（event-sourcing 式派生状态），使内核可见。
       --
+      -- 分层：CPU 层类型在此**装箱**成 Dynamic；Core 只经 setProjection 碰 Dynamic，
+      -- 不反向依赖 Infrastructure。
       ----------------------------------------------------------------------
+      let (verdict, t6st) = verdictOfWithState (T.unpack reply)
+      liftIO $ setProjection session "t6state" (toDyn t6st)
+      liftIO $ setProjection session "constraint" (toDyn verdict)
       names <- liftIO $ projectionNames session
       -- D-3：推进内核 FSM（Core.Agent.StateMachine 的 transition 为唯一语义来源）
       stBefore <- liftIO $ getAgentState session
@@ -609,6 +620,14 @@ agentStepHandler adapter sessionsVar stateDir req = do
         , "usage" .= toJSON usage
         -- 让"上浮"可被观测：回显投影名与本步的推理状态摘要（不改变既有字段语义）
         , "session_projections" .= names
+        -- 注意：不叫 "t6"，因为 constraintField 里已有同名的判定字段（避免同 key 冲突）
+        , "t6_state" .= object
+            [ "polar"    .= t6Polar t6st
+            , "toroidal" .= t6Toroidal t6st
+            , "berry"    .= t6Berry t6st
+            ]
+        -- 与 /v1/chat/completions 一致：判定随响应返回（复用同一个 constraintField）
+        , constraintField reply
         -- D-3：内核 FSM 状态（推理"走到哪一步"）也随之可见
         , "agent_state" .= object
             [ "before" .= show stBefore
@@ -710,6 +729,9 @@ touchKernelSession sessionsVar stateDir body replyText =
             Just _ -> pure ()   -- 待决中：不推进 FSM，也不假装这一步发生过
             Nothing | here == Planning -> pure ()
             Nothing -> do
+              let (verdict, t6st) = verdictOfWithState (T.unpack replyText)
+              setProjection session "t6state" (toDyn t6st)
+              setProjection session "constraint" (toDyn verdict)
               st <- advanceAgent session (StartCommand (T.unpack sid))
               -- Same two events as /agent/step: this path advances the FSM too,
               -- and a log that omitted it would misreport the session.
@@ -777,6 +799,27 @@ parseOpenAIRequest val = parseMaybe parser val
       <*> (v .:? "genParams")
 
 -- | Legacy completion response (no tools).
+-- | C5(D-1)：约束的**采纳判定**作为一个可复用的响应字段。
+--
+-- 作用点在**响应侧** —— 外部模型是黑盒（不能改其权重/采样），约束不可能作用于它的
+-- 内部计算，只能作用于"哪些输出被采纳"。这里把候选输出投影到约束输入空间，过一遍
+-- T⁶ / 6×6 因果图 / 五行四步链。判定**总是**产出（用户裁定①：标注而非拒绝、不降级）；
+-- 草稿（本地）与外部输出共用这一条路径（裁定③：同一机制的两面）。
+constraintField :: Text -> Pair
+constraintField content =
+  "trha_constraint"
+    .= object
+      [ "status" .= (case cvStatus v of
+                       VerdictPass -> "pass" :: Text
+                       VerdictWarn -> "warn")
+      , "t6"     .= cvT6 v
+      , "reach"  .= cvReach v
+      , "edges"  .= cvEdges v
+      , "reason" .= T.pack (cvReason v)
+      ]
+  where
+    v = verdictOf (T.unpack content)
+
 openaiCompletion :: Text -> [LLM.StreamChunk] -> Maybe Value -> Value
 openaiCompletion model chunks genParams = object
   ( [ "id"      .= ("chatcmpl-" <> model :: Text)
@@ -788,6 +831,7 @@ openaiCompletion model chunks genParams = object
         , "finish_reason" .= ("stop" :: Text)
         ]]
     , "usage"   .= toJSON usage
+  , constraintField content
   ] ++ genParamsEcho genParams )
   where
     content = T.concat [t | LLM.ChunkDelta t <- chunks]
@@ -814,6 +858,7 @@ openaiToolCompletion model turn genParams = object
       , "finish_reason" .= (if null (LLM.ctToolCalls turn) then ("stop" :: Text) else "tool_calls")
       ]]
   , "usage" .= maybe (toJSON (LLM.mkUsage 0 0 0)) toJSON (LLM.ctUsage turn)
+  , constraintField (LLM.ctContent turn)
   ] ++ genParamsEcho genParams )
 
 -- | Map the wire @genParams@ object onto 'LLM.GenParams'.
@@ -872,6 +917,12 @@ anthropicMessagesHandler adapter body =
                    $ map (\(r, c) -> LLM.Message (toRole r) c) msgs
       chunks <- liftIO $ llmChat adapter hsMsgs
       let content = T.concat [t | LLM.ChunkDelta t <- chunks]
+      -- C5(D-1) 裁定③：草稿（本地）输出与外部输出走**同一条**判定入口。
+      -- C5(D-1)：约束的**作用点 = 响应侧的采纳判定**。
+      -- 外部模型是黑盒（不能改其权重/采样），约束不可能作用于其内部计算，只能作用于
+      -- "哪些输出被采纳"。这里把候选输出投影到约束输入空间，过一遍 T⁶ / 6×6 因果图 /
+      -- 五行四步链；判定**总是**随响应返回（用户裁定①：标注而非拒绝，不降级）。
+      let verdict = verdictOf (T.unpack content)
       let usage = case [u | LLM.ChunkDone u <- chunks] of
             (u:_) -> u
             []    -> LLM.mkUsage 0 0 0
@@ -886,6 +937,7 @@ anthropicMessagesHandler adapter body =
             [ "input_tokens"  .= LLM.usagePromptTokens usage
             , "output_tokens" .= LLM.usageCompletionTokens usage
             ]
+        , constraintField content
         ]
 
 parseAnthropic :: Value -> Maybe (Text, Maybe Text, [(Text, Text)])
@@ -913,6 +965,12 @@ responsesHandler adapter body =
                    $ map (\(r, c) -> LLM.Message (toRole r) c) inputMsgs
       chunks <- liftIO $ llmChat adapter hsMsgs
       let content = T.concat [t | LLM.ChunkDelta t <- chunks]
+      -- C5(D-1) 裁定③：草稿（本地）输出与外部输出走**同一条**判定入口。
+      -- C5(D-1)：约束的**作用点 = 响应侧的采纳判定**。
+      -- 外部模型是黑盒（不能改其权重/采样），约束不可能作用于其内部计算，只能作用于
+      -- "哪些输出被采纳"。这里把候选输出投影到约束输入空间，过一遍 T⁶ / 6×6 因果图 /
+      -- 五行四步链；判定**总是**随响应返回（用户裁定①：标注而非拒绝，不降级）。
+      let verdict = verdictOf (T.unpack content)
       let usage = case [u | LLM.ChunkDone u <- chunks] of
             (u:_) -> u
             []    -> LLM.mkUsage 0 0 0
@@ -1177,6 +1235,11 @@ openaiStreamHandler adapter body =
         Nothing -> Stream.streamDeepSeek "" model hsMsgs onEvent
       events <- liftIO $ readIORef eventsRef
       let content = T.concat [t | Stream.SEVDelta t <- reverse events]
+      -- C5(D-1)：约束的**作用点 = 响应侧的采纳判定**。
+      -- 外部模型是黑盒（不能改其权重/采样），约束不可能作用于其内部计算，只能作用于
+      -- "哪些输出被采纳"。这里把候选输出投影到约束输入空间，过一遍 T⁶ / 6×6 因果图 /
+      -- 五行四步链；判定**总是**随响应返回（用户裁定①：标注而非拒绝，不降级）。
+      let verdict = verdictOf (T.unpack content)
       let toolCalls = streamedToolCalls (reverse events)
       let usage = case [u | Stream.SEVUsageFull u <- events] of
             (u:_) -> toJSON u
@@ -1202,6 +1265,16 @@ openaiStreamHandler adapter body =
             ]]
         , "usage"   .= usage
         , "stream_events" .= length events
+        -- 约束判定：status 为 pass / warn；**总是**存在（warn 时仍返回内容，仅标注）。
+        , "trha_constraint" .= object
+            [ "status" .= (case cvStatus verdict of
+                             VerdictPass -> "pass" :: Text
+                             VerdictWarn -> "warn")
+            , "t6"     .= cvT6 verdict
+            , "reach"  .= cvReach verdict
+            , "edges"  .= cvEdges verdict
+            , "reason" .= T.pack (cvReason verdict)
+            ]
         ]
 
 -- | POST /v1/messages/stream — the Messages API's named-event SSE.
@@ -1248,6 +1321,11 @@ anthropicStreamHandler adapter body =
         Nothing -> Stream.streamAnthropic "" model hsMsgs onEvent
       events <- liftIO $ readIORef eventsRef
       let content = T.concat [t | Stream.SEVDelta t <- reverse events]
+      -- C5(D-1)：约束的**作用点 = 响应侧的采纳判定**。
+      -- 外部模型是黑盒（不能改其权重/采样），约束不可能作用于其内部计算，只能作用于
+      -- "哪些输出被采纳"。这里把候选输出投影到约束输入空间，过一遍 T⁶ / 6×6 因果图 /
+      -- 五行四步链；判定**总是**随响应返回（用户裁定①：标注而非拒绝，不降级）。
+      let verdict = verdictOf (T.unpack content)
       let toolCalls = streamedToolCalls (reverse events)
       return $ object
         [ "id"          .= ("msg-stream-" <> model :: Text)
@@ -1261,6 +1339,16 @@ anthropicStreamHandler adapter body =
         , "model"       .= model
         , "stop_reason" .= (if null toolCalls then "end_turn" else "tool_use" :: Text)
         , "stream_events" .= length events
+        -- 约束判定：status 为 pass / warn；**总是**存在（warn 时仍返回内容，仅标注）。
+        , "trha_constraint" .= object
+            [ "status" .= (case cvStatus verdict of
+                             VerdictPass -> "pass" :: Text
+                             VerdictWarn -> "warn")
+            , "t6"     .= cvT6 verdict
+            , "reach"  .= cvReach verdict
+            , "edges"  .= cvEdges verdict
+            , "reason" .= T.pack (cvReason verdict)
+            ]
         ]
 
 -- | POST /v1/responses/stream — the Responses API's typed-event SSE.
@@ -1308,6 +1396,11 @@ responsesStreamHandler adapter body =
         Nothing -> Stream.streamDeepSeek "" model hsMsgs onEvent
       events <- liftIO $ readIORef eventsRef
       let content = T.concat [t | Stream.SEVDelta t <- reverse events]
+      -- C5(D-1)：约束的**作用点 = 响应侧的采纳判定**。
+      -- 外部模型是黑盒（不能改其权重/采样），约束不可能作用于其内部计算，只能作用于
+      -- "哪些输出被采纳"。这里把候选输出投影到约束输入空间，过一遍 T⁶ / 6×6 因果图 /
+      -- 五行四步链；判定**总是**随响应返回（用户裁定①：标注而非拒绝，不降级）。
+      let verdict = verdictOf (T.unpack content)
       let toolCalls = streamedToolCalls (reverse events)
       return $ object
         [ "id"         .= ("resp-stream-" <> model :: Text)
@@ -1335,6 +1428,16 @@ responsesStreamHandler adapter body =
                    ] | (_, id0, n, a) <- toolCalls ])
         , "status"     .= ("completed" :: Text)
         , "stream_events" .= length events
+        -- 约束判定：status 为 pass / warn；**总是**存在（warn 时仍返回内容，仅标注）。
+        , "trha_constraint" .= object
+            [ "status" .= (case cvStatus verdict of
+                             VerdictPass -> "pass" :: Text
+                             VerdictWarn -> "warn")
+            , "t6"     .= cvT6 verdict
+            , "reach"  .= cvReach verdict
+            , "edges"  .= cvEdges verdict
+            , "reason" .= T.pack (cvReason verdict)
+            ]
         ]
 
 --------------------------------------------------------------------------------

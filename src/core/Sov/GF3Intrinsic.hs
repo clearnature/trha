@@ -19,7 +19,7 @@
 -- （对应电性文明复位后的本源表达，见 @Sovereign\/Projection.agda@ 与
 -- @Sovereign\/Algebra\/Duodecimal.agda@）。两者并存，互不替换：
 -- 浮点版是投影读数，整数版每步 % 3 归约，状态有限 ⟹ 必然落入极限环。
-module Infrastructure.CPU.GF3Intrinsic
+module Sov.GF3Intrinsic
   ( fxpShift
   , fxpOne
   , fxpHalf
@@ -61,7 +61,7 @@ module Infrastructure.CPU.GF3Intrinsic
   ) where
 
 import qualified Data.Vector.Unboxed as V
-import Infrastructure.CPU.SovereignTypes (Trit, mkTrit, tritToInt)
+import Sov.Types (Trit, mkTrit, tritToInt)
 import qualified Data.Vector.Unboxed.Mutable as MV
 
 --------------------------------------------------------------------------------

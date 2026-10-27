@@ -23,7 +23,7 @@
 --    权重 = GF(3) 元素 'Trit'；激活 = trit 向量；@MixGF27@ 分支用 GF(27) 元素。
 --    注意 'christoffelInt' 的返回类型仍是 @[Int]@ —— 因为 @MixLayer2@ 分支
 --    返回 [0,24]（层2 整数累加，3 ≠ 0），范畴随 'MixMode' 而变，不是疏忽。
-module Infrastructure.CPU.SovereignIntrinsic
+module Sov.Intrinsic
   ( MixMode(..)
   , SovereignIntLayer(..)
   , SovereignIntWeights(..)
@@ -36,11 +36,11 @@ module Infrastructure.CPU.SovereignIntrinsic
   , traceStates
   ) where
 
-import Infrastructure.CPU.Christoffel (transportTryte)
-import Infrastructure.CPU.GF3Intrinsic
-import Infrastructure.CPU.S2Geometry (getDirection, gf3Shift)
-import Infrastructure.CPU.SovereignModel (SovereignConfig(..), layerStep)
-import Infrastructure.CPU.SovereignTypes (GF27, Trit, mkTrit, gf27ToInt, tritToInt)
+import Sov.Christoffel (transportTryte)
+import Sov.GF3Intrinsic
+import Sov.S2Geometry (getDirection, gf3Shift)
+import Sov.Model (SovereignConfig(..), layerStep)
+import Sov.Types (GF27, Trit, mkTrit, gf27ToInt, tritToInt)
 
 --------------------------------------------------------------------------------
 -- 权重载体

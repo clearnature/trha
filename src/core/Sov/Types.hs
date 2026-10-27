@@ -21,7 +21,7 @@
 --   * 加法群 @(Z/3)³@ —— 逐分量，见 'plusGF27'
 --   * 乘法群 ≅ @Z/26@ —— 周期，见 'mulGF27'
 --   两者是**同一集合上的两个运算**，不是两种表示。
-module Infrastructure.CPU.SovereignTypes
+module Sov.Types
   ( -- * GF(3) 的元素
     Trit
   , mkTrit

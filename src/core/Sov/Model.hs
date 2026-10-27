@@ -17,7 +17,7 @@
 -- @scale@ — are random initialisations in the reference.  Here they take
 -- deterministic values (zeros / 'defaultMonopolePrototype' / ones) so the two
 -- sides can be compared value by value.
-module Infrastructure.CPU.SovereignModel
+module Sov.Model
   ( SovereignConfig(..)
   , SovereignLayer(..)
   , SovereignWeights(..)
@@ -33,10 +33,10 @@ module Infrastructure.CPU.SovereignModel
   , sovereignForwardMixed
   ) where
 
-import Infrastructure.CPU.Christoffel (christoffelForward)
-import Infrastructure.CPU.GF3Ops (gf3RmsNorm, gf3RmsNormLut, gf3SwiGLU, ternaryLinear)
-import Infrastructure.CPU.GF3Intrinsic (AlphaPower(..), DuodecPoint, mixedOp, crt12)
-import Infrastructure.CPU.S2Geometry (icoVertices, r2Fxp, s2NumCells)
+import Sov.Christoffel (christoffelForward)
+import Sov.GF3Ops (gf3RmsNorm, gf3RmsNormLut, gf3SwiGLU, ternaryLinear)
+import Sov.GF3Intrinsic (AlphaPower(..), DuodecPoint, mixedOp, crt12)
+import Sov.S2Geometry (icoVertices, r2Fxp, s2NumCells)
 
 data SovereignConfig = SovereignConfig
   { scDim   :: Int      -- ^ 24n (1440 in the real model)

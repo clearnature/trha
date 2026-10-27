@@ -22,7 +22,7 @@
 --
 -- 这里验的是**数学/理论正确性**：判定来自 T⁶ 几何（Berry 相位连续性）与 GF(3) 因果图
 -- 的可达性，**不是**启发式打分，也不涉及任何性能指标。
-module Infrastructure.CPU.ConstraintVerdict
+module Sov.ConstraintVerdict
   ( -- * 判定
     ConstraintVerdict (..)
   , VerdictStatus (..)
@@ -36,8 +36,8 @@ module Infrastructure.CPU.ConstraintVerdict
 
 import Data.Char (ord)
 
-import Infrastructure.CPU.SovereignTypes (GF27, Trit, mkGF27, mkTrit, tritToInt)
-import Infrastructure.CPU.SovereignWuxingLayer
+import Sov.Types (GF27, Trit, mkGF27, mkTrit, tritToInt)
+import Sov.WuxingLayer
   ( T6State (..)
   , WuxingConfig (..)
   , WuxingLayerW (..)

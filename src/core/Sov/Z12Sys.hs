@@ -23,7 +23,7 @@
 -- 以及 pyBitNet @HolographicState (a,b,c,d) ∈ Z⁴@ 的 4 维对应。
 --
 -- ⚠️ 宪法约束：坐标全部是 ℚ（定点整数比），**不使用任何浮点**。
-module Infrastructure.CPU.Z12Sys
+module Sov.Z12Sys
   ( Q(..)
   , qnum
   , qadd
