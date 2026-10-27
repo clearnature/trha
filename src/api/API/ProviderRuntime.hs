@@ -22,8 +22,6 @@ module API.ProviderRuntime
   , openAICompatStream
   , anthropicStream
   , responsesStream
-  , cpuAdapterFor
-  , cpuAdapterCacheSize
   , anthropicRequestBody
   , StreamCall
   ) where
@@ -50,52 +48,12 @@ import Network.HTTP.Types.Status (statusCode, statusIsSuccessful)
 import System.IO.Unsafe (unsafePerformIO)
 
 import Core.Provider.Types
-import LLM.Adapter.Interface (LLMAdapter(..), StreamCall, createCPUAdapterWith)
+import LLM.Adapter.Interface (LLMAdapter(..), StreamCall)
 import qualified LLM.Stream as LStream
 import LLM.Adapter.Types
 import LLM.Providers.DeepSeek (buildDeepSeekChatRequest, parseDeepSeekChatTurn)
-import Infrastructure.CPU.InferenceGPU (gpuForwardFactory)
 import System.Environment (lookupEnv)
 
---------------------------------------------------------------------------------
--- Local inference backend ("cpu" kind)
---------------------------------------------------------------------------------
-
--- | Local-inference adapters, cached **by model path**.
---
--- @createCPUAdapter@ calls @loadModel@ on every invocation (a local .sov/GGUF
--- can be hundreds of MB), so building one per request would be unusable.  The
--- adapter closes over its engine, so caching the adapter caches the engine.
-{-# NOINLINE cpuAdapterCache #-}
-cpuAdapterCache :: MVar (Map.Map FilePath LLMAdapter)
-cpuAdapterCache = unsafePerformIO (newMVar Map.empty)
-
--- | Get (or build) the local-inference adapter for a model path.
-cpuAdapterFor :: FilePath -> IO LLMAdapter
-cpuAdapterFor path = modifyMVar cpuAdapterCache $ \m ->
-  case Map.lookup path m of
-    Just a  -> pure (m, a)
-    Nothing -> do
-      -- TRHA_GPU=1：尝试挂 WebGPU 前端（60 层 matmul 上 GPU；失败回退 CPU，不崩）
-      gpuOn <- maybe False (== "1") <$> lookupEnv "TRHA_GPU"
-      if not gpuOn
-        then do
-          (_, a0) <- createCPUAdapterWith Nothing path
-          pure (Map.insert path a0 m, a0)
-        else do
-          gpuF <- gpuForwardFactory path 12
-          case gpuF of
-            Left err -> do
-              putStrLn ("[gpu] 未启用 WebGPU 前端（回退 CPU）: " ++ err)
-              (_, a0) <- createCPUAdapterWith Nothing path
-              pure (Map.insert path a0 m, a0)
-            Right fwd -> do
-              (_, a') <- createCPUAdapterWith (Just fwd) path
-              pure (Map.insert path a' m, a')
-
--- | Number of cached local adapters (lets tests assert path reuse).
-cpuAdapterCacheSize :: IO Int
-cpuAdapterCacheSize = withMVar cpuAdapterCache (pure . Map.size)
 
 -- | One adapter per provider name, rebuilt only when its fingerprint
 -- (entry fields + key) changes.  The Responses wire keeps its continuation
@@ -160,7 +118,6 @@ buildAdapter entry key = case peKind entry of
   "responses" -> Right <$> responsesAdapter (peBaseUrl entry) key (peDefault entry)
                        (extraHeaders (peHeaders entry)) (peExtraBody entry)
                        (peResponsesMode entry)
-  "cpu"       -> Right <$> cpuAdapterFor (T.unpack (T.strip (peBaseUrl entry)))
   other       -> pure (Left ("provider kind not implemented yet: " <> other))
 
 --------------------------------------------------------------------------------
@@ -286,11 +243,6 @@ buildStream entry key = case peKind entry of
     responsesStream (peBaseUrl entry) key (peDefault entry)
       (extraHeaders (peHeaders entry)) (peExtraBody entry)
       (effortOf entry) (peResponsesMode entry) ridRef
-  -- 本地推理 backend：走**真实流式**（cpuStream 逐 token 回调），
-  -- 不落到下面的 blockingStream 回退。
-  "cpu"       -> do
-    a <- cpuAdapterFor (T.unpack (T.strip (peBaseUrl entry)))
-    pure (llmChatToolsStream a)
   _        -> do
     built <- adapterFor entry key
     pure $ case built of
