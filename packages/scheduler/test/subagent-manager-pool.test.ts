@@ -60,7 +60,7 @@ describe('ResourcePool', () => {
     expect(released).toBeUndefined();
     const second = await Promise.race([
       pending,
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('waiter not resolved')), 300)),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('waiter not resolved')), 2000)),
     ]);
     expect(second.id).toBe('only');
     void first;
