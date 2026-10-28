@@ -61,6 +61,7 @@ import CoreContractSpec (coreContractSpec)
 import SessionPersistSpec (sessionPersistSpec)
 import ApprovalSpec (approvalSpec)
 import PlanSpec (planSpec)
+import GoldenGF27Spec (goldenGF27Spec)
 import DeepSeekCacheSpec (deepSeekCacheSpec)
 import StreamToolCallsSpec (streamToolCallsSpec)
 import HTTPProxySpec (spec)
@@ -95,6 +96,7 @@ main = hspec $ do
   sessionPersistSpec
   approvalSpec
   planSpec
+  goldenGF27Spec
   deepSeekCacheSpec
   streamToolCallsSpec
   HTTPProxySpec.spec

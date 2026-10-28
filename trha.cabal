@@ -280,6 +280,7 @@ test-suite trha-test
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
   other-modules:    CoreContractSpec, SessionPersistSpec, ApprovalSpec, PlanSpec
+                  , GoldenGF27Spec
                   , DeepSeekCacheSpec
                   , StreamToolCallsSpec
                   , HTTPProxySpec
