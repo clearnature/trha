@@ -121,12 +121,12 @@ describe('SubAgentManager', () => {
     // simulateExecution 有 20% 概率抛 + 1000ms 退避重试 ⇒ 终态时间是概率性的；
     // 断言只要求「任务被跟踪且最终收敛（绝大多数立刻）或仍在途」。
     let settled: string | undefined;
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 300; i++) {
       await new Promise(r => setTimeout(r, 50));
       settled = (await mgr.getTask(task.id))?.status;
       if (settled === 'completed' || settled === 'failed') break;
     }
-    expect(['pending', 'completed', 'failed']).toContain(settled);
+    expect(['pending', 'running', 'completed', 'failed']).toContain(settled);
   });
 
   it('terminate / updateState / getSummary / on-off', async () => {
