@@ -5,6 +5,7 @@
 module SandboxMacSpec (sandboxMacSpec) where
 
 import Control.Exception (SomeException, try)
+import Control.Monad (forM_)
 import Infrastructure.Sandbox
 import qualified Infrastructure.Sandbox.Backend.Mac as Mac
 import Infrastructure.Sandbox.Probe
@@ -33,7 +34,9 @@ sandboxMacSpec = describe "macOS sandbox integration (T3.3)" $ do
             _ <- try (removeDirectoryRecursive ws) :: IO (Either SomeException ())
             map probeName results
               `shouldBe` ["write-workspace", "write-etc", "read-ssh", "network"]
-            map probeOk results `shouldBe` [True, True, True, True]
+            -- 逐个断言（带名字）：数组断言只会打印 [False,…]，看不出是哪一项。
+            forM_ results $ \r ->
+              (probeName r, probeOk r) `shouldBe` (probeName r, True)
 
 probeScope :: FilePath -> Scope
 probeScope ws = scopeRoot (ScopeId "mac") policy (ExclusivePath (AbsolutePath ws))
