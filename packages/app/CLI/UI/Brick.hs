@@ -211,6 +211,8 @@ data AppState = AppState
   , appMetrics    :: [(Text, Text)]     -- ^ static metric values (workspace/git)
   , appGitStat    :: Text               -- ^ +N -M ?K for the second status line
   , appCostSum    :: Double             -- ^ session cost estimate (CNY)
+  , appLastCost   :: Double             -- ^ cost of the last turn (CNY)
+  , appSessTokens :: Int                -- ^ cumulative tokens this session
   , appNow        :: Maybe UTCTime      -- ^ clock for the peak/off-peak label
   , appTz         :: Maybe TimeZone     -- ^ local zone for the status-bar clock
   , appPlan       :: Maybe PlanView     -- ^ live multi-step plan (kernel-owned)
@@ -325,6 +327,8 @@ initialState bridge chan cfg = AppState
   , appMetrics   = []
   , appGitStat   = ""
   , appCostSum   = 0
+  , appLastCost  = 0
+  , appSessTokens = 0
   , appNow       = Nothing
   , appTz        = Nothing
   , appPlan      = Nothing
@@ -906,7 +910,9 @@ resumeSession selText = do
                          -- switch silently blends two sessions' hit rates.
                          , appCacheNow = Nothing
                          , appCacheSum = (0, 0)
-                         , appCacheTurns = 0 }
+                         , appCacheTurns = 0
+                         , appLastCost = 0
+                         , appSessTokens = 0 }
       when (null msgs) $
         appendMsg (mkMsg "system" (tr lang "Session " <> T.pack (ssId s) <> tr lang " has an empty transcript.") t)
       appendMsg (mkMsg "system" (tr lang "Note: continuing needs the session on the orchestration side.") t)
@@ -1437,9 +1443,24 @@ drawStatus st = Widget Greedy Fixed $ do
           <> " / 合计 " <> shortK (usageTotalTokens u)
       _ -> ""
     prices = pricesOf (appModel st) (appEffCfg st)
-    costSeg = if hasPrices prices
-                then "费用 ≈¥" <> T.pack (showFFloat (Just 4) (appCostSum st) "")
-                else "费用 ≈¥—"
+    costSessionSeg = if hasPrices prices
+                then "会话 ¥" <> T.pack (showFFloat (Just 4) (appCostSum st) "")
+                else "会话 ¥—"
+    -- This turn's cost, so one expensive round is visible immediately.
+    costTurnSeg = if hasPrices prices && appLastCost st > 0
+                then "本次 ¥" <> T.pack (showFFloat (Just 4) (appLastCost st) "")
+                else ""
+    outSeg = case appUsage st of
+      Just u | usageCompletionTokens u > 0 ->
+        "输出 " <> shortK (usageCompletionTokens u)
+      _ -> ""
+    -- Cache-hit token count (not the rate): what the provider billed cheap.
+    cacheTokensSeg = case appCacheNow st of
+      Just (hit, _) | hit > 0 -> "缓存 " <> shortK hit
+      _ -> ""
+    sessTokensSeg
+      | appSessTokens st > 0 = "会话 " <> shortK (appSessTokens st) <> " tok"
+      | otherwise = ""
     peak = case appNow st of
       Just t | isOffPeak t -> "低峰"
       _ -> "高峰"
@@ -1451,16 +1472,17 @@ drawStatus st = Widget Greedy Fixed $ do
     -- /\`session\` live on the first row, so only status-class keys apply here;
     -- a config with none of them falls back to the full default set.
     statusKeys :: [Text]
-    statusKeys = [ "cache", "ctx", "compact", "tps", "tokens", "usage"
-                 , "balance", "cost", "peak" ]
+    statusKeys = [ "cache", "ctx", "compact", "tps", "tokens", "out"
+                 , "cacheTokens", "sessTokens", "costTurn", "costSession"
+                 , "usage", "balance", "cost", "peak" ]
     aliasKey "context" = "ctx"   -- the catalogue alias users tend to write
     aliasKey k = k
     configuredKeys =
       [ aliasKey k | k <- parseMetrics (configMetrics (appEffCfg st))
                    , aliasKey k `elem` statusKeys ]
     statsKeys = if null configuredKeys
-                  then [ "cache", "ctx", "compact", "tps", "tokens"
-                       , "balance", "cost", "peak" ]
+                  then [ "cache", "ctx", "compact", "tps", "tokens", "out"
+                       , "sessTokens", "costTurn", "costSession", "balance" ]
                   else configuredKeys
     segFor k = case k of
       "cache"   -> cacheSeg
@@ -1468,9 +1490,14 @@ drawStatus st = Widget Greedy Fixed $ do
       "compact" -> compactSeg
       "tps"     -> tpsSeg
       "tokens"  -> tokensSeg
+      "out"     -> outSeg
+      "cacheTokens" -> cacheTokensSeg
+      "sessTokens"  -> sessTokensSeg
+      "costTurn"    -> costTurnSeg
+      "costSession" -> costSessionSeg
       "usage"   -> usageSeg
       "balance" -> balanceSeg
-      "cost"    -> costSeg
+      "cost"    -> costSessionSeg
       "peak"    -> peak
       _         -> ""
     statsLine = T.intercalate "  "
@@ -2612,7 +2639,9 @@ handleAppEvent (EvSession result) = do
                        , appRoute = RouteSession
                        , appCacheNow = Nothing
                        , appCacheSum = (0, 0)
-                       , appCacheTurns = 0 }
+                       , appCacheTurns = 0
+                       , appLastCost = 0
+                       , appSessTokens = 0 }
       liftIO $ setWindowTitle ("trha · " <> T.take 8 (T.pack sid))
       liftIO $ refreshMode (appBridge st) sid (appChan st)
     Left err -> do
@@ -2653,6 +2682,8 @@ handleAppEvent (EvResponse result) = case result of
                                         else appCtxUsed s
                        , appLastTps = tps
                        , appCostSum = appCostSum s + estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
+                       , appLastCost = estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
+                       , appSessTokens = appSessTokens s + usageTotalTokens usage
                        , appTurnStart = Nothing }
       flushPending (if real then Just usage else Nothing)
       st3 <- get
@@ -2678,7 +2709,9 @@ handleAppEvent (EvResponse result) = case result of
                            , appStatus = tr (appLang st) "Session expired"
                            , appCacheNow = Nothing
                            , appCacheSum = (0, 0)
-                           , appCacheTurns = 0 }
+                           , appCacheTurns = 0
+                           , appLastCost = 0
+                           , appSessTokens = 0 }
       else appendMsg (mkMsg "error" ("Error: " <> msg) t)
     bell <- gets (configBell . appEffCfg)
     when bell $ liftIO (putStr "\a" >> hFlush stdout)
@@ -3347,7 +3380,9 @@ handleSlash input = do
                 modify $ \s -> s { appSessionId = Nothing
                                  , appCacheNow = Nothing
                                  , appCacheSum = (0, 0)
-                                 , appCacheTurns = 0 }
+                                 , appCacheTurns = 0
+                                 , appLastCost = 0
+                                 , appSessTokens = 0 }
               void $ liftIO $ async $ do
                 _ <- deleteSession bridge sid
                 writeBChan chan (EvDeleted sid)

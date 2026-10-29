@@ -60,6 +60,7 @@ metricKeys :: [Text]
 metricKeys =
   [ "model", "git", "workspace", "context", "tokens", "session", "usage"
   , "mode", "cache", "ctx", "compact", "tps", "balance", "cost", "peak"
+  , "out", "cacheTokens", "sessTokens", "costTurn", "costSession"
   ]
 
 -- | Keys shown by default (order matters).
