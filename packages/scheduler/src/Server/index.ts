@@ -1200,7 +1200,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 
   // Rename / tag a session.  Both fields are user-facing only (never part of
   // the model's history) and persisted alongside the rest of the state.
-  app.post('/api/session/:id/meta', (req, res) => {
+  app.post('/api/session/:id/meta', async (req, res) => {
     const session = sessions.get(req.params.id);
     if (!session) return res.status(404).json({ error: 'Session not found' });
     const body = req.body ?? {};
@@ -1208,7 +1208,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     if (Array.isArray(body.tags)) {
       session.tags = body.tags.filter((t: unknown): t is string => typeof t === 'string');
     }
-    persistSession(session);
+    // Await the write: a restart on the same stateDir must see the metadata
+    // (session-meta pins this; fire-and-forget lost it under load).
+    await persistSession(session);
     res.json({ id: session.id, title: session.title ?? null, tags: session.tags ?? [] });
   });
 

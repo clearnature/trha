@@ -88,6 +88,19 @@ describe('session meta', () => {
     expect(row2?.tags).toEqual(['tui', 'port']);
   });
 
+  it('updates tags without touching the title', async () => {
+    const dir = await tempDir();
+    const port = await startOn(dir);
+    const sessionId = await startSession(port);
+    const res = await fetch(`http://127.0.0.1:${port}/api/session/${sessionId}/meta`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ tags: ['only'] }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { title: string | null; tags: string[] };
+    expect(body.title).toBeNull();
+    expect(body.tags).toEqual(['only']);
+  });
+
   it('rejects an unknown session', async () => {
     const dir = await tempDir();
     const port = await startOn(dir);

@@ -37,7 +37,6 @@ if (process.argv[2] === 'sandbox' && process.argv[3] === 'status') {
     platform: 'linux',
     enforcement: 'full',
     available: true,
-    notes: [],
   }));
   process.exit(0);
 }
