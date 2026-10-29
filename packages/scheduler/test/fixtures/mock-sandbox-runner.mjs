@@ -6,25 +6,37 @@ import { createInterface } from 'node:readline';
 
 // `trha sandbox config [--enabled on|off ...] --json`.
 if (process.argv[2] === 'sandbox' && process.argv[3] === 'config') {
-  const at = process.argv.indexOf('--enabled');
-  const enabled = at >= 0 && process.argv[at + 1] === 'on';
+  if (process.env.MOCK_SANDBOX_EMPTY === '1') {
+    process.stdout.write('{}');
+    process.exit(0);
+  }
+  const val = (k) => {
+    const i = process.argv.indexOf(k);
+    return i >= 0 ? process.argv[i + 1] : undefined;
+  };
   process.stdout.write(JSON.stringify({
-    enabled,
-    policy: 'read-only',
-    network: 'off',
-    scratch: '/tmp/trha-scratch',
+    enabled: val('--enabled') === 'on',
+    policy: val('--policy') ?? 'read-only',
+    network: val('--network') ?? 'off',
+    scratch: val('--scratch') ?? '/tmp/trha-scratch',
   }));
   process.exit(0);
 }
 
 // `trha sandbox status --json` shape (the scheduler shells out to this).
 if (process.argv[2] === 'sandbox' && process.argv[3] === 'status') {
+  if (process.env.MOCK_SANDBOX_STATUS_EXTRA === '1') {
+    process.stdout.write(JSON.stringify({
+      backend: 'linux-bwrap', platform: 'linux', enforcement: 'full',
+      available: true, capabilities: {}, missing: ['net'], notes: ['extra note'],
+    }));
+    process.exit(0);
+  }
   process.stdout.write(JSON.stringify({
     backend: 'linux-bwrap',
     platform: 'linux',
     enforcement: 'full',
     available: true,
-    capabilities: {},
     notes: [],
   }));
   process.exit(0);
@@ -47,8 +59,17 @@ rl.on('line', (line) => {
     return;
   }
   if (frame.op === 'exec') {
+    if (process.env.MOCK_SANDBOX_HANG === '1') return;
+    if (process.env.MOCK_SANDBOX_ERROR === '1') {
+      process.stdout.write(JSON.stringify({
+        v: 1, op: 'error', id: frame.id, kind: 'runner', message: 'boom',
+      }) + '\n');
+      return;
+    }
+    if (process.env.MOCK_SANDBOX_QUIT === '1') process.exit(0);
+    const args = process.argv.slice(2).join(' ');
     process.stdout.write(JSON.stringify({
-      v: 1, op: 'stdout', id: frame.id, data: 'mock-output\n',
+      v: 1, op: 'stdout', id: frame.id, data: `mock-output\nargs:${args}\n`,
     }) + '\n');
     process.stdout.write(JSON.stringify({
       v: 1, op: 'exit', id: frame.id, code: 0,

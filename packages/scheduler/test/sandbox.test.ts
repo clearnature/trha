@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   SandboxUnavailableError,
   defaultSandboxScope,
+  readSandboxConfig,
   sandboxEnabled,
   sandboxStatus,
   runExperiment,
@@ -218,6 +219,165 @@ describe('defaultSandboxScope (network)', () => {
       }
     } finally {
       setSandboxConfigRuntime(undefined);
+    }
+  });
+});
+
+
+describe('config defaults and patches (mock runner)', () => {
+  it('falls back to defaults when the CLI returns an empty object', async () => {
+    chmodSync(fixture, 0o755);
+    const prev = process.env.MOCK_SANDBOX_EMPTY;
+    process.env.TRHA_SANDBOX = 'off';
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    process.env.MOCK_SANDBOX_EMPTY = '1';
+    try {
+      const cfg = await readSandboxConfig();
+      expect(cfg).toEqual({
+        enabled: false,
+        policy: 'workspace-write',
+        network: 'off',
+        scratch: '~/.trha/sandbox-scratch',
+      });
+    } finally {
+      if (prev === undefined) delete process.env.MOCK_SANDBOX_EMPTY;
+      else process.env.MOCK_SANDBOX_EMPTY = prev;
+    }
+  });
+
+  it('passes network and scratch patches through', async () => {
+    chmodSync(fixture, 0o755);
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    const cfg = await writeSandboxConfig({
+      enabled: true,
+      network: 'proxy:http://127.0.0.1:1',
+      scratch: '/tmp/trha-scratch-x',
+    });
+    expect(cfg.network).toBe('proxy:http://127.0.0.1:1');
+    expect(cfg.scratch).toBe('/tmp/trha-scratch-x');
+  });
+});
+
+describe('sandboxedSpawn branches', () => {
+  it('rejects danger-full-access without spawning', async () => {
+    process.env.TRHA_SANDBOX = 'on';
+    const danger: SandboxScope = {
+      id: 'x',
+      policy: { kind: 'danger-full-access' },
+      isolation: 'process',
+      scratch: '/tmp/trha-danger',
+    };
+    await expect(sandboxedSpawn(danger, { argv: ['true'], cwd: '/tmp' }))
+      .rejects.toThrow(/danger-full-access/);
+  });
+
+  it('passes a read-only policy and the cwd to the runner', async () => {
+    chmodSync(fixture, 0o755);
+    process.env.TRHA_SANDBOX = 'on';
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    const ro: SandboxScope = {
+      id: 'r',
+      policy: { kind: 'read-only', readonlyRoots: ['/ws'] },
+      isolation: 'process',
+      scratch: '/tmp/trha-ro-scratch',
+    };
+    const r = await sandboxedSpawn(ro, { argv: ['echo', 'x'], cwd: '/tmp/trha-ro-cwd' });
+    expect(r.stdout).toContain('--policy read-only');
+    expect(r.stdout).toContain('--workspace /tmp/trha-ro-cwd');
+  });
+
+
+  it('rejects when the runner binary is missing', async () => {
+    process.env.TRHA_SANDBOX = 'on';
+    process.env.TRHA_SANDBOX_RUNNER = '/nonexistent/trha-sandbox-runner';
+    try {
+      await expect(sandboxedSpawn(scope, { argv: ['true'], cwd: '/tmp' }))
+        .rejects.toThrow(/ENOENT/);
+    } finally {
+      delete process.env.TRHA_SANDBOX_RUNNER;
+    }
+  });
+
+  it('times out a hanging runner', async () => {
+    chmodSync(fixture, 0o755);
+    process.env.TRHA_SANDBOX = 'on';
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    process.env.MOCK_SANDBOX_HANG = '1';
+    try {
+      await expect(sandboxedSpawn(scope, { argv: ['sleep', '1'], cwd: '/tmp', timeoutMs: 200 }))
+        .rejects.toThrow(/exceeded 200 ms/);
+    } finally {
+      delete process.env.MOCK_SANDBOX_HANG;
+    }
+  });
+});
+
+describe('defaultSandboxScope network edge cases', () => {
+  it('parses proxy and invalid network specs', () => {
+    setSandboxConfigRuntime({
+      enabled: true, policy: 'workspace-write', network: 'proxy:http://p:1', scratch: '/tmp/x',
+    });
+    try {
+      const s = defaultSandboxScope('/ws', {});
+      if (s.policy.kind === 'workspace-write') {
+        expect(s.policy.network).toEqual({ kind: 'proxy', url: 'http://p:1' });
+      }
+    } finally {
+      setSandboxConfigRuntime(undefined);
+    }
+    setSandboxConfigRuntime({
+      enabled: true, policy: 'workspace-write', network: 'garbage', scratch: '/tmp/x',
+    });
+    try {
+      const s = defaultSandboxScope('/ws', {});
+      if (s.policy.kind === 'workspace-write') {
+        expect(s.policy.network).toEqual({ kind: 'off' });
+      }
+    } finally {
+      setSandboxConfigRuntime(undefined);
+    }
+  });
+});
+
+
+describe('runner edge frames (mock runner)', () => {
+  it('propagates an error frame', async () => {
+    chmodSync(fixture, 0o755);
+    process.env.TRHA_SANDBOX = 'on';
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    process.env.MOCK_SANDBOX_ERROR = '1';
+    try {
+      await expect(sandboxedSpawn(scope, { argv: ['true'], cwd: '/tmp' }))
+        .rejects.toThrow(/boom/);
+    } finally {
+      delete process.env.MOCK_SANDBOX_ERROR;
+    }
+  });
+
+  it('rejects when the runner exits without an exit frame', async () => {
+    chmodSync(fixture, 0o755);
+    process.env.TRHA_SANDBOX = 'on';
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    process.env.MOCK_SANDBOX_QUIT = '1';
+    try {
+      await expect(sandboxedSpawn(scope, { argv: ['true'], cwd: '/tmp' }))
+        .rejects.toThrow(/without an exit frame/);
+    } finally {
+      delete process.env.MOCK_SANDBOX_QUIT;
+    }
+  });
+
+  it('surfaces missing capabilities and notes from status', async () => {
+    chmodSync(fixture, 0o755);
+    process.env.TRHA_SANDBOX = 'on';
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    process.env.MOCK_SANDBOX_STATUS_EXTRA = '1';
+    try {
+      const st = await sandboxStatus();
+      expect(st.missing).toEqual(['net']);
+      expect(st.notes).toEqual(['extra note']);
+    } finally {
+      delete process.env.MOCK_SANDBOX_STATUS_EXTRA;
     }
   });
 });
