@@ -8,7 +8,7 @@ import Core.Sandbox (runSandboxCommand)
 import Core.Fonts
 import Bridge.Scheduler
 import Config.Settings
-import Core.RunLog (logLine)
+import Core.RunLog (logDir, logLine)
 import Core.RunState
 import Core.Bootstrap (ensureBackend)
 import Core.ProjectStore (ensureProject)
@@ -37,7 +37,9 @@ import Data.Maybe (fromMaybe)
 import Control.Applicative ((<|>))
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode(ExitFailure), exitFailure, exitWith)
-import System.IO (hFlush, hIsTerminalDevice, hPutStrLn, stderr, stdin, stdout, hSetEncoding, utf8)
+import System.IO
+  ( BufferMode(LineBuffering), hFlush, hIsTerminalDevice, hPutStrLn, hSetBuffering
+  , hSetEncoding, stderr, stdin, stdout, utf8 )
 
 -- | Build CLIConfig from global options.
 -- Ensures ~/.trha/settings.yaml exists (first run writes the default),
@@ -81,9 +83,10 @@ runTUIMode config = do
 -- | Tell the user which services had to be started (silent when both were up).
 announceBackend :: [Text] -> IO ()
 announceBackend [] = pure ()
-announceBackend started =
+announceBackend started = do
+  dir <- logDir
   putStrLn ("backend: started " <> T.unpack (T.intercalate " + " started)
-            <> " — logs: /tmp/trha-kernel.log, /tmp/trha-scheduler.log")
+            <> " — logs: " <> dir <> "/{kernel,scheduler}.log")
 
 -- | Run CLI mode
 runCLIMode :: CLIConfig -> IO ()
@@ -121,6 +124,10 @@ runCLIMode config = do
 -- in-memory only (and says so).
 runServeMode :: Int -> Maybe FilePath -> CLIConfig -> IO ()
 runServeMode kernelPort cliStateDir _config = do
+  -- stdout is a file when launched as a service: without LineBuffering the
+  -- "Starting API server" line (and any later diagnostics) sits in an 8 KiB
+  -- block buffer and never reaches ~/.trha/logs/kernel.log.
+  hSetBuffering stdout LineBuffering
   envStateDir <- lookupEnv "TRHA_STATE_DIR"
   let stateDir = cliStateDir <|> envStateDir
   outcome <- writePid Kernel

@@ -85,8 +85,8 @@ kernel_plist() {
   <key>WorkingDirectory</key><string>$REPO</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-  <key>StandardOutPath</key><string>/tmp/trha-kernel.log</string>
-  <key>StandardErrorPath</key><string>/tmp/trha-kernel.err.log</string>
+  <key>StandardOutPath</key><string>$HOME/.trha/logs/kernel.log</string>
+  <key>StandardErrorPath</key><string>$HOME/.trha/logs/kernel.err.log</string>
 </dict>
 </plist>
 EOF
@@ -106,8 +106,8 @@ scheduler_plist() {
   <key>WorkingDirectory</key><string>$REPO/packages/scheduler</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-  <key>StandardOutPath</key><string>/tmp/trha-scheduler.log</string>
-  <key>StandardErrorPath</key><string>/tmp/trha-scheduler.err.log</string>
+  <key>StandardOutPath</key><string>$HOME/.trha/logs/scheduler.log</string>
+  <key>StandardErrorPath</key><string>$HOME/.trha/logs/scheduler.err.log</string>
 </dict>
 </plist>
 EOF
@@ -205,7 +205,7 @@ case "$os:$action" in
   Darwin:status)      mac_status ;;
   Darwin:start)       run launchctl load "$AGENT_DIR/com.clearnature.trha.kernel.plist" ;;
   Darwin:stop)        run launchctl unload "$AGENT_DIR/com.clearnature.trha.kernel.plist" ;;
-  Darwin:logs)        tail -40 /tmp/trha-kernel.log /tmp/trha-scheduler.log ;;
+  Darwin:logs)        tail -40 "$HOME/.trha/logs/kernel.log" "$HOME/.trha/logs/scheduler.log" ;;
   *)
     die "unsupported: $os ${action:-<none>}
 Windows is P4 by ADR-007 (docs/plans/sandbox-decisions.md); run \`trha\` and

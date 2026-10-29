@@ -6,12 +6,16 @@
 # a plain `&` dies with the caller's process group, which is why the desktop
 # shell kept reporting "cannot connect to 127.0.0.1:28433".
 #
-# Logs: /tmp/trha-kernel.log, /tmp/trha-scheduler.log
+# Logs: ~/.trha/logs/{kernel,scheduler}.log (TRHA_LOG_DIR overrides)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 KERNEL_PORT=${TRHA_KERNEL_PORT:-19433}
 SCHED_PORT=${TRHA_PORT:-28433}
+# Same place the CLI writes its own logs: these must survive a reboot and
+# belong with the rest of the state, not in /tmp.
+LOG_DIR=${TRHA_LOG_DIR:-$HOME/.trha/logs}
+mkdir -p "$LOG_DIR"
 
 listening() { ss -ltn 2>/dev/null | grep -q ":$1 "; }
 
@@ -44,7 +48,7 @@ start_kernel() {
     return 1
   fi
   setsid nohup "$bin" serve --kernel-port "$KERNEL_PORT" \
-    >/tmp/trha-kernel.log 2>&1 </dev/null &
+    >"$LOG_DIR/kernel.log" 2>&1 </dev/null &
   echo "kernel:    started ($bin) on :$KERNEL_PORT"
 }
 
@@ -58,7 +62,7 @@ start_scheduler() {
     ( cd "$dir" && npx tsc >/dev/null )
   fi
   ( cd "$dir" && setsid nohup node dist/cli.js \
-      >/tmp/trha-scheduler.log 2>&1 </dev/null & )
+      >"$LOG_DIR/scheduler.log" 2>&1 </dev/null & )
   echo "scheduler: started on :$SCHED_PORT"
 }
 

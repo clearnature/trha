@@ -21,13 +21,16 @@ import Core.HTTP (createHTTPClient, httpGet)
 import Core.Types (CLIConfig(..), CLIError)
 import Data.Aeson (Value)
 import Data.IORef (modifyIORef', newIORef, readIORef)
+import Core.RunLog (logDir)
 import Data.Text (Text)
 import qualified Data.Text as T
-import System.Directory (doesFileExist, findExecutable)
+import System.Directory (createDirectoryIfMissing, doesFileExist, findExecutable)
 import System.Environment (getExecutablePath, lookupEnv)
 import System.FilePath (takeDirectory, (</>))
+import System.IO (IOMode(AppendMode), hClose, openFile)
 import System.Process
-  ( CreateProcess(..), StdStream(NoStream), createProcess, proc )
+  ( CreateProcess(..), StdStream(NoStream, UseHandle), createProcess, proc
+  , waitForProcess )
 
 -- | The kernel's OpenAI-compatible API port (CLI default in "Core.Args").
 -- Kept here so the bootstrap and the scheduler agree without passing it around.
@@ -82,7 +85,7 @@ waitHealthy config scheme port attempts = go attempts
 spawnKernel :: IO ()
 spawnKernel = do
   self <- getExecutablePath
-  spawnDetached self ["serve", "--kernel-port", show kernelPort] Nothing
+  spawnDetached "kernel" self ["serve", "--kernel-port", show kernelPort] Nothing
 
 -- | @node packages/scheduler/dist/cli.js@ from the repo the binary lives in.
 -- Returns False when the entry point cannot be located (installed elsewhere).
@@ -91,7 +94,7 @@ spawnScheduler = do
   found <- findSchedulerEntry
   case found of
     Nothing -> pure False
-    Just (dir, entry) -> spawnDetached "node" [entry] (Just dir) >> pure True
+    Just (dir, entry) -> spawnDetached "scheduler" "node" [entry] (Just dir) >> pure True
 
 -- | Start a service that is *not* our child.
 --
@@ -105,19 +108,29 @@ spawnScheduler = do
 -- Without this the service was a direct child of the TUI: quitting the TUI
 -- looked like an "orphan" and a stopped service sat as a zombie, which made
 -- Ctrl+Alt+Q wait out the full 5 s liveness budget per service.
-spawnDetached :: FilePath -> [String] -> Maybe FilePath -> IO ()
-spawnDetached cmd args mcwd = do
+spawnDetached :: Text -> FilePath -> [String] -> Maybe FilePath -> IO ()
+spawnDetached name cmd args mcwd = do
+  dir <- logDir
+  createDirectoryIfMissing True dir
+  let path = dir </> T.unpack name <> ".log"
   hasSetsid <- findExecutable "setsid"
   let (prog, argv) = case hasSetsid of
         Just _  -> ("setsid", "-f" : cmd : args)
         Nothing -> (cmd, args)   -- no setsid: fall back to a plain spawn
-  _ <- try (void $ createProcess (proc prog argv)
-    { cwd = mcwd
-    , std_in = NoStream
-    , std_out = NoStream
-    , std_err = NoStream
-    , create_group = True
-    }) :: IO (Either SomeException ())
+  _ <- try (do
+    -- The service's own output goes to ~/.trha/logs/, not /tmp: these logs
+    -- have to survive a reboot, and they belong with the rest of the state.
+    h <- openFile path AppendMode
+    (_, _, _, ph) <- createProcess (proc prog argv)
+      { cwd = mcwd
+      , std_in = NoStream
+      , std_out = UseHandle h
+      , std_err = UseHandle h
+      , create_group = True
+      }
+    hClose h                  -- the child keeps its own copy of the handle
+    _ <- waitForProcess ph    -- reap the short-lived setsid wrapper
+    pure ()) :: IO (Either SomeException ())
   pure ()
 
 -- | Locate the scheduler entry point. @TRHA_SCHEDULER_ENTRY@ wins; otherwise
