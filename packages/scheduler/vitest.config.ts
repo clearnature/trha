@@ -12,6 +12,9 @@ export default defineConfig({
     environment: 'node',
     include: ['test/**/*.test.ts'],
     exclude: ['node_modules', 'dist'],
+    // Headless Chrome / shell spawns can exceed the 5s default on loaded CI runners.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     pool: 'forks',
     poolOptions: {
       forks: {
