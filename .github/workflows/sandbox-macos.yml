@@ -70,8 +70,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.cabal/packages
-            ~/.cabal/store
+            ~/.cache/cabal/packages
+            ~/.local/state/cabal/store
+            ~/.cabal
             dist-newstyle
           key: macos-${{ runner.os }}-${{ hashFiles('**/*.cabal', 'cabal.project.ci') }}
           restore-keys: |
@@ -88,7 +89,8 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            ~/.cabal/packages
-            ~/.cabal/store
+            ~/.cache/cabal/packages
+            ~/.local/state/cabal/store
+            ~/.cabal
             dist-newstyle
           key: macos-${{ runner.os }}-${{ hashFiles('**/*.cabal', 'cabal.project.ci') }}

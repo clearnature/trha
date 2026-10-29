@@ -70,13 +70,18 @@ jobs:
         EOF
         cat cabal.project.ci.local
     
+    # cabal-install ≥3.10 按 XDG 布局：包索引在 ~/.cache/cabal/packages，
+    # 编译好的依赖在 ~/.local/state/cabal/store。旧写法 ~/.cabal/{packages,store}
+    # 在 cabal 3.16 上恒为空 ⇒ 缓存里只有 dist-newstyle，163 个依赖包每次全量重编。
+    # 仍列 ~/.cabal 只为兼容自定义 CABAL_DIR；默认不存在，actions/cache 跳过。
     - name: Restore Haskell dependencies
       id: haskell-cache
       uses: actions/cache/restore@v4
       with:
         path: |
-          ~/.cabal/packages
-          ~/.cabal/store
+          ~/.cache/cabal/packages
+          ~/.local/state/cabal/store
+          ~/.cabal
           dist-newstyle
         key: ${{ runner.os }}-haskell-${{ hashFiles('trha.cabal', 'cabal.project.ci') }}
         restore-keys: |
@@ -101,8 +106,9 @@ jobs:
       uses: actions/cache/save@v4
       with:
         path: |
-          ~/.cabal/packages
-          ~/.cabal/store
+          ~/.cache/cabal/packages
+          ~/.local/state/cabal/store
+          ~/.cabal
           dist-newstyle
         key: ${{ runner.os }}-haskell-${{ hashFiles('trha.cabal', 'cabal.project.ci') }}
   
@@ -312,8 +318,9 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: |
-          ~/.cabal/packages
-          ~/.cabal/store
+          ~/.cache/cabal/packages
+          ~/.local/state/cabal/store
+          ~/.cabal
           dist-newstyle
         key: ${{ runner.os }}-haskell-${{ hashFiles('trha.cabal', 'cabal.project.ci') }}
         restore-keys: |
@@ -349,7 +356,8 @@ jobs:
       uses: actions/cache/save@v4
       with:
         path: |
-          ~/.cabal/packages
-          ~/.cabal/store
+          ~/.cache/cabal/packages
+          ~/.local/state/cabal/store
+          ~/.cabal
           dist-newstyle
         key: ${{ runner.os }}-haskell-${{ hashFiles('trha.cabal', 'cabal.project.ci') }}
