@@ -24,8 +24,9 @@ import Data.IORef (modifyIORef', newIORef, readIORef)
 import Core.RunLog (logDir)
 import Data.Text (Text)
 import qualified Data.Text as T
-import System.Directory (createDirectoryIfMissing, doesFileExist, findExecutable)
-import System.Environment (getExecutablePath, lookupEnv)
+import System.Directory
+  ( createDirectoryIfMissing, doesFileExist, findExecutable, getCurrentDirectory )
+import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (IOMode(AppendMode), hClose, openFile)
 import System.Process
@@ -85,16 +86,24 @@ waitHealthy config scheme port attempts = go attempts
 spawnKernel :: IO ()
 spawnKernel = do
   self <- getExecutablePath
-  spawnDetached "kernel" self ["serve", "--kernel-port", show kernelPort] Nothing
+  spawnDetached "kernel" [] self ["serve", "--kernel-port", show kernelPort] Nothing
 
 -- | @node packages/scheduler/dist/cli.js@ from the repo the binary lives in.
 -- Returns False when the entry point cannot be located (installed elsewhere).
+--
+-- @TRHA_WORKSPACE@ is passed explicitly, and it is the *caller's* cwd, not the
+-- scheduler's own directory.  Without it `resolveWorkspace` walks up from
+-- @packages/scheduler@ and lands on this repository's `.git` root — so a `trha`
+-- started in @/data/test@ reported the source tree as its workspace.
 spawnScheduler :: IO Bool
 spawnScheduler = do
   found <- findSchedulerEntry
   case found of
     Nothing -> pure False
-    Just (dir, entry) -> spawnDetached "scheduler" "node" [entry] (Just dir) >> pure True
+    Just (dir, entry) -> do
+      cwd <- getCurrentDirectory
+      spawnDetached "scheduler" [("TRHA_WORKSPACE", cwd)] "node" [entry] (Just dir)
+      pure True
 
 -- | Start a service that is *not* our child.
 --
@@ -108,8 +117,8 @@ spawnScheduler = do
 -- Without this the service was a direct child of the TUI: quitting the TUI
 -- looked like an "orphan" and a stopped service sat as a zombie, which made
 -- Ctrl+Alt+Q wait out the full 5 s liveness budget per service.
-spawnDetached :: Text -> FilePath -> [String] -> Maybe FilePath -> IO ()
-spawnDetached name cmd args mcwd = do
+spawnDetached :: Text -> [(String, String)] -> FilePath -> [String] -> Maybe FilePath -> IO ()
+spawnDetached name extraEnv cmd args mcwd = do
   dir <- logDir
   createDirectoryIfMissing True dir
   let path = dir </> T.unpack name <> ".log"
@@ -117,12 +126,18 @@ spawnDetached name cmd args mcwd = do
   let (prog, argv) = case hasSetsid of
         Just _  -> ("setsid", "-f" : cmd : args)
         Nothing -> (cmd, args)   -- no setsid: fall back to a plain spawn
+  baseEnv <- getEnvironment
+  let -- env = Just replaces the whole environment, so start from ours and
+      -- let the explicit entries win.
+      childEnv = extraEnv
+        <> [ (k, v) | (k, v) <- baseEnv, k `notElem` map fst extraEnv ]
   _ <- try (do
     -- The service's own output goes to ~/.trha/logs/, not /tmp: these logs
     -- have to survive a reboot, and they belong with the rest of the state.
     h <- openFile path AppendMode
     (_, _, _, ph) <- createProcess (proc prog argv)
       { cwd = mcwd
+      , env = Just childEnv
       , std_in = NoStream
       , std_out = UseHandle h
       , std_err = UseHandle h
