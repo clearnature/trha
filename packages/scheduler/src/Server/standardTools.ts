@@ -19,6 +19,7 @@ import path from 'node:path';
 import { discoverSkills, readSkill, skillDirs } from './skills.js';
 import { listMcpResources, listMcpResourceTemplates, readMcpResource } from './mcp.js';
 import { hardenedEnv, resolveShell, shellRunner } from './shell.js';
+import { defaultSandboxScope, sandboxEnabled, sandboxedSpawn } from './sandbox.js';
 import { lspQuery, type LspOperation } from './lsp.js';
 import { browserClose, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 
@@ -142,6 +143,31 @@ export function startJob(host: StandardToolHost, command: string): string {
   // Stable, predictable ids: the model reads them back in job_output/job_kill.
   const id = `job-${host.jobs.size + 1}`;
   const sh = resolveShell(command);
+  // Sandboxed jobs run one-shot through the runner: the id is returned
+  // immediately and the captured output lands when the command finishes.
+  if (sandboxEnabled()) {
+    const record: JobRecord = {
+      id, command, startedAt: Date.now(), output: [], status: 'running',
+    };
+    host.jobs.set(id, record);
+    void (async () => {
+      try {
+        const r = await sandboxedSpawn(defaultSandboxScope(host.workspace), {
+          argv: [sh.cmd, ...sh.args],
+          cwd: host.workspace,
+          timeoutMs: 600_000,
+        });
+        record.output.push(r.stdout + r.stderr);
+        record.exitCode = r.code ?? -1;
+      } catch (e) {
+        record.output.push(`ERROR: ${(e as Error).message}`);
+        record.exitCode = 1;
+      } finally {
+        record.status = 'exited';
+      }
+    })();
+    return id;
+  }
   const child = spawn(sh.cmd, sh.args, { cwd: host.workspace, ...sh.options, env: hardenedEnv() }) as ChildProcessWithoutNullStreams;
   const record: JobRecord = { id, command, startedAt: Date.now(), output: [], status: 'running', child };
   const push = (chunk: Buffer): void => {
@@ -431,10 +457,25 @@ export async function runStandardTool(
     // A private dir under the OS temp root keeps the workspace clean; `cwd`
     // below stays the workspace, so relative paths in the snippet behave the
     // same as before.
-    const dir = path.join(tmpdir(), 'trha-run');
+    const dir = sandboxEnabled()
+      ? path.join(host.workspace, '.trha-run')
+      : path.join(tmpdir(), 'trha-run');
     await mkdir(dir, { recursive: true, mode: 0o700 });
     const file = path.join(dir, `run-${Date.now().toString(36)}-${process.pid}.${ext}`);
     await writeFile(file, code, 'utf8');
+    if (sandboxEnabled()) {
+      try {
+        const result = await sandboxedSpawn(defaultSandboxScope(host.workspace), {
+          argv: [runner.cmd, file],
+          cwd: host.workspace,
+        });
+        await rm(file, { force: true }).catch(() => {});
+        return clip(`exit ${result.code ?? -1}\n${result.stdout}${result.stderr}`);
+      } catch (e) {
+        await rm(file, { force: true }).catch(() => {});
+        return `ERROR: ${(e as Error).message}`;
+      }
+    }
     return await new Promise<string>(resolve => {
       const child = spawn(runner.cmd, [file], { cwd: host.workspace, env: hardenedEnv() });
       const out: string[] = [];

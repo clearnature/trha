@@ -127,6 +127,7 @@ data Command
   | Todo
   | Tree
   | Agents
+  | Sandbox
   | Rename Text
   | Tag Text
   | Home
@@ -164,6 +165,7 @@ slashRegistry =
   , SlashCommand "/todo"     False True  "Show team tasks"
   , SlashCommand "/tree"     False True  "Show the agent session tree"
   , SlashCommand "/agents"   False True  "Show agent sessions in a dialog"
+  , SlashCommand "/sandbox"  False True  "SandBox: toggle enforcement and tune policy/network"
   , SlashCommand "/rename"   True  True  "Rename the active session (usage: /rename <title>)"
   , SlashCommand "/tag"      True  True  "Set session tags (usage: /tag <tag> [tag...])"
   , SlashCommand "/export"   True  True  "Export the transcript (usage: /export [json|md] [path])"
@@ -273,7 +275,7 @@ groupMembers =
   , (GInput,   [ "/attachments", "/clear-attachments", "/paste", "/vim", "/copy" ])
   , (GAppearance, [ "/theme", "/language", "/reasoning-language"
                   , "/output-style", "/verbose" ])
-  , (GSettings, [ "/mode", "/ask-timeout", "/settings" ])
+  , (GSettings, [ "/mode", "/sandbox", "/ask-timeout", "/settings" ])
   , (GHelp,    [ "/help", "/quit", "/exit", "/stop" ])
   ]
 
@@ -386,6 +388,7 @@ parseCommandBase input = case T.words (T.strip input) of
   ("/todo" : _) -> Todo
   ("/tree" : _) -> Tree
   ("/agents" : _) -> Agents
+  ("/sandbox" : _) -> Sandbox
   ("/rename" : args) -> Rename (T.unwords args)
   ("/tag" : args) -> Tag (T.unwords args)
   (w : _)

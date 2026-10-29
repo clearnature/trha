@@ -86,7 +86,7 @@ cabal install exe:trha --installdir "$HOME/.local/bin" --overwrite-policy=always
 # 启动 CLI（REPL 模式；/quit 退出）
 trha cli
 
-# 启动 TUI（全屏终端界面；Ctrl+Q 直接退出，Ctrl+C 连按两次退出，Ctrl+D 空输入时退出）
+# 启动 TUI（全屏终端界面；Ctrl+Q 退出当前壳，Ctrl+Alt+Q 停内核与 scheduler，Ctrl+C 连按两次退出，Ctrl+D 空输入时退出）
 trha tui
 
 # 指定 TUI 主题（tokyo-night 深色 / light 浅色，默认读 settings.yaml 或 --theme）
@@ -112,13 +112,17 @@ trha -h localhost -p 28433 -m deepseek-chat cli
 
 # 退出与服务管理
 > /quit                 # 只退出当前壳（Ctrl+Q 等价）
-> /stop                # 提示确认
+> /stop                # 提示确认（Ctrl+Alt+Q 等价：先弹确认框）
 > /stop confirm        # 停止内核与 scheduler 并退出 TUI
 
 # 键盘（与 Reasonix / Claude Code 一致）
 #   Ctrl+C   运行中→中断 turn；输入非空→清空；空闲连按两次→退出（3 秒窗口）
 #   Ctrl+D   空闲且输入为空→退出
-#   Ctrl+Q   直接退出（保留旧习惯；部分终端的流控可能吞掉该键）
+#   Ctrl+Q     退出当前壳（保留旧习惯；部分终端的流控可能吞掉该键）
+#   Ctrl+Alt+Q 停止服务：停内核与 scheduler（服务级操作，不是退壳；等同于
+#              /stop confirm，先弹确认框，默认「否」）
+#              为什么不用 Ctrl+Shift+Q：GNOME Terminal 把它绑成「关闭窗口」，
+#              按键先被终端吃掉，到不了 trha
 
 # 终端里（不需要 TUI）
 trha status            # kernel: pid … (running) / scheduler: …

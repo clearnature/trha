@@ -5,7 +5,8 @@
 //   工作区根目录 / 实际可写根 + 允许写入路径
 // 接线状态：本地可编辑；持久化与沙箱后端（seatbelt/bubblewrap/Windows token）预留。
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { PortSandboxScope, PortSandboxStatus } from '../port/types.js';
 import { useSessionStore } from './SessionContext.js';
 
 export interface SandboxPanelProps {
@@ -28,7 +29,29 @@ export function SandboxPanel({ t }: SandboxPanelProps) {
   const [network, setNetwork] = useState(false);
   const [workspaceRoot, setWorkspaceRoot] = useState('');
   const [writePaths, setWritePaths] = useState('');
+  const [sandbox, setSandbox] = useState<PortSandboxStatus | null>(null);
+  const [scopes, setScopes] = useState<PortSandboxScope[]>([]);
   const store = useSessionStore();
+
+  // Real backend state from the scheduler (`trha sandbox status --json` when
+  // TRHA_SANDBOX is on; "none" otherwise). Failures leave the panel blank —
+  // it must never claim a backend that was not probed.
+  useEffect(() => {
+    let alive = true;
+    void store.getState().port.sandboxStatus()
+      .then(s => { if (alive) setSandbox(s); })
+      .catch(() => { /* status is optional */ });
+    return () => { alive = false; };
+  }, [store]);
+
+  // Execution scopes (session/subagent tree) from /api/sandbox/scopes.
+  useEffect(() => {
+    let alive = true;
+    void store.getState().port.sandboxScopes()
+      .then(list => { if (alive) setScopes(list); })
+      .catch(() => { /* optional */ });
+    return () => { alive = false; };
+  }, [store]);
 
   // 允许写入路径 → 内核额外可信写目录（写文件校验放宽；空 = 仅工作区）
   const syncWriteRoots = (value: string) => {
@@ -39,6 +62,39 @@ export function SandboxPanel({ t }: SandboxPanelProps) {
   return (
     <div className="settings-pagebody">
       <p className="settings-page-desc">{t('settings.sandbox.desc')}</p>
+
+      {/* 后端真实状态（scheduler /api/sandbox/status） */}
+      <section className="settings-block">
+        <h4 className="settings-block-title">{t('settings.sandbox.backendTitle')}</h4>
+        <div className="setting-group">
+          <label>{t('settings.sandbox.backend')}</label>
+          <p className="param-hint">{sandbox?.backend ?? '—'}</p>
+        </div>
+        <div className="setting-group">
+          <label>{t('settings.sandbox.enforcement')}</label>
+          <p className="param-hint">{sandbox?.enforcement ?? '—'}</p>
+        </div>
+        <div className="setting-group">
+          <label>{t('settings.sandbox.available')}</label>
+          <p className="param-hint">
+            {sandbox
+              ? (sandbox.available ? t('settings.sandbox.yes') : t('settings.sandbox.no'))
+              : '—'}
+          </p>
+        </div>
+        <div className="setting-group">
+          <label>{t('settings.sandbox.scopes')}</label>
+          <p className="param-hint">
+            {scopes.length === 0
+              ? '—'
+              : scopes.slice(0, 5).map(s => `${s.id} (${s.policy})`).join(' · ')
+                + (scopes.length > 5 ? ` …+${scopes.length - 5}` : '')}
+          </p>
+        </div>
+        {sandbox?.notes?.length
+          ? <p className="param-hint">{sandbox.notes.join(' · ')}</p>
+          : null}
+      </section>
 
       <div className="hooks-actions">
         <button type="button" className="btn" disabled title={t('settings.sandbox.applyPlanned')}>
@@ -114,7 +170,7 @@ export function SandboxPanel({ t }: SandboxPanelProps) {
             onChange={e => { setWritePaths(e.target.value); syncWriteRoots(e.target.value); }}
             placeholder={t('settings.sandbox.writePathsNone')} />
         </div>
-        <span className="param-hint"><code>port.sandbox()</code>（持久化/后端预留，未接线）</span>
+        <span className="param-hint"><code>port.sandboxStatus()</code>（后端真实状态；`TRHA_SANDBOX=on` 时经 runner 探测）</span>
       </section>
     </div>
   );

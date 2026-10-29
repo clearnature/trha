@@ -19,7 +19,7 @@
 
 ## 生命周期与停止
 - **Quit（关窗口 / `app.quit`）只退出壳**：不停 scheduler、不停内核，其他入口继续工作。
-- **Stop**：`Services → Stop kernel and scheduler…`（`Ctrl+Shift+Q`）→ 原生确认框 →
+- **Stop**：`Services → Stop kernel and scheduler…`（`Ctrl+Alt+Q`）→ 原生确认框 →
   读 `~/.trha/run/{kernel,scheduler}.pid`、校验 `/proc/<pid>/cmdline`、SIGTERM →
   显示结果 → `app.quit()`。与 `trha stop` / TUI `/stop confirm` 同一语义。
 - 子进程 `exit` 事件清引用；异常退出日志走 stderr。

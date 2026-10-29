@@ -993,6 +993,15 @@ executeCommand lang bridge sessionRef modelRef (SendMessage msg) = do
           ChunkDone usage -> turnSummary prices usage (usageReasoningTokens usage) nowT
         Left err -> toolLines <> tr lang "Error: " <> T.pack (show err)
 
+executeCommand _ _ _ _ Sandbox = do
+  enabled <- lookupEnv "TRHA_SANDBOX"
+  let state = case fmap (T.toLower . T.strip . T.pack) enabled of
+        Just v | v `elem` ["on", "1", "true", "enforce"] -> "on"
+        _ -> "off"
+  let label = if state == "on" then "enabled" else "disabled"
+  return $ Just ("SandBox: " <> label
+    <> " (TUI: /sandbox opens the panel; the scheduler reads TRHA_SANDBOX)")
+
 executeCommand lang bridge _ _ Agents = do
   r <- fetchAgents bridge
   return $ Just $ case r of

@@ -11,6 +11,8 @@ import type {
   PlanDecision,
   PortModeConfig,
   PortModel,
+  PortSandboxScope,
+  PortSandboxStatus,
   PortSession,
   PortSessionMessage,
   PortToolSpec,
@@ -170,6 +172,13 @@ export class SchedulerPort implements Port {
     return this.request<{ roots: string[] }>('/api/sandbox/write-roots', {
       method: 'PUT', headers: this.headers(), body: JSON.stringify({ roots }),
     }).then(r => r.roots ?? []);
+  }
+  sandboxStatus(): Promise<PortSandboxStatus> {
+    return this.request<PortSandboxStatus>('/api/sandbox/status');
+  }
+  sandboxScopes(): Promise<PortSandboxScope[]> {
+    return this.request<{ scopes: PortSandboxScope[] }>('/api/sandbox/scopes')
+      .then(r => r.scopes ?? []);
   }
   saveProvider(draft: ProviderDraft): Promise<ProviderEntry[]> {
     return this.request<{ providers: ProviderEntry[] }>('/api/providers', {

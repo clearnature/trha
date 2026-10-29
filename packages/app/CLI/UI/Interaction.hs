@@ -169,6 +169,7 @@ layerTable =
   , ("/sessions", CmdPicker)
   , ("/skills", CmdPicker)
   , ("/agents", CmdPicker)
+  , ("/sandbox", CmdPicker)
   , ("/theme", CmdPicker)
   , ("/language", CmdPicker)
   , ("/resume", CmdPicker)

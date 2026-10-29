@@ -126,13 +126,35 @@ library trha-api
   default-language: Haskell2010
 
 -- Infrastructure Layer
+-- Infrastructure（存储/网络/沙箱）
+-- visibility: public so the standalone CLI package (packages/app/CLI) can
+-- depend on it via `trha:trha-infra` for `trha sandbox`.
 library trha-infra
+  visibility:        public
   exposed-modules:  
     Core.HTTPProxy
     Infrastructure.Storage.JSON
     Infrastructure.Storage.SessionStore
     Infrastructure.Storage.SQLite
     Infrastructure.Network.HTTP
+    Infrastructure.Sandbox
+    Infrastructure.Sandbox.Policy
+    Infrastructure.Sandbox.Scope
+    Infrastructure.Sandbox.Plan
+    Infrastructure.Sandbox.Backend
+    Infrastructure.Sandbox.Error
+    Infrastructure.Sandbox.Backend.Stub
+    Infrastructure.Sandbox.Backend.Linux
+    Infrastructure.Sandbox.Backend.Mac
+    Infrastructure.Sandbox.Backend.Windows
+    Infrastructure.Sandbox.Backend.FreeBSD
+    Infrastructure.Sandbox.Backend.OpenBSD
+    Infrastructure.Sandbox.Protocol
+    Infrastructure.Sandbox.Runner
+    Infrastructure.Sandbox.Config
+    Infrastructure.Sandbox.Probe
+    Infrastructure.Sandbox.Audit
+    Infrastructure.Sandbox.Experiment
     Infrastructure.Sandbox.Process
     Infrastructure.Telemetry.Metrics
   hs-source-dirs:   src/infra
@@ -148,6 +170,9 @@ library trha-infra
                   , http-client
                   , http-client-tls
                   , http-types
+                  , yaml
+                  , time
+                  , unix
   default-language: Haskell2010
 
 -- WebGPU backend —— 真实绑定 wgpu-native 的 C API
@@ -210,6 +235,7 @@ executable trha
     Core.Currency
     Core.Export
     Core.Fonts
+    Core.Sandbox
     Core.TurnStats
     Core.EffortContract
     Core.Types
@@ -250,6 +276,7 @@ executable trha
   ghc-options:      -rtsopts -threaded
   build-depends:    base ^>=4.22
                   , trha:trha-api
+                  , trha:trha-infra
                   , aeson
                   , text
                   , bytestring
@@ -276,6 +303,35 @@ executable trha
   default-language: Haskell2010
 
 -- Test Suite
+
+test-suite trha-sandbox-test
+  type:             exitcode-stdio-1.0
+  main-is:          SandboxSpecMain.hs
+  hs-source-dirs:   test-sandbox test
+  other-modules:    SandboxSpec
+                  , SandboxLinuxSpec
+                  , SandboxMacSpec
+                  , SandboxRunnerSpec
+                  , AuditSpec
+                  , ExperimentSpec
+                  , ConfigSpec
+  build-depends:    base ^>=4.22
+                  , directory
+                  , filepath
+                  , unix
+                  , process
+                  , hspec
+                  , QuickCheck
+                  , aeson
+                  , bytestring
+                  , text
+                  , containers
+                  , trha:trha-infra
+  -- timeout-based runner tests need the threaded RTS (same reason as
+  -- trha-test): without it the 200 ms deadline never fires.
+  ghc-options:      -threaded
+  default-language: Haskell2010
+
 test-suite trha-test
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
@@ -291,10 +347,18 @@ test-suite trha-test
                   , ServerBindSpec
                   , SecuritySpec
                   , SessionTruthSpec
+                  , SandboxSpec
+                  , SandboxLinuxSpec
+                  , SandboxRunnerSpec
+                  , AuditSpec
+                  , ExperimentSpec
+                  , ConfigSpec
   hs-source-dirs:   test
   build-depends:    base ^>=4.22
                   , directory
                   , filepath
+                  , unix
+                  , process
                   , trha:trha-core
                   , sov-math
                   , trha:trha-llm

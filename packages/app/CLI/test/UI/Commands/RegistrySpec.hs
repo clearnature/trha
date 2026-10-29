@@ -37,7 +37,7 @@ spec = do
                                     , "/session-info", "/transcript", "/retry", "/btw", "/recap", "/queue", "/steer"
                                     , "/fork", "/branch", "/goal", "/switch", "/loop", "/graph", "/workflow", "/currency"
                                     , "/cls", "/ask-timeout", "/reasoning-language"
-                                    , "/todo", "/tree", "/agents", "/rename", "/tag", "/quit", "/exit", "/stop" ])
+                                    , "/todo", "/tree", "/agents", "/sandbox", "/rename", "/tag", "/quit", "/exit", "/stop" ])
 
   describe "pickerItems" $ do
     it "offers exactly the picker-enabled commands in registry order" $ do

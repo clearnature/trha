@@ -41,6 +41,7 @@ import {
 import { startPluginWatcher } from '../Plugins/watcher.js';
 import { resolveWorkspace } from './workspace.js';
 import { execShell } from './shell.js';
+import { defaultSandboxScope, readSandboxConfig, sandboxEnabled, sandboxedSpawn, sandboxStatus, setSandboxConfigRuntime, setSandboxEnabledRuntime, writeSandboxConfig, type SandboxConfigView } from './sandbox.js';
 import { snapshotFile } from './fileHistory.js';
 import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
 import { resolveTls } from './tls.js';
@@ -943,6 +944,43 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   });
 
   // ── 沙箱额外可信写目录（SandboxPanel 同步）────────
+  app.get('/api/sandbox/status', async (_req, res) => {
+    try {
+      res.json(await sandboxStatus());
+    } catch (e) {
+      res.status(503).json({ error: String(e) });
+    }
+  });
+  // Load the persisted sandbox config once. An explicit TRHA_SANDBOX wins;
+  // otherwise the saved `enabled` flag decides. The cached view also feeds
+  // defaultSandboxScope so /sandbox policy/scratch take effect.
+  void readSandboxConfig().then(cfg => {
+    setSandboxConfigRuntime(cfg);
+    const envExplicit = (process.env.TRHA_SANDBOX ?? '').trim() !== '';
+    setSandboxEnabledRuntime(envExplicit ? sandboxEnabled() : cfg.enabled);
+  }).catch(() => {});
+
+  app.get('/api/sandbox/config', async (_req, res) => {
+    try {
+      const cfg = await readSandboxConfig();
+      // `enabled` reports the effective switch (env/config + runtime PUT).
+      res.json({ ...cfg, enabled: sandboxEnabled() });
+    } catch (e) {
+      res.status(503).json({ error: String(e) });
+    }
+  });
+  app.put('/api/sandbox/config', async (req, res) => {
+    try {
+      const patch: Partial<SandboxConfigView> = {};
+      if (typeof req.body?.enabled === 'boolean') patch.enabled = req.body.enabled;
+      if (typeof req.body?.policy === 'string') patch.policy = req.body.policy;
+      if (typeof req.body?.network === 'string') patch.network = req.body.network;
+      if (typeof req.body?.scratch === 'string') patch.scratch = req.body.scratch;
+      res.json(await writeSandboxConfig(patch));
+    } catch (e) {
+      res.status(503).json({ error: String(e) });
+    }
+  });
   app.get('/api/sandbox/write-roots', (_req, res) => {
     res.json({ roots: extraWriteRoots });
   });
@@ -1139,6 +1177,27 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     res.json(Array.from(sessions.values()));
   });
 
+  // ── Sandbox scopes (T2.6: agent tree + isolation) ─────────────────────
+  app.get('/api/sandbox/scopes', async (_req, res) => {
+    try {
+      const cfg = await readSandboxConfig();
+      const enabled = sandboxEnabled();
+      res.json({
+        scopes: Array.from(sessions.values()).map(s => ({
+          id: s.id,
+          parent: s.parentId ?? null,
+          depth: s.depth ?? 0,
+          policy: s.parentId ? 'read-only' : cfg.policy,
+          isolation: 'process',
+          enabled,
+          cwd: s.cwd ?? null,
+        })),
+      });
+    } catch (e) {
+      res.status(503).json({ error: String(e) });
+    }
+  });
+
   // Rename / tag a session.  Both fields are user-facing only (never part of
   // the model's history) and persisted alongside the rest of the state.
   app.post('/api/session/:id/meta', (req, res) => {
@@ -1195,6 +1254,31 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     opts: { cwd: string },
   ): Promise<{ code: number; stdout: string; stderr: string; note: string }> => {
     const shell = execShell();
+    // Compatibility default (TRHA_SANDBOX=off): the unconfined path below is
+    // unchanged. When the seam is enabled, execution goes through the runner
+    // and a failure is returned as a failed tool call, never a fallback.
+    if (sandboxEnabled()) {
+      try {
+        const result = await sandboxedSpawn(defaultSandboxScope(opts.cwd), {
+          argv: [shell ?? 'bash', '-c', cmd],
+          cwd: opts.cwd,
+          timeoutMs: SHELL_TIMEOUT_MS,
+        });
+        return {
+          code: result.code ?? 1,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          note: result.ok ? '' : (result.stderr ? '' : 'sandbox denied the command'),
+        };
+      } catch (e) {
+        return {
+          code: 1,
+          stdout: '',
+          stderr: (e as Error).message,
+          note: 'sandbox unavailable',
+        };
+      }
+    }
     try {
       const { stdout, stderr } = await execAsync(cmd, {
         cwd: opts.cwd,

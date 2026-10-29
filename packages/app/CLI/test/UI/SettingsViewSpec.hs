@@ -5,6 +5,7 @@ module UI.SettingsViewSpec (spec) where
 import Test.Hspec
 import UI.SettingsView
 import Core.Types (defaultCLIConfig)
+import UI.StatusInfo (StatusRow(..), collectStatusInfo)
 import UI.I18n (Lang(..))
 import qualified Data.Text as T
 
@@ -25,6 +26,13 @@ spec = do
       seVal (byKey "lang") `shouldBe` "zh-Hans"
       -- auto is the default and means "follow the interface language"
       seVal (byKey "reasoningLanguage") `shouldBe` "auto"
+
+  describe "status info" $ do
+    it "reports the sandbox switch, not the workspace path" $ do
+      rows <- collectStatusInfo defaultCLIConfig Nothing "m"
+      case [ srValue r | r <- rows, srLabel r == "SandBox" ] of
+        (v : _) -> v `shouldSatisfy` (not . T.isInfixOf "/")
+        [] -> expectationFailure "no Sandbox row"
 
   describe "maskSecret" $ do
     it "hides short secrets fully" $ do

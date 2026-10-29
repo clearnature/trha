@@ -215,7 +215,10 @@ function buildMenu(): void {
       submenu: [
         {
           label: 'Stop kernel and scheduler…',
-          accelerator: 'CommandOrControl+Shift+Q',
+          // Ctrl+Alt+Q, not Ctrl+Shift+Q: GNOME Terminal binds
+          // Ctrl+Shift+Q to close-window, so the old accelerator killed the
+          // terminal running the TUI before this shell ever saw the key.
+          accelerator: 'CommandOrControl+Alt+Q',
           click: () => {
             void confirmAndStop();
           },

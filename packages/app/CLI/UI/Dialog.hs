@@ -11,6 +11,9 @@
 module UI.Dialog
   ( -- * Dialog stack
     Dialog(..)
+  , SandboxSettings(..)
+  , defaultSandboxSettings
+  , sandboxApply
   , DialogStack
   , emptyStack
   , stackPush
@@ -55,6 +58,32 @@ import UI.Render.Picker
 import Data.Text (Text)
 import qualified Data.Text as T
 
+-- | Runtime sandbox knobs shown by @/sandbox@.  Enter persists through
+-- PUT /api/sandbox/config: sandbox.yaml is written and the scheduler's
+-- runtime switch flips, so the panel controls real execution.
+data SandboxSettings = SandboxSettings
+  { ssEnabled :: Bool
+  , ssPolicy  :: Text   -- ^ workspace-write | read-only
+  , ssNetwork :: Bool
+  , ssScratch :: Text
+  } deriving (Show, Eq)
+
+defaultSandboxSettings :: SandboxSettings
+defaultSandboxSettings = SandboxSettings
+  { ssEnabled = False
+  , ssPolicy = "workspace-write"
+  , ssNetwork = False
+  , ssScratch = "~/.trha/sandbox-scratch"
+  }
+
+-- | Apply the row at @index@ to the settings (enter on the /sandbox panel).
+sandboxApply :: Int -> SandboxSettings -> SandboxSettings
+sandboxApply 0 s = s { ssEnabled = not (ssEnabled s) }
+sandboxApply 1 s = s { ssPolicy =
+  if ssPolicy s == "workspace-write" then "read-only" else "workspace-write" }
+sandboxApply 2 s = s { ssNetwork = not (ssNetwork s) }
+sandboxApply _ s = s
+
 -- | One modal overlay.  Selection dialogs carry their filtered list plus
 -- the selected index; the command dialog carries the full registry (so
 -- query edits can re-filter) plus the query and the selection.
@@ -70,6 +99,7 @@ data Dialog
   | DialogLanguages [Lang] Int              -- ^ /language: interface languages, selected
   | DialogApproval Text String [Text] Int   -- ^ ask message, tool, args, selected
   | DialogConfirm Text Int                  -- ^ "always" confirmation, selected (0=yes)
+  | DialogSandbox SandboxSettings Int       -- ^ /sandbox: settings, selected row
   deriving (Show, Eq)
 
 -- | Stack of open dialogs; the head is the topmost (owns keys).
@@ -109,6 +139,7 @@ dialogCount (DialogThemes ts _)      = length ts
 dialogCount (DialogLanguages ls _)   = length ls
 dialogCount (DialogApproval _ name args _) = length (approvalOptions name args)
 dialogCount (DialogConfirm _ _)      = 2  -- yes / no
+dialogCount (DialogSandbox _ _)      = 4  -- enabled / policy / network / scratch
 
 -- | Options offered by an approval card, in display order.
 data ApprovalOption = ApprovalOnce | ApprovalAlways | ApprovalReject
@@ -165,6 +196,7 @@ dialogMoveSel delta d = case d of
   DialogLanguages ls s     -> DialogLanguages ls (mv (dialogCount d) s)
   DialogApproval m t a s  -> DialogApproval m t a (mv (dialogCount d) s)
   DialogConfirm m s       -> DialogConfirm m (mv (dialogCount d) s)
+  DialogSandbox ss s      -> DialogSandbox ss (mv (dialogCount d) s)
   where
     mv n s = moveSelection delta s n
 

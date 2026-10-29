@@ -26,7 +26,7 @@ import Control.Monad.IO.Class (liftIO)
 import System.Timeout (timeout)
 import Core.Clipboard (saveClipboardImage)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.RunState (stopAll, stopResultText)
 import Core.Export (exportMarkdown, exportJson, defaultExportName)
@@ -219,6 +219,7 @@ data AppState = AppState
   , appSelEnd     :: Maybe Int            -- ^ drag-selection cursor (message id)
   , appCardFocus  :: Maybe Int          -- ^ focused tool card (msgId); Nothing = none
   , appMode       :: Maybe SessionMode  -- ^ permission posture (Shift+Tab / Ctrl+Y)
+  , appSandbox    :: SandboxSettings    -- ^ /sandbox panel state (TUI-local)
   , appCacheNow   :: Maybe (Int, Int)   -- ^ last turn's (cache hit, miss)
   , appCacheSum   :: (Int, Int)         -- ^ session-total (cache hit, miss)
   , appCtxUsed    :: Maybe Int          -- ^ last prompt tokens (context used)
@@ -243,6 +244,7 @@ data AppState = AppState
   , appApproval   :: Maybe Text         -- ^ parked tool-approval message (M3)
   , appAskTool    :: Maybe (String, [Text])  -- ^ tool identity captured from the ask event
   , appPendingDelete :: Maybe String        -- ^ session id awaiting delete confirmation
+  , appPendingStop   :: Bool                -- ^ Ctrl+Alt+Q confirmation is open (service stop)
   , appUsage      :: Maybe Usage        -- ^ real usage echo of the last turn
   , appCtxSize    :: Maybe Int          -- ^ context size of the active model
   , appSidebar    :: SidebarState       -- ^ sidebar open/closed/auto (M4-1)
@@ -292,6 +294,12 @@ data ResourceName
   deriving (Show, Eq, Ord)
 
 -- | Create initial state
+-- | TRHA_SANDBOX=on/1/true/enforce enables the sandbox badge.
+sandboxOn :: Maybe String -> Bool
+sandboxOn v = case fmap (T.toLower . T.strip . T.pack) v of
+  Just x | x `elem` ["on", "1", "true", "enforce"] -> True
+  _ -> False
+
 initialState :: SchedulerBridge -> BChan AppEvent -> CLIConfig -> AppState
 initialState bridge chan cfg = AppState
   { appMessages  = []
@@ -324,6 +332,7 @@ initialState bridge chan cfg = AppState
   , appSelEnd    = Nothing
   , appCardFocus = Nothing
   , appMode      = Nothing
+  , appSandbox   = defaultSandboxSettings
   , appCacheNow  = Nothing
   , appCacheSum  = (0, 0)
   , appCtxUsed   = Nothing
@@ -348,6 +357,7 @@ initialState bridge chan cfg = AppState
   , appApproval  = Nothing
   , appAskTool   = Nothing
   , appPendingDelete = Nothing
+  , appPendingStop   = False
   , appUsage     = Nothing
   , appCtxSize   = configCtxSize cfg
   , appSidebar   = SidebarAuto
@@ -374,6 +384,13 @@ appFor = App
   , appHandleEvent  = handleEvent
   , appStartEvent   = do
       st <- get
+      -- Sandbox badge: env is the first guess; the scheduler's effective
+      -- switch (config + runtime) arrives asynchronously and wins.
+      liftIO (lookupEnv "TRHA_SANDBOX") >>= \v -> modify $ \s0 ->
+        s0 { appSandbox = (appSandbox s0) { ssEnabled = sandboxOn v } }
+      void $ liftIO $ async $ do
+        r <- fetchSandboxConfig (appBridge st)
+        writeBChan (appChan st) (EvSandboxConfig r)
       -- Window title: the terminal tab should name the workspace.
       liftIO $ hPutStr stdout
         ("\ESC]0;trha — " <> T.unpack (fromMaybe "agent" (appCwd st)) <> "\a")
@@ -714,6 +731,7 @@ drawDialog st d =
       DialogLanguages{}  -> tr lang " Languages "
       DialogApproval{}   -> tr lang " Approval "
       DialogConfirm{}    -> tr lang " Confirm "
+      DialogSandbox{}    -> tr lang " SandBox "
     sel = case d of
       DialogModels _ s -> s
       DialogSessions _ s -> s
@@ -725,6 +743,7 @@ drawDialog st d =
       DialogLanguages _ s -> s
       DialogApproval _ _ _ s -> s
       DialogConfirm _ s -> s
+      DialogSandbox _ s -> s
     n = dialogCount d
     -- 30 rows for every dialog, including the skills overlay.
     (start, end) = windowRange n sel 30
@@ -798,6 +817,14 @@ drawDialog st d =
         [ row idx sel (str (T.unpack (langName it)))
                       (str (if it == appLang st then "current" else ""))
         | (idx, it) <- zip [start ..] (drop start (take (end + 1) ls)) ]
+      DialogSandbox ss _ ->
+        [ row 0 sel (str (T.unpack ("SandBox: " <> (if ssEnabled ss then "enabled" else "disabled")))) (str "")
+        , row 1 sel (str (T.unpack ("Policy: " <> ssPolicy ss))) (str "read-only | workspace-write")
+        , row 2 sel (str (T.unpack ("Network: " <> (if ssNetwork ss then "enabled" else "disabled")))) (str "")
+        , row 3 sel (str (T.unpack ("Scratch: " <> ssScratch ss))) (str "")
+        , padLeftRight 1 $ withAttr (attrName "timestamp") $
+            str "enter toggle · esc close"
+        ]
 
     -- One selectable row: marker + label + dim right-hand detail.
     row :: Int -> Int -> Widget ResourceName -> Widget ResourceName -> Widget ResourceName
@@ -1327,6 +1354,9 @@ drawStatus st = Widget Greedy Fixed $ do
         | not (T.null clockNow) ]
       , [ withAttr (attrName "timestamp")
             (str (T.unpack (tr lang " · Shift+Tab read-only/ask/auto/YOLO/plan · Ctrl+Y YOLO")))
+        , str "   "
+        , withAttr (attrName (if ssEnabled (appSandbox st) then "status" else "error"))
+            (str (T.unpack (sandboxTag st)))
         , padLeft Max (withAttr (attrName "timestamp") (str (T.unpack modelLine)))
         ]
       ])
@@ -1346,6 +1376,7 @@ drawStatus st = Widget Greedy Fixed $ do
         row r = padLeftRight 1 $ timestampWidget $ str (T.unpack r)
     timestampWidget = withAttr (attrName "timestamp")
     modeTag = maybe "Read only" smLabel (appMode st)
+    sandboxTag st' = "SandBox:" <> (if ssEnabled (appSandbox st') then "enabled" else "disabled")
     clockNow = case (appNow st, appTz st) of
       (Just t, Just tz) -> clockWithZone tz t
       _ -> ""
@@ -1487,6 +1518,16 @@ handleEvent (VtyEvent (EvKey KBackTab _)) =
 handleEvent (VtyEvent (EvKey (KChar '\t') ms))
   | MShift `elem` ms = modeAction (object ["action" .= ("cycle" :: Text)])
 handleEvent (VtyEvent (EvKey (KChar 'q') [MCtrl])) = halt
+-- Ctrl+Alt+Q is the *service-level* stop (kernel + scheduler), not another
+-- shell exit: the kernel is shared by TUI, Desktop and Web and has no "quit"
+-- of its own, so stopping it tears down every trha process.  This mirrors
+-- Desktop's `Services → Stop kernel and scheduler…` and `/stop confirm`, and
+-- opens the confirmation dialog first.  vty delivers Alt as an ESC prefix, so
+-- the key arrives as MMeta+MCtrl (MAlt is accepted for parsers that report Alt
+-- directly); GNOME Terminal binds Ctrl+Shift+Q to close-window and never
+-- forwards it, so this combination is the one that reaches the shell.
+handleEvent (VtyEvent (EvKey (KChar 'q') ms))
+  | MCtrl `elem` ms && (MMeta `elem` ms || MAlt `elem` ms) = requestStopServices
 handleEvent (VtyEvent (EvKey (KChar 'c') [MCtrl])) = handleCtrlCKey
 handleEvent (VtyEvent (EvKey (KChar 'd') [MCtrl])) = handleCtrlDKey
 handleEvent (VtyEvent (EvKey KEsc _)) = do
@@ -1599,6 +1640,32 @@ requestInterrupt = do
     Nothing -> return ()
     Just sid -> void $ liftIO $ async $ void (interruptSession (appBridge st) sid)
 
+-- | Ctrl+Alt+Q: the service-level stop.  The kernel and scheduler are shared
+-- by every shell, so this needs the same explicit confirmation as @/stop@ —
+-- one keystroke must never tear down the backend.  The dialog defaults to
+-- "No"; confirming runs 'stopAll' and then leaves the shell.
+requestStopServices :: EventM ResourceName AppState ()
+requestStopServices = do
+  lang <- gets appLang
+  modify $ \s -> s
+    { appDialogs = stackPush
+        (DialogConfirm (tr lang "Stop the kernel and scheduler? Every shell (TUI, Desktop, Web) disconnects.") 1)
+        (appDialogs s)
+    , appPendingStop = True }
+
+-- | Confirmed service stop: SIGTERM kernel + scheduler, report, then halt.
+-- The dialog itself was already popped by 'dialogActivate'.
+stopServicesAndHalt :: EventM ResourceName AppState ()
+stopServicesAndHalt = do
+  modify $ \s -> s { appPendingStop = False
+                   , appStatus = tr (appLang s) "Stopping services..." }
+  t <- liftIO now
+  rs <- liftIO (stopAll False)
+  let out = T.intercalate "\n"
+              [ T.pack (stopResultText svc r) | (svc, r) <- rs ]
+  appendMsg (mkMsg "system" out t)
+  halt
+
 -- | Answer the parked ask: post the decision and let EvVerdict close the
 -- loop (it clears appApproval and busy).
 decideApprovalNow :: Bool -> EventM ResourceName AppState ()
@@ -1652,7 +1719,8 @@ escapeWithoutApproval = do
                        , efComplete = isJust (appComp st) }
   case resolveEscape flags of
     EscPopDialog ->
-      modify $ \s -> s { appDialogs = stackPop (appDialogs s), appEscLast = Nothing }
+      modify $ \s -> s { appDialogs = stackPop (appDialogs s), appEscLast = Nothing
+                       , appPendingStop = False }
     _ | fired -> do
           modify $ \s -> s { appEscLast = Nothing }
           requestInterrupt
@@ -1770,42 +1838,60 @@ dialogActivate = do
             (ApprovalAlways : _) -> modifyTop $ \_ ->
               DialogConfirm (alwaysConfirmText (appLang st) name args) 0
             _                    -> decideApprovalNow False
+        DialogSandbox ss sel -> do
+          st <- get
+          let ss' = sandboxApply sel ss
+          modify $ \s0 -> s0 { appSandbox = ss' }
+          void $ liftIO $ async $ do
+            r <- setSandboxConfig (appBridge st) (ssEnabled ss')
+                   (ssPolicy ss')
+                   (if ssNetwork ss' then "allow:*" else "off")
+                   (ssScratch ss')
+            case r of
+              Left e -> writeBChan (appChan st) (EvToast ("sandbox: " <> T.pack (show e)))
+              Right () -> writeBChan (appChan st) (EvToast "sandbox config saved")
         DialogConfirm _ sel -> case sel of
           0 -> do
             st2 <- get
-            case appPendingDelete st2 of
-              Just sid -> do
-                modify $ \s -> s { appDialogs = stackPop (appDialogs s)
-                                 , appPendingDelete = Nothing
-                                 , appStatus = tr (appLang s) "Deleting..." }
-                let bridge = appBridge st2
-                    chan = appChan st2
-                void $ liftIO $ async $ do
-                  r <- deleteSession bridge sid
-                  writeBChan chan (EvToast (case r of
-                    Right () -> "Session deleted: " <> T.pack sid
-                    Left e   -> "Error: " <> T.pack (show e)))
-              Nothing -> do  -- persist the rule, then approve once
-                modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
-                let (name, args) = fromMaybe ("", []) (appAskTool st2)
-                    bridge = appBridge st2
-                    chan   = appChan st2
-                case appSessionId st2 of
-                  Nothing -> decideApprovalNow True
-                  Just sid -> do
-                    modify $ \s2 -> s2 { appStatus = tr (appLang s2) "Approving..." }
-                    void $ liftIO $ async $ do
-                      _ <- allowAlways bridge name args  -- best effort: a failed rule
-                                                         -- still allows this once
-                      r <- decidePlan bridge sid True
-                      writeBChan chan (EvVerdict r)
-          _ -> do  -- no: back to the approval card
-            modify $ \s -> s { appPendingDelete = Nothing }
+            if appPendingStop st2
+              then stopServicesAndHalt
+              else case appPendingDelete st2 of
+                Just sid -> do
+                  modify $ \s -> s { appDialogs = stackPop (appDialogs s)
+                                   , appPendingDelete = Nothing
+                                   , appStatus = tr (appLang s) "Deleting..." }
+                  let bridge = appBridge st2
+                      chan = appChan st2
+                  void $ liftIO $ async $ do
+                    r <- deleteSession bridge sid
+                    writeBChan chan (EvToast (case r of
+                      Right () -> "Session deleted: " <> T.pack sid
+                      Left e   -> "Error: " <> T.pack (show e)))
+                Nothing -> do  -- persist the rule, then approve once
+                  modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
+                  let (name, args) = fromMaybe ("", []) (appAskTool st2)
+                      bridge = appBridge st2
+                      chan   = appChan st2
+                  case appSessionId st2 of
+                    Nothing -> decideApprovalNow True
+                    Just sid -> do
+                      modify $ \s2 -> s2 { appStatus = tr (appLang s2) "Approving..." }
+                      void $ liftIO $ async $ do
+                        _ <- allowAlways bridge name args  -- best effort: a failed rule
+                                                           -- still allows this once
+                        r <- decidePlan bridge sid True
+                        writeBChan chan (EvVerdict r)
+          _ -> do  -- no: cancel the pending stop, or go back to the approval card
             st2 <- get
-            case (appApproval st2, appAskTool st2) of
-              (Just msg, Just (name, args)) ->
-                modifyTop (const (DialogApproval msg name args 0))
-              _ -> modify $ \s2 -> s2 { appDialogs = stackPop (appDialogs s2) }
+            if appPendingStop st2
+              then modify $ \s -> s { appPendingStop = False }
+              else do
+                modify $ \s -> s { appPendingDelete = Nothing }
+                st3 <- get
+                case (appApproval st3, appAskTool st3) of
+                  (Just msg, Just (name, args)) ->
+                    modifyTop (const (DialogApproval msg name args 0))
+                  _ -> modify $ \s2 -> s2 { appDialogs = stackPop (appDialogs s2) }
 
 -- | Keys in the normal chat view.
 handleChatKey :: Event -> EventM ResourceName AppState ()
@@ -2581,6 +2667,9 @@ handleAppEvent (EvAgents (Left _)) = return ()
 handleAppEvent (EvServices lsp mcp) = modify $ \s -> s { appLsp = lsp, appMcp = mcp }
 handleAppEvent (EvBalance (Right b)) = modify $ \s -> s { appBalance = Just b }
 handleAppEvent (EvBalance (Left _)) = return ()
+handleAppEvent (EvSandboxConfig (Right on)) = modify $ \s ->
+  s { appSandbox = (appSandbox s) { ssEnabled = on } }
+handleAppEvent (EvSandboxConfig (Left _)) = return ()
 
 handleAppEvent (EvRecent xs) = modify $ \s -> s { appRecent = xs }
 
@@ -3016,6 +3105,8 @@ handleSlash input = do
           modify $ \s -> s { appDialogs = stackPush (DialogModels [] 0) (appDialogs s) }
           void $ liftIO $ async $
             listModels bridge >>= writeBChan chan . EvModels
+    "/sandbox" -> modify $ \s -> s { appDialogs =
+      stackPush (DialogSandbox (appSandbox s) 0) (appDialogs s) }
     "/theme" -> do
       let arg = T.strip (T.drop 6 input)
       if T.null arg

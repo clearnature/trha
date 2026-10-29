@@ -189,6 +189,8 @@ zhDict = M.fromList
   , ("Exit the application", "退出程序")
   , ("Exit the application (alias)", "退出程序（别名）")
   , ("Stop the kernel and scheduler (usage: /stop confirm)", "停止内核与调度器（用法：/stop confirm）")
+  , ("Stop the kernel and scheduler? Every shell (TUI, Desktop, Web) disconnects.", "停止内核与调度器？所有外壳（TUI、Desktop、Web）都会断开。")
+  , ("Stopping services...", "正在停止服务...")
   , ("This stops the kernel and scheduler and exits. Type /stop confirm to proceed."
     , "这会停止内核与调度器并退出。输入 /stop confirm 确认。")
   , ("This stops the kernel and scheduler and exits TUI. Type /stop confirm to proceed."
@@ -199,6 +201,7 @@ zhDict = M.fromList
   , ("Type '/help' for commands, '/quit' to exit", "输入 '/help' 查看命令，'/quit' 退出")
   , ("Goodbye!", "再见！")
   , ("Press Ctrl+Q to quit", "按 Ctrl+Q 退出")
+  , ("Press Ctrl+Alt+Q to stop the kernel and scheduler", "按 Ctrl+Alt+Q 停止内核与调度器")
   , ("Press Ctrl+C again to quit", "再按一次 Ctrl+C 退出")
   , ("Keys:", "按键：")
   , ("quit", "退出")
@@ -296,8 +299,8 @@ zhDict = M.fromList
   , ("Voice saved: ", "语音已保存：")
   , ("The session no longer exists on the scheduler; the next message creates a new one.", "该会话在调度器中已不存在（可能已重启）；下一条消息会自动新建会话。")
   , ("Export the transcript (usage: /export [json|md] [path])", "导出转写（用法：/export [json|md] [路径]）")
-  , ( "Shift+Tab read-only/ask/auto/YOLO/plan · Ctrl+Y YOLO · Ctrl+O expand tool output · Ctrl+Q quit · Ctrl+C twice"
-    , "Shift+Tab 只读/询问/自动/YOLO/计划 · Ctrl+Y YOLO · Ctrl+O 展开工具输出 · Ctrl+Q 退出 · Ctrl+C 两次退出" )
+  , ( "Shift+Tab read-only/ask/auto/YOLO/plan · Ctrl+Y YOLO · Ctrl+O expand tool output · Ctrl+Q quit · Ctrl+Alt+Q stop services · Ctrl+C twice"
+    , "Shift+Tab 只读/询问/自动/YOLO/计划 · Ctrl+Y YOLO · Ctrl+O 展开工具输出 · Ctrl+Q 退出 · Ctrl+Alt+Q 停止服务 · Ctrl+C 两次退出" )
   , ("Usage: /plan <what to do>", "用法：/plan <要做的事>")
   , ("No active session. Use /new to create one.", "当前没有活动会话，请用 /new 新建一个。")
   , ("Plan: ", "计划：")
@@ -442,6 +445,7 @@ zhDict = M.fromList
   , ("Show the footer key hints", "显示底部快捷键提示")
   , ("Ring the bell when a reply completes", "回复完成时终端响铃")
   , ("Switch the CLI language (usage: /language [code])", "切换 CLI 语言（用法：/language [code]）")
+  , ("SandBox: toggle enforcement and tune policy/network", "沙箱：开关强制执行与调校策略/网络")
   , ("Show the working-tree diff", "显示工作区 diff")
   , ("Show context-window usage", "显示上下文窗口用量")
   , ("Check scheduler, provider, fonts and settings", "检查调度器、Provider、字体与设置")

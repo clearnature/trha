@@ -72,6 +72,12 @@ import SessionGateSpec (sessionGateSpec)
 import ServerBindSpec (serverBindSpec)
 import SecuritySpec (securitySpec)
 import SessionTruthSpec (sessionTruthSpec)
+import SandboxSpec (sandboxSpec)
+import SandboxLinuxSpec (sandboxLinuxSpec)
+import SandboxRunnerSpec (sandboxRunnerSpec)
+import AuditSpec (auditSpec)
+import ExperimentSpec (experimentSpec)
+import ConfigSpec (configSpec)
 
 subsetOf :: (Eq a) => [a] -> [a] -> Bool
 subsetOf xs ys = all (`elem` ys) xs
@@ -107,6 +113,12 @@ main = hspec $ do
   sessionGateSpec
   serverBindSpec
   securitySpec
+  sandboxSpec
+  sandboxLinuxSpec
+  sandboxRunnerSpec
+  auditSpec
+  experimentSpec
+  configSpec
 
   describe "Core.Session" $ do
     it "can create a session and append events" $ do

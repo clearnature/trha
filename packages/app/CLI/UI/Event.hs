@@ -134,6 +134,7 @@ data AppEvent
   | EvAgents (Either CLIError [AgentEntry])     -- ^ session tree (subagents)
   | EvServices [Text] [Text]                   -- ^ LSP lines, MCP lines
   | EvBalance (Either CLIError Balance)         -- ^ provider account balance
+  | EvSandboxConfig (Either CLIError Bool)       -- ^ scheduler's effective sandbox switch
   deriving (Show)
 
 -- | Which screen the TUI is showing.  Home is the launch screen (MiMo's

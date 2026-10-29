@@ -33,6 +33,7 @@ executable trha
     Core.Currency
     Core.Export
     Core.Fonts
+    Core.Sandbox
     Core.TurnStats
     Core.EffortContract
     Core.Types
@@ -73,6 +74,7 @@ executable trha
   ghc-options:      -rtsopts -threaded
   build-depends:    base ^>=4.22
                   , trha:trha-api
+                  , trha:trha-infra
                   , aeson
                   , text
                   , bytestring
@@ -108,6 +110,7 @@ test-suite trha-cli-test
     Config.HomeSpec
     Config.SettingsSpec
     Core.Args
+    Core.Sandbox
     Core.ArgsSpec
     Core.HTTP
     Core.HTTPSpec
@@ -186,6 +189,7 @@ test-suite trha-cli-test
     UI.Render.Sidebar
     UI.Render.SidebarSpec
   build-depends:    base ^>=4.22
+                  , trha:trha-infra
                   , hspec >= 2.10
                   , text
                   , aeson

@@ -116,3 +116,25 @@ export interface StudioVersion {
   pinned: string | null;
   versions: { version: string; current: boolean }[];
 }
+
+/** Sandbox backend state (docs/plans/sandbox-architecture.md §5.7.4). */
+export interface PortSandboxStatus {
+  backend: string;
+  platform: string;
+  enforcement: 'full' | 'partial' | 'none';
+  available: boolean;
+  capabilities: Record<string, unknown>;
+  missing?: string[];
+  notes?: string[];
+}
+
+/** One execution scope (session or subagent) from /api/sandbox/scopes. */
+export interface PortSandboxScope {
+  id: string;
+  parent: string | null;
+  depth: number;
+  policy: string;
+  isolation: string;
+  enabled: boolean;
+  cwd: string | null;
+}

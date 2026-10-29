@@ -11,6 +11,8 @@ import type {
   PortEvent,
   PortModeConfig,
   PortModel,
+  PortSandboxScope,
+  PortSandboxStatus,
   PortSession,
   PortSessionMessage,
   PortToolSpec,
@@ -302,6 +304,17 @@ export class MockPort implements Port {
   async usageStats(): Promise<UsageRow[]> { return []; }
   async writeRoots(): Promise<string[]> { return this.extraRoots; }
   async setWriteRoots(roots: string[]): Promise<string[]> { this.extraRoots = roots; return roots; }
+  async sandboxScopes(): Promise<PortSandboxScope[]> { return []; }
+  async sandboxStatus(): Promise<PortSandboxStatus> {
+    return {
+      backend: 'none',
+      platform: 'linux',
+      enforcement: 'none',
+      available: false,
+      capabilities: {},
+      notes: ['mock port'],
+    };
+  }
   async removeProvider(name: string): Promise<ProviderEntry[]> {
     this.providers = this.providers.filter(p => p.name !== name);
     return [...this.providers];

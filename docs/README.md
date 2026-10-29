@@ -1,6 +1,6 @@
 # docs/ 导览
 
-> 本目录共 **53 份文档**（2026-10-27 追加；计数规则 = `reference/` 下按**条目**计，其余按 `.md` 文件计），按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
+> 本目录共 **56 份文档**（2026-10-29 追加；计数规则 = `reference/` 下按**条目**计，其余按 `.md` 文件计），按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
 >
 > **结构权威**是 `../QWEN.md`（§Architecture Layers / §Development Conventions / §Documentation）与 `architecture/architecture.md`。本文件只是**浏览用导览**，如有冲突，一律以 `QWEN.md` 为准。
 
@@ -48,9 +48,15 @@
 - `desktop-port-contract.md` — UI ↔ 后端 `Port` 契约（组件只经 `port/` 访问后端，禁止直接 `fetch`）
 - `desktop-host-contract.md` — Desktop ↔ Scheduler 宿主契约 v1（握手 / 租约 / 日志 stderr / 安全基线）
 
-### `plans/` — 进行中（13）
+### `plans/` — 进行中（16）
 
 - **`compact-weights-plan.md`** — **紧凑权重（2026-10-27，P-12 已完成）**：默认走 `SovereignIntWeightsC` + `sovereignForwardFullCompact`；`trha-cpu-braintoken` 实测 **2.5s/token、RSS 8.6GB**（旧流式 222s/40GB 仅作对照）；C1–C5 已落地，门禁 ≤5s / ≤12GB
+
+- **`sandbox-decisions.md`** — **沙箱决策记录（ADR-001–007，2026-10-29 冻结）**：C4 `scopeId = sessionId`（证据：`parentSessionId`/`createSession`）、工具执行归属（编排层强制 + 内核策略快照校验）、实验对比留 host、默认策略（交互 `WorkspaceWrite` / 子代理 `ReadOnly`）、工具链静态表 + 探针、`Remote` 仅预留、Windows 放 P4。每条含背景/备选/代价/判据/复审触发；变更需新增 ADR 并注明 supersede
+
+- **`sandbox-delivery-plan.md`** — **沙箱交付计划（2026-10-29，未开工）**：范围与前提、M0–M5 里程碑（接口冻结 → Linux → 多智能体 → macOS → Windows → Unix/边缘）、**WBS 48 项原子任务**（含 **T0.13 接线契约**、**T2.7/T2.8 消融实验批**）、关键路径、1 周迭代、7 条 DoD 门禁、接口冻结后的 RFC 变更控制、风险与 30% 缓冲、6 项度量、交付物清单、**§11 技能与智能体协作**（阶段技能映射、单人效率 7 条规则、PERT 估算、攻击面清单）。总计 **55–60 人日 + 30% 缓冲 ≈ 72–78 人日（约 15 周）**
+
+- **`sandbox-architecture.md`** — **沙箱架构第一版设计基线（2026-10-29，未实现）**：现状证据（无 OS 级沙箱、`permissionRules` 默认 allow 且注释误称「沙箱已兜底」）、L1–L4 分层、**§3.1 平台能力矩阵**、**§4.2.1 gVisor 采用与 bwrap personality**、**§4.3 成熟工具访问区对照**、**§4.4 真实事件复盘（Anthropic 2026-05）**、**§5.3.1 实验批（消融）模型**（基线只读/变体隔离/复现元数据/批次配额）、**§5.5.1–5.5.3 内核接线契约与工具执行归属**、**§5.8 实现语言与组件边界**、Windows 权限与路径专项、强类型 `Policy`/`Scope`/`narrow` 设计、多智能体 Scope 模型、runner NDJSON v1 协议、平台后端、编译期+黄金+探针+多 agent+**消融实验判据（§6.5）**、P0–P5 计划与风险。**§5.7 接口一次性冻结**：Haskell 公开 API、协议全部帧、TS `sandboxedSpawn`/`runExperiment`/HTTP 端点、`~/.trha/sandbox.yaml` schema（含 read/write/protectedSubpaths/tmp/experiments）、CLI 命令、P0 落地文件清单。**§9 参考代码索引**：R1–R11 + D1–D4，正文逐条标注可追溯
 
 - **`improvement-plan-2026-10-27.md`** — **改进计划（2026-10-27）**：合并 qwen 2026-09-20 的独立评价（S1–S6）与本次对照评审（A1–A8），并**重新核实**现状（44 个重复模块、sdk 已并入根构建、haskell-network 已归档（2026-10-27 处置；旧记录 92 文件/11,781 行误把 dist-newstyle 计入）、Presentation 8 文件、26 executable）。含 P0/P1/P2 路线、两项需用户裁定（重复模块归属、死代码去留）、与「不建议做」清单
 

@@ -98,7 +98,7 @@ trha stop scheduler  # 只停其中一个；加 --force 才会在超时后 SIGKI
 trha --help          # 全局选项 + 子命令
 ```
 
-TUI 里 `/quit`（或 Ctrl+Q）只退出当前壳；`Ctrl+C` 是「中断优先」（空闲连按两次才退出），`Ctrl+D` 在空输入时退出；`/stop` 需要再输入 `/stop confirm`，会停掉内核与 scheduler 并退出 TUI。
+TUI 里 `/quit`（或 Ctrl+Q）只退出当前壳；`Ctrl+C` 是「中断优先」（空闲连按两次才退出），`Ctrl+D` 在空输入时退出；**停止服务**用 `Ctrl+Alt+Q`（先确认，等同 `/stop confirm`）：它会停掉内核与 scheduler 并退出 TUI——内核由 TUI/Desktop/Web 共用，所以这是从系统层面清理 trha，而不是退壳。
 
 TUI 直接驱动终端，stdin 不是终端时会明确报错并提示改用 `trha cli`，而不是抛 `hWaitForInput: end of file`。
 

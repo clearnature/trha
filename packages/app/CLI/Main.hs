@@ -4,6 +4,7 @@ module Main where
 
 import Core.Types
 import Core.Args
+import Core.Sandbox (runSandboxCommand)
 import Core.Fonts
 import Bridge.Scheduler
 import Config.Settings
@@ -69,6 +70,7 @@ runTUIMode config = do
       let lang = parseLang (configLang config)
       putStrLn (T.unpack (tr lang "Starting TUI mode..."))
       putStrLn (T.unpack (tr lang "Press Ctrl+Q to quit"))
+      putStrLn (T.unpack (tr lang "Press Ctrl+Alt+Q to stop the kernel and scheduler"))
       logLine ("start tui model=" <> configModel config)
       bridge <- createSchedulerBridge config
       runTUI bridge config
@@ -250,3 +252,4 @@ main = do
     CmdFonts act -> runFontsMode act
     CmdStop svc force -> runStopMode svc force
     CmdStatus -> runStatusMode
+    CmdSandbox action -> runSandboxCommand action

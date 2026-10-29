@@ -30,7 +30,7 @@ import Core.Types (Usage(..))
 -- | Key hints shown at the end of the footer.
 footerHints :: Text
 footerHints =
-  "Shift+Tab read-only/ask/auto/YOLO/plan · Ctrl+Y YOLO · Ctrl+O expand tool output · Ctrl+Q quit · Ctrl+C twice"
+  "Shift+Tab read-only/ask/auto/YOLO/plan · Ctrl+Y YOLO · Ctrl+O expand tool output · Ctrl+Q quit · Ctrl+Alt+Q stop services · Ctrl+C twice"
 
 -- | Branch name from @.git/HEAD@ content: @ref: refs/heads/main@ → @Just "main"@.
 -- A bare SHA (detached HEAD) has no branch, so it returns 'Nothing'.

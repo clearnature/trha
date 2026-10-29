@@ -1,0 +1,54 @@
+name: sandbox-macos
+
+on:
+  push:
+    paths:
+      - 'src/infra/Infrastructure/Sandbox/**'
+      - 'test/Sandbox*.hs'
+      - 'test/AuditSpec.hs'
+      - 'test/ExperimentSpec.hs'
+      - 'test/ConfigSpec.hs'
+      - 'test-sandbox/**'
+      - 'trha.cabal'
+      - 'cabal.project.ci'
+      - '.github/workflows/sandbox-macos.yml'
+  pull_request:
+    paths:
+      - 'src/infra/Infrastructure/Sandbox/**'
+      - 'test/Sandbox*.hs'
+      - 'test-sandbox/**'
+      - 'trha.cabal'
+      - 'cabal.project.ci'
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: checkout sov-math (kernel math dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: triqchem-lab/math
+          path: .ci/math
+          sparse-checkout: |
+            hs/sov-math
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.14.1'
+          cabal-version: '3.14'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cabal/packages
+            ~/.cabal/store
+            dist-newstyle
+          key: macos-${{ runner.os }}-${{ hashFiles('**/*.cabal', 'cabal.project.ci') }}
+          restore-keys: |
+            macos-${{ runner.os }}-
+      - name: cabal update
+        run: cabal update
+      - name: build trha-infra
+        run: cabal build --project-file=cabal.project.ci trha-infra
+      - name: sandbox tests (Linux-only cases pending on macOS)
+        run: cabal test --project-file=cabal.project.ci trha-sandbox-test

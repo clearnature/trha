@@ -30,7 +30,8 @@
 - **不做**进程名匹配（`pkill`）或按端口杀。
 - 启动时若 pid 文件指向存活的同类进程，拒绝启动并提示先 `trha stop <service>`。
 - 外壳侧：`/quit`、Ctrl+Q、Desktop 关窗都只退出当前壳；TUI `/stop` 需 `/stop confirm`；
-  Desktop 用 `Services → Stop kernel and scheduler…`（Ctrl+Shift+Q）+ 原生确认框；
+  Desktop 用 `Services → Stop kernel and scheduler…`（Ctrl+Alt+Q）+ 原生确认框，TUI 的
+  Ctrl+Alt+Q 同义（先弹确认框，默认「否」）；
   两者最终都走同一套 pid 文件 + SIGTERM 逻辑（终端版是 `trha stop`）。
 - scheduler 启动时写 `~/.trha/run/scheduler.token`（0600）；复用外部 scheduler 的外壳
   （Desktop）读它认证，而不是自带随机 token。
@@ -58,12 +59,41 @@
 | 壳 | `Ctrl+D` | 空闲且输入为空 → 退出 |
 | 壳 | `/quit`、`/exit` | 退出当前壳 |
 | 服务 | TUI `/stop` → `/stop confirm` | 停内核 + scheduler，并退出 TUI |
-| 服务 | Desktop `Ctrl+Shift+Q` | 确认框 → 停内核 + scheduler |
+| 服务 | TUI `Ctrl+Alt+Q` | 确认框 → 停内核 + scheduler，并退出 TUI |
+| 服务 | Desktop `Ctrl+Alt+Q` | 确认框 → 停内核 + scheduler |
 | 服务 | `trha stop` | 终端版，同上 |
 
 - 键事件**不跨进程**（未注册 `globalShortcut`）；`quit` 只影响自己的壳。
 - `stop` 的作用对象是**共享后端**：任一入口 stop，其他入口立即断连。
 - `Ctrl+Q` 沿用旧习惯保留；终端流控（XON）可能吞掉它，因此 `Ctrl+C` 两次与 `Ctrl+D` 是替代出口。
+- **`Ctrl+Alt+Q` 是服务级停止，不是退壳**（2026-10-29）：内核由 TUI/Desktop/Web 共享，本身没有
+  「退出」，停止意味着从系统层面清理所有 trha 进程（`stopAll`：SIGTERM kernel + scheduler）。
+  TUI 与 Desktop 统一用这个组合；TUI 侧先弹确认框（默认「否」），与 Desktop 的原生确认框一致。
+- **不用 `Ctrl+Shift+Q`**（2026-10-29）：GNOME Terminal 把它绑成 close-window，按键到不了
+  TUI/Desktop，反而直接关掉运行 TUI 的终端窗口。因此停止服务统一改用 `Ctrl+Alt+Q`：它在终端里
+  以 ESC 前缀传输（vty 报为 `MMeta+MCtrl`），不经过终端的快捷键表，也不受 XON 流控影响。
+
+### 1.3 沙箱接线契约（C1–C5，2026-10-29 冻结）
+
+> 设计依据：`docs/plans/sandbox-architecture.md` §5.5.1；决策记录：`docs/plans/sandbox-decisions.md`（ADR-001/002）。
+
+内核（Haskell）持有 FSM、审批屏障、事件日志、checkpoint，但**不执行工具**；工具执行在 scheduler
+的 `runStep → executeTool`。因此沙箱与内核之间是**事件与策略契约**，不是调用关系。
+
+| 编号 | 契约点 | 结论 |
+|---|---|---|
+| **C1** | 策略来源与优先级 | `CLI 参数 > ./.trha/sandbox.yaml > ~/.trha/sandbox.yaml > 默认`；scope 覆盖在后；内核只持久化快照，不裁决 |
+| **C2** | 沙箱拒绝 vs 用户审批 | 沙箱拒绝（`PolicyRejected` / `SandboxUnavailable`）直接 `tool:update failed`，**不进入** `AwaitingApproval`；审批仍只由 `/session/:id/decision` 写入 |
+| **C3** | 事件归属 | 映射到既有 `tool:update failed`，detail 携带 `deny.kind/target`；是否新增 `sandbox:deny` 在 G5（内核遥测）时评估 |
+| **C4** | Scope ↔ Session 映射 | `scopeId = sessionId`；子代理 scope 沿 `parentSessionId` 链（ADR-001）；内核不感知 scope |
+| **C5** | 内核不可达时的降级 | 沙箱在 scheduler，独立于内核可达性；内核不可达不改变沙箱策略，只影响审批提示 |
+
+执行归属（ADR-002）：**执行留在 scheduler**，沙箱在 `sandboxedSpawn` 强制；内核持有 `policyHash`
+快照，scheduler 每次执行前后上报 `{scopeId, policyHash, backend, enforcement}`，不一致记
+`sandbox:policydrift` 并拒绝后续执行。
+
+协议：scheduler ↔ `trha-sandbox` runner 使用 NDJSON v1（`Infrastructure.Sandbox.Protocol` /
+`packages/scheduler/src/Server/sandboxProtocol.ts`），帧格式见架构文档 §5.7.3。
 
 ## 2. 端点清单
 | 方法/路径 | 请求 | 成功响应 | 契约测试 |

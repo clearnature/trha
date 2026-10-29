@@ -28,9 +28,11 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Text.Read (decimal)
 import Data.Maybe (fromMaybe)
-import System.Directory (getCurrentDirectory)
+import System.Directory (getCurrentDirectory, getHomeDirectory)
 import System.Environment (lookupEnv)
+import System.FilePath ((</>))
 import System.Info (arch, compilerName, compilerVersion, os)
+import Infrastructure.Sandbox.Config (loadSandboxConfig, scEnabled)
 import Data.Version (showVersion)
 
 -- | One status row: English label key (localised at render time via
@@ -97,7 +99,7 @@ collectStatusInfo :: CLIConfig -> Maybe String -> Text -> IO [StatusRow]
 collectStatusInfo cfg mSid model = do
   osStr <- osLine
   mem <- memoryLine
-  ws <- workspaceLine
+  sandbox <- sandboxLine
   return
     [ StatusRow "Name" versionLine
     , StatusRow "Runtime" runtimeLine
@@ -106,9 +108,24 @@ collectStatusInfo cfg mSid model = do
     , StatusRow "Base URL" (baseUrlLine cfg)
     , StatusRow "Model" model
     , StatusRow "Session ID" (maybe "—" T.pack mSid)
-    , StatusRow "Sandbox" ws
+    , StatusRow "SandBox" sandbox
     , StatusRow "Memory" (fromMaybe "—" mem)
     ]
+
+-- | The effective sandbox switch: an explicit env value wins, otherwise the
+-- persisted ~/.trha/sandbox.yaml 'enabled' flag (what the scheduler loads).
+sandboxLine :: IO Text
+sandboxLine = do
+  envV <- lookupEnv "TRHA_SANDBOX"
+  home <- getHomeDirectory
+  loaded <- loadSandboxConfig (home </> ".trha" </> "sandbox.yaml")
+  let cfgOn = either (const False) scEnabled loaded
+      envOn = case fmap (T.toLower . T.strip . T.pack) envV of
+        Just v | v `elem` ["on", "1", "true", "enforce"] -> Just True
+        Just _ -> Just False
+        Nothing -> Nothing
+      on = fromMaybe cfgOn envOn
+  pure (if on then "enabled (linux-bwrap)" else "disabled")
 
 -- | The workspace the tools use: the explicit override, else the shell's
 -- current directory (the scheduler follows the same rule).

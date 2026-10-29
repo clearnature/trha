@@ -54,6 +54,8 @@ module Bridge.Scheduler
   , forkSession
   , branchSession
   , setInUseProvider
+  , setSandboxConfig
+  , fetchSandboxConfig
   , startLoop
   , fetchLoops
   , stopLoops
@@ -451,6 +453,27 @@ setInUseProvider bridge name = do
   pure $ case r of
     Left e  -> Left e
     Right v -> providerStoreToList v
+
+-- | Read the scheduler's effective sandbox switch (/sandbox badge).
+fetchSandboxConfig :: SchedulerBridge -> IO (Either CLIError Bool)
+fetchSandboxConfig bridge = do
+  r <- httpGet (bridgeHTTP bridge) "/api/sandbox/config" :: IO (Either CLIError Value)
+  pure $ case r of
+    Left e -> Left e
+    Right (Object o) -> Right (fromMaybe False (parseMaybe (.: "enabled") o))
+    Right _ -> Left (ValidationError "invalid sandbox config response")
+
+-- | Persist sandbox settings through the scheduler (/sandbox panel).
+setSandboxConfig :: SchedulerBridge -> Bool -> Text -> Text -> Text -> IO (Either CLIError ())
+setSandboxConfig bridge enabled policy network scratch = do
+  r <- (httpPut (bridgeHTTP bridge) "/api/sandbox/config"
+         (object [ "enabled" .= enabled
+                 , "policy" .= policy
+                 , "network" .= network
+                 , "scratch" .= scratch ])) :: IO (Either CLIError Value)
+  pure $ case r of
+    Left e  -> Left e
+    Right _ -> Right ()
 
 -- | Copy this session into a child (/fork); @upto@ truncates the history.
 forkSession :: SchedulerBridge -> SessionId -> Maybe Int -> IO (Either CLIError SessionId)

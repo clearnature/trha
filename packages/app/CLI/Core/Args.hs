@@ -14,6 +14,7 @@ module Core.Args
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
+import Core.Sandbox (SandboxAction(..), sandboxActionParser)
 import Options.Applicative
 import qualified Data.Text as T
 
@@ -36,6 +37,7 @@ data SubCommand
   | CmdFonts Text
   | CmdStop (Maybe String) Bool  -- ^ service (Nothing = all), --force
   | CmdStatus
+  | CmdSandbox SandboxAction
   deriving (Eq, Show)
 
 -- | Global options parser
@@ -160,6 +162,9 @@ commandParser = (,)
         <> command "status"
             (info (pure CmdStatus)
               (progDesc "Show the kernel/scheduler pids and whether they are alive (read-only)"))
+        <> command "sandbox"
+            (info (CmdSandbox <$> sandboxActionParser)
+              (progDesc "Sandbox backend status, probes, scope policies and audit"))
         ))
 
 -- | The full parser, help included.

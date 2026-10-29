@@ -1,0 +1,244 @@
+// P0/P1 judgement tests for the scheduler-side sandbox seam.
+// docs/plans/sandbox-architecture.md §6.1/§6.2: no unconfined fallback.
+
+import { chmodSync, existsSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, it, expect } from 'vitest';
+import {
+  SandboxUnavailableError,
+  defaultSandboxScope,
+  sandboxEnabled,
+  sandboxStatus,
+  runExperiment,
+  sandboxedSpawn,
+  setSandboxConfigRuntime,
+  setSandboxEnabledRuntime,
+  writeSandboxConfig,
+  type SandboxScope,
+} from '../src/Server/sandbox.js';
+import {
+  PROTOCOL_VERSION,
+  decodeFrame,
+  encodeFrame,
+  type ExecFrame,
+} from '../src/Server/sandboxProtocol.js';
+
+const scope: SandboxScope = {
+  id: 'root/a',
+  parent: 'root',
+  policy: { kind: 'read-only', readonlyRoots: ['/ws'] },
+  isolation: 'process',
+  scratch: path.join(os.tmpdir(), 'trha-sandbox-test-scratch'),
+};
+
+const fixture = fileURLToPath(new URL('./fixtures/mock-sandbox-runner.mjs', import.meta.url));
+
+describe('sandbox seam switch', () => {
+  it('defaults to off (compatibility)', () => {
+    expect(sandboxEnabled({})).toBe(false);
+    expect(sandboxEnabled({ TRHA_SANDBOX: 'off' })).toBe(false);
+    expect(sandboxEnabled({ TRHA_SANDBOX: 'false' })).toBe(false);
+    expect(sandboxEnabled({ TRHA_SANDBOX: '0' })).toBe(false);
+  });
+
+  it('enables only on an explicit opt-in', () => {
+    expect(sandboxEnabled({ TRHA_SANDBOX: 'on' })).toBe(true);
+    expect(sandboxEnabled({ TRHA_SANDBOX: '1' })).toBe(true);
+    expect(sandboxEnabled({ TRHA_SANDBOX: 'enforce' })).toBe(true);
+  });
+
+  it('reports no backend when off', async () => {
+    const status = await sandboxStatus();
+    expect(status.available).toBe(false);
+    expect(status.enforcement).toBe('none');
+  });
+});
+
+describe('sandboxedSpawn (off)', () => {
+  it('refuses instead of running unconfined', async () => {
+    await expect(
+      sandboxedSpawn(scope, { argv: ['bash', '-c', 'true'], cwd: '/ws' }),
+    ).rejects.toBeInstanceOf(SandboxUnavailableError);
+  });
+});
+
+describe('sandboxedSpawn (on, mock runner)', () => {
+  it('speaks NDJSON and returns the runner result', async () => {
+    chmodSync(fixture, 0o755);
+    const previousSandbox = process.env.TRHA_SANDBOX;
+    const previousRunner = process.env.TRHA_SANDBOX_RUNNER;
+    process.env.TRHA_SANDBOX = 'on';
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    try {
+      const result = await sandboxedSpawn(scope, { argv: ['echo', 'x'], cwd: '/tmp' });
+      expect(result.ok).toBe(true);
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('mock-output');
+      expect(result.enforcement).toBe('full');
+    } finally {
+      if (previousSandbox === undefined) delete process.env.TRHA_SANDBOX;
+      else process.env.TRHA_SANDBOX = previousSandbox;
+      if (previousRunner === undefined) delete process.env.TRHA_SANDBOX_RUNNER;
+      else process.env.TRHA_SANDBOX_RUNNER = previousRunner;
+    }
+  });
+});
+
+describe('sandboxStatus (on, mock runner)', () => {
+  it('asks the runner for the real backend', async () => {
+    chmodSync(fixture, 0o755);
+    const previousSandbox = process.env.TRHA_SANDBOX;
+    const previousRunner = process.env.TRHA_SANDBOX_RUNNER;
+    process.env.TRHA_SANDBOX = 'on';
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    try {
+      const status = await sandboxStatus();
+      expect(status.backend).toBe('linux-bwrap');
+      expect(status.available).toBe(true);
+      expect(status.enforcement).toBe('full');
+    } finally {
+      if (previousSandbox === undefined) delete process.env.TRHA_SANDBOX;
+      else process.env.TRHA_SANDBOX = previousSandbox;
+      if (previousRunner === undefined) delete process.env.TRHA_SANDBOX_RUNNER;
+      else process.env.TRHA_SANDBOX_RUNNER = previousRunner;
+    }
+  });
+});
+
+describe('runExperiment (on, mock runner)', () => {
+  it('runs the variant x seed matrix and writes repro.json', async () => {
+    chmodSync(fixture, 0o755);
+    const previousSandbox = process.env.TRHA_SANDBOX;
+    const previousRunner = process.env.TRHA_SANDBOX_RUNNER;
+    process.env.TRHA_SANDBOX = 'on';
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    const root = path.join(os.tmpdir(), `trha-exp-${Date.now()}`);
+    try {
+      const outcome = await runExperiment({
+        id: 'b1',
+        root,
+        baseline: path.join(root, 'baseline'),
+        variants: [{ id: 'a' }, { id: 'b' }],
+        seeds: [1, 2],
+        concurrency: 2,
+      }, {
+        makeRequest: task => ({ argv: ['echo', 'x'], cwd: task.work }),
+      });
+      expect(outcome.results).toHaveLength(4);
+      expect(outcome.results.every(r => r.ok)).toBe(true);
+      expect(outcome.results.map(r => `${r.variant}/${r.seed}`).sort())
+        .toEqual(['a/1', 'a/2', 'b/1', 'b/2']);
+      expect(existsSync(path.join(root, 'repro.json'))).toBe(true);
+      // T2.2: work/ is reclaimed, out/ is kept.
+      expect(existsSync(path.join(root, 'a', '1', 'out'))).toBe(true);
+      expect(existsSync(path.join(root, 'a', '1', 'work'))).toBe(false);
+    } finally {
+      if (previousSandbox === undefined) delete process.env.TRHA_SANDBOX;
+      else process.env.TRHA_SANDBOX = previousSandbox;
+      if (previousRunner === undefined) delete process.env.TRHA_SANDBOX_RUNNER;
+      else process.env.TRHA_SANDBOX_RUNNER = previousRunner;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('writeSandboxConfig (on, mock runner)', () => {
+  it('persists through the runner and flips the runtime switch', async () => {
+    chmodSync(fixture, 0o755);
+    const previousSandbox = process.env.TRHA_SANDBOX;
+    const previousRunner = process.env.TRHA_SANDBOX_RUNNER;
+    process.env.TRHA_SANDBOX = 'off';
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    setSandboxEnabledRuntime(undefined);
+    try {
+      expect(sandboxEnabled()).toBe(false);
+      const cfg = await writeSandboxConfig({ enabled: true, policy: 'read-only' });
+      expect(cfg.enabled).toBe(true);
+      expect(cfg.policy).toBe('read-only');
+      expect(sandboxEnabled()).toBe(true);
+    } finally {
+      setSandboxEnabledRuntime(undefined);
+      setSandboxConfigRuntime(undefined);
+      if (previousSandbox === undefined) delete process.env.TRHA_SANDBOX;
+      else process.env.TRHA_SANDBOX = previousSandbox;
+      if (previousRunner === undefined) delete process.env.TRHA_SANDBOX_RUNNER;
+      else process.env.TRHA_SANDBOX_RUNNER = previousRunner;
+    }
+  });
+});
+
+describe('defaultSandboxScope', () => {
+  it('uses workspace-write and the cwd by default', () => {
+    const s = defaultSandboxScope('/work', {});
+    expect(s.policy.kind).toBe('workspace-write');
+    if (s.policy.kind === 'workspace-write') expect(s.policy.root).toBe('/work');
+    expect(s.scratch).toContain('.trha');
+  });
+
+  it('honours TRHA_SANDBOX_POLICY=read-only', () => {
+    const s = defaultSandboxScope('/work', { TRHA_SANDBOX_POLICY: 'read-only' });
+    expect(s.policy.kind).toBe('read-only');
+  });
+});
+
+describe('defaultSandboxScope (cached config)', () => {
+  it('uses the tuned policy and expands a home-relative scratch', () => {
+    setSandboxConfigRuntime({
+      enabled: true,
+      policy: 'read-only',
+      network: 'off',
+      scratch: '~/scratch-x',
+    });
+    try {
+      const s = defaultSandboxScope('/ws', {});
+      expect(s.policy.kind).toBe('read-only');
+      expect(s.scratch).toBe(path.join(os.homedir(), 'scratch-x'));
+    } finally {
+      setSandboxConfigRuntime(undefined);
+    }
+  });
+});
+
+describe('defaultSandboxScope (network)', () => {
+  it('reads the network policy from the cached config', () => {
+    setSandboxConfigRuntime({
+      enabled: true,
+      policy: 'workspace-write',
+      network: 'allow:a.com,b.com',
+      scratch: '/tmp/x',
+    });
+    try {
+      const s = defaultSandboxScope('/ws', {});
+      if (s.policy.kind === 'workspace-write') {
+        expect(s.policy.network).toEqual({ kind: 'allow', domains: ['a.com', 'b.com'] });
+      } else {
+        throw new Error('expected workspace-write');
+      }
+    } finally {
+      setSandboxConfigRuntime(undefined);
+    }
+  });
+});
+
+describe('sandbox protocol v1', () => {
+  it('round-trips an exec frame', () => {
+    const frame: ExecFrame = {
+      v: PROTOCOL_VERSION,
+      op: 'exec',
+      id: 'c1',
+      argv: ['bash', '-lc', 'true'],
+      cwd: '/ws',
+    };
+    expect(decodeFrame(encodeFrame(frame).trimEnd())).toEqual(frame);
+  });
+
+  it('rejects an unknown op', () => {
+    expect(() => decodeFrame('{"v":1,"op":"teleport"}')).toThrow();
+  });
+
+  it('rejects a version mismatch', () => {
+    expect(() => decodeFrame('{"v":99,"op":"shutdown"}')).toThrow(/version mismatch/);
+  });
+});

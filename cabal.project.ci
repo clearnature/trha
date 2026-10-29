@@ -1,0 +1,8 @@
+-- Minimal project for the macOS sandbox CI job.
+-- The root cabal.project references the local sov-math checkout (kernel math,
+-- a sibling repository) and an absolute builddir; neither exists on a GitHub
+-- runner.  The workflow checks sov-math out into .ci/math and only builds the
+-- trha-infra library plus its sandbox test suite.
+packages:
+  .
+  .ci/math/hs/sov-math

@@ -12,6 +12,7 @@ import path from 'node:path';
 import { confineWritePath } from './toolGuard.js';
 import { browserEvaluate, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 import { hardenedEnv, interactiveShell, powerShellCandidates, resolveShell } from './shell.js';
+import { defaultSandboxScope, sandboxEnabled, sandboxedSpawn } from './sandbox.js';
 import type { StandardToolHost, TeamTask } from './standardTools.js';
 
 export interface Terminal {
@@ -62,9 +63,18 @@ export function isExtraTool(name: string): boolean {
 const clip = (s: string, cap = 20_000): string =>
   s.length <= cap ? s : `${s.slice(0, cap)}\n…(${s.length - cap} more chars)`;
 
-const sh = (host: ExtraHost, cmd: string): Promise<{ code: number; out: string }> =>
-  new Promise(resolve => {
-    const shell = resolveShell(cmd);
+const sh = (host: ExtraHost, cmd: string): Promise<{ code: number; out: string }> => {
+  const shell = resolveShell(cmd);
+  // Compatibility default: TRHA_SANDBOX=off keeps the direct spawn below.
+  if (sandboxEnabled()) {
+    return sandboxedSpawn(defaultSandboxScope(host.cwd()), {
+      argv: [shell.cmd, ...shell.args],
+      cwd: host.cwd(),
+    })
+      .then(r => ({ code: r.code ?? 1, out: r.stdout + r.stderr }))
+      .catch((e: Error) => ({ code: 127, out: e.message }));
+  }
+  return new Promise(resolve => {
     const child = spawn(shell.cmd, shell.args, { cwd: host.cwd(), ...shell.options, env: hardenedEnv() });
     const out: string[] = [];
     child.stdout.on('data', (b: Buffer) => out.push(b.toString('utf8')));
@@ -72,6 +82,7 @@ const sh = (host: ExtraHost, cmd: string): Promise<{ code: number; out: string }
     child.on('error', e => resolve({ code: 127, out: e.message }));
     child.on('exit', code => resolve({ code: code ?? -1, out: out.join('') }));
   });
+};
 
 export async function runExtraTool(
   name: string,
@@ -166,6 +177,11 @@ export async function runExtraTool(
 
   // ── persistent terminals ─────────────────────────────────────────────
   if (name === 'terminal_open') {
+    // PTY inside the sandbox is not wired yet: refuse instead of silently
+    // running unconfined when the seam is enabled (M1: no bypass path).
+    if (sandboxEnabled()) {
+      return 'ERROR: terminal_open is not available while the sandbox is enabled (use the bash tool)';
+    }
     const id = `term-${host.terminals.size + 1}`;
     const ish = interactiveShell();
     const child = spawn(ish.cmd, ish.args, {

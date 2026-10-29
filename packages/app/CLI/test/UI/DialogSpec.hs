@@ -46,6 +46,22 @@ spec = do
     it "does not move within an empty list" $ do
       dialogMoveSel 1 (DialogModels [] 0) `shouldBe` DialogModels [] 0
 
+  describe "sandbox panel" $ do
+    it "has four rows and clamps the selection" $ do
+      dialogCount (DialogSandbox defaultSandboxSettings 0) `shouldBe` 4
+      dialogMoveSel 1 (DialogSandbox defaultSandboxSettings 3)
+        `shouldBe` DialogSandbox defaultSandboxSettings 3
+      dialogMoveSel (-9) (DialogSandbox defaultSandboxSettings 0)
+        `shouldBe` DialogSandbox defaultSandboxSettings 0
+
+    it "toggles enabled, policy and network" $ do
+      ssEnabled (sandboxApply 0 defaultSandboxSettings) `shouldBe` True
+      ssPolicy (sandboxApply 1 defaultSandboxSettings) `shouldBe` "read-only"
+      ssPolicy (sandboxApply 1 (sandboxApply 1 defaultSandboxSettings))
+        `shouldBe` "workspace-write"
+      ssNetwork (sandboxApply 2 defaultSandboxSettings) `shouldBe` True
+      sandboxApply 3 defaultSandboxSettings `shouldBe` defaultSandboxSettings
+
   describe "commands editing" $ do
     it "appends a character and resets the selection" $ do
       let d1 = dialogCommandsAppend 'h' (DialogCommands [] "/" 2)

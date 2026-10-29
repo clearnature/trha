@@ -7,6 +7,8 @@ import type {
   PortEvent,
   PortModeConfig,
   PortModel,
+  PortSandboxScope,
+  PortSandboxStatus,
   PortSession,
   PortSessionMessage,
   PortToolSpec,
@@ -63,6 +65,12 @@ export interface Port {
   // 沙箱额外可信写目录（SandboxPanel 同步）
   writeRoots(): Promise<string[]>;
   setWriteRoots(roots: string[]): Promise<string[]>;
+
+  // 沙箱后端真实状态（SandboxPanel 展示）
+  sandboxStatus(): Promise<PortSandboxStatus>;
+
+  // 执行作用域（session/agent 树的 policy + isolation）
+  sandboxScopes(): Promise<PortSandboxScope[]>;
 
   // 用量统计（UsageStatsPanel；scheduler 聚合 sessions）
   usageStats(): Promise<UsageRow[]>;
