@@ -72,8 +72,11 @@ async function loadServers(): Promise<ServerConfig[]> {
     }];
     return configured;
   }
-  const servers: ServerConfig[] = [...BUILTINS];
   const file = process.env.TRHA_LSP_CONFIG;
+  // An explicit config replaces the built-in table: a file that only lists
+  // .py must not silently fall back to the built-in rust-analyzer for .rs
+  // (gap-lsp-config pins this).  Without a config the built-ins apply.
+  const servers: ServerConfig[] = file ? [] : [...BUILTINS];
   if (file) {
     try {
       const raw = JSON.parse(await readFile(file, 'utf8')) as {
