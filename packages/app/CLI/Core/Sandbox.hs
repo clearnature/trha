@@ -139,20 +139,25 @@ runSandboxCommand :: SandboxAction -> IO ()
 runSandboxCommand action = do
   home <- getHomeDirectory
   let path = home </> ".trha" </> "sandbox.yaml"
+  -- Inside the sandbox HOME *is* the scratch dir, so a file at this path is a
+  -- guest-local copy (written by an earlier `sandbox config` in a guest), not
+  -- the host's authoritative config.  Trusting it reported "disabled / pids 0"
+  -- while execution actually used the host's enabled/512/2 GiB — a fail-open.
+  -- Refuse to read it either way, whether or not a copy happens to exist.
+  guest <- insideSandbox
   exists <- doesFileExist path
-  cfg <- if exists
-    then do
-      parsed <- loadSandboxConfig path
-      either (failWith . T.unpack) pure parsed
-    else do
-      -- Inside the sandbox HOME is the scratch dir, so the host config is not
-      -- visible. Inferring "disabled" from a missing file would fail open, so
-      -- refuse and say why instead.
-      guest <- insideSandbox
-      if guest
-        then failWith ("running inside the sandbox: " <> path
-              <> " is not visible here, so 'disabled' cannot be inferred from its absence")
-        else pure defaultSandboxConfig
+  cfg <-
+    if guest
+      then failWith ("running inside the sandbox: " <> path
+             <> " is guest-local (HOME is the scratch dir), not the host config."
+             <> " Run `trha sandbox status` on the host, or query"
+             <> " /api/sandbox/status on the scheduler.")
+      else
+        if exists
+          then do
+            parsed <- loadSandboxConfig path
+            either (failWith . T.unpack) pure parsed
+          else pure defaultSandboxConfig
   case action of
     SandboxStatus asJson -> do
       caps <- Linux.probeLinux
