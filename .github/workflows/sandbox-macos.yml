@@ -36,12 +36,10 @@ jobs:
           path: .ci/math
           sparse-checkout: |
             hs/sov-math
-      - name: Cache ghcup + cabal store
+      - name: Cache ghcup
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.ghcup
-            ~/.cabal/store
+          path: ~/.ghcup
           key: ghcup-${{ runner.os }}-9.14.1-3.16.1.0
           restore-keys: ghcup-${{ runner.os }}-
 
