@@ -21,6 +21,7 @@ import qualified Data.Text as T
 import Infrastructure.Sandbox.Backend
 import Infrastructure.Sandbox.Cgroup (CgroupSupport(..), detectCgroup)
 import Infrastructure.Sandbox.Error
+import Infrastructure.Sandbox.Landlock (LandlockSupport(..), detectLandlock)
 import Infrastructure.Sandbox.Plan
 import Infrastructure.Sandbox.Policy
 import Infrastructure.Sandbox.Scope
@@ -48,9 +49,12 @@ probeLinux :: IO (Either SandboxError BackendCapabilities)
 probeLinux = do
   found <- findExecutable "bwrap"
   cg <- detectCgroup
+  ll <- detectLandlock
   let cgNotes = case cg of
         Right s -> ["cgroup pids: " <> T.pack (csBase s)]
         Left reason -> ["cgroup pids unavailable: " <> reason]
+      -- Landlock is reported, not enforced (rules need an in-process launcher).
+      healthy = cgNotes <> [llNote ll]
   case found of
     Nothing -> pure (Left (SandboxUnavailable backendIdLinux "bwrap not found in PATH"))
     Just _ -> do
@@ -60,9 +64,9 @@ probeLinux = do
       pure $ case probed of
         Nothing -> Left (SandboxUnavailable backendIdLinux "bwrap probe timed out")
         Just (ExitSuccess, _, _) -> Right capsFull
-          { bcNotes = cgNotes }
+          { bcNotes = healthy }
         Just (ExitFailure _, _, err) -> Right capsPartial
-          { bcNotes = ["bwrap probe failed: " <> T.pack (take 200 err)] <> cgNotes }
+          { bcNotes = ["bwrap probe failed: " <> T.pack (take 200 err)] <> healthy }
 
 capsFull :: BackendCapabilities
 capsFull = BackendCapabilities

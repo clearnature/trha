@@ -12,6 +12,7 @@ import ConfigSpec (configSpec)
 import ExperimentSpec (experimentSpec)
 import SandboxBsdSpec (sandboxBsdSpec)
 import SandboxCgroupSpec (sandboxCgroupSpec)
+import SandboxLandlockSpec (sandboxLandlockSpec)
 import SandboxLinuxSpec (sandboxLinuxSpec)
 import SandboxMacSpec (sandboxMacSpec)
 import SandboxRunnerSpec (sandboxRunnerSpec)
@@ -27,6 +28,7 @@ main = hspec $ do
   sandboxCgroupSpec
   sandboxWindowsSpec
   sandboxBsdSpec
+  sandboxLandlockSpec
   auditSpec
   experimentSpec
   configSpec
