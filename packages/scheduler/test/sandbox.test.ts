@@ -382,6 +382,37 @@ describe('runner edge frames (mock runner)', () => {
   });
 });
 
+
+describe('coverage edges (mock runner)', () => {
+  it('drops empty allow entries', () => {
+    setSandboxConfigRuntime({
+      enabled: true, policy: 'workspace-write', network: 'allow:a.com,,b.com', scratch: '/tmp/x',
+    });
+    try {
+      const s = defaultSandboxScope('/ws', {});
+      if (s.policy.kind === 'workspace-write') {
+        expect(s.policy.network).toEqual({ kind: 'allow', domains: ['a.com', 'b.com'] });
+      }
+    } finally {
+      setSandboxConfigRuntime(undefined);
+    }
+  });
+
+  it('writes an explicit disable', async () => {
+    chmodSync(fixture, 0o755);
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    process.env.TRHA_SANDBOX = 'on';
+    try {
+      const cfg = await writeSandboxConfig({ enabled: false });
+      expect(cfg.enabled).toBe(false);
+      expect(sandboxEnabled()).toBe(false);
+    } finally {
+      setSandboxEnabledRuntime(undefined);
+      setSandboxConfigRuntime(undefined);
+    }
+  });
+});
+
 describe('sandbox protocol v1', () => {
   it('round-trips an exec frame', () => {
     const frame: ExecFrame = {
