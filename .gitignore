@@ -227,3 +227,6 @@ __pycache__/
 .trha/cache/
 .trha/tmp/
 .trha/*.log
+
+# Rust helper build artifacts (packages/sandbox-win-helper).
+packages/sandbox-win-helper/target/
