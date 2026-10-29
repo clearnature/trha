@@ -92,15 +92,27 @@ mod imp {
     use std::process::{Command, Stdio};
     use windows_sys::Win32::Foundation::HANDLE;
 
-    /// Only read-only is enforceable today: `WRITE_RESTRICTED` with no
-    /// restricting SIDs denies every write, which is exactly that policy.
-    /// workspace-write needs a restricting SID plus a workspace ACE — both
-    /// pieces exist (`create_restricted_token` / `grant_directory_write`) but
-    /// the combination still has to be proven on a real host (T4.6).
+    /// Which token a policy gets.
+    ///
+    /// * read-only → `WRITE_RESTRICTED` with **no** restricting SID: every write
+    ///   is denied, reads are untouched.
+    /// * workspace-write → first grant the writable roots to our own SID
+    ///   (`grant_directory_write`), then restrict writes to exactly that SID.
+    ///
+    /// Both combinations are unproven on a real host (T4.6 is the gate); a
+    /// failure here falls back to the plain spawn and says so on stderr.
     fn restricted_token(plan: &LaunchPlan) -> Option<HANDLE> {
         match plan.policy {
-            crate::policy::Policy::ReadOnly => crate::win32::create_restricted_token().ok(),
-            crate::policy::Policy::WorkspaceWrite => None,
+            crate::policy::Policy::ReadOnly => crate::win32::create_restricted_token(false).ok(),
+            crate::policy::Policy::WorkspaceWrite => {
+                for root in &plan.writable_roots {
+                    if let Err(e) = crate::win32::grant_directory_write(root) {
+                        eprintln!("workspace ACL grant failed for {root}: {e}");
+                        return None;
+                    }
+                }
+                crate::win32::create_restricted_token(true).ok()
+            }
         }
     }
 

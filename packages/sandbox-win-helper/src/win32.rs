@@ -105,20 +105,17 @@ pub fn close(handle: HANDLE) {
 /// Create a restricted copy of the helper's own token.
 ///
 /// `DISABLE_MAX_PRIVILEGE` removes every privilege except SeChangeNotifyPrivilege;
-/// `WRITE_RESTRICTED` turns the token write-only-where-SIDs-allow. With no
-/// restricting SIDs that means *no writes at all* — which is exactly the
-/// read-only policy. Workspace-write needs a restricting SID plus a matching
-/// ACE (`grant_directory_write`), and that combination still has to be proven
-/// on a real host (T4.6).
+/// `WRITE_RESTRICTED` turns the token write-only-where-SIDs-allow.
 ///
-/// Not wired into spawn yet: carrying a token requires
-/// `CreateProcessAsUserW` with inheritable stdio handles, i.e. a hand-written
-/// replacement for the `Command` spawn. Until then `enforcement` stays
-/// `Partial` for both policies.
-pub fn create_restricted_token() -> Result<HANDLE, String> {
+/// * `restrict_to_user = false` → no restricting SIDs, so **no writes at all**.
+///   That is exactly the read-only policy.
+/// * `restrict_to_user = true` → the user's own SID is the restricting SID, so
+///   writes succeed only where that SID has an allow ACE — i.e. the workspace
+///   granted by `grant_directory_write`. This is workspace-write.
+pub fn create_restricted_token(restrict_to_user: bool) -> Result<HANDLE, String> {
     use windows_sys::Win32::Security::{
-        CreateRestrictedToken, DISABLE_MAX_PRIVILEGE, TOKEN_DUPLICATE, TOKEN_QUERY,
-        WRITE_RESTRICTED,
+        CreateRestrictedToken, GetTokenInformation, TokenUser, DISABLE_MAX_PRIVILEGE,
+        SID_AND_ATTRIBUTES, TOKEN_DUPLICATE, TOKEN_QUERY, TOKEN_USER, WRITE_RESTRICTED,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -130,6 +127,38 @@ pub fn create_restricted_token() -> Result<HANDLE, String> {
                 std::io::Error::last_os_error()
             ));
         }
+
+        // The SID lives inside this buffer: it must outlive the call below.
+        let mut sid_buf: Vec<u8> = Vec::new();
+        let mut restrict_sids: Vec<SID_AND_ATTRIBUTES> = Vec::new();
+        if restrict_to_user {
+            let mut len: u32 = 0;
+            GetTokenInformation(current, TokenUser, std::ptr::null_mut(), 0, &mut len);
+            if len == 0 {
+                let err = std::io::Error::last_os_error();
+                CloseHandle(current);
+                return Err(format!("GetTokenInformation(TokenUser) size failed: {err}"));
+            }
+            sid_buf = vec![0u8; len as usize];
+            let ok = GetTokenInformation(
+                current,
+                TokenUser,
+                sid_buf.as_mut_ptr() as *mut std::ffi::c_void,
+                len,
+                &mut len,
+            );
+            if ok == 0 {
+                let err = std::io::Error::last_os_error();
+                CloseHandle(current);
+                return Err(format!("GetTokenInformation(TokenUser) failed: {err}"));
+            }
+            let user = &*(sid_buf.as_ptr() as *const TOKEN_USER);
+            restrict_sids.push(SID_AND_ATTRIBUTES {
+                Sid: user.User.Sid,
+                Attributes: 0,
+            });
+        }
+
         let mut restricted: HANDLE = std::ptr::null_mut();
         let ok = CreateRestrictedToken(
             current,
@@ -138,8 +167,8 @@ pub fn create_restricted_token() -> Result<HANDLE, String> {
             std::ptr::null(),
             0,
             std::ptr::null(),
-            0,
-            std::ptr::null(),
+            restrict_sids.len() as u32,
+            restrict_sids.as_ptr(),
             &mut restricted,
         );
         let err = std::io::Error::last_os_error();

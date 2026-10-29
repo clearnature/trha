@@ -41,9 +41,10 @@ scheduler `vitest` 相关文件 → 60 passed。
    看 `SandboxMacSpec` 是否真绿（2026-10-29 的 SBPL 顺序修复从未在真机验证）。
 3. **T5.4 qemu VM CI**（需要虚拟化环境）：FreeBSD/OpenBSD 各一台，
    跑 `make check` + 真机 launcher 探针。
-4. **workspace-write 的 restricting SID + ACE 组合**（需要 Windows）：
-   `create_restricted_token` 的 restricting SID 取谁、`grant_directory_write` 的
-   ACE 顺序，都必须在真机上定案；Haskell 侧 `windowsCaps` 的 `Partial` 也要跟着改。
+4. **workspace-write 的 restricting SID + ACE 组合**（需要 Windows）：代码已接线
+   （`grant_directory_write` 授权 → 以当前用户 SID 为 restricting SID 建令牌），
+   但 ACE 顺序、继承标志与 `WRITE_RESTRICTED` 的实际效果必须在真机确认；
+   Haskell 侧 `windowsCaps` 的 `Partial` 也要跟着改。
 5. **T4.7 签名分发**（需要 Windows 代码签名证书）、**T4.8 AppContainer**（可选，5 人日）。
 
 ## 4. 未决 / 需要拍板
