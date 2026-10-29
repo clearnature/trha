@@ -252,10 +252,14 @@ jobs:
         node-version-file: .node-version
         cache: 'npm'
     
+    # benchmarks 的用例直接 import ../../packages/scheduler/src/**（见
+    # benchmarks/tests/*.ts），Node 从 packages/scheduler/src 逐级向上找 node_modules：
+    # axios 只落在 benchmarks/node_modules，winston/express 则哪儿都没有 ⇒
+    # Cannot find package 'axios' / 'winston'。故两处都要装。
     - name: Install dependencies
       run: |
-        cd benchmarks
-        npm install
+        (cd packages/scheduler && npm install)
+        (cd benchmarks && npm install)
     
     - name: Run smoke tests
       run: |
@@ -344,6 +348,11 @@ jobs:
         npm install
         npm run build
     
+    - name: Install benchmark dependencies
+      run: |
+        cd benchmarks
+        npm install
+
     - name: Run integration tests
       run: |
         cd benchmarks
