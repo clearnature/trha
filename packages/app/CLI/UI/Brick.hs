@@ -899,7 +899,11 @@ resumeSession selText = do
                          , appStatus = tr (appLang st) "Resumed " <> T.pack (ssId s)
                          , appBusy = False
                          , appPending = Nothing
-                         , appRoute = RouteSession }
+                         , appRoute = RouteSession
+                         -- Cache totals are per session: carrying them across a
+                         -- switch silently blends two sessions' hit rates.
+                         , appCacheNow = Nothing
+                         , appCacheSum = (0, 0) }
       when (null msgs) $
         appendMsg (mkMsg "system" (tr lang "Session " <> T.pack (ssId s) <> tr lang " has an empty transcript.") t)
       appendMsg (mkMsg "system" (tr lang "Note: continuing needs the session on the orchestration side.") t)
@@ -2553,7 +2557,9 @@ handleAppEvent (EvSession result) = do
       -- Auto-created sessions are recorded silently so that the system
       -- message does not interleave between the user message and the reply.
       modify $ \s -> s { appSessionId = Just sid, appStatus = tr (appLang s) "Ready"
-                       , appRoute = RouteSession }
+                       , appRoute = RouteSession
+                       , appCacheNow = Nothing
+                       , appCacheSum = (0, 0) }
       liftIO $ setWindowTitle ("trha · " <> T.take 8 (T.pack sid))
       liftIO $ refreshMode (appBridge st) sid (appChan st)
     Left err -> do
@@ -2613,7 +2619,9 @@ handleAppEvent (EvResponse result) = case result of
         appendMsg (mkMsg "system"
           (tr lang0 "The session no longer exists on the scheduler; the next message creates a new one.") t)
         modify $ \st -> st { appSessionId = Nothing
-                           , appStatus = tr (appLang st) "Session expired" }
+                           , appStatus = tr (appLang st) "Session expired"
+                           , appCacheNow = Nothing
+                           , appCacheSum = (0, 0) }
       else appendMsg (mkMsg "error" ("Error: " <> msg) t)
     bell <- gets (configBell . appEffCfg)
     when bell $ liftIO (putStr "\a" >> hFlush stdout)
@@ -3279,7 +3287,9 @@ handleSlash input = do
             else do
               cur <- gets appSessionId
               when (cur == Just sid) $
-                modify $ \s -> s { appSessionId = Nothing }
+                modify $ \s -> s { appSessionId = Nothing
+                                 , appCacheNow = Nothing
+                                 , appCacheSum = (0, 0) }
               void $ liftIO $ async $ do
                 _ <- deleteSession bridge sid
                 writeBChan chan (EvDeleted sid)
@@ -3318,7 +3328,9 @@ handleSlash input = do
             mref <- liftIO (newIORef (appModel st))
             r <- liftIO $ executeCommand lang bridge ref mref c
             sid' <- liftIO (readIORef ref)
-            modify $ \s -> s { appSessionId = sid' }
+            modify $ \s -> s { appSessionId = sid'
+                             , appCacheNow = Nothing
+                             , appCacheSum = (0, 0) }
             case r of
               Just out | not (T.null (T.strip out)) -> appendMsg (mkMsg "system" out t)
               _ -> pure ()
