@@ -113,6 +113,18 @@
 | 判据 | 同一命令 `getent hosts example.com`：`off` → `NO-DNS`，`allow:` → 解析出地址（2026-10-29 实测）；`proxy:` 的 argv 含四个代理变量 |
 | 复审触发 | 需要「只允许白名单域名」时引入代理桥（参考 Reasonix `egress_bridge`），届时 `NetworkProxy` 变为强制模式 |
 
+## ADR-010：pids 配额改走 cgroup v2（supersede ADR-008 的 pids 部分）
+
+| 项 | 内容 |
+|---|---|
+| 日期 | 2026-10-30 |
+| 状态 | ✅ Accepted |
+| 背景 | ADR-008 把 pids 排除在 prlimit 之外（`RLIMIT_NPROC` 按宿主 uid 计数，低于宿主进程数会让 bwrap 的 `clone` EAGAIN），只留了「cgroup 扩展点」；但 T2.3 的验收仍要求「并发 N agent 不超全局上限」 |
+| 决策 | pids 用 cgroup v2 的 pids 控制器：① **探测**——从 `/proc/self/cgroup` 逐级向上找「能建子目录且子目录带 `pids.max`」的委派目录（systemd 的 `user@UID.service` 通常已委托）；② **执行**——每个 exec 建一个 `trha-<cid>-<pid>` 子 cgroup，写 `pids.max`，spawn 后把 pid 写入 `cgroup.procs`，子进程退出后 `rmdir`；③ **降级**——探测失败不静默：审计写 `AuditError`，`trha sandbox status` 的 `notes` 显示原因。memory 仍用 `prlimit --as`（ADR-008 不变） |
+| 代价 | spawn 到写入 `cgroup.procs` 之间有几毫秒竞态：这期间已 fork 的孙进程不在该 cgroup 内；cgroup 依赖 systemd 委托（容器 / 无 systemd 环境会降级为无 pids 限制） |
+| 判据 | `test/SandboxCgroupSpec.hs` 全绿：探测、创建/写 `pids.max`/销毁、非法 base 拒绝、`pids.max=4` 下 8 次 fork 让 `pids.events` 出现 `max`（2026-10-30 实测）；`trha sandbox status --json` 的 notes 含 `cgroup pids: <base>` |
+| 复审触发 | 需要消除竞态时给 bwrap 加 `--cgroup`（bwrap ≥0.9）或在 runner 里先建 cgroup 再 clone |
+
 ## 决策汇总
 
 | ADR | 决策 | 状态 |
@@ -124,7 +136,8 @@
 | 005 | 工具链静态表 + 探针 | ✅ Accepted |
 | 006 | `Remote` 仅预留 | ✅ Accepted |
 | 007 | Windows 放 P4 | ✅ Accepted |
-| 008 | 配额 prlimit memory-only + wall；pids 留 cgroup | ✅ Accepted |
+| 008 | 配额 prlimit memory-only + wall；pids 留 cgroup | ✅ Accepted（pids 部分由 ADR-010 supersede） |
 | 009 | network：allow=share-net，proxy=代理环境变量（非 ACL） | ✅ Accepted |
+| 010 | pids 用 cgroup v2（探测委派目录 + 每 exec 一个子 cgroup） | ✅ Accepted |
 
-> 以上 9 条若需修改，新增 ADR-010 起并注明 supersede 关系。
+> 以上 10 条若需修改，新增 ADR-011 起并注明 supersede 关系。
