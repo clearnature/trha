@@ -23,7 +23,10 @@ on:
 
 jobs:
   macos:
-    runs-on: macos-latest
+    # macos-latest (SDK 27) ships .tbd stubs with arm64e.x1 markers that
+    # GHC 9.14.1's linker rejects ("tapi error: unknown architecture").
+    # Pin the previous SDK generation until GHC catches up.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: checkout sov-math (kernel math dependency)
