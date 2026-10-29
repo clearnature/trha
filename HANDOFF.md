@@ -1,0 +1,68 @@
+# HANDOFF — sandbox 交付
+
+> 快照时间：2026-10-30。依据 `docs/plans/sandbox-delivery-plan.md`（里程碑是门禁，不是日期承诺）。
+> 本文只记「现在在哪、下一步做什么、什么被什么挡住」，细节看计划与 ADR。
+
+## 1. 进度快照
+
+| 里程碑 | 状态 | 说明 |
+|---|---|---|
+| **M0** 接口冻结 | ✅ | `Policy`/`Scope`/`Plan`/`Backend`/`Protocol` 全部落地，`cabal build all` 绿 |
+| **M1** Linux 进程级 | ✅ | bwrap 渲染、runner（NDJSON + 长驻 stdin）、探针、审计、UI/CLI/TUI、执行点接入（bash / run_code / terminal / terminal_open）、Landlock **探测** |
+| **M2** 多智能体作用域 | ✅ | Scope 树、独立 scratch、命名空间隔离探针、实验批（变体×种子/重试/`repro.json`）、cgroup v2 pids 配额（ADR-010） |
+| **M3** macOS | 🟡 实现完成、**零真机验证** | SBPL 渲染器 + `SandboxMacSpec` + `sandbox-macos.yml` 都在；CI 额度为 0，从未在真 macOS 上跑过 |
+| **M4** Windows | 🟡 可无平台推进的部分已完成 | helper（Rust）21+28 单测、Job Object、路径规范化、受限令牌**已接线**（read-only 生效）、渲染器与探针集合；**真机未验证** |
+| **M5** Unix / 边缘 | 🟡 | FreeBSD/OpenBSD 渲染器 + launcher 骨架、边缘降级（bwrap 不可 unshare → Partial）、§9 索引核对；**真机与 qemu 未做** |
+
+测试现状：`cabal test trha-sandbox-test` → **84 examples / 0 failures / 1 pending**（pending 是 macOS-only）；
+`cargo test`（helper）→ **28 passed**；launcher `make check` → **9 项契约 smoke 全绿**；
+scheduler `vitest` 相关文件 → 60 passed。
+
+## 2. 关键实现位置
+
+| 关注点 | 文件 |
+|---|---|
+| 策略 / Scope / 计划 | `src/infra/Infrastructure/Sandbox/{Policy,Scope,Plan,Backend}.hs` |
+| 执行循环（NDJSON、长驻 stdin、cgroup、审计） | `src/infra/Infrastructure/Sandbox/Runner.hs` |
+| 平台渲染器 | `Sandbox/Backend/{Linux,Windows,FreeBSD,OpenBSD}.hs` |
+| 探测 | `Sandbox/Probe.hs`、`Sandbox/Landlock.hs`、`Sandbox/Cgroup.hs` |
+| scheduler 侧 seam 与会话 | `packages/scheduler/src/Server/{sandbox,extraTools}.ts` |
+| Windows helper（Rust） | `packages/sandbox-win-helper/src/{protocol,policy,win,win32,winargs,path}.rs` |
+| BSD launcher（C） | `packages/sandbox-bsd-launcher/launcher.c` |
+| 决策记录 | `docs/plans/sandbox-decisions.md`（ADR-001…010） |
+
+## 3. 下一步（按「能否在无真机下推进」排序）
+
+1. **T4.6 真机探针**（需要一台 Windows 10/11）：把 `windowsProbes` 跑一遍，
+   `write-system` / `read-user-secret` / `junction-escape` 必须失败，
+   `write-workspace` 在 workspace-write 下必须成功。全绿后才有资格把
+   `enforcement` 从 `Partial` 往上抬。
+2. **M3 真机验证**（需要 CI 额度或一台 macOS）：`sandbox-macos.yml` 手动触发一次，
+   看 `SandboxMacSpec` 是否真绿（2026-10-29 的 SBPL 顺序修复从未在真机验证）。
+3. **T5.4 qemu VM CI**（需要虚拟化环境）：FreeBSD/OpenBSD 各一台，
+   跑 `make check` + 真机 launcher 探针。
+4. **workspace-write 的 restricting SID + ACE 组合**（需要 Windows）：
+   `create_restricted_token` 的 restricting SID 取谁、`grant_directory_write` 的
+   ACE 顺序，都必须在真机上定案；Haskell 侧 `windowsCaps` 的 `Partial` 也要跟着改。
+5. **T4.7 签名分发**（需要 Windows 代码签名证书）、**T4.8 AppContainer**（可选，5 人日）。
+
+## 4. 未决 / 需要拍板
+
+| 项 | 现状 | 需要谁 |
+|---|---|---|
+| Windows `enforcement` 何时抬到 `Full` | 现在 read-only 也报 `Partial`（限制写、不限制读） | 真机探针结果 |
+| 是否给 Landlock 上 launcher | 现在只探测不强制（`Sandbox/Landlock.hs`） | 用户：可选增强，需额外 launcher |
+| 按域名的网络 ACL | `NetworkAllow` = `--share-net` 全放行，`domains` 只进审计（ADR-009） | 用户：要不要做代理桥 |
+| FreeBSD capsicum 的 fd 传递约定 | launcher 把预开目录 fd 留在子进程，编号约定未定 | 真机 |
+| CI 额度 | `clearnature/trha` 私有库 Actions 分钟耗尽，所有 run `steps=0` | 用户（billing） |
+
+## 5. 已知坑（别再踩）
+
+- `cabal build exe:trha` 会因 `trha` 与 `trha-cli` 同名而**静默失败**（Cabal-7132），
+  必须用 `cabal build trha:exe:trha`。曾因此让端到端探针跑了半小时的旧二进制。
+- cabal ≥3.10 用 XDG 目录：store 在 `~/.local/state/cabal/store`、索引在
+  `~/.cache/cabal/packages`；CI 里缓存 `~/.cabal/*` 是无效的（已修）。
+- `terminal_open` 在沙箱里是「管道 + 常驻 shell」，**不是真 PTY**：
+  `terminal_signal` 会终止整个会话而不是只给前台进程发信号。
+- Windows helper 的 `WRITE_RESTRICTED` 且不给 restricting SID ⇒ 写全拒；
+  workspace-write 需要的组合尚未在真机验证。
