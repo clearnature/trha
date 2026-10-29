@@ -26,18 +26,19 @@ jobs:
         node-version: [26]
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
     
     - name: Install dependencies
       run: |
-        (cd packages/scheduler && npm install)
-        (cd benchmarks && npm install)
+        (cd packages/scheduler && npm ci)
+        (cd benchmarks && npm ci)
     
     # 一次跑完：coverage 与 JSON 报告都由 benchmarks/vitest.config.ts 的
     # coverage / reporters(outputFile) 配置产出；原先 test → coverage → report
@@ -60,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     # 根 cabal.project 的 packages 里有本机绝对路径 /home/yanli/work/math/hs/sov-math，
     # CI 上不存在 ⇒ cabal 直接报 "The package location ... does not exist."。
@@ -104,7 +105,7 @@ jobs:
         EOF
     
     - name: Cache Haskell dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cache/cabal/packages
@@ -134,7 +135,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: checkout sov-math (kernel math dependency)
       uses: actions/checkout@v4
@@ -145,10 +146,11 @@ jobs:
           hs/sov-math
     
     - name: Setup Node.js
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
         node-version: '26'
         cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
     
     - name: Cache ghcup + cabal store
       uses: actions/cache@v4
@@ -196,8 +198,8 @@ jobs:
     
     - name: Install Node dependencies
       run: |
-        (cd packages/scheduler && npm install)
-        (cd benchmarks && npm install)
+        (cd packages/scheduler && npm ci)
+        (cd benchmarks && npm ci)
     
     - name: Install Haskell dependencies
       run: |
