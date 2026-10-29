@@ -6,6 +6,7 @@ module ConfigSpec (configSpec, sandboxGuestSpec) where
 import Infrastructure.Sandbox.Config
 import Infrastructure.Sandbox.Policy (NetworkPolicy(..))
 import Data.List (isSuffixOf)
+import qualified Data.Text as T
 import System.Directory
   ( doesFileExist, getHomeDirectory, getTemporaryDirectory, removeFile )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
@@ -62,15 +63,22 @@ cleanup path = do
 -- trap this pins down.
 sandboxGuestSpec :: Spec
 sandboxGuestSpec = describe "insideSandbox (fail-open guard)" $ do
+  it "treats a short uid_map range as a guest" $ do
+    -- Measured: host maps everything, bwrap's --unshare-user maps 1 uid.
+    guestByUidMap "         0          0 4294967295\n" `shouldBe` False
+    guestByUidMap "      1000          0          1\n" `shouldBe` True
+    guestByUidMap "" `shouldBe` False
+
   -- Deliberately environment-agnostic: this suite also runs *inside* the
-  -- sandbox (a guest checking that a guest is detected), where asserting
-  -- "False on the host" would fail for the wrong reason.
-  it "agrees with the observed HOME (guest must never read as not-sandboxed)" $ do
+  -- sandbox, where a host-only constant would fail for the wrong reason.
+  it "agrees with the signals it can actually read" $ do
     home <- getHomeDirectory
+    guestEnv <- lookupEnv "TRHA_SANDBOX_GUEST"
+    uidMap <- readFile "/proc/self/uid_map"
     guest <- insideSandbox
-    if "sandbox-scratch" `isSuffixOf` home
-      then shouldBe guest True
-      else shouldBe guest False
+    let inScratch = "sandbox-scratch" `isSuffixOf` home
+        expected = guestEnv == Just "1" || inScratch || guestByUidMap (T.pack uidMap)
+    guest `shouldBe` expected
 
   it "detects a guest by HOME ending in sandbox-scratch" $ do
     old <- lookupEnv "HOME"

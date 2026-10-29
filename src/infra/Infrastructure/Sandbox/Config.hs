@@ -15,6 +15,7 @@ module Infrastructure.Sandbox.Config
   , saveSandboxConfig
   , networkPolicyOf
   , insideSandbox
+  , guestByUidMap
   ) where
 
 import Control.Exception (IOException, try)
@@ -30,6 +31,8 @@ import qualified Data.Yaml as Yaml
 import Infrastructure.Sandbox.Policy
   ( NetworkPolicy(..), ResourceLimits(..), defaultResourceLimits )
 import System.Directory (getHomeDirectory)
+import System.Environment (lookupEnv)
+import System.Posix.Files (readSymbolicLink)
 
 data NetworkSpec
   = NetOff
@@ -254,12 +257,54 @@ loadSandboxConfig path = do
 --
 -- Detection is deliberately cheap and local: PID 1 inside the pid namespace is
 -- bwrap, and the guest HOME ends in the scratch directory name.
+-- | Are we running *inside* the sandbox?
+--
+-- Deliberately conservative: several independent signals, any one of which is
+-- enough. A false positive only makes guest-only commands refuse; a false
+-- negative is a fail-open (host config read from a stale guest copy), so every
+-- signal is biased towards "yes".
+--
+--   1. @TRHA_SANDBOX_GUEST=1@ — written by the renderer itself.
+--   2. @/proc/self/uid_map@ does not map the full uid range: inside a user
+--      namespace it is a short one-line range (measured @1000 0 1@ inside
+--      bwrap vs @0 0 4294967295@ on the host).
+--   3. PID 1 is bwrap, by @comm@ or by the exe target.
+--   4. HOME ends in the scratch directory name (older binaries and other
+--      backends that predate the env marker).
 insideSandbox :: IO Bool
 insideSandbox = do
+  guestEnv <- lookupEnv "TRHA_SANDBOX_GUEST"
   comm <- readTextFile "/proc/1/comm"
+  exe <- readLink "/proc/1/exe"
+  uidMap <- readTextFile "/proc/self/uid_map"
   home <- getHomeDirectory
-  pure $ comm == Just "bwrap" || "sandbox-scratch" `isSuffixOf` home
+  pure $
+       guestEnv == Just "1"
+    || comm == Just "bwrap"
+    || maybe False ("bwrap" `isSuffixOf`) exe
+    || not (fullUidMap uidMap)
+    || "sandbox-scratch" `isSuffixOf` home
   where
     readTextFile p = do
       r <- try (TIO.readFile p) :: IO (Either IOException Text)
       pure (either (const Nothing) (Just . T.strip) r)
+    readLink p = do
+      r <- try (readSymbolicLink p) :: IO (Either IOException FilePath)
+      pure (either (const Nothing) Just r)
+    -- The host maps every uid; a short range means a user namespace.
+    -- Unreadable procfs says nothing, so it must not decide on its own.
+    fullUidMap Nothing = True
+    fullUidMap (Just t) = not (guestByUidMap t)
+
+-- | Does this @/proc\/self\/uid_map@ content prove we are in a user namespace?
+--
+-- The host maps the whole range (@0 0 4294967295@); bwrap's @--unshare-user@
+-- leaves a short one-line range (measured @1000 0 1@).  Exposed as a pure
+-- function so the parsing is unit-tested without needing a real sandbox.
+guestByUidMap :: Text -> Bool
+guestByUidMap t = case filter (not . T.null) (map T.strip (T.lines t)) of
+  [row] -> case T.words row of
+    [_, _, len] -> len /= "4294967295"
+    _ -> True
+  [] -> False      -- nothing to go on
+  _ -> True        -- multiple ranges: not the host's single full mapping

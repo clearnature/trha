@@ -208,7 +208,8 @@ mountArgs writable readable = dedupe (writable <> map (\p -> (p, False)) readabl
 environmentArgs :: Scope -> [(Text, Text)] -> [Text]
 environmentArgs scope env =
   ["--clearenv"]
-    <> concatMap setArg (("PATH", defaultPath) : ("HOME", homeDir) : xdg <> filter keep env)
+    <> concatMap setArg (("PATH", defaultPath) : ("HOME", homeDir)
+        : ("TRHA_SANDBOX_GUEST", "1") : xdg <> filter keep env)
   where
     defaultPath = "/usr/local/bin:/usr/bin:/bin"
     homeDir = T.pack (guestHome scope)
