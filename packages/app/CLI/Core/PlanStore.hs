@@ -16,7 +16,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))
-import System.Posix.Files (setFileMode)
+import Core.Fs (chmodQuiet)
 
 import Config.Settings (getConfigDir)
 import Core.Types (PlanView, renderPlanBrief)
@@ -33,7 +33,7 @@ savePlanSnapshot :: Text -> PlanView -> IO FilePath
 savePlanSnapshot sid pv = do
   dir <- planDir
   createDirectoryIfMissing True dir
-  setFileMode dir 0o700
+  chmodQuiet dir 0o700
   let name = map sanitize (T.unpack (T.strip sid))
       file = if null name then "current" else name
       path = dir </> (file <> ".md")

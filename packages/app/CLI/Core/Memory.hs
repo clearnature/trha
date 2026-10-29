@@ -24,7 +24,7 @@ import System.Directory
     ( createDirectoryIfMissing, doesDirectoryExist, doesFileExist
     , getHomeDirectory, listDirectory )
 import System.FilePath ((</>))
-import System.Posix.Files (setFileMode)
+import Core.Fs (chmodQuiet)
 
 import Config.Settings (getConfigDir)
 
@@ -41,7 +41,7 @@ rememberText :: Text -> IO ()
 rememberText text = do
   dir <- memoryDir
   createDirectoryIfMissing True dir
-  setFileMode dir 0o700
+  chmodQuiet dir 0o700
   TIO.appendFile (dir </> "notes.md") ("- " <> T.strip text <> "\n")
 
 -- | Every non-empty @*.md@ under a directory, sorted by file name.

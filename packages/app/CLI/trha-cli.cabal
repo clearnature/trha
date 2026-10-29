@@ -34,6 +34,7 @@ executable trha
     Core.Currency
     Core.Export
     Core.Fonts
+    Core.Fs
     Core.Sandbox
     Core.TurnStats
     Core.EffortContract

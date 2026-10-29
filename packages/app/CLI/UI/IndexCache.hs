@@ -38,7 +38,7 @@ import Numeric (showHex)
 import System.Directory
     ( createDirectoryIfMissing, doesFileExist, getModificationTime )
 import System.FilePath ((</>))
-import System.Posix.Files (setFileMode)
+import Core.Fs (chmodQuiet)
 
 import Config.Settings (getConfigDir)
 import UI.Completion (Completion(..), IndexOptions, scanProject)
@@ -114,7 +114,7 @@ writeCache root now mtime files = do
   path <- indexCachePath root
   dir <- (</> "cache") <$> getConfigDir
   createDirectoryIfMissing True dir
-  setFileMode dir 0o700
+  chmodQuiet dir 0o700
   BL.writeFile path (encode (CacheFile root now mtime (map fromCompletion files)))
     `catch` \(_ :: IOException) -> pure ()
 

@@ -19,7 +19,7 @@ import Control.Exception (IOException, catch)
 import System.Directory
     ( copyFile, createDirectoryIfMissing, doesFileExist )
 import System.FilePath ((</>))
-import System.Posix.Files (setFileMode)
+import Core.Fs (chmodQuiet)
 
 import Config.Settings (getConfigDir)
 
@@ -29,7 +29,7 @@ stateWritePath name = do
   dir <- getConfigDir
   let sdir = dir </> "state"
   createDirectoryIfMissing True sdir
-  setFileMode sdir 0o700
+  chmodQuiet sdir 0o700
   pure (sdir </> name)
 
 -- | @~/.trha/<name>@ (where older builds wrote it).

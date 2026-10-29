@@ -63,7 +63,7 @@ import System.Directory
     , listDirectory
     )
 import System.FilePath ((</>))
-import System.Posix.Files (setFileMode)
+import Core.Fs (chmodQuiet)
 
 -- | Directory for one session: @~/.trha/sessions/<sid>@ (0700).
 ensureSessionDir :: SessionId -> IO FilePath
@@ -71,7 +71,7 @@ ensureSessionDir sid = do
   dir <- sessionsDir
   let sessionDir = dir </> sanitizeSessionId sid
   createDirectoryIfMissing True sessionDir
-  setFileMode sessionDir 0o700
+  chmodQuiet sessionDir 0o700
   return sessionDir
 
 -- | Full path of the transcript file for a session (creating the session

@@ -29,7 +29,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime)
 import GHC.Generics (Generic)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath ((</>))
-import System.Posix.Files (setFileMode)
+import Core.Fs (chmodQuiet)
 
 import Config.Settings (getConfigDir)
 import Core.SessionSummary (SessionSummary(..))
@@ -71,7 +71,7 @@ ensureProject :: FilePath -> IO ()
 ensureProject root = do
   dir <- projectDir root
   createDirectoryIfMissing True dir
-  setFileMode dir 0o700
+  chmodQuiet dir 0o700
   old <- readJson (dir </> "meta.json") :: IO (Maybe ProjectMeta)
   sessions <- projectSessions root
   now <- timestamp
@@ -87,7 +87,7 @@ recordProjectSession :: FilePath -> SessionSummary -> IO ()
 recordProjectSession root s = do
   dir <- projectDir root
   createDirectoryIfMissing True dir
-  setFileMode dir 0o700
+  chmodQuiet dir 0o700
   existing <- projectSessions root
   now <- timestamp
   let row = ProjectSession
