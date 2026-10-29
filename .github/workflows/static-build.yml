@@ -29,7 +29,7 @@ jobs:
         outputs: type=local,dest=./dist
     
     - name: Upload binary
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: trha-linux-x86_64
         path: dist/trha
@@ -68,7 +68,7 @@ jobs:
     
     steps:
     - name: Download binary
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: trha-linux-x86_64
     
