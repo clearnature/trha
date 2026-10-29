@@ -78,7 +78,11 @@ renderMac :: Scope -> LaunchRequest -> Either SandboxError LaunchPlan
 renderMac scope req = do
   (writable, readable, network, limits) <- surface (scPolicy scope)
   let profile = sbplProfile writable readable network
-      argv = ["sandbox-exec", "-p", profile, "--"] <> lrArgv req
+      -- sandbox-exec has no `--` separator: it takes the profile, then the
+      -- command and its argv.  Adding `--` made every probe "fail" (the
+      -- binary was treated as the command), which only looked like a pass
+      -- for the negative probes.
+      argv = ["sandbox-exec", "-p", profile] <> lrArgv req
   pure LaunchPlan
     { lpBackend = backendIdMac
     , lpArgv = argv
