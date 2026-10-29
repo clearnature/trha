@@ -259,6 +259,7 @@ executable trha
     UI.Skills
     UI.Selection
     UI.TimeStamp
+    UI.State
     UI.Stash
     UI.Frecency
     UI.ModelPrefs
