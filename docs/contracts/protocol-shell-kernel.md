@@ -115,7 +115,16 @@
 | DELETE /api/plugins/:name | – | 200 `{ok,name}`；不存在 404 | vitest plugins-dynamic |
 | GET /api/events/:sessionId | –(SSE) | data 帧（见 §3） | vitest tool-events |
 | GET /v1/models · /v1/chat/completions(±stream) · /v1/messages(±stream) · /v1/responses(±stream) | OpenAI/Anthropic/Responses | 标准协议 | vitest protocols |
+| GET /api/sandbox/status | – | `SandboxStatus`（backend/platform/enforcement/available/capabilities/missing/notes） | vitest sandbox |
+| GET /api/sandbox/config | – | `SandboxConfigView`（`enabled` 为运行时开关，env 显式时优先） | vitest sandbox |
+| PUT /api/sandbox/config | `Partial<SandboxConfigView>` | `SandboxConfigView`（落盘 + 热切换） | vitest sandbox |
+| GET /api/sandbox/scopes | – | `{scopes:[SandboxScopeInfo]}`（id/parent/depth/policy/isolation/enabled/cwd） | vitest sandbox |
+| GET/PUT /api/sandbox/write-roots | `{roots:[string]}` | `{roots:[string]}` | 既有（保持兼容） |
 
+> **沙箱端点只增不改**：`status/config/scopes` 的路径与载荷已冻结（2026-10-29）；
+> 破坏性变更须升协议 `v` 并保留 v1 解码，与 NDJSON runner 同规则。端点行为见
+> `docs/plans/sandbox-architecture.md` §5.7.4。
+>
 > **多步计划的端点**（同为转发）：`POST/GET /api/session/:id/plan`、
 > `POST /api/session/:id/step-result`，以及 `POST /api/session/:id/decision`
 > 带 `{action: "approve"|"skip"|"reject"|"abandon"}` 时走计划分支（不带 `action`

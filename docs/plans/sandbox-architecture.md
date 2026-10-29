@@ -719,6 +719,7 @@ export interface SandboxRequest {
   env?: Record<string, string>
   stdin?: string
   timeoutMs?: number
+  experiment?: string        // 审计标签 batch:variant:seed
 }
 
 export interface SandboxDenial {
@@ -728,7 +729,7 @@ export interface SandboxDenial {
 
 export interface SandboxResult {
   ok: boolean
-  enforcement: 'full' | 'partial'
+  enforcement: 'full' | 'partial' | 'none'
   partialReasons?: string[]
   code: number | null
   signal?: string
@@ -762,30 +763,68 @@ export interface SandboxStatus {
   notes?: string[]
 }
 
+// 持久化配置视图（Get/Put /api/sandbox/config 的载荷）
+export interface SandboxConfigView {
+  enabled: boolean
+  policy: 'read-only' | 'workspace-write'
+  network: string            // off | allow:<domains> | proxy:<url>
+  scratch: string
+}
+
+// 执行作用域视图（Get /api/sandbox/scopes 的条目）
+export interface SandboxScopeInfo {
+  id: string
+  parent: string | null
+  depth: number
+  policy: string             // root = 配置策略；子代理 = read-only（ADR-004）
+  isolation: SandboxIsolation
+  enabled: boolean
+  cwd: string | null
+}
+
 export function sandboxedSpawn(scope: SandboxScope, req: SandboxRequest): Promise<SandboxResult>
 export function sandboxStatus(): Promise<SandboxStatus>
 export function sandboxProbe(scopeId?: string): Promise<ProbeResult[]>
+export function readSandboxConfig(): Promise<SandboxConfigView>
+export function writeSandboxConfig(patch: Partial<SandboxConfigView>): Promise<SandboxConfigView>
+export function setSandboxEnabledRuntime(on: boolean | undefined): void
 export function setSandboxPolicy(scopeId: string, policy: SandboxPolicy): Promise<void>
 
-// 实验批（消融）：编排层概念，内部为每个 (variant, seed) 建一个 Scope
+// 实验批（消融）：编排层概念，内部为每个 (variant, seed) 建一个 Scope。
+// 目录布局：<root>/<variant>/<seed>/ 为可写根，work/ 为独占 scratch，
+// out/ 在根内；baseline/ 只读挂载。重试写入 attempt-N/ 新目录。
+export interface ExperimentVariantSpec { id: string; network?: NetworkPolicy }
 export interface ExperimentBatch {
-  batchId: string
+  id: string
+  root: string                     // <state>/experiments/<id>
   baseline: string                 // 只读根
-  variants: Array<{ id: string; policy?: SandboxPolicy; network?: NetworkPolicy }>
+  variants: ExperimentVariantSpec[]
   seeds: number[]
-  isolation: SandboxIsolation
-  limits?: { maxConcurrent?: number; batchWallMs?: number }
+  concurrency: number
+}
+export interface ExperimentTask {
+  variant: string; seed: number; attempt: number
+  scope: SandboxScope
+  dir: string; work: string; out: string
 }
 export interface ExperimentResult {
-  variant: string; seed: number
-  scopeId: string
+  variant: string; seed: number; attempt: number
   ok: boolean; code: number | null
-  outDir: string
-  enforcement: 'full' | 'partial' | 'none'
-  denials: SandboxDenial[]
-  repro: Record<string, unknown>
+  stdout: string; stderr: string
+  error?: string
 }
-export function runExperiment(batch: ExperimentBatch): Promise<ExperimentResult[]>
+export interface ExperimentRunOptions {
+  makeRequest: (task: ExperimentTask) => SandboxRequest
+  retries?: number
+  onStart?: (task: ExperimentTask) => void | Promise<void>
+  cleanupWork?: boolean            // 默认 true：回收 work/，保留 out/
+}
+export interface ExperimentOutcome {
+  batchId: string
+  results: ExperimentResult[]
+  reproPath: string
+}
+export function runExperiment(batch: ExperimentBatch, options: ExperimentRunOptions): Promise<ExperimentOutcome>
 ```
 
 HTTP（复用现有 `/api/sandbox/*` 前缀）：
@@ -793,6 +832,9 @@ HTTP（复用现有 `/api/sandbox/*` 前缀）：
 | 方法/路径 | 请求 | 响应 |
 |---|---|---|
 | GET `/api/sandbox/status` | — | `SandboxStatus` |
+| GET `/api/sandbox/config` | — | `SandboxConfigView`（`enabled` 为运行时开关，env 显式时优先） |
+| PUT `/api/sandbox/config` | `Partial<SandboxConfigView>` | `SandboxConfigView`（落盘 + 热切换） |
+| GET `/api/sandbox/scopes` | — | `{ scopes: SandboxScopeInfo[] }` |
 | GET `/api/sandbox/policy?scope=` | — | `SandboxPolicy` + 来源（default/scope） |
 | PUT `/api/sandbox/policy` | `{scope, policy}` | `{ok}` |
 | GET/PUT `/api/sandbox/write-roots` | 已有 | 已有（保持兼容） |
@@ -805,11 +847,14 @@ HTTP（复用现有 `/api/sandbox/*` 前缀）：
 
 ```yaml
 version: 1
+enabled: false                   # 运行时开关；TRHA_SANDBOX 显式设置时 env 优先
 defaults:
   policy: workspace-write        # read-only | workspace-write | danger-full-access
   isolation: process             # shared | process | strong | remote
   network: off                   # off | allow:<domain,...> | proxy:<url>
-  limits: { pids: 512, memoryMiB: 2048, wallMs: 600000 }
+  scratch: ~/.trha/sandbox-scratch
+  # 0 = 不限（ADR-008：Linux 不映射 --nproc；memory 默认关闭，显式才用 RLIMIT_AS）
+  limits: { pids: 0, memoryMiB: 0, wallMs: 600000 }
   # 读：默认允许（deny-then-allow）；allow 优先于 deny
   read:
     mode: allow
@@ -846,13 +891,20 @@ experiments:
 #### 5.7.6 CLI（P0 先接 stub）
 
 ```bash
-trha sandbox status                 # 后端、enforcement、policies 来源
+trha sandbox status [--json]        # 后端、enforcement、policies 来源
 trha sandbox probe [--scope <id>]   # 运行探针，退出码 = 是否全绿
+trha sandbox config [--enabled on|off] [--policy <p>] [--network <spec>] [--scratch <dir>] [--json]
+                                    # 无参数 = 显示；带参数 = 落盘 ~/.trha/sandbox.yaml
+trha sandbox scopes                 # 执行作用域（session/agent 树：policy + isolation）
+trha sandbox runner --workspace <dir> --scratch <dir> --policy <p> [--network <spec>] [--experiment <tag>]
+                                    # NDJSON runner 入口（scheduler 内部使用）
 trha sandbox policy get [--scope <id>]
 trha sandbox policy set --scope <id> --file <yaml|json>
 trha sandbox exec --scope <id> -- <argv...>   # 直接走 runner
 trha sandbox audit [--since <ts>] [--limit N]
 ```
+
+> 以上 CLI 签名自 P0 冻结；`config` / `scopes` / `runner` 为 P1 新增，只加不改。
 
 #### 5.7.7 审计事件
 
