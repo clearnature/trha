@@ -9,7 +9,7 @@ name: CI
 # 历史（2026-09-17 修）：本工作流曾钉 `ghc-version: 9.4.8`（base-4.17），
 # 而 trha.cabal 要求 `base ^>=4.22`（GHC 9.12+）⇒ haskell 与 integration
 # 两个 job **不可能通过**。现抬到 ghcup 的 GHC `9.14.1`（latest，base-4.22.0.0）
-# 与 cabal `3.16.1.0`（recommended；trha.cabal 声明 `cabal-version: 3.8`，
+# 与 cabal `3.14`（trha.cabal 声明 `cabal-version: 3.8`，
 # 故 cabal-install 需 ≥3.8）。
 
 on:
@@ -29,7 +29,7 @@ jobs:
       uses: haskell/actions/setup@v2
       with:
         ghc-version: '9.14.1'
-        cabal-version: '3.16.1.0'
+        cabal-version: '3.14'
     
     # WebGPU 组件需要 libwgpu_native.so 所在目录参与链接与运行时查找。
     # 本机把它放在 `cabal.project.local`（不入仓、绝对路径），CI 上没有 → 这里生成一份等价配置。
@@ -221,7 +221,7 @@ jobs:
       uses: haskell/actions/setup@v2
       with:
         ghc-version: '9.14.1'
-        cabal-version: '3.16.1.0'
+        cabal-version: '3.14'
     
     - name: Provide wgpu-native lib dir
       run: |

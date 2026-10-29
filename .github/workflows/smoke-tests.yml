@@ -2,7 +2,7 @@ name: Smoke Tests
 
 # ⚠️ 与 ci.yml 同批修（2026-09-17）：haskell-test 与 integration-test 两个 job 原先也钉
 #    `ghc-version: 9.4.8`（base-4.17），而 trha.cabal 要求 `base ^>=4.22` ⇒ 不可能通过。
-#    现抬到 GHC 9.14.1 + cabal 3.16.1.0，并补 wgpu-native 库目录步骤（本机放在被 .gitignore
+#    现抬到 GHC 9.14.1 + cabal 3.14，并补 wgpu-native 库目录步骤（本机放在被 .gitignore
 #    忽略的 cabal.project.local 里，CI 上没有）。**本工作流未在本机实跑过。**
 
 on:
@@ -67,7 +67,7 @@ jobs:
       uses: haskell/actions/setup@v2
       with:
         ghc-version: '9.14.1'
-        cabal-version: '3.16.1.0'
+        cabal-version: '3.14'
 
     - name: Provide wgpu-native lib dir
       run: |
@@ -116,7 +116,7 @@ jobs:
       uses: haskell/actions/setup@v2
       with:
         ghc-version: '9.14.1'
-        cabal-version: '3.16.1.0'
+        cabal-version: '3.14'
 
     - name: Provide wgpu-native lib dir
       run: |
