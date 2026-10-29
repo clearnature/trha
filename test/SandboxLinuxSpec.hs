@@ -4,7 +4,7 @@
 -- unavailable, so the suite stays usable on restricted hosts.
 module SandboxLinuxSpec (sandboxLinuxSpec) where
 
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException, finally, try)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Infrastructure.Sandbox
@@ -14,9 +14,10 @@ import Infrastructure.Sandbox.Plan (LaunchRequest(..), LaunchPlan(..), StdinMode
 import Infrastructure.Sandbox.Probe
 import System.Directory
   ( createDirectoryIfMissing, getHomeDirectory, removeDirectoryRecursive )
-import System.Environment (lookupEnv)
+import System.Environment (lookupEnv, setEnv)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
+import System.Posix.Files (setFileMode)
 import System.Process (readProcessWithExitCode)
 import Test.Hspec
 
@@ -192,6 +193,25 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
                   _ <- try (removeDirectoryRecursive root) :: IO (Either SomeException ())
                   code `shouldBe` ExitSuccess
 
+  -- T5.3: bwrap present but unable to unshare must degrade to Partial with the
+  -- reason visible — never fail open, never claim Full.
+  it "degrades to Partial when bwrap cannot unshare (T5.3)" $ do
+    home <- getHomeDirectory
+    let dir = home </> ".trha-fake-bwrap"
+        fake = dir </> "bwrap"
+    createDirectoryIfMissing True dir
+    writeFile fake "#!/bin/sh\nexit 1\n"
+    setFileMode fake 0o755
+    oldPath <- lookupEnv "PATH"
+    let newPath = dir ++ ":" ++ maybe "" id oldPath
+    caps <- (setEnv "PATH" newPath >> Linux.probeLinux)
+      `finally` maybe (pure ()) (setEnv "PATH") oldPath
+    case caps of
+      Left e -> expectationFailure ("probe should degrade, not fail: " ++ show e)
+      Right c -> do
+        bcEnforcement c `shouldSatisfy` isPartialEnforcement
+        bcNotes c `shouldSatisfy` any ("bwrap probe failed" `T.isInfixOf`)
+
 readInt :: String -> Maybe Int
 readInt raw = case reads raw :: [(Int, String)] of
   [(n, "")] -> Just n
@@ -207,3 +227,7 @@ probeScope ws = scopeRoot (ScopeId "probe") policy (ExclusivePath (AbsolutePath 
       , wrNetwork = NetworkOff
       , wrLimits = defaultResourceLimits
       }
+
+isPartialEnforcement :: Enforcement -> Bool
+isPartialEnforcement (Partial _) = True
+isPartialEnforcement _ = False

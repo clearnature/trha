@@ -121,6 +121,15 @@
 | T5.4 | VM CI（qemu FreeBSD/OpenBSD） | T5.1、T5.2 | 探针可重复运行 | 2.0 |
 | T5.5 | 平台文档与索引收尾 | 全部 | §9 索引与实际文件一致 | 1.0 |
 
+> **P5 进度（2026-10-30，无 BSD 主机的前提下的最大推进）**
+>
+> - **T5.1 渲染器完成**：`Backend/FreeBSD.hs` 从 stub 改为纯渲染器，生成 `trha-sandbox-bsd --workspace … --scratch … --policy … --network … -- argv`；非 FreeBSD 上 probe fail-closed；`enforcement` 如实报 `Partial`（capsicum 限制的是已开 fd 的 capability，不是路径）。launcher 本体（预开 fd + `cap_enter` + `cap_rights_limit`）未写，是 T5.1 的剩余部分。
+> - **T5.2 渲染器完成**：`Backend/OpenBSD.hs` 渲染**语义化**参数，便于黄金测试直接断言：`--pledge "<promises>"` 与 `--unveil "path:perms"`。read-only → `stdio rpath proc exec`；workspace-write 追加 `wpath cpath`；网络放行追加 `inet`；workspace 的 unveil 权限随策略是 `:r` 或 `:rw`，系统路径恒 `:r`。launcher（真正调用 pledge/unveil）同样待写。
+> - **T5.3 完成**：新增用例「bwrap 存在但无法 unshare → 降级为 `Partial` 且 notes 可见」；`Enforcement = None` 时拒绝执行由既有用例覆盖。
+> - **T5.4 未做**：qemu 跑 FreeBSD/OpenBSD 需要虚拟化环境与镜像分发，不在当前机器能力内。
+> - **T5.5 部分**：§9 索引核对留到 M5 收尾统一做。
+> - 新增 10 个黄金用例（FreeBSD 3 + OpenBSD 6 + T5.3 降级 1），全部在 Linux 上跑绿。
+
 ## 3. 依赖与关键路径
 
 ```
