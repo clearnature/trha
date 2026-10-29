@@ -43,6 +43,8 @@ module Bridge.Scheduler
   , tagSession
   , fetchServiceStatus
   , fetchBalance
+  , fetchUsageStats
+  , UsageRow(..)
   , transcribeVoice
   , compactSession
   , retrySession
@@ -583,6 +585,44 @@ transcribeVoice bridge path = do
 -- | Provider account balance (DeepSeek @/user/balance@, via the scheduler).
 fetchBalance :: SchedulerBridge -> IO (Either CLIError Balance)
 fetchBalance bridge = httpGet (bridgeHTTP bridge) "/api/balance"
+
+-- | One row of @GET /api/usage-stats@: accounting aggregated per session mode.
+--
+-- The kernel bills @input_cache_hit_tokens@ / @input_cache_miss_tokens@
+-- separately, and this row exposes the same split, so the numbers here match
+-- the provider's invoice instead of an estimate.
+data UsageRow = UsageRow
+  { urMode       :: Text
+  , urRequests   :: Int
+  , urPrompt     :: Int
+  , urCompletion :: Int
+  , urCacheHit   :: Int
+  , urCacheMiss  :: Int
+  , urHitRatio   :: Double
+  , urResets     :: Int
+  , urCost       :: Text
+  } deriving (Eq, Show)
+
+instance FromJSON UsageRow where
+  parseJSON = withObject "UsageRow" $ \o -> UsageRow
+    <$> o .: "model"
+    <*> o .:? "requests" .!= 0
+    <*> o .:? "promptTokens" .!= 0
+    <*> o .:? "completionTokens" .!= 0
+    <*> o .:? "cacheHitTokens" .!= 0
+    <*> o .:? "cacheMissTokens" .!= 0
+    <*> o .:? "cacheHitRatio" .!= 0
+    <*> o .:? "contextResets" .!= 0
+    <*> o .:? "cost" .!= "—"
+
+fetchUsageStats :: SchedulerBridge -> IO (Either CLIError [UsageRow])
+fetchUsageStats bridge = do
+  r <- httpGet (bridgeHTTP bridge) "/api/usage-stats"
+  pure $ case r of
+    Left e -> Left e
+    Right v -> case parseMaybe (\o -> o .: "rows") v :: Maybe [UsageRow] of
+      Just rows -> Right rows
+      Nothing -> Left (ValidationError "Missing rows in /api/usage-stats")
 
 -- | LSP / MCP service state for the sidebar (best effort: [] when the
 -- scheduler predates the endpoints).
