@@ -13,6 +13,7 @@ import {
   sandboxEnabled,
   sandboxStatus,
   runExperiment,
+  sandboxedInteractive,
   sandboxedSpawn,
   setSandboxConfigRuntime,
   setSandboxEnabledRuntime,
@@ -87,8 +88,61 @@ describe('sandboxedSpawn (on, mock runner)', () => {
   });
 });
 
-describe('sandboxStatus (on, mock runner)', () => {
-  it('asks the runner for the real backend', async () => {
+/** Poll until the predicate holds (mock runner frames arrive asynchronously). */
+async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (cond()) return;
+    await new Promise(r => setTimeout(r, 20));
+  }
+  throw new Error('timed out waiting for frames');
+}
+
+describe('sandboxedInteractive (on, mock runner)', () => {
+  it('keeps a session open and routes stdin frames', async () => {
+    chmodSync(fixture, 0o755);
+    const previousSandbox = process.env.TRHA_SANDBOX;
+    const previousRunner = process.env.TRHA_SANDBOX_RUNNER;
+    const previousInteractive = process.env.MOCK_SANDBOX_INTERACTIVE;
+    process.env.TRHA_SANDBOX = 'on';
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    process.env.MOCK_SANDBOX_INTERACTIVE = '1';
+    try {
+      const session = await sandboxedInteractive(scope, { argv: ['bash', '-l'], cwd: '/tmp' });
+      let output = '';
+      session.onData(chunk => { output += chunk; });
+      const exited = new Promise<number>(resolve => session.onExit(resolve));
+
+      session.write('hello\n');
+      await waitFor(() => output.includes('echo:hello'));
+      expect(output).toContain('echo:hello');
+
+      session.write('exit\n');
+      expect(await exited).toBe(0);
+    } finally {
+      if (previousSandbox === undefined) delete process.env.TRHA_SANDBOX;
+      else process.env.TRHA_SANDBOX = previousSandbox;
+      if (previousRunner === undefined) delete process.env.TRHA_SANDBOX_RUNNER;
+      else process.env.TRHA_SANDBOX_RUNNER = previousRunner;
+      if (previousInteractive === undefined) delete process.env.MOCK_SANDBOX_INTERACTIVE;
+      else process.env.MOCK_SANDBOX_INTERACTIVE = previousInteractive;
+    }
+  });
+
+  it('refuses instead of running unconfined when the seam is off', async () => {
+    const previousSandbox = process.env.TRHA_SANDBOX;
+    delete process.env.TRHA_SANDBOX;
+    try {
+      await expect(
+        sandboxedInteractive(scope, { argv: ['bash', '-l'], cwd: '/tmp' }),
+      ).rejects.toBeInstanceOf(SandboxUnavailableError);
+    } finally {
+      if (previousSandbox !== undefined) process.env.TRHA_SANDBOX = previousSandbox;
+    }
+  });
+});
+
+describe('sandboxStatus (on, mock runner)', () => {  it('asks the runner for the real backend', async () => {
     chmodSync(fixture, 0o755);
     const previousSandbox = process.env.TRHA_SANDBOX;
     const previousRunner = process.env.TRHA_SANDBOX_RUNNER;

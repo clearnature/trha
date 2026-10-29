@@ -2,13 +2,17 @@
 // ralph, search/models/plugins, and the stagehand aliases.
 
 import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
+import { chmodSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runExtraTool, type ExtraHost, type Terminal } from '../src/Server/extraTools.js';
 import { browserCloseAll } from '../src/Server/browser.js';
+
+const sandboxFixture = fileURLToPath(new URL('./fixtures/mock-sandbox-runner.mjs', import.meta.url));
 
 let dir = '';
 let host: ExtraHost;
@@ -75,6 +79,41 @@ describe('persistent terminals', () => {
     expect(await runExtraTool('terminal_close', { id }, host)).toMatch(/closed/);
     expect(host.terminals.size).toBe(0);
     expect(await runExtraTool('terminal_read', { id }, host)).toMatch(/no terminal/);
+  });
+});
+
+describe('persistent terminals (sandbox seam on)', () => {
+  it('runs the shell inside the sandbox and keeps it interactive', async () => {
+    chmodSync(sandboxFixture, 0o755);
+    const previousSandbox = process.env.TRHA_SANDBOX;
+    const previousRunner = process.env.TRHA_SANDBOX_RUNNER;
+    const previousInteractive = process.env.MOCK_SANDBOX_INTERACTIVE;
+    process.env.TRHA_SANDBOX = 'on';
+    process.env.TRHA_SANDBOX_RUNNER = sandboxFixture;
+    process.env.MOCK_SANDBOX_INTERACTIVE = '1';
+    try {
+      const h = makeHost();
+      const opened = await runExtraTool('terminal_open', {}, h);
+      expect(opened).toMatch(/sandboxed shell/);
+      const id = /term-1/.exec(opened ?? '')?.[0];
+      expect(id).toBeTruthy();
+
+      await runExtraTool('terminal_send', { id, input: 'hello' }, h);
+      let read = '';
+      for (let i = 0; i < 30 && !read.includes('echo:hello'); i++) {
+        await new Promise(r => setTimeout(r, 50));
+        read = await runExtraTool('terminal_read', { id }, h);
+      }
+      expect(read).toContain('echo:hello');
+      expect(await runExtraTool('terminal_close', { id }, h)).toMatch(/closed/);
+    } finally {
+      if (previousSandbox === undefined) delete process.env.TRHA_SANDBOX;
+      else process.env.TRHA_SANDBOX = previousSandbox;
+      if (previousRunner === undefined) delete process.env.TRHA_SANDBOX_RUNNER;
+      else process.env.TRHA_SANDBOX_RUNNER = previousRunner;
+      if (previousInteractive === undefined) delete process.env.MOCK_SANDBOX_INTERACTIVE;
+      else process.env.MOCK_SANDBOX_INTERACTIVE = previousInteractive;
+    }
   });
 });
 

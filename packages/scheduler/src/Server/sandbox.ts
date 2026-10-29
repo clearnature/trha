@@ -10,7 +10,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { PROTOCOL_VERSION, decodeFrame, encodeFrame, type ExecFrame, type Frame, type HelloFrame } from './sandboxProtocol.js';
+import { PROTOCOL_VERSION, decodeFrame, encodeFrame, type ExecFrame, type Frame, type HelloFrame, type StdinFrame } from './sandboxProtocol.js';
 
 export type SandboxIsolation = 'shared' | 'process' | 'strong' | 'remote';
 
@@ -334,6 +334,165 @@ export async function sandboxedSpawn(
     },
   };
   return exchange(child, scope, withEnv);
+}
+
+/** A long-lived sandboxed child (persistent shell) driven by the caller. */
+export type SandboxSession = {
+  /** Exec id on the wire; also the audit correlation id. */
+  id: string;
+  /** Feed bytes to the child's stdin. */
+  write(data: string): void;
+  /** Terminate the runner (and with it the sandboxed child). */
+  kill(): void;
+  /** Every stdout/stderr chunk, plus rendered deny frames. */
+  onData(cb: (chunk: string) => void): void;
+  /** Fires once, on child exit or runner failure. */
+  onExit(cb: (code: number) => void): void;
+};
+
+/**
+ * Start a long-lived child inside the sandbox and keep it interactive.
+ *
+ * `sandboxedSpawn` resolves once the exit frame arrives; this variant hands
+ * back a session as soon as the runner says `ready`, which is what a
+ * persistent shell (`terminal_open`) needs. The runner waits for its child on
+ * a separate thread, so stdin frames keep flowing while it runs.
+ */
+export async function sandboxedInteractive(
+  scope: SandboxScope,
+  request: SandboxRequest,
+): Promise<SandboxSession> {
+  if (!sandboxEnabled()) {
+    throw new SandboxUnavailableError(
+      'disabled',
+      'TRHA_SANDBOX is off; refusing to run through the sandbox seam',
+    );
+  }
+  if (scope.policy.kind === 'danger-full-access') {
+    throw new SandboxUnavailableError('policy', 'danger-full-access must not be rendered');
+  }
+  const runner = process.env.TRHA_SANDBOX_RUNNER ?? 'trha';
+  mkdirSync(scope.scratch, { recursive: true, mode: 0o700 });
+  const args = [
+    'sandbox', 'runner',
+    '--workspace', workspaceFor(scope, request),
+    '--scratch', scope.scratch,
+    '--policy', policyName(scope.policy),
+    '--network', networkSpecText(scope.policy),
+    ...(request.experiment ? ['--experiment', request.experiment] : []),
+  ];
+  const child = spawn(runner, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+  const id = 'i1';
+  const dataHandlers: Array<(chunk: string) => void> = [];
+  const exitHandlers: Array<(code: number) => void> = [];
+  let exited = false;
+  const emit = (chunk: string): void => {
+    for (const cb of dataHandlers) cb(chunk);
+  };
+  const finish = (code: number): void => {
+    if (exited) return;
+    exited = true;
+    for (const cb of exitHandlers) cb(code);
+  };
+  if (!child.stdin || !child.stdout || !child.stderr) {
+    child.kill();
+    throw new SandboxUnavailableError('runner', 'runner has no stdio pipes');
+  }
+  const stdin = child.stdin;
+  const envPairs = Object.entries({
+    PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+    ...request.env,
+  }).map(([name, value]) => ({ name, value }));
+
+  const ready = new Promise<void>((resolve, reject) => {
+    let buffer = '';
+    child.stdout!.setEncoding('utf8');
+    child.stdout!.on('data', (chunk: string) => {
+      buffer += chunk;
+      for (;;) {
+        const nl = buffer.indexOf('\n');
+        if (nl < 0) return;
+        const line = buffer.slice(0, nl);
+        buffer = buffer.slice(nl + 1);
+        if (!line.trim()) continue;
+        let frame: Frame;
+        try {
+          frame = decodeFrame(line);
+        } catch (e) {
+          reject(e);
+          child.kill();
+          return;
+        }
+        switch (frame.op) {
+          case 'ready': {
+            const execFrame = {
+              v: PROTOCOL_VERSION,
+              op: 'exec',
+              id,
+              argv: request.argv,
+              cwd: request.cwd,
+              ...(envPairs.length ? { env: envPairs } : {}),
+              ...(request.timeoutMs !== undefined ? { timeoutMs: request.timeoutMs } : {}),
+            } as ExecFrame;
+            stdin.write(encodeFrame(execFrame));
+            resolve();
+            break;
+          }
+          case 'stdout':
+          case 'stderr':
+            emit(frame.data);
+            break;
+          case 'deny':
+            emit(`\n[sandbox denied ${frame.kind}: ${frame.target}]\n`);
+            break;
+          case 'exit':
+            finish(frame.code);
+            break;
+          case 'error':
+            emit(`ERROR: ${frame.message}\n`);
+            finish(-1);
+            break;
+          default:
+            break;
+        }
+      }
+    });
+  });
+  child.stderr.setEncoding('utf8');
+  // Runner diagnostics only: the child's own stderr arrives as frames.
+  child.stderr.on('data', () => {});
+  child.on('error', () => finish(-1));
+  child.on('exit', () => finish(-1));
+
+  const helloFrame: HelloFrame = {
+    v: PROTOCOL_VERSION,
+    op: 'hello',
+    scope: scope.id,
+    ...(scope.parent !== undefined ? { parent: scope.parent } : {}),
+    policy: policyName(scope.policy),
+    isolation: scope.isolation,
+  };
+  stdin.write(encodeFrame(helloFrame));
+  await ready;
+
+  return {
+    id,
+    write(data: string): void {
+      if (exited) return;
+      stdin.write(encodeFrame({ v: PROTOCOL_VERSION, op: 'stdin', id, data } as StdinFrame));
+    },
+    kill(): void {
+      child.kill('SIGTERM');
+      const t = setTimeout(() => child.kill('SIGKILL'), 1000);
+      if (typeof t.unref === 'function') t.unref();
+    },
+    onData(cb: (chunk: string) => void): void {
+      dataHandlers.push(cb);
+    },
+    onExit(cb: (code: number) => void): void {
+      exitHandlers.push(cb);
+    },
+  };
 }
 
 function exchange(

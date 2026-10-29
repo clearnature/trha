@@ -12,15 +12,18 @@ import path from 'node:path';
 import { confineWritePath } from './toolGuard.js';
 import { browserEvaluate, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 import { hardenedEnv, interactiveShell, powerShellCandidates, resolveShell } from './shell.js';
-import { defaultSandboxScope, sandboxEnabled, sandboxedSpawn } from './sandbox.js';
+import { defaultSandboxScope, sandboxEnabled, sandboxedInteractive, sandboxedSpawn, type SandboxSession } from './sandbox.js';
 import type { StandardToolHost, TeamTask } from './standardTools.js';
 
 export interface Terminal {
   id: string;
-  child: ChildProcessWithoutNullStreams;
   output: string;
   status: 'running' | 'exited';
   exitCode?: number;
+  /** Feed stdin — works for a local child and for a sandboxed session alike. */
+  write(data: string): void;
+  /** Terminate the shell (sandboxed sessions terminate as a whole). */
+  kill(signal?: NodeJS.Signals): void;
 }
 
 export interface ExtraHost extends StandardToolHost {
@@ -177,26 +180,49 @@ export async function runExtraTool(
 
   // ── persistent terminals ─────────────────────────────────────────────
   if (name === 'terminal_open') {
-    // PTY inside the sandbox is not wired yet: refuse instead of silently
-    // running unconfined when the seam is enabled (M1: no bypass path).
-    if (sandboxEnabled()) {
-      return 'ERROR: terminal_open is not available while the sandbox is enabled (use the bash tool)';
-    }
     const id = `term-${host.terminals.size + 1}`;
     const ish = interactiveShell();
+    const term: Terminal = { id, output: '', status: 'running', write: () => {}, kill: () => {} };
+    const push = (chunk: string): void => {
+      term.output += chunk;
+      if (term.output.length > 200_000) term.output = term.output.slice(-200_000);
+    };
+
+    // No bypass path when the seam is on: the persistent shell runs inside the
+    // sandbox too, driven by stdin frames over the same NDJSON protocol as
+    // one-shot commands. A runner failure is a failed tool call.
+    if (sandboxEnabled()) {
+      let session: SandboxSession;
+      try {
+        session = await sandboxedInteractive(defaultSandboxScope(host.cwd()), {
+          argv: [ish.cmd, ...ish.args],
+          cwd: host.cwd(),
+          env: { PS1: '' },
+        });
+      } catch (e) {
+        return `ERROR: sandboxed terminal unavailable: ${(e as Error).message}`;
+      }
+      term.write = (data: string) => session.write(data);
+      term.kill = () => session.kill();
+      session.onData(push);
+      session.onExit(code => {
+        term.status = 'exited';
+        term.exitCode = code;
+      });
+      host.terminals.set(id, term);
+      return `OK: ${id} (sandboxed shell ${session.id})`;
+    }
+
     const child = spawn(ish.cmd, ish.args, {
       cwd: host.cwd(),
       // PS1 is a bash concept; PowerShell needs no prompt scrubbing
       env: hardenedEnv(undefined, process.platform === 'win32' ? process.env : { ...process.env, PS1: '' }),
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
-    const term: Terminal = { id, child, output: '', status: 'running' };
-    const push = (b: Buffer): void => {
-      term.output += b.toString('utf8');
-      if (term.output.length > 200_000) term.output = term.output.slice(-200_000);
-    };
-    child.stdout.on('data', push);
-    child.stderr.on('data', push);
+    term.write = (data: string) => { child.stdin.write(data); };
+    term.kill = (signal?: NodeJS.Signals) => { child.kill(signal); };
+    child.stdout.on('data', (b: Buffer) => push(b.toString('utf8')));
+    child.stderr.on('data', (b: Buffer) => push(b.toString('utf8')));
     child.on('exit', code => { term.status = 'exited'; term.exitCode = code ?? -1; });
     host.terminals.set(id, term);
     return `OK: ${id} (shell pid ${child.pid ?? '?'})`;
@@ -207,7 +233,7 @@ export async function runExtraTool(
     const term = host.terminals.get(id);
     if (!term) return `ERROR: no terminal ${id}`;
     if (term.status !== 'running') return `ERROR: ${id} has exited`;
-    term.child.stdin.write(input.endsWith('\n') ? input : `${input}\n`);
+    term.write(input.endsWith('\n') ? input : `${input}\n`);
     return `OK: sent ${input.length} chars to ${id}`;
   }
   if (name === 'terminal_read') {
@@ -223,14 +249,14 @@ export async function runExtraTool(
     const sig = typeof args.signal === 'string' ? args.signal : 'SIGINT';
     const term = host.terminals.get(id);
     if (!term) return `ERROR: no terminal ${id}`;
-    term.child.kill(sig as NodeJS.Signals);
+    term.kill(sig as NodeJS.Signals);
     return `OK: sent ${sig} to ${id}`;
   }
   if (name === 'terminal_close') {
     const id = typeof args.id === 'string' ? args.id : '';
     const term = host.terminals.get(id);
     if (!term) return `ERROR: no terminal ${id}`;
-    term.child.kill('SIGTERM');
+    term.kill('SIGTERM');
     host.terminals.delete(id);
     return `OK: closed ${id}`;
   }
