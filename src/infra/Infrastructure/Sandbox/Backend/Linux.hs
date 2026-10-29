@@ -19,6 +19,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Infrastructure.Sandbox.Backend
+import Infrastructure.Sandbox.Cgroup (CgroupSupport(..), detectCgroup)
 import Infrastructure.Sandbox.Error
 import Infrastructure.Sandbox.Plan
 import Infrastructure.Sandbox.Policy
@@ -40,9 +41,16 @@ backend = Backend
 
 -- | Probe bwrap and its unprivileged-userns path. A missing/failed probe is a
 -- hard failure; a partial probe still reports the capabilities it has.
+--
+-- cgroup v2 support is reported in the notes: it decides whether the scope's
+-- pids limit can be enforced (ADR-008), so `trha sandbox status` has to show it.
 probeLinux :: IO (Either SandboxError BackendCapabilities)
 probeLinux = do
   found <- findExecutable "bwrap"
+  cg <- detectCgroup
+  let cgNotes = case cg of
+        Right s -> ["cgroup pids: " <> T.pack (csBase s)]
+        Left reason -> ["cgroup pids unavailable: " <> reason]
   case found of
     Nothing -> pure (Left (SandboxUnavailable backendIdLinux "bwrap not found in PATH"))
     Just _ -> do
@@ -52,8 +60,9 @@ probeLinux = do
       pure $ case probed of
         Nothing -> Left (SandboxUnavailable backendIdLinux "bwrap probe timed out")
         Just (ExitSuccess, _, _) -> Right capsFull
+          { bcNotes = cgNotes }
         Just (ExitFailure _, _, err) -> Right capsPartial
-          { bcNotes = ["bwrap probe failed: " <> T.pack (take 200 err)] }
+          { bcNotes = ["bwrap probe failed: " <> T.pack (take 200 err)] <> cgNotes }
 
 capsFull :: BackendCapabilities
 capsFull = BackendCapabilities
