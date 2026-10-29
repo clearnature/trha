@@ -37,6 +37,9 @@ jobs:
         with:
           ghc-version: '9.14.1'
           cabal-version: '3.14'
+          # The repo cabal.project points at a local sov-math checkout; the
+          # action's own `cabal update` would fail on that absolute path.
+          cabal-update: false
       - uses: actions/cache@v4
         with:
           path: |
@@ -47,7 +50,7 @@ jobs:
           restore-keys: |
             macos-${{ runner.os }}-
       - name: cabal update
-        run: cabal update
+        run: cabal update --project-file=cabal.project.ci
       - name: build trha-infra
         run: cabal build --project-file=cabal.project.ci trha-infra
       - name: sandbox tests (Linux-only cases pending on macOS)
