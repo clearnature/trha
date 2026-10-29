@@ -183,6 +183,8 @@ data AppState = AppState
   , appBalance    :: Maybe Balance      -- ^ provider account balance
   , appTurnStart  :: Maybe UTCTime      -- ^ when the current turn started
   , appLastTps    :: Maybe Double       -- ^ completion tokens/s of the last turn
+  , appLastDecodeTps :: Maybe Double    -- ^ same, but measured from the first token
+  , appFirstToken :: Maybe UTCTime      -- ^ when this turn's first delta arrived
   , appApproval   :: Maybe Text         -- ^ parked tool-approval message (M3)
   , appAskTool    :: Maybe (String, [Text])  -- ^ tool identity captured from the ask event
   , appPendingDelete :: Maybe String        -- ^ session id awaiting delete confirmation

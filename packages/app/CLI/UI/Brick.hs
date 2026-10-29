@@ -185,6 +185,8 @@ initialState bridge chan cfg = AppState
   , appBalance    = Nothing
   , appTurnStart  = Nothing
   , appLastTps    = Nothing
+  , appLastDecodeTps = Nothing
+  , appFirstToken = Nothing
   , appApproval  = Nothing
   , appAskTool   = Nothing
   , appPendingDelete = Nothing
@@ -737,7 +739,9 @@ resumeSession selText = do
                          , appCacheSum = (0, 0)
                          , appCacheTurns = 0
                          , appLastCost = 0
-                         , appSessTokens = 0 }
+                         , appSessTokens = 0
+                         , appLastDecodeTps = Nothing
+                         , appFirstToken = Nothing }
       when (null msgs) $
         appendMsg (mkMsg "system" (tr lang "Session " <> T.pack (ssId s) <> tr lang " has an empty transcript.") t)
       appendMsg (mkMsg "system" (tr lang "Note: continuing needs the session on the orchestration side.") t)
@@ -1254,8 +1258,15 @@ drawStatus st = Widget Greedy Fixed $ do
         "压缩 " <> T.pack (show (max 0 (100 - ctxPct used size))) <> "%"
       _ -> ""
     -- Completion throughput of the last turn (computed when usage arrived).
-    tpsSeg = case appLastTps st of
-      Just t | t > 0 -> "速度 " <> T.pack (showFFloat (Just 1) t "") <> " t/s"
+    oneDec v = T.pack (showFFloat (Just 1) v "")
+    -- Two rates, same numerator: end-to-end (from submit) and pure decode
+    -- (from the first token).  Providers quote the latter; users feel the
+    -- former, so show both once we have them.
+    tpsSeg = case (appLastTps st, appLastDecodeTps st) of
+      (Just e2e, Just dec) | e2e > 0 && dec > 0 ->
+        "速度 " <> oneDec e2e <> " t/s（生成 " <> oneDec dec <> "）"
+      (Just e2e, _) | e2e > 0 -> "速度 " <> oneDec e2e <> " t/s"
+      (_, Just dec) | dec > 0 -> "生成 " <> oneDec dec <> " t/s"
       _ -> ""
     -- Per-turn token spend, so the "million-token" bill is readable per round.
     tokensSeg = case appLastUsage st of
@@ -2479,7 +2490,9 @@ handleAppEvent (EvSession result) = do
                        , appCacheSum = (0, 0)
                        , appCacheTurns = 0
                        , appLastCost = 0
-                       , appSessTokens = 0 }
+                       , appSessTokens = 0
+                       , appLastDecodeTps = Nothing
+                       , appFirstToken = Nothing }
       liftIO $ setWindowTitle ("trha · " <> T.take 8 (T.pack sid))
       liftIO $ refreshMode (appBridge st) sid (appChan st)
     Left err -> do
@@ -2490,7 +2503,15 @@ handleAppEvent (EvSession result) = do
   scrollBottom
 handleAppEvent (EvResponse result) = case result of
   Right chunk -> case chunk of
-    ChunkDelta text    -> appendDelta text >> scrollBottom
+    ChunkDelta text    -> do
+      -- The first delta ends the TTFT window; the pure-decode rate is measured
+      -- from here, to the final usage.  Recorded once per turn.
+      first <- gets appFirstToken
+      when (isNothing first) $ do
+        t <- liftIO getCurrentTime
+        modify $ \s -> s { appFirstToken = Just t }
+      appendDelta text
+      scrollBottom
     ChunkToolCall n as -> addToolLine n as >> scrollBottom
     ChunkDone usage    -> do
       let real = usageTotalTokens usage > 0
@@ -2504,6 +2525,13 @@ handleAppEvent (EvResponse result) = case result of
           tps = if real && elapsed > 0 && usageCompletionTokens usage > 0
                   then Just (fromIntegral (usageCompletionTokens usage) / elapsed)
                   else appLastTps st0
+          -- Same numerator, but the clock starts at the first token: this is
+          -- the number a provider's own dashboard reports as "t/s".
+          decodeTps = case (appFirstToken st0, usageCompletionTokens usage) of
+            (Just tFirst, n) | real && n > 0 ->
+              let d = realToFrac (diffUTCTime t1 tFirst) :: Double
+              in if d > 0.02 then Just (fromIntegral n / d) else Nothing
+            _ -> appLastDecodeTps st0
       modify $ \s -> s { appLastUsage = Just (usageTotalTokens usage)
                        , appUsage = if real then Just usage else appUsage s
                        , appCacheNow = if cacheSeen then Just (hit, miss) else appCacheNow s
@@ -2519,9 +2547,11 @@ handleAppEvent (EvResponse result) = case result of
                                                    + usageCompletionTokens usage)
                                         else appCtxUsed s
                        , appLastTps = tps
+                       , appLastDecodeTps = decodeTps
                        , appCostSum = appCostSum s + estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
                        , appLastCost = estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
                        , appSessTokens = appSessTokens s + usageTotalTokens usage
+                       , appFirstToken = Nothing
                        , appTurnStart = Nothing }
       flushPending (if real then Just usage else Nothing)
       st3 <- get
@@ -2549,7 +2579,9 @@ handleAppEvent (EvResponse result) = case result of
                            , appCacheSum = (0, 0)
                            , appCacheTurns = 0
                            , appLastCost = 0
-                           , appSessTokens = 0 }
+                           , appSessTokens = 0
+                           , appLastDecodeTps = Nothing
+                           , appFirstToken = Nothing }
       else appendMsg (mkMsg "error" ("Error: " <> msg) t)
     bell <- gets (configBell . appEffCfg)
     when bell $ liftIO (putStr "\a" >> hFlush stdout)
@@ -3220,7 +3252,9 @@ handleSlash input = do
                                  , appCacheSum = (0, 0)
                                  , appCacheTurns = 0
                                  , appLastCost = 0
-                                 , appSessTokens = 0 }
+                                 , appSessTokens = 0
+                                 , appLastDecodeTps = Nothing
+                                 , appFirstToken = Nothing }
               void $ liftIO $ async $ do
                 _ <- deleteSession bridge sid
                 writeBChan chan (EvDeleted sid)
