@@ -222,6 +222,7 @@ data AppState = AppState
   , appSandbox    :: SandboxSettings    -- ^ /sandbox panel state (TUI-local)
   , appCacheNow   :: Maybe (Int, Int)   -- ^ last turn's (cache hit, miss)
   , appCacheSum   :: (Int, Int)         -- ^ session-total (cache hit, miss)
+  , appCacheTurns :: Int                -- ^ turns that reported cache numbers
   , appCtxUsed    :: Maybe Int          -- ^ last prompt tokens (context used)
   , appToast      :: Maybe (Text, UTCTime) -- ^ transient notice + its stamp
   , appRoute      :: Route              -- ^ Home (launch) or Session view
@@ -335,6 +336,7 @@ initialState bridge chan cfg = AppState
   , appSandbox   = defaultSandboxSettings
   , appCacheNow  = Nothing
   , appCacheSum  = (0, 0)
+  , appCacheTurns = 0
   , appCtxUsed   = Nothing
   , appToast     = Nothing
   , appRoute     = RouteHome
@@ -903,7 +905,8 @@ resumeSession selText = do
                          -- Cache totals are per session: carrying them across a
                          -- switch silently blends two sessions' hit rates.
                          , appCacheNow = Nothing
-                         , appCacheSum = (0, 0) }
+                         , appCacheSum = (0, 0)
+                         , appCacheTurns = 0 }
       when (null msgs) $
         appendMsg (mkMsg "system" (tr lang "Session " <> T.pack (ssId s) <> tr lang " has an empty transcript.") t)
       appendMsg (mkMsg "system" (tr lang "Note: continuing needs the session on the orchestration side.") t)
@@ -1392,8 +1395,13 @@ drawStatus st = Widget Greedy Fixed $ do
                 <> (if T.null (appGitStat st) then "" else "  " <> appGitStat st)
     cacheSeg = case (appCacheNow st, appCacheSum st) of
       (Just (h, m), (h0, m0)) | h + m > 0 && h0 + m0 > 0 ->
-        "缓存 本次命中 " <> pct h m <> " · 平均 " <> pct h0 m0
+        "缓存 本次命中 " <> pct h m <> " · 会话累计 " <> pct h0 m0
+          <> turnsSuffix (appCacheTurns st)
       _ -> ""
+    -- Turns that reported cache numbers, so a stable percentage is explainable.
+    turnsSuffix n
+      | n > 0 = " · " <> T.pack (show n) <> " 轮"
+      | otherwise = ""
     pct a b =
       T.pack (showFFloat (Just 2) (fromIntegral a * 100 / fromIntegral (a + b) :: Double) "") <> "%"
     -- MiMo's accounting: the usable window reserves 20% for the reply, and
@@ -2559,7 +2567,8 @@ handleAppEvent (EvSession result) = do
       modify $ \s -> s { appSessionId = Just sid, appStatus = tr (appLang s) "Ready"
                        , appRoute = RouteSession
                        , appCacheNow = Nothing
-                       , appCacheSum = (0, 0) }
+                       , appCacheSum = (0, 0)
+                       , appCacheTurns = 0 }
       liftIO $ setWindowTitle ("trha · " <> T.take 8 (T.pack sid))
       liftIO $ refreshMode (appBridge st) sid (appChan st)
     Left err -> do
@@ -2591,6 +2600,9 @@ handleAppEvent (EvResponse result) = case result of
                                          then let (h0, m0) = appCacheSum s
                                               in (h0 + hit, m0 + miss)
                                          else appCacheSum s
+                       , appCacheTurns = if cacheSeen
+                                           then appCacheTurns s + 1
+                                           else appCacheTurns s
                        , appCtxUsed = if usagePromptTokens usage > 0
                                         then Just (usagePromptTokens usage
                                                    + usageCompletionTokens usage)
@@ -2621,7 +2633,8 @@ handleAppEvent (EvResponse result) = case result of
         modify $ \st -> st { appSessionId = Nothing
                            , appStatus = tr (appLang st) "Session expired"
                            , appCacheNow = Nothing
-                           , appCacheSum = (0, 0) }
+                           , appCacheSum = (0, 0)
+                           , appCacheTurns = 0 }
       else appendMsg (mkMsg "error" ("Error: " <> msg) t)
     bell <- gets (configBell . appEffCfg)
     when bell $ liftIO (putStr "\a" >> hFlush stdout)
@@ -3289,7 +3302,8 @@ handleSlash input = do
               when (cur == Just sid) $
                 modify $ \s -> s { appSessionId = Nothing
                                  , appCacheNow = Nothing
-                                 , appCacheSum = (0, 0) }
+                                 , appCacheSum = (0, 0)
+                                 , appCacheTurns = 0 }
               void $ liftIO $ async $ do
                 _ <- deleteSession bridge sid
                 writeBChan chan (EvDeleted sid)
@@ -3330,7 +3344,8 @@ handleSlash input = do
             sid' <- liftIO (readIORef ref)
             modify $ \s -> s { appSessionId = sid'
                              , appCacheNow = Nothing
-                             , appCacheSum = (0, 0) }
+                             , appCacheSum = (0, 0)
+                             , appCacheTurns = 0 }
             case r of
               Just out | not (T.null (T.strip out)) -> appendMsg (mkMsg "system" out t)
               _ -> pure ()

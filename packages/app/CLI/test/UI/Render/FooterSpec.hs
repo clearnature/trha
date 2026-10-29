@@ -68,13 +68,13 @@ spec = do
                     (Just 450100) (Just 35) Nothing
       footerMetrics En ["mode", "cache", "ctx", "compact"] live []
         `shouldBe` [ "Mode: Auto"
-                   , "cache turn hit 99.93% · avg 99.50%"
+                   , "cache turn hit 99.93% · session 99.50%"
                    , "context 450.1K (45%)"
                    , "compact 35%"
                    ]
       footerMetrics Zh ["mode", "cache", "ctx", "compact"] live []
         `shouldBe` [ "模式：Auto"
-                   , "缓存 本次命中 99.93% · 平均 99.50%"
+                   , "缓存 本次命中 99.93% · 会话累计 99.50%"
                    , "上下文 450.1K (45%)"
                    , "压缩 35%"
                    ]
@@ -95,7 +95,7 @@ spec = do
     -- The real 120-column overflow: git summary + metrics measured 129 cells,
     -- so hBox silently clipped the right end (balance / cost / peak).
     let git = "trha@main  +6650 -834  ?119"
-        stats = "缓存 本次命中 98.78% · 平均 92.70%  上下文 15.9K (1%)  压缩 79%  余额 ¥30.77  费用 ≈¥0.0139 · 低峰"
+        stats = "缓存 本次命中 98.78% · 会话累计 92.70%  上下文 15.9K (1%)  压缩 79%  余额 ¥30.77  费用 ≈¥0.0139 · 低峰"
     it "rejects the git + metrics pair on a 120-column terminal" $
       statusFitsOneRow 118 git stats `shouldBe` False
     it "accepts the same pair when the terminal is wide enough" $
@@ -109,7 +109,7 @@ spec = do
       statusFitsOneRow 1 git "" `shouldBe` True
 
   describe "wrapStatusLine" $ do
-    let stats = "缓存 本次命中 98.78% · 平均 92.70%  上下文 15.9K (1%)  压缩 79%  余额 ¥30.77  费用 ≈¥0.0139 · 低峰"
+    let stats = "缓存 本次命中 98.78% · 会话累计 92.70%  上下文 15.9K (1%)  压缩 79%  余额 ¥30.77  费用 ≈¥0.0139 · 低峰"
     it "keeps a row that fits on one line" $
       wrapStatusLine 118 stats `shouldBe` [stats]
     it "splits a 98-cell row into rows that really fit" $ do
