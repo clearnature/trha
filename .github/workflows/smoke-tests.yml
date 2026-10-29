@@ -67,7 +67,7 @@ jobs:
       uses: haskell/actions/setup@v2
       with:
         ghc-version: '9.14.1'
-        cabal-version: '3.14'
+        cabal-version: '3.14.2.0'
 
     - name: Provide wgpu-native lib dir
       run: |
@@ -116,7 +116,7 @@ jobs:
       uses: haskell/actions/setup@v2
       with:
         ghc-version: '9.14.1'
-        cabal-version: '3.14'
+        cabal-version: '3.14.2.0'
 
     - name: Provide wgpu-native lib dir
       run: |
