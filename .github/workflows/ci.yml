@@ -29,7 +29,7 @@ jobs:
       uses: haskell/actions/setup@v2
       with:
         ghc-version: '9.14.1'
-        cabal-version: '3.14.2.0'
+        cabal-version: '3.17.0.0'
     
     # WebGPU 组件需要 libwgpu_native.so 所在目录参与链接与运行时查找。
     # 本机把它放在 `cabal.project.local`（不入仓、绝对路径），CI 上没有 → 这里生成一份等价配置。
@@ -70,19 +70,13 @@ jobs:
   typescript:
     runs-on: ubuntu-latest
     
-    strategy:
-      matrix:
-        # TypeScript 7 (the Go-native compiler) needs Node 20+; Node 18 is EOL
-        # and its npm refuses the platform binary package.
-        node-version: [20, 22]
-    
     steps:
     - uses: actions/checkout@v3
     
-    - name: Use Node.js ${{ matrix.node-version }}
+    - name: Use Node.js (from .node-version)
       uses: actions/setup-node@v4
       with:
-        node-version: ${{ matrix.node-version }}
+        node-version-file: .node-version
         cache: 'npm'
     
     - name: Install dependencies
@@ -94,7 +88,7 @@ jobs:
       run: |
         cd packages/scheduler
         npx tsc --version
-        node -e "const v=require('typescript/package.json').version; if (!v.startsWith('7.')) { console.error('expected TypeScript 7.x, got ' + v); process.exit(1); }"
+        node -e "const v=require('typescript/package.json').version; if (!v.startsWith('7.0.')) { console.error('expected TypeScript 7.0.x, got ' + v); process.exit(1); }"
         npm run typecheck
     
     - name: Build
@@ -117,10 +111,10 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
-    - name: Use Node.js 20
-      uses: actions/setup-node@v3
+    - name: Use Node.js (from .node-version)
+      uses: actions/setup-node@v4
       with:
-        node-version: 20
+        node-version-file: .node-version
         cache: 'npm'
 
     - name: Install dependencies
@@ -139,10 +133,10 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
-    - name: Use Node.js 20
-      uses: actions/setup-node@v3
+    - name: Use Node.js (from .node-version)
+      uses: actions/setup-node@v4
       with:
-        node-version: 20
+        node-version-file: .node-version
         cache: 'npm'
 
     - name: Install dependencies
@@ -167,10 +161,10 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
-    - name: Use Node.js 20
-      uses: actions/setup-node@v3
+    - name: Use Node.js (from .node-version)
+      uses: actions/setup-node@v4
       with:
-        node-version: 20
+        node-version-file: .node-version
         cache: 'npm'
 
     - name: Install dependencies
@@ -201,10 +195,10 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     
-    - name: Use Node.js 18
-      uses: actions/setup-node@v3
+    - name: Use Node.js (from .node-version)
+      uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version-file: .node-version
         cache: 'npm'
     
     - name: Install dependencies
@@ -230,7 +224,7 @@ jobs:
       uses: haskell/actions/setup@v2
       with:
         ghc-version: '9.14.1'
-        cabal-version: '3.14.2.0'
+        cabal-version: '3.17.0.0'
     
     - name: Provide wgpu-native lib dir
       run: |
@@ -241,9 +235,9 @@ jobs:
         EOF
     
     - name: Setup Node.js
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version-file: .node-version
         cache: 'npm'
     
     - name: Build Haskell core

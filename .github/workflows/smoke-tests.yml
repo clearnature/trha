@@ -17,7 +17,7 @@ jobs:
     
     strategy:
       matrix:
-        node-version: [18, 20]
+        node-version: [26]
     
     steps:
     - uses: actions/checkout@v3
@@ -67,7 +67,7 @@ jobs:
       uses: haskell/actions/setup@v2
       with:
         ghc-version: '9.14.1'
-        cabal-version: '3.14.2.0'
+        cabal-version: '3.17.0.0'
 
     - name: Provide wgpu-native lib dir
       run: |
@@ -109,14 +109,14 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v3
       with:
-        node-version: '18'
+        node-version: '26'
         cache: 'npm'
     
     - name: Setup Haskell
       uses: haskell/actions/setup@v2
       with:
         ghc-version: '9.14.1'
-        cabal-version: '3.14.2.0'
+        cabal-version: '3.17.0.0'
 
     - name: Provide wgpu-native lib dir
       run: |

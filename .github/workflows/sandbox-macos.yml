@@ -39,7 +39,7 @@ jobs:
       - uses: haskell-actions/setup@v2
         with:
           ghc-version: '9.14.1'
-          cabal-version: '3.14.2.0'
+          cabal-version: '3.17.0.0'
           # The repo cabal.project points at a local sov-math checkout; the
           # action's own `cabal update` would fail on that absolute path.
           cabal-update: false
