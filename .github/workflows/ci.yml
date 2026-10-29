@@ -24,6 +24,14 @@ jobs:
     
     steps:
     - uses: actions/checkout@v3
+
+    - name: checkout sov-math (kernel math dependency)
+      uses: actions/checkout@v4
+      with:
+        repository: triqchem-lab/math
+        path: .ci/math
+        sparse-checkout: |
+          hs/sov-math
     
     - name: Cache ghcup + cabal store
       uses: actions/cache@v4
@@ -49,12 +57,12 @@ jobs:
     # 本机把它放在 `cabal.project.local`（不入仓、绝对路径），CI 上没有 → 这里生成一份等价配置。
     - name: Provide wgpu-native lib dir
       run: |
-        cat > cabal.project.local <<EOF
+        cat > cabal.project.ci.local <<EOF
         package trha
           extra-lib-dirs: $GITHUB_WORKSPACE/3rdparty/wgpu-native/lib
           ghc-options: -optl-Wl,-rpath,$GITHUB_WORKSPACE/3rdparty/wgpu-native/lib
         EOF
-        cat cabal.project.local
+        cat cabal.project.ci.local
     
     - name: Cache Haskell dependencies
       uses: actions/cache@v3
@@ -69,17 +77,17 @@ jobs:
     
     - name: Install dependencies
       run: |
-        cabal update
-        cabal build --only-dependencies
+        cabal update --project-file=cabal.project.ci
+        cabal build --project-file=cabal.project.ci --only-dependencies
     
     - name: Build
-      run: cabal build all
+      run: cabal build --project-file=cabal.project.ci all
     
     # `cabal test all` 含 `trha-webgpu-test`。该套件在无 GPU / 无 wgpu-native 时
     # 刻意用 `pendingWith` 兜底（见 test-webgpu/Spec.hs 头部注释），所以 runner 无 GPU 也应绿。
     # ⚠️ 那条兜底分支**本机从未走到过**（本机有 GPU），首次 CI 请确认它确实是 pending 而非崩溃。
     - name: Test
-      run: cabal test all
+      run: cabal test --project-file=cabal.project.ci all
   
   typescript:
     runs-on: ubuntu-latest
@@ -239,6 +247,14 @@ jobs:
     
     steps:
     - uses: actions/checkout@v3
+
+    - name: checkout sov-math (kernel math dependency)
+      uses: actions/checkout@v4
+      with:
+        repository: triqchem-lab/math
+        path: .ci/math
+        sparse-checkout: |
+          hs/sov-math
     
     - name: Cache ghcup + cabal store
       uses: actions/cache@v4
@@ -262,7 +278,7 @@ jobs:
     
     - name: Provide wgpu-native lib dir
       run: |
-        cat > cabal.project.local <<EOF
+        cat > cabal.project.ci.local <<EOF
         package trha
           extra-lib-dirs: $GITHUB_WORKSPACE/3rdparty/wgpu-native/lib
           ghc-options: -optl-Wl,-rpath,$GITHUB_WORKSPACE/3rdparty/wgpu-native/lib
@@ -276,9 +292,9 @@ jobs:
     
     - name: Build Haskell core
       run: |
-        cabal update
-        cabal build --only-dependencies
-        cabal build all
+        cabal update --project-file=cabal.project.ci
+        cabal build --project-file=cabal.project.ci --only-dependencies
+        cabal build --project-file=cabal.project.ci all
     
     - name: Build TypeScript scheduler
       run: |
