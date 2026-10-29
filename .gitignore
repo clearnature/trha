@@ -46,6 +46,8 @@ credentials/
 **/api_key*
 **/api-key*
 **/token*
+# ... but the Web design tokens are source, not a secret dump.
+!packages/app/Web/src/styles/tokens.css
 **/secret*
 **/password*
 **/credential*
