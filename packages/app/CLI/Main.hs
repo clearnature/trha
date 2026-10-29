@@ -10,6 +10,7 @@ import Bridge.Scheduler
 import Config.Settings
 import Core.RunLog (logLine)
 import Core.RunState
+import Core.Bootstrap (ensureBackend)
 import Core.ProjectStore (ensureProject)
 import UI.SetupWizard (runSetupWizard)
 import qualified API.Server (kernelBindAddress, startStubKernel)
@@ -72,9 +73,17 @@ runTUIMode config = do
       putStrLn (T.unpack (tr lang "Press Ctrl+Q to quit"))
       putStrLn (T.unpack (tr lang "Press Ctrl+Alt+Q to stop the kernel and scheduler"))
       logLine ("start tui model=" <> configModel config)
+      announceBackend =<< ensureBackend config
       bridge <- createSchedulerBridge config
       runTUI bridge config
       logLine "exit tui"
+
+-- | Tell the user which services had to be started (silent when both were up).
+announceBackend :: [Text] -> IO ()
+announceBackend [] = pure ()
+announceBackend started =
+  putStrLn ("backend: started " <> T.unpack (T.intercalate " + " started)
+            <> " — logs: /tmp/trha-kernel.log, /tmp/trha-scheduler.log")
 
 -- | Run CLI mode
 runCLIMode :: CLIConfig -> IO ()
@@ -93,6 +102,7 @@ runCLIMode config = do
   setSGR [SetColor Foreground Vivid Black]
   putStrLn (T.unpack (tr lang "Type '/help' for commands, '/quit' to exit"))
   setSGR [Reset]
+  announceBackend =<< ensureBackend config
   bridge <- createSchedulerBridge config
   sessionRef <- newIORef (Nothing :: Maybe SessionId)
   modelRef <- newIORef (configModel config)

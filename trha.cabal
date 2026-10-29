@@ -222,6 +222,7 @@ executable trha
     Config.Home
     Core.Args
     UI.Commands.Registry
+    Core.Bootstrap
     Core.HTTP
     Core.Transcript
     Core.Memory
