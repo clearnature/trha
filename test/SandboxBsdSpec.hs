@@ -91,6 +91,7 @@ writeRequest = LaunchRequest
   , lrEnv = []
   , lrStdin = StdinClosed
   , lrTimeoutMs = Just 5000
+  , lrDenyReads = []
   }
 
 writePolicy :: Policy

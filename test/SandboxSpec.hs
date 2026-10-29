@@ -76,6 +76,7 @@ request = LaunchRequest
   , lrEnv = []
   , lrStdin = StdinClosed
   , lrTimeoutMs = Nothing
+  , lrDenyReads = []
   }
 
 -- Spec ------------------------------------------------------------------

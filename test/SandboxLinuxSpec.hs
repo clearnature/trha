@@ -21,6 +21,16 @@ import System.Posix.Files (setFileMode)
 import System.Process (readProcessWithExitCode)
 import Test.Hspec
 
+-- | Nested sandboxes (this suite running inside another bwrap) cannot create a
+-- user namespace, so bwrap still exists but probes partial.  Turn that into a
+-- pending instead of a false failure — the boundary itself is fine, this host
+-- just will not let us re-enter it.
+withFullBwrap :: BackendCapabilities -> IO () -> IO ()
+withFullBwrap c action
+  | bcEnforcement c == Full = action
+  | otherwise = pendingWith
+      ("bwrap cannot create a namespace here: " ++ show (bcEnforcement c))
+
 sandboxLinuxSpec :: Spec
 sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
   it "enforces workspace-write and denies writes outside it" $ do
@@ -29,7 +39,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
       Left (SandboxUnavailable _ msg) ->
         pendingWith ("bwrap unavailable: " ++ show msg)
       Left e -> expectationFailure (show e)
-      Right c -> do
+      Right c -> withFullBwrap c $ do
         home <- getHomeDirectory
         let ws = home </> ".trha-sandbox-probe-test"
         createDirectoryIfMissing True ws
@@ -48,7 +58,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
       Left (SandboxUnavailable _ msg) ->
         pendingWith ("bwrap unavailable: " ++ show msg)
       Left e -> expectationFailure (show e)
-      Right c -> do
+      Right c -> withFullBwrap c $ do
         home <- getHomeDirectory
         let ws = home </> ".trha-sandbox-toolchain"
         createDirectoryIfMissing True ws
@@ -62,6 +72,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
               , lrEnv = [("PATH", T.pack hostPath)]
               , lrStdin = StdinClosed
               , lrTimeoutMs = Just 60000
+              , lrDenyReads = []
               }
         case planWith Linux.backend c (probeScope ws) request of
           Left e -> expectationFailure (show e)
@@ -80,7 +91,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
       Left (SandboxUnavailable _ msg) ->
         pendingWith ("bwrap unavailable: " ++ show msg)
       Left e -> expectationFailure (show e)
-      Right c -> do
+      Right c -> withFullBwrap c $ do
         home <- getHomeDirectory
         let ws = home </> ".trha-sandbox-limits"
         createDirectoryIfMissing True ws
@@ -98,6 +109,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
               , lrEnv = []
               , lrStdin = StdinClosed
               , lrTimeoutMs = Just 30000
+              , lrDenyReads = []
               }
         case planWith Linux.backend c scope request of
           Left e -> expectationFailure (show e)
@@ -116,7 +128,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
       Left (SandboxUnavailable _ msg) ->
         pendingWith ("bwrap unavailable: " ++ show msg)
       Left e -> expectationFailure (show e)
-      Right c -> do
+      Right c -> withFullBwrap c $ do
         home <- getHomeDirectory
         let ws = home </> ".trha-sandbox-ns"
         createDirectoryIfMissing True ws
@@ -127,6 +139,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
               , lrEnv = []
               , lrStdin = StdinClosed
               , lrTimeoutMs = Just 30000
+              , lrDenyReads = []
               }
         case planWith Linux.backend c (probeScope ws) request of
           Left e -> expectationFailure (show e)
@@ -151,7 +164,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
       Left (SandboxUnavailable _ msg) ->
         pendingWith ("bwrap unavailable: " ++ show msg)
       Left e -> expectationFailure (show e)
-      Right c -> do
+      Right c -> withFullBwrap c $ do
         home <- getHomeDirectory
         let root = home </> ".trha-sandbox-experiment"
             variantA = Variant (VariantId "a") NetworkOff
@@ -182,6 +195,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
                   , lrEnv = []
                   , lrStdin = StdinClosed
                   , lrTimeoutMs = Just 30000
+                  , lrDenyReads = []
                   }
             case planWith Linux.backend c scopeA request of
               Left e -> expectationFailure (show e)
@@ -208,7 +222,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
       `finally` maybe (pure ()) (setEnv "PATH") oldPath
     case caps of
       Left e -> expectationFailure ("probe should degrade, not fail: " ++ show e)
-      Right c -> do
+      Right c -> withFullBwrap c $ do
         bcEnforcement c `shouldSatisfy` isPartialEnforcement
         bcNotes c `shouldSatisfy` any ("bwrap probe failed" `T.isInfixOf`)
 

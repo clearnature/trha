@@ -20,6 +20,7 @@ import Config.Settings (resolveConfig)
 import Core.HTTP (createHTTPClient, httpGet)
 import Core.Types (CLIConfig(..), CLIError, defaultCLIConfig)
 import Data.Maybe (fromMaybe, isNothing)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -33,7 +34,9 @@ import Options.Applicative
 import System.Directory
   ( createDirectoryIfMissing, doesFileExist, getCurrentDirectory, getHomeDirectory )
 import System.Exit (exitFailure)
+import System.Environment (getEnvironment)
 import System.FilePath ((</>))
+import System.Info (os)
 import System.IO (stderr, stdin, stdout)
 
 data SandboxAction
@@ -53,6 +56,9 @@ data SandboxConfigPatch = SandboxConfigPatch
   , cfgPolicy  :: Maybe String
   , cfgNetwork :: Maybe String
   , cfgScratch :: Maybe String
+  , cfgPids    :: Maybe Int
+  , cfgMemory  :: Maybe Int
+  , cfgWall    :: Maybe Int
   } deriving (Eq, Show)
 
 sandboxActionParser :: Parser SandboxAction
@@ -107,7 +113,13 @@ sandboxActionParser = subparser
                   (long "enabled" <> metavar "on|off" <> help "Enable or disable the sandbox"))
             <*> optional (strOption (long "policy" <> metavar "POLICY"))
             <*> optional (strOption (long "network" <> metavar "SPEC" <> help "off | allow:host1,host2 | proxy:url"))
-            <*> optional (strOption (long "scratch" <> metavar "DIR")))
+            <*> optional (strOption (long "scratch" <> metavar "DIR"))
+            <*> optional (option auto (long "pids" <> metavar "N"
+                  <> help "cgroup v2 pids.max for each exec (0 = no limit)"))
+            <*> optional (option auto (long "memory-mib" <> metavar "MiB"
+                  <> help "RLIMIT_AS in MiB (0 = no limit; keep 0 for builds)"))
+            <*> optional (option auto (long "wall-ms" <> metavar "MS"
+                  <> help "default wall timeout per exec")))
       <*> switch (long "json" <> help "Machine-readable output")
     onOff "on" = Right True
     onOff "off" = Right False
@@ -139,7 +151,7 @@ runSandboxCommand action = do
       case caps of
         Left err -> do
           if asJson
-            then emitJson "none" "none" False [T.pack (show err)]
+            then emitJson Nothing [T.pack (show err)]
             else do
               TIO.putStrLn "backend:     none"
               TIO.putStrLn ("reason:      " <> T.pack (show err))
@@ -148,7 +160,7 @@ runSandboxCommand action = do
               enforcement = T.pack (show (bcEnforcement c))
               notes = bcNotes c
           if asJson
-            then emitJson backend enforcement True notes
+            then emitJson (Just c) notes
             else do
               TIO.putStrLn ("backend:     " <> backend)
               TIO.putStrLn ("enforcement: " <> enforcement)
@@ -164,6 +176,8 @@ runSandboxCommand action = do
                 <> " memoryMiB=" <> T.pack (show (rlMemoryMiB (dcLimits d)))
                 <> " wallMs=" <> T.pack (show (rlWallMs (dcLimits d))))
               TIO.putStrLn ("readonly:    " <> T.pack (show (dcReadonlyRoots d)))
+              when (rlMemoryMiB (dcLimits d) > 0) $
+                TIO.putStrLn ("warn:        memoryMiB caps RLIMIT_AS; node/GHC builds abort — `trha sandbox config --memory-mib 0` to lift")
               TIO.putStrLn ("scopes:      " <> T.pack (show (map fst (scScopes cfg))))
     SandboxProbe _ -> do
       caps <- Linux.probeLinux
@@ -173,7 +187,7 @@ runSandboxCommand action = do
           ws <- getCurrentDirectory
           let scratch = home </> ".trha" </> "sandbox-scratch"
           createDirectoryIfMissing True scratch
-          results <- runProbes Linux.backend c (mkRunnerScope ws scratch "workspace-write" "off")
+          results <- runProbes Linux.backend c (mkRunnerScope cfg home ws scratch "workspace-write" "off")
           mapM_ printProbe results
           if all probeOk results then pure () else exitFailure
     SandboxPolicyGet mscope -> do
@@ -191,7 +205,7 @@ runSandboxCommand action = do
         then TIO.putStrLn "no audit events"
         else mapM_ printAudit events
     SandboxRunner ws scratch policyName experiment network ->
-      runRunnerMode ws scratch policyName experiment network
+      runRunnerMode cfg ws scratch policyName experiment network
     SandboxScopes -> do
       cliCfg <- resolveConfig defaultCLIConfig
       client <- createHTTPClient (configScheme cliCfg) (configHost cliCfg)
@@ -208,6 +222,9 @@ runSandboxCommand action = do
               && isNothing (cfgPolicy patch)
               && isNothing (cfgNetwork patch)
               && isNothing (cfgScratch patch)
+              && isNothing (cfgPids patch)
+              && isNothing (cfgMemory patch)
+              && isNothing (cfgWall patch)
           cfg' = if noop then cfg else applyConfigPatch cfg patch
       when (not noop) (saveSandboxConfig path cfg')
       if asJson then emitConfigJson cfg' else printConfig cfg'
@@ -257,10 +274,16 @@ applyConfigPatch cfg' patch = cfg'
       { dcPolicy = maybe (dcPolicy base) T.pack (cfgPolicy patch)
       , dcNetwork = maybe (dcNetwork base) parseNetworkSpec (cfgNetwork patch)
       , dcScratch = maybe (dcScratch base) id (cfgScratch patch)
+      , dcLimits = limits
       }
   }
   where
     base = scDefaults cfg'
+    limits = ResourceLimits
+      { rlPids = maybe (rlPids (dcLimits base)) id (cfgPids patch)
+      , rlMemoryMiB = maybe (rlMemoryMiB (dcLimits base)) id (cfgMemory patch)
+      , rlWallMs = maybe (rlWallMs (dcLimits base)) id (cfgWall patch)
+      }
 
 parseNetworkSpec :: String -> NetworkSpec
 parseNetworkSpec raw = case T.stripPrefix "allow:" txt of
@@ -284,6 +307,11 @@ emitConfigJson cfg' = do
     , "policy" .= dcPolicy d
     , "network" .= networkSpecText (dcNetwork d)
     , "scratch" .= dcScratch d
+    , "limits" .= object
+        [ "pids" .= rlPids (dcLimits d)
+        , "memoryMiB" .= rlMemoryMiB (dcLimits d)
+        , "wallMs" .= rlWallMs (dcLimits d)
+        ]
     ]))
   TIO.putStrLn ""
 
@@ -294,6 +322,9 @@ printConfig cfg' = do
   TIO.putStrLn ("policy:   " <> dcPolicy d)
   TIO.putStrLn ("network:  " <> networkSpecText (dcNetwork d))
   TIO.putStrLn ("scratch:  " <> T.pack (dcScratch d))
+  TIO.putStrLn ("limits:   pids=" <> T.pack (show (rlPids (dcLimits d)))
+    <> " memoryMiB=" <> T.pack (show (rlMemoryMiB (dcLimits d)))
+    <> " wallMs=" <> T.pack (show (rlWallMs (dcLimits d))))
 
 printProbe :: ProbeResult -> IO ()
 printProbe result = TIO.putStrLn $ T.intercalate "\t"
@@ -302,49 +333,82 @@ printProbe result = TIO.putStrLn $ T.intercalate "\t"
   , probeActual result
   ]
 
--- | Machine-readable status consumed by the scheduler/Desktop.
-emitJson :: Text -> Text -> Bool -> [Text] -> IO ()
-emitJson backend enforcement available notes = do
+-- | Machine-readable status consumed by the scheduler/Desktop (§5.7.4).
+-- Capabilities and platform come from the probe, not from constants: the
+-- Desktop renders them, and an empty list made every backend look the same.
+emitJson :: Maybe BackendCapabilities -> [Text] -> IO ()
+emitJson mcaps notes = do
   BL.putStr (Aeson.encode (object
-    [ "backend" .= backend
-    , "platform" .= ("linux" :: Text)
-    , "enforcement" .= enforcement
-    , "available" .= available
-    , "capabilities" .= ([] :: [Text])
+    [ "backend" .= maybe "none" (unBackendId . bcBackend) mcaps
+    , "platform" .= maybe (platformText (Other (T.pack os))) (platformText . bcPlatform) mcaps
+    , "enforcement" .= maybe "none" (T.pack . show . bcEnforcement) mcaps
+    , "available" .= maybe False (const True) mcaps
+    , "capabilities" .= maybe [] (map (T.pack . show) . Set.toList . bcCapabilities) mcaps
     , "notes" .= notes
     ]))
   TIO.putStrLn ""
 
+platformText :: Platform -> Text
+platformText Linux = "linux"
+platformText FreeBSD = "freebsd"
+platformText OpenBSD = "openbsd"
+platformText Darwin = "darwin"
+platformText Windows = "win32"
+platformText Android = "android"
+platformText (Other name) = name
+
 -- | Internal entry point used by the scheduler: read NDJSON from stdin,
 -- execute through the Linux backend, write frames to stdout.
-runRunnerMode :: FilePath -> FilePath -> T.Text -> Maybe String -> T.Text -> IO ()
-runRunnerMode ws scratch policyName experiment network = do
+--
+-- The config is the single source of truth for limits, readonly roots and the
+-- env allow-list (T1.2/T2.3).  @--policy@ / @--network@ stay CLI overrides
+-- because the scheduler passes them per scope.
+runRunnerMode :: SandboxConfig -> FilePath -> FilePath -> T.Text -> Maybe String -> T.Text -> IO ()
+runRunnerMode cfg ws scratch policyName experiment network = do
   caps <- Linux.probeLinux
+  home <- getHomeDirectory
+  hostEnv <- getEnvironment
+  let allow = map T.unpack (dcEnvAllow (scDefaults cfg))
+      baseEnv = [ (T.pack k, T.pack v)
+                | (k, v) <- hostEnv
+                , k `elem` allow || k == "HOME" ]
   case caps of
     Left err -> failWith (show err)
     Right c -> runRunner
-      (RunnerConfig stdin stdout (T.pack <$> experiment))
+      (RunnerConfig stdin stdout (T.pack <$> experiment) baseEnv)
       Linux.backend
       c
-      (mkRunnerScope ws scratch policyName network)
+      (mkRunnerScope cfg home ws scratch policyName network)
 
-mkRunnerScope :: FilePath -> FilePath -> T.Text -> T.Text -> Scope
-mkRunnerScope ws scratch policyName networkSpec =
-  scopeRoot (ScopeId "runner") policy (ExclusivePath (AbsolutePath scratch))
+-- | Build the runner scope from the config defaults.
+mkRunnerScope :: SandboxConfig -> FilePath -> FilePath -> FilePath -> T.Text -> T.Text -> Scope
+mkRunnerScope cfg home ws scratch policyName networkSpec =
+  scopeRoot (ScopeId "runner") policy (ExclusivePath (AbsolutePath (expandHome home scratch)))
   where
+    d = scDefaults cfg
     net = networkPolicyOf (parseNetworkSpec (T.unpack networkSpec))
+    ro = map (AbsolutePath . expandHome home) (dcReadonlyRoots d)
+    homeDir = expandHome home scratch
     policy = case T.toLower policyName of
       "read-only" -> ReadOnly emptyReadOnlyPolicy
-        { roReadableRoots = [AbsolutePath ws]
+        { roReadableRoots = AbsolutePath ws : ro
         , roNetwork = net
+        , roEnvAllow = dcEnvAllow d
         }
       _ -> WorkspaceWrite WritableRoot
         { wrRoot = AbsolutePath ws
-        , wrScratch = ExclusivePath (AbsolutePath scratch)
-        , wrReadOnly = []
+        , wrScratch = ExclusivePath (AbsolutePath homeDir)
+        , wrReadOnly = ro
         , wrNetwork = net
-        , wrLimits = defaultResourceLimits
+        , wrLimits = dcLimits d
         }
+
+-- | @~@ in the config expands against the (host) home of the runner.
+expandHome :: FilePath -> FilePath -> FilePath
+expandHome home path = case path of
+  '~':'/':rest -> home </> rest
+  "~" -> home
+  _ -> path
 
 failWith :: String -> IO a
 failWith message = do

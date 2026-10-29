@@ -643,6 +643,7 @@ data LaunchRequest = LaunchRequest
   , lrEnv       :: [(EnvName, Text)]
   , lrStdin     :: StdinMode
   , lrTimeoutMs :: Maybe Int
+  , lrDenyReads :: [AbsolutePath]   -- 2026-10-30 新增可选字段（ADR-012）：guest 内挂空 tmpfs 的路径，调用方预过滤「存在」
   }
 
 data LaunchPlan = LaunchPlan
@@ -888,13 +889,23 @@ experiments:
 
 未知键 → 报错（fail-closed），不做静默忽略；`version` 不匹配 → 拒绝启动沙箱并提示迁移。
 
+**实现现状（2026-10-30 修订）**：
+
+- `defaults.limits` / `readonlyRoots` / `envAllow` 由 runner 读入并真正生效（ADR-011）；`--policy` / `--network` 仍是 scheduler 的 per-scope 覆盖。
+- `read.mode=allow` 尚未实现为完整 allow-list；当前是「整根只读 + `read.deny` 目录挂空 tmpfs」（ADR-012）。`read.allow` / `write.roots` / `protectedSubpaths` / `tmp` 仍在 schema 里但未接线（仅 `limits` / `readonlyRoots` / `envAllow` / `scratch` / `policy` / `network` 生效）。
+- `readonlyRoots` 中的路径**可以不存在**：渲染用 `--ro-bind-try`（本机无 `/nix/store`，严格 `--ro-bind` 曾让整个沙箱起不来）。
+- `memoryMiB > 0` 会限制沙箱内进程的虚拟内存；GHC/Node 构建建议保持 0。
+
 #### 5.7.6 CLI（P0 先接 stub）
 
 ```bash
 trha sandbox status [--json]        # 后端、enforcement、policies 来源
 trha sandbox probe [--scope <id>]   # 运行探针，退出码 = 是否全绿
-trha sandbox config [--enabled on|off] [--policy <p>] [--network <spec>] [--scratch <dir>] [--json]
+trha sandbox config [--enabled on|off] [--policy <p>] [--network <spec>] [--scratch <dir>]
+                    [--pids N] [--memory-mib MiB] [--wall-ms MS] [--json]
                                     # 无参数 = 显示；带参数 = 落盘 ~/.trha/sandbox.yaml
+                                    # limits 于 2026-10-30 接入执行路径（ADR-011）；
+                                    # --memory-mib 是 RLIMIT_AS，构建机建议 0
 trha sandbox scopes                 # 执行作用域（session/agent 树：policy + isolation）
 trha sandbox runner --workspace <dir> --scratch <dir> --policy <p> [--network <spec>] [--experiment <tag>]
                                     # NDJSON runner 入口（scheduler 内部使用）

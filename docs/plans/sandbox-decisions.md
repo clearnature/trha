@@ -125,6 +125,31 @@
 | 判据 | `test/SandboxCgroupSpec.hs` 全绿：探测、创建/写 `pids.max`/销毁、非法 base 拒绝、`pids.max=4` 下 8 次 fork 让 `pids.events` 出现 `max`（2026-10-30 实测）；`trha sandbox status --json` 的 notes 含 `cgroup pids: <base>` |
 | 复审触发 | 需要消除竞态时给 bwrap 加 `--cgroup`（bwrap ≥0.9）或在 runner 里先建 cgroup 再 clone |
 
+## ADR-011：`sandbox.yaml` 是执行期的单一事实来源（limits / readonlyRoots / envAllow）
+
+| 项 | 内容 |
+|---|---|
+| 日期 | 2026-10-30 |
+| 状态 | ✅ Accepted |
+| 背景 | `sandbox.yaml` 的 `defaults.limits`、`readonlyRoots`、`envAllow` 只有解析与 `status` 展示，`mkRunnerScope` 硬编码 `defaultResourceLimits` 且 `wrReadOnly = []`。结果是配置「看起来生效、实际不生效」：实测沙箱内 700 个进程全部创建成功、`ulimit -v` 为 unlimited，只有 `/etc` 只读与断网是真的 |
+| 决策 | ① runner 读 `~/.trha/sandbox.yaml` 的 `defaults`，构造 `Scope` 时用 `dcLimits`（→ `wrLimits`，驱动 `prlimit --as`、cgroup `pids.max`、默认 wall timeout）、`dcReadonlyRoots`（→ `wrReadOnly`，只读挂载）、`dcEnvAllow`（→ 宿主 env 白名单，注入 `LaunchRequest.lrEnv`）；② `--policy` / `--network` 仍是 CLI 覆盖（scheduler 按 scope 传）；③ 只读根用 `--ro-bind-try`：宿主可能没有 `/nix/store`，严格 `--ro-bind` 会让**整个沙箱无法启动**（实测过一次，教训）；④ env 白名单之外仍叠加凭据前缀过滤，HOME 永远重定向到 scratch |
+| 代价 | `limits.memoryMiB > 0` 会真的限制沙箱内进程的虚拟内存（`RLIMIT_AS`）；GHC/Node 的虚拟内存远大于 RSS，2 GiB 能让大型构建失败——ADR-008 已把默认设为 0，用户显式设置时接受该后果 |
+| 判据 | 沙箱内 `ulimit -v` 等于 `memoryMiB`；`sandbox.yaml` 里删掉 `/nix/store` 后沙箱仍可启动；`envAllow` 不含的变量不出现在 guest（`--clearenv` + 白名单） |
+| 复审触发 | 需要在同一台机器上按 scope 设不同 limits（届时把 `limits` 移入 `ScopeConfig`） |
+
+## ADR-012：读面 = 整根只读 + 凭据目录空 tmpfs（不做完整 allow-list）
+
+| 项 | 内容 |
+|---|---|
+| 日期 | 2026-10-30 |
+| 状态 | ✅ Accepted |
+| 背景 | 架构 §2 写「文件读：仅 workspace + 工具链只读根」，但渲染器是 `--ro-bind / /` + 环境变量清洗，宿主 `~/.ssh`、`~/.config`、`/data` 在 guest 内全部可读。完整 allow-list（把 `/` 换成白名单 bind）会破坏 `/etc`、`/usr`、`/proc` 等基础路径，维护成本高 |
+| 决策 | 读面保持「整根只读」，另加**静态 deny 列表**（`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.kube`、`~/.docker`、`~/.config/{gh,gcloud}`）：`LaunchRequest.lrDenyReads` 携带**已存在**的路径（纯渲染器不能 `stat`，由 runner/probe 过滤），渲染成 `--dir p --tmpfs p` |
+| 理由 | 与写面的「allow-only」不同，读面的目的是**防凭据外泄**；逐目录屏蔽比整根白名单风险低得多，且列表可审阅（ADR-005 的静态表原则） |
+| 代价 | 新增凭据位置需要手工加入；`~/.ssh` 里的 agent socket 也一并不可见（这是有意的） |
+| 判据 | `read-ssh` 探针用**宿主绝对路径**（`%HOST_HOME%/.ssh/id_rsa`）并失败；宿主 `~/.ssh` 非空时 guest 内 `ls -A ~/.ssh` 为空 |
+| 复审触发 | 需要「只允许读 workspace 与工具链」的强隔离（多租户）时，改整根白名单 + 基础路径静态表 |
+
 ## 决策汇总
 
 | ADR | 决策 | 状态 |
@@ -139,5 +164,7 @@
 | 008 | 配额 prlimit memory-only + wall；pids 留 cgroup | ✅ Accepted（pids 部分由 ADR-010 supersede） |
 | 009 | network：allow=share-net，proxy=代理环境变量（非 ACL） | ✅ Accepted |
 | 010 | pids 用 cgroup v2（探测委派目录 + 每 exec 一个子 cgroup） | ✅ Accepted |
+| 011 | `sandbox.yaml` 的 limits / readonlyRoots / envAllow 是执行期事实来源 | ✅ Accepted |
+| 012 | 读面 = 整根只读 + 凭据目录空 tmpfs（不做完整 allow-list） | ✅ Accepted |
 
 > 以上 10 条若需修改，新增 ADR-011 起并注明 supersede 关系。

@@ -110,7 +110,7 @@ withRunner caps action = do
           })
         (ExclusivePath (AbsolutePath ws))
   _ <- forkIO $
-    runRunner (RunnerConfig hIn hOutW Nothing) Linux.backend caps scope
+    runRunner (RunnerConfig hIn hOutW Nothing []) Linux.backend caps scope
       `finally` putMVar done ()
   let shutdown = do
         _ <- try (writeFrame hInW Shutdown) :: IO (Either SomeException ())
@@ -137,7 +137,11 @@ requireBwrap = do
     Left (SandboxUnavailable _ msg) ->
       pendingWith ("bwrap unavailable: " ++ show msg) >> fail "unreachable"
     Left e -> expectationFailure (show e) >> fail "unreachable"
-    Right c -> pure c
+    Right c
+      | bcEnforcement c == Full -> pure c
+      | otherwise ->
+          pendingWith ("bwrap cannot create a namespace here: "
+                        ++ show (bcEnforcement c)) >> fail "unreachable"
 
 isReady :: Either ProtocolError Frame -> Bool
 isReady (Right Ready{}) = True

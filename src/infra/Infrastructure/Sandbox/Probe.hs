@@ -17,6 +17,7 @@ module Infrastructure.Sandbox.Probe
   ) where
 
 import Control.Exception (SomeException, try)
+import Control.Monad (filterM)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Infrastructure.Sandbox.Backend (Backend, BackendCapabilities, planWith)
@@ -24,7 +25,9 @@ import Infrastructure.Sandbox.Error
 import Infrastructure.Sandbox.Plan
 import Infrastructure.Sandbox.Policy
 import Infrastructure.Sandbox.Scope
+import System.Directory (doesDirectoryExist, getHomeDirectory)
 import System.Exit (ExitCode(..))
+import System.FilePath ((</>))
 import System.Info (os)
 import System.Process (readProcessWithExitCode)
 
@@ -43,7 +46,7 @@ defaultProbes :: [Probe]
 defaultProbes =
   [ Probe "write-workspace" "touch .trha-probe" ExpectSuccess
   , Probe "write-etc" "touch /etc/trha-probe" ExpectFailure
-  , Probe "read-ssh" "cat \"$HOME/.ssh/id_rsa\"" ExpectFailure
+  , Probe "read-ssh" "cat \"%HOST_HOME%/.ssh/id_rsa\"" ExpectFailure
   , Probe "network" "getent hosts example.com" ExpectFailure
   ]
 
@@ -86,48 +89,59 @@ macProbes :: [Probe]
 macProbes =
   [ Probe "write-workspace" "touch .trha-probe" ExpectSuccess
   , Probe "write-etc" "touch /etc/trha-probe" ExpectFailure
-  , Probe "read-ssh" "cat \"$HOME/.ssh/id_rsa\"" ExpectFailure
+  , Probe "read-ssh" "cat \"%HOST_HOME%/.ssh/id_rsa\"" ExpectFailure
   , Probe "network" "curl -s --max-time 3 https://example.com" ExpectFailure
   ]
 
 runProbe :: Backend -> BackendCapabilities -> Scope -> Probe -> IO ProbeResult
-runProbe backend caps scope probe =
+runProbe backend caps scope probe = do
+  hostHome <- getHomeDirectory
+  deny <- existingDenyReads hostHome
+  let probe' = probe
+        { prCommand = T.replace "%HOST_HOME%" (T.pack hostHome) (prCommand probe) }
+      request = LaunchRequest
+        { lrArgv = probeShell <> [prCommand probe']
+        , lrCwd = workspaceOf (scPolicy scope)
+        , lrEnv = []
+        , lrStdin = StdinClosed
+        , lrTimeoutMs = Just 15000
+        , lrDenyReads = deny
+        }
   case planWith backend caps scope request of
-    Left err -> pure (result False (renderError err))
+    Left err -> pure (result probe' False (renderError err))
     Right plan -> case lpArgv plan of
-      [] -> pure (result False "empty argv")
+      [] -> pure (result probe' False "empty argv")
       (cmd : args) -> do
         attempted <- try (readProcessWithExitCode (T.unpack cmd) (map T.unpack args) "")
         pure $ case attempted of
-          Left (e :: SomeException) -> result False (T.pack (show e))
+          Left (e :: SomeException) -> result probe' False (T.pack (show e))
           Right (code, out, err) ->
             let ok = matches (prExpect probe) code
-             in ProbeResult
-                  { probeName = prId probe
-                  , probeOk = ok
-                  , probeExpected = expectText (prExpect probe)
-                  , probeActual = clip (if ok then out else err)
-                  }
-  where
-    request = LaunchRequest
-      { lrArgv = probeShell <> [prCommand probe]
-      , lrCwd = workspaceOf (scPolicy scope)
-      , lrEnv = []
-      , lrStdin = StdinClosed
-      , lrTimeoutMs = Just 15000
-      }
-    -- Windows has no bash: the helper's one-shot form runs the command under
-    -- cmd.exe, so the probe strings use cmd syntax there.
-    probeShell :: [Text]
-    probeShell
-      | os == "mingw32" = ["cmd.exe", "/c"]
-      | otherwise = ["bash", "-lc"]
-    result ok actual = ProbeResult
-      { probeName = prId probe
-      , probeOk = ok
-      , probeExpected = expectText (prExpect probe)
-      , probeActual = actual
-      }
+             in (result probe' ok (clip (if ok then out else err)))
+                  { probeExpected = expectText (prExpect probe) }
+
+-- | Existing credential dirs of the *host* home.  Probes use the host path
+-- deliberately: `$HOME` inside the sandbox is the scratch dir, so a probe that
+-- reads `$HOME/.ssh` would pass without proving anything.
+existingDenyReads :: FilePath -> IO [AbsolutePath]
+existingDenyReads home = do
+  present <- filterM (doesDirectoryExist . (home </>)) defaultDenyReads
+  pure (map (AbsolutePath . (home </>)) present)
+
+-- Windows has no bash: the helper's one-shot form runs the command under
+-- cmd.exe, so the probe strings use cmd syntax there.
+probeShell :: [Text]
+probeShell
+  | os == "mingw32" = ["cmd.exe", "/c"]
+  | otherwise = ["bash", "-lc"]
+
+result :: Probe -> Bool -> Text -> ProbeResult
+result probe ok actual = ProbeResult
+  { probeName = prId probe
+  , probeOk = ok
+  , probeExpected = expectText (prExpect probe)
+  , probeActual = actual
+  }
 
 matches :: ProbeExpect -> ExitCode -> Bool
 matches ExpectSuccess ExitSuccess = True

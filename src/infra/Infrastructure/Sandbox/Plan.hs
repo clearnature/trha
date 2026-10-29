@@ -31,6 +31,10 @@ data LaunchRequest = LaunchRequest
   , lrEnv       :: [(Text, Text)]
   , lrStdin     :: StdinMode
   , lrTimeoutMs :: Maybe Int
+  , lrDenyReads :: [AbsolutePath]
+    -- ^ Paths the backend must hide from the guest (an empty tmpfs is mounted
+    -- over each).  The caller filters to paths that actually exist: the
+    -- renderer is pure and cannot @stat@.
   } deriving (Eq, Show)
 
 data LaunchPlan = LaunchPlan

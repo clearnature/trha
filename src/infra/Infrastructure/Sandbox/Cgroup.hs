@@ -19,6 +19,7 @@ module Infrastructure.Sandbox.Cgroup
   , createPidsCgroup
   , addProcessTo
   , destroyPidsCgroup
+  , detectSystemdRun
   ) where
 
 import Control.Exception (IOException, SomeException, try)
@@ -27,9 +28,11 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory
-  ( createDirectory, doesFileExist, removeDirectory )
+  ( createDirectory, doesFileExist, findExecutable, removeDirectory )
+import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (</>))
 import System.Posix.Process (getProcessID)
+import System.Process (readProcessWithExitCode)
 
 data CgroupSupport = CgroupSupport
   { csBase  :: FilePath
@@ -135,3 +138,22 @@ destroyPidsCgroup :: PidsCgroup -> IO ()
 destroyPidsCgroup (PidsCgroup dir) = do
   _ <- try (removeDirectory dir) :: IO (Either SomeException ())
   pure ()
+
+-- | Does @systemd-run --user --scope@ work here?
+--
+-- This is the only reliable way to put a bwrap child into a pids-limited
+-- cgroup *before* it forks: bwrap 0.11 has no @--cgroup@, and joining after
+-- spawn loses the race (measured: 700 forks succeeded under @pids.max=512@).
+-- systemd creates the scope first, so every child inherits the limit.
+detectSystemdRun :: IO Bool
+detectSystemdRun = do
+  found <- findExecutable "systemd-run"
+  case found of
+    Nothing -> pure False
+    Just _ -> do
+      r <- try (readProcessWithExitCode "systemd-run"
+             ["--user", "--scope", "-p", "TasksMax=4096", "--", "true"] "")
+        :: IO (Either SomeException (ExitCode, String, String))
+      pure $ case r of
+        Right (ExitSuccess, _, _) -> True
+        _ -> False

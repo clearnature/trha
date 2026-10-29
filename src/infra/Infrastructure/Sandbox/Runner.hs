@@ -15,9 +15,10 @@ module Infrastructure.Sandbox.Runner
   ) where
 
 import Control.Concurrent (forkIO, newEmptyMVar, newMVar, putMVar, readMVar, takeMVar, withMVar)
+import Control.Applicative ((<|>))
 import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_)
 import Control.Exception (IOException, SomeException, try)
-import Control.Monad (forM_, void)
+import Control.Monad (filterM, forM_, void, when)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
@@ -32,17 +33,23 @@ import Infrastructure.Sandbox.Audit (AuditEvent(..), AuditKind(..), appendAudit)
 import Infrastructure.Sandbox.Backend
 import Infrastructure.Sandbox.Cgroup
   ( CgroupSupport, PidsCgroup, addProcessTo, createPidsCgroup
-  , destroyPidsCgroup, detectCgroup )
+  , destroyPidsCgroup, detectCgroup, detectSystemdRun )
 import Infrastructure.Sandbox.Error
 import Infrastructure.Sandbox.Plan
-import Infrastructure.Sandbox.Policy (AbsolutePath(..), Enforcement(..), ResourceLimits(..))
+import Infrastructure.Sandbox.Policy
+  ( AbsolutePath(..), Enforcement(..), Policy(..), ResourceLimits(..), WritableRoot(..)
+  , defaultDenyReads )
 import Infrastructure.Sandbox.Protocol
 import Infrastructure.Sandbox.Scope
+import System.Directory (doesDirectoryExist)
+import System.Environment (getEnvironment)
 import System.Exit (ExitCode(..))
+import System.FilePath ((</>))
 import System.IO (Handle, hClose, hFlush, hIsEOF)
+import System.Posix.User (getEffectiveUserID)
 import System.Process
   ( CreateProcess(..), ProcessHandle, StdStream(..), createProcess, getPid
-  , interruptProcessGroupOf, proc, terminateProcess, waitForProcess )
+  , interruptProcessGroupOf, proc, readProcessWithExitCode, terminateProcess, waitForProcess )
 import System.Posix.Types (CPid(..))
 import System.Timeout (timeout)
 
@@ -50,6 +57,11 @@ data RunnerConfig = RunnerConfig
   { rcInput      :: Handle
   , rcOutput     :: Handle
   , rcExperiment :: Maybe Text
+  , rcBaseEnv    :: [(Text, Text)]
+    -- ^ Host environment already filtered by the config's @envAllow@ (always
+    -- including @HOME@, which the renderer turns into @XDG_*@ hints before
+    -- HOME is pointed at the scratch directory).  @exec@ frames may override
+    -- any entry.
   }
 
 readFrame :: Handle -> IO (Either ProtocolError Frame)
@@ -78,6 +90,7 @@ runRunner cfg backend caps scope = do
   -- cgroup support is probed once per runner: pids limits are per cgroup,
   -- unlike RLIMIT_NPROC (see ADR-008).
   cgroupSupport <- detectCgroup
+  sdOk <- detectSystemdRun
   handshake <- readFrame (rcInput cfg)
   case handshake of
     Right Hello{} -> do
@@ -87,33 +100,75 @@ runRunner cfg backend caps scope = do
         , readyCapabilities = Aeson.toJSON (map show (Set.toList (bcCapabilities caps)))
         , readyPid = 0
         }
-      loop sessions cgroupSupport
+      loop sessions cgroupSupport sdOk
     _ -> writeFrame (rcOutput cfg)
       (Error Nothing "protocol" "expected a hello frame")
   where
     out = rcOutput cfg
-    loop sessions cgSupport = do
+    loop sessions cgSupport sdRun = do
       frame <- readFrame (rcInput cfg)
       case frame of
         Right Shutdown -> shutdownAll sessions
         Right (Exec cid argv cwd env mstdin mtimeout) -> do
+          deny <- existingDenyReads (rcBaseEnv cfg)
           let request = LaunchRequest
                 { lrArgv = argv
                 , lrCwd = AbsolutePath (T.unpack cwd)
-                , lrEnv = env
+                -- Host env (envAllow-filtered) first, frame overrides last.
+                , lrEnv = Map.toList (Map.fromList (rcBaseEnv cfg <> env))
                 , lrStdin = StdinClosed
-                , lrTimeoutMs = mtimeout
+                , lrTimeoutMs = mtimeout <|> policyWallMs (scPolicy scope)
+                , lrDenyReads = deny
                 }
           case planWith backend caps scope request of
             Left err -> writeFrame out (Error (Just cid) "policy" (renderError err))
             Right plan ->
-              runExec sessions cgSupport scope caps (rcExperiment cfg) out cid request plan mstdin
-          loop sessions cgSupport
+              runExec sessions cgSupport sdRun scope caps (rcExperiment cfg) out cid request plan mstdin
+          loop sessions cgSupport sdRun
         Right (Stdin cid payload) -> do
           writeStdin sessions cid payload
-          loop sessions cgSupport
-        Right _ -> loop sessions cgSupport
+          loop sessions cgSupport sdRun
+        Right _ -> loop sessions cgSupport sdRun
         Left err -> writeFrame out (Error Nothing "protocol" (T.pack (show err)))
+
+-- | One-shot check immediately before use (see 'runExec'): the startup probe
+-- is not enough, because the user bus can go away while the runner lives.
+systemdRunWorks :: IO Bool
+systemdRunWorks = do
+  r <- timeout 5000000 (readProcessWithExitCode "systemd-run"
+         ["--user", "--scope", "--", "true"] "")
+  pure $ case r of
+    Just (ExitSuccess, _, _) -> True
+    _ -> False
+
+-- | systemd-run needs @XDG_RUNTIME_DIR@ to find the user manager's bus. The
+-- scheduler may have been started without it (cron, bare tmux, ssh).
+addRuntimeDir :: [(Text, Text)] -> IO [(Text, Text)]
+addRuntimeDir env
+  | any ((== "XDG_RUNTIME_DIR") . T.toUpper . fst) env = pure env
+  | otherwise = do
+      uid <- getEffectiveUserID
+      let dir = "/run/user/" <> show uid
+      exists <- doesDirectoryExist dir
+      pure $ if exists then ("XDG_RUNTIME_DIR", T.pack dir) : env else env
+
+-- | Credential dirs that exist in the host home.  Only those can be masked
+-- with an empty tmpfs (bwrap refuses a tmpfs over a missing path).
+existingDenyReads :: [(Text, Text)] -> IO [AbsolutePath]
+existingDenyReads env = case [ v | (k, v) <- env, T.toUpper k == "HOME", not (T.null v) ] of
+  (homeT : _) -> do
+    let home = T.unpack homeT
+    present <- filterM (doesDirectoryExist . (home </>)) defaultDenyReads
+    pure (map (AbsolutePath . (home </>)) present)
+  [] -> pure []
+
+-- | The config's wall limit applies when the @exec@ frame carries none, so a
+-- `sandbox.yaml` `limits.wallMs` is not decorative.
+policyWallMs :: Policy -> Maybe Int
+policyWallMs policy = case policy of
+  WorkspaceWrite wr
+    | rlWallMs (wrLimits wr) > 0 -> Just (rlWallMs (wrLimits wr))
+  _ -> Nothing
 
 renderError :: SandboxError -> Text
 renderError err = case err of
@@ -189,27 +244,65 @@ shutdownAll sessions = do
     _ <- try (hClose (ssStdin s)) :: IO (Either IOException ())
     pure ()
 
-runExec :: MVar (Map.Map Text Session) -> Either Text CgroupSupport -> Scope -> BackendCapabilities -> Maybe Text -> Handle -> Text -> LaunchRequest -> LaunchPlan -> Maybe Text -> IO ()
-runExec sessions cgSupport scope caps experiment out cid request plan initialStdin = case lpArgv plan of
+runExec :: MVar (Map.Map Text Session) -> Either Text CgroupSupport -> Bool -> Scope -> BackendCapabilities -> Maybe Text -> Handle -> Text -> LaunchRequest -> LaunchPlan -> Maybe Text -> IO ()
+runExec sessions cgSupport sdRun scope caps experiment out cid request plan initialStdin = case lpArgv plan of
   [] -> writeFrame out (Error (Just cid) "backend" "empty argv")
   (cmd : args) -> do
     record scope caps experiment AuditAllow
       ("exec " <> T.intercalate " " (lrArgv request))
-    started <- try $ createProcess (proc (T.unpack cmd) (map T.unpack args))
-      { cwd = Just (unAbsolutePath (lrCwd request))
-      , env = Just [(T.unpack k, T.unpack v) | (k, v) <- lrEnv request]
-      , std_in = CreatePipe
-      , std_out = CreatePipe
-      , std_err = CreatePipe
-      , create_group = True
-      }
+    let pids = rlPids (lpLimits plan)
+        -- systemd-run creates the scope *before* the child forks, so the pids
+        -- limit really applies. Joining a cgroup after spawn loses the race
+        -- (measured: 700 forks succeeded under pids.max=512).
+        wantSystemd = pids > 0 && sdRun
+    -- The startup probe can pass and a later call still fail: systemd-run needs
+    -- the *user manager's* bus, which is missing under a bare shell, and which
+    -- drops out under load.  A failed call used to fail the whole command, so
+    -- probe right before use and degrade to spawn+join (audited) instead.
+    useSystemd <- if wantSystemd then systemdRunWorks else pure False
+    when (wantSystemd && not useSystemd) $
+      record scope caps experiment AuditPartial
+        ("pids=" <> T.pack (show pids)
+         <> " not enforced: systemd-run cannot reach the user bus")
+    let (spawnCmd, spawnArgs)
+          | useSystemd =
+              ("systemd-run"
+              , [ "--user", "--scope", "-p", "TasksMax=" <> T.pack (show pids), "--", cmd ]
+                <> args)
+          | otherwise = (cmd, args)
+    when useSystemd $
+      record scope caps experiment AuditAllow
+        ("pids=" <> T.pack (show pids) <> " via systemd-run")
+    started <- try $ do
+      -- systemd-run is a *host* process: it needs the user session bus
+      -- (XDG_RUNTIME_DIR / DBUS_SESSION_BUS_ADDRESS), which the sandbox env
+      -- filter deliberately drops. The child still gets a clean env because
+      -- bwrap re-applies --clearenv inside.
+      hostEnv <- if useSystemd
+        then do
+          raw <- getEnvironment
+          Just <$> addRuntimeDir (map (\(k, v) -> (T.pack k, T.pack v)) raw)
+        else pure Nothing
+      let spawnEnv = case hostEnv of
+            Just e -> e
+            Nothing -> lrEnv request
+      createProcess (proc (T.unpack spawnCmd) (map T.unpack spawnArgs))
+        { cwd = Just (unAbsolutePath (lrCwd request))
+        , env = Just [(T.unpack k, T.unpack v) | (k, v) <- spawnEnv]
+        , std_in = CreatePipe
+        , std_out = CreatePipe
+        , std_err = CreatePipe
+        , create_group = True
+        }
     case started of
       Left (e :: SomeException) ->
         writeFrame out (Error (Just cid) "backend" ("spawn failed: " <> T.pack (show e)))
       Right (mIn, mOut, mErr, ph) -> do
-        -- pids limit via cgroup v2 (ADR-008). Probed once at startup; an
-        -- unusable cgroup degrades to "no limit" and records why.
-        cgroup <- applyPidsLimit cid (lpLimits plan) cgSupport scope caps experiment ph
+        -- systemd already enforced pids; otherwise fall back to joining a
+        -- cgroup (racy, but better than nothing where systemd is absent).
+        cgroup <- if useSystemd
+          then pure Nothing
+          else applyPidsLimit cid (lpLimits plan) cgSupport scope caps experiment ph
         lock <- newMVar ()
         outDone <- newEmptyMVar
         errDone <- newEmptyMVar

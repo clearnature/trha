@@ -8,7 +8,7 @@
 | 里程碑 | 状态 | 说明 |
 |---|---|---|
 | **M0** 接口冻结 | ✅ | `Policy`/`Scope`/`Plan`/`Backend`/`Protocol` 全部落地，`cabal build all` 绿 |
-| **M1** Linux 进程级 | ✅ | bwrap 渲染、runner（NDJSON + 长驻 stdin）、探针、审计、UI/CLI/TUI、执行点接入（bash / run_code / terminal / terminal_open）、Landlock **探测** |
+| **M1** Linux 进程级 | ✅ | bwrap 渲染、runner（NDJSON + 长驻 stdin）、探针、审计、UI/CLI/TUI、执行点接入（bash / run_code / terminal / terminal_open / pwsh）、Landlock **探测**；**2026-10-30 修复**：`sandbox.yaml` 的 limits/readonlyRoots/envAllow 接线（ADR-011）、凭据目录 tmpfs（ADR-012）、XDG 注入让沙箱内能用宿主 cabal store、`status --json` 的 capabilities/platform 用真实 probe |
 | **M2** 多智能体作用域 | ✅ | Scope 树、独立 scratch、命名空间隔离探针、实验批（变体×种子/重试/`repro.json`）、cgroup v2 pids 配额（ADR-010） |
 | **M3** macOS | 🟡 实现完成、**零真机验证** | SBPL 渲染器 + `SandboxMacSpec` + `sandbox-macos.yml` 都在；CI 额度为 0，从未在真 macOS 上跑过 |
 | **M4** Windows | 🟡 可无平台推进的部分已完成 | helper（Rust）21+28 单测、Job Object、路径规范化、受限令牌**已接线**（read-only 生效）、渲染器与探针集合；**真机未验证** |
@@ -67,3 +67,18 @@ scheduler `vitest` 相关文件 → 60 passed。
   `terminal_signal` 会终止整个会话而不是只给前台进程发信号。
 - Windows helper 的 `WRITE_RESTRICTED` 且不给 restricting SID ⇒ 写全拒；
   workspace-write 需要的组合尚未在真机验证。
+- **只读根必须 `--ro-bind-try`**：`readonlyRoots` 里有宿主不存在的路径（本机 `/nix/store`）
+  时，严格 `--ro-bind` 会让 bwrap 直接退出，**沙箱整体不可用**（2026-10-30 踩过，
+  连 agent 自己的 shell 都起不来）。writable 根仍用严格 `--bind`。
+- **沙箱内不能再起沙箱**：bwrap 在已有 user namespace 里建新命名空间会被
+  AppArmor/内核拒绝（`No permissions to create a new namespace`）。Linux/runner 集成
+  spec 因此在本机变成 `pending`（`withFullBwrap` / `requireBwrap` 判 `bcEnforcement`），
+  真绿只能在宿主直接跑 `cabal test trha-sandbox-test`。
+- **HOME 被改成 scratch，工具链靠 XDG 注入**：渲染器把宿主 HOME 转成
+  `XDG_STATE_HOME`/`XDG_CONFIG_HOME`/`XDG_DATA_HOME`（只读）与写 scratch 的
+  `XDG_CACHE_HOME`。cabal 仍会用 `getpwuid` 写 `~/.cache/cabal/logs`，只读时打印
+  `withFile: permission denied` 警告（不影响退出码）。
+- **`limits.memoryMiB > 0` 真的会限制构建**：`RLIMIT_AS` 是虚拟内存，2 GiB 能把
+  GHC 编译逼死；默认 0（ADR-008）。要在沙箱里编译大项目，先把它设 0。
+- **嵌套宿主上 `sandbox status` 报 `Partial`** 是预期的（probe 跑不了 `--unshare-all`），
+  不代表后端坏；看 notes 里的原因。

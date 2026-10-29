@@ -374,6 +374,20 @@ export async function runExtraTool(
     // PS7 (pwsh) first; Windows PowerShell 5 (powershell.exe) as the win32 fallback
     let r: { code: number; out: string } = { code: 127, out: '' };
     for (const exe of powerShellCandidates()) {
+      // T1.6 execution point #5: never spawn unconfined once the seam is on.
+      // Windows has no backend yet (ADR-007), so this fails closed with
+      // SandboxUnavailable instead of silently running outside the boundary.
+      if (sandboxEnabled()) {
+        try {
+          const res = await sandboxedSpawn(defaultSandboxScope(host.cwd()), {
+            argv: [exe, '-NoLogo', '-Command', cmd],
+            cwd: host.cwd(),
+          });
+          return clip(`exit ${res.code ?? -1}\n${res.stdout}${res.stderr}`);
+        } catch (e) {
+          return `ERROR: sandbox unavailable for pwsh: ${(e as Error).message}`;
+        }
+      }
       r = await new Promise<{ code: number; out: string }>(resolve => {
         const child = spawn(exe, ['-NoLogo', '-Command', cmd], { cwd: host.cwd(), env: hardenedEnv() });
         const out: string[] = [];

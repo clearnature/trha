@@ -16,6 +16,7 @@ module LLM.Stream
   , streamPostSse
   , openAICompatStreamCall
   , streamTimeoutMs
+  , streamFirstByteTimeoutMs
   ) where
 
 import Control.Exception (try, SomeException)
@@ -82,11 +83,12 @@ streamChatCompletion cfg onEvent = do
             ]
         , responseTimeout = responseTimeoutNone
         }
-  ms <- streamTimeoutMs
-  stalledRef <- newIORef False
+  idleMs <- streamTimeoutMs
+  firstMs <- streamFirstByteTimeoutMs
+  stalledRef <- newIORef (Nothing :: Maybe Text)
   -- Outer budget is only a backstop against "always trickling, never ending";
-  -- the per-read idle timeout below fires first for a dead provider.
-  let totalMs = ms * 60
+  -- the per-read budgets below fire first for a dead provider.
+  let totalMs = idleMs * 60
   result <- try $ timeout (totalMs * 1000) $ withResponse request mgr $ \response -> do
     let status = statusCode (responseStatus response)
     if status >= 400
@@ -96,32 +98,51 @@ streamChatCompletion cfg onEvent = do
       else do
         let reader = responseBody response
         bufferRef <- newIORef BS.empty
-        drainReader ms (scFormat cfg) onEvent reader bufferRef stalledRef
+        drainReader firstMs idleMs (scFormat cfg) onEvent reader bufferRef stalledRef
         return (Right ())
   stalled <- readIORef stalledRef
   case result of
     Left (ex :: SomeException) -> return $ Left (show ex)
-    Right Nothing -> return $ Left ("stream timed out after " <> show totalMs <> " ms")
-    Right (Just r)
-      | stalled -> return $ Left ("stream timed out after " <> show ms <> " ms of silence")
-      | otherwise -> return r
+    Right Nothing -> return $ Left ("stream timed out after " <> show totalMs <> " ms (total budget)")
+    Right (Just r) -> return $ case stalled of
+      Just "first-byte" -> Left ("stream timed out: no first byte within " <> show firstMs <> " ms")
+      Just _ -> Left ("stream timed out: no data for " <> show idleMs <> " ms mid-stream")
+      Nothing -> r
 
--- | How long a streamed call may stay silent before it is abandoned.
+-- | How long a stream may stay silent *after the first byte* before it is
+-- abandoned.
 --
 -- Enforced *per read* (`drainReader` / `streamPostSse`'s `go`): a slow but
 -- live answer may legitimately take minutes, while silence for this long means
 -- the provider is gone. The outer budget is only a backstop (@ms * 60@), so a
 -- long generation is never cut short just for being long.
 --
--- @responseTimeoutNone@ means a stalled provider would otherwise hang the whole
--- step forever, which is why this bound exists at all. Overridable for tests
--- and for slow deployments (@TRHA_STREAM_TIMEOUT_MS@).
+-- The wait for the *first* byte uses the larger
+-- 'streamFirstByteTimeoutMs' budget instead (provider queuing, prompt
+-- processing, large-context upload).  @responseTimeoutNone@ means a stalled
+-- provider would otherwise hang the whole step forever, which is why these
+-- bounds exist at all. Overridable for tests and slow deployments
+-- (@TRHA_STREAM_TIMEOUT_MS@).
 streamTimeoutMs :: IO Int
-streamTimeoutMs = do
-  raw <- lookupEnv "TRHA_STREAM_TIMEOUT_MS"
+streamTimeoutMs = envMs "TRHA_STREAM_TIMEOUT_MS" 45000
+
+-- | How long the *first* byte may take.
+--
+-- Waiting for the first token covers provider queuing, prompt processing and
+-- uploading a large context, so it is a different failure from mid-stream
+-- silence and gets a larger budget.  With one shared 20 s budget, a large
+-- session could time out before the provider said anything at all (observed:
+-- "stream timed out" on a long turn, with no partial output to rescue).
+streamFirstByteTimeoutMs :: IO Int
+streamFirstByteTimeoutMs = envMs "TRHA_STREAM_FIRST_BYTE_TIMEOUT_MS" 90000
+
+-- | Positive milliseconds from an environment variable, else the default.
+envMs :: String -> Int -> IO Int
+envMs name dflt = do
+  raw <- lookupEnv name
   pure $ case raw >>= readMaybe of
     Just n | n > 0 -> n
-    _              -> 20000
+    _              -> dflt
 
 -- | DeepSeek streaming (SSE, OpenAI-compatible)
 streamDeepSeek :: String -> Text -> [Message] -> (StreamEvent -> IO ()) -> IO (Either String ())
@@ -178,25 +199,30 @@ streamAnthropic apiKey model messages onEvent = do
     roleToText Assistant = "assistant"
 
 -- Internal: chunked reader with line buffering
-drainReader :: Int -> StreamFormat -> (StreamEvent -> IO ()) -> BodyReader -> IORef BS.ByteString -> IORef Bool -> IO ()
-drainReader idleMs fmt onEvent reader bufferRef stalledRef = do
-  -- The budget is per read, not per stream: a long answer may legitimately
-  -- take minutes, while a provider that stops sending for `idleMs` is dead.
-  next <- timeout (idleMs * 1000) (brRead reader)
-  case next of
-    Nothing -> writeIORef stalledRef True
-    Just chunk
-      | BS.null chunk -> do
-          remainder <- readIORef bufferRef
-          when (not $ BS.null remainder) $
-            dispatchLine fmt onEvent remainder
-      | otherwise -> do
-          buffer <- readIORef bufferRef
-          let combined = buffer <> chunk
-          let (lines', remainder) = splitLines combined
-          writeIORef bufferRef remainder
-          mapM_ (dispatchLine fmt onEvent) lines'
-          drainReader idleMs fmt onEvent reader bufferRef stalledRef
+drainReader :: Int -> Int -> StreamFormat -> (StreamEvent -> IO ()) -> BodyReader -> IORef BS.ByteString -> IORef (Maybe Text) -> IO ()
+drainReader firstMs idleMs fmt onEvent reader bufferRef stalledRef = go True
+  where
+    -- Two budgets, because "the provider is still thinking" and "the provider
+    -- is gone" are different failures.  The first byte has to wait for
+    -- queuing, prompt processing and upload of a large context; after that,
+    -- silence for `idleMs` means the connection is dead.
+    go isFirst = do
+      let budget = if isFirst then firstMs else idleMs
+      next <- timeout (budget * 1000) (brRead reader)
+      case next of
+        Nothing -> writeIORef stalledRef (Just (if isFirst then "first-byte" else "idle"))
+        Just chunk
+          | BS.null chunk -> do
+              remainder <- readIORef bufferRef
+              when (not $ BS.null remainder) $
+                dispatchLine fmt onEvent remainder
+          | otherwise -> do
+              buffer <- readIORef bufferRef
+              let combined = buffer <> chunk
+              let (lines', remainder) = splitLines combined
+              writeIORef bufferRef remainder
+              mapM_ (dispatchLine fmt onEvent) lines'
+              go False
 
 splitLines :: BS.ByteString -> ([BS.ByteString], BS.ByteString)
 splitLines bs = go bs []
@@ -344,9 +370,10 @@ streamPostSse url headers body onFrame = do
             ("Accept", "text/event-stream") : ("Content-Type", "application/json") : headers
         , responseTimeout = responseTimeoutNone
         }
-  ms <- streamTimeoutMs
-  stalledRef <- newIORef False
-  let totalMs = ms * 60
+  idleMs <- streamTimeoutMs
+  firstMs <- streamFirstByteTimeoutMs
+  stalledRef <- newIORef (Nothing :: Maybe Text)
+  let totalMs = idleMs * 60
   result <- try $ timeout (totalMs * 1000) $ withResponse req mgr $ \resp -> do
     let code = statusCode (responseStatus resp)
     if code >= 400
@@ -354,22 +381,25 @@ streamPostSse url headers body onFrame = do
         errBody <- brReadSome (responseBody resp) 4096
         return $ Left ("HTTP " <> T.pack (show code) <> ": " <> TE.decodeUtf8With lenientDecode (BSL.toStrict errBody))
       else do
-        go ms stalledRef (responseBody resp) ""
+        go firstMs idleMs stalledRef (responseBody resp) "" True
         return (Right ())
   stalled <- readIORef stalledRef
   case result of
     Left (ex :: SomeException) -> return $ Left (T.pack (show ex))
-    Right Nothing -> return $ Left (T.pack ("stream timed out after " <> show totalMs <> " ms"))
-    Right (Just r)
-      | stalled -> return $ Left (T.pack ("stream timed out after " <> show ms <> " ms of silence"))
-      | otherwise -> return r
+    Right Nothing -> return $ Left (T.pack ("stream timed out after " <> show totalMs <> " ms (total budget)"))
+    Right (Just r) -> return $ case stalled of
+      Just "first-byte" -> Left (T.pack ("stream timed out: no first byte within " <> show firstMs <> " ms"))
+      Just _ -> Left (T.pack ("stream timed out: no data for " <> show idleMs <> " ms mid-stream"))
+      Nothing -> r
   where
-    go idleMs stalled reader buf = do
-      -- Idle timeout per read, mirroring drainReader: a slow-but-live stream
-      -- must not be killed just because the answer is long.
-      next <- timeout (idleMs * 1000) (brRead reader)
+    -- Two budgets, mirroring drainReader: the wait for the first byte includes
+    -- provider queuing and prompt processing, so it gets a larger allowance
+    -- than mid-stream silence.
+    go firstMs idleMs stalled reader buf isFirst = do
+      let budget = if isFirst then firstMs else idleMs
+      next <- timeout (budget * 1000) (brRead reader)
       case next of
-        Nothing -> writeIORef stalled True
+        Nothing -> writeIORef stalled (Just (if isFirst then "first-byte" else "idle"))
         Just chunk
           | BS.null chunk -> pure ()
           | otherwise -> do
@@ -377,7 +407,7 @@ streamPostSse url headers body onFrame = do
                   allFrames = buf <> text
                   (frames, rest) = splitFrames allFrames
               mapM_ dispatch frames
-              go idleMs stalled reader rest
+              go firstMs idleMs stalled reader rest False
     splitFrames t = case T.breakOn "\n\n" t of
       (frame, rest) | T.null rest -> ([], frame)
                     | otherwise   -> let (f, r) = splitFrames (T.drop 2 rest) in (frame : f, r)

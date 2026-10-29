@@ -325,11 +325,14 @@ export async function sandboxedSpawn(
   ];
   const child = spawn(runner, args, { stdio: ['pipe', 'pipe', 'pipe'] });
   // Preserve the caller's PATH so host toolchains (ghcup/cabal/fnm) remain
-  // reachable; the runner still filters credentials and sets HOME.
+  // reachable; the runner still filters credentials and sets HOME.  HOME is
+  // passed as a *hint only*: the renderer turns it into XDG_STATE_HOME etc.
+  // (host package store, read-only) before HOME is pointed at scratch.
   const withEnv: SandboxRequest = {
     ...request,
     env: {
       PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+      HOME: process.env.HOME ?? os.homedir(),
       ...request.env,
     },
   };
@@ -401,6 +404,7 @@ export async function sandboxedInteractive(
   const stdin = child.stdin;
   const envPairs = Object.entries({
     PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+    HOME: process.env.HOME ?? os.homedir(),
     ...request.env,
   }).map(([name, value]) => ({ name, value }));
 

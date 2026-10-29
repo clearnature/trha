@@ -24,6 +24,7 @@ module Infrastructure.Sandbox.Policy
   , Policy(..)
   , emptyReadOnlyPolicy
   , defaultResourceLimits
+  , defaultDenyReads
     -- * Capabilities and enforcement
   , Capability(..)
   , Enforcement(..)
@@ -40,7 +41,7 @@ import Data.List (isPrefixOf)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
-import System.FilePath (addTrailingPathSeparator, normalise)
+import System.FilePath ((</>), addTrailingPathSeparator, normalise)
 
 -- | An absolute path in the execution world. Callers are responsible for
 -- canonicalisation before constructing one; platform backends re-check it.
@@ -77,6 +78,15 @@ defaultResourceLimits = ResourceLimits
   , rlMemoryMiB = 0  -- opt-in: RLIMIT_AS caps virtual memory
   , rlWallMs = 600000
   }
+
+-- | Credential directories hidden from every sandbox.  Kept static (ADR-005:
+-- no runtime probing) and filtered by the caller to paths that exist, because
+-- an empty tmpfs can only be mounted over an existing path.
+defaultDenyReads :: [FilePath]
+defaultDenyReads =
+  [ ".ssh", ".aws", ".gnupg", ".kube", ".docker"
+  , ".config" </> "gh", ".config" </> "gcloud"
+  ]
 
 data ReadOnlyPolicy = ReadOnlyPolicy
   { roReadableRoots :: [AbsolutePath]
