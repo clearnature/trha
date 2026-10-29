@@ -38,10 +38,10 @@ import Infrastructure.Sandbox.Error
 import Infrastructure.Sandbox.Plan
 import Infrastructure.Sandbox.Policy
   ( AbsolutePath(..), Enforcement(..), Policy(..), ResourceLimits(..), WritableRoot(..)
-  , defaultDenyReads )
+  , defaultDenyFiles, defaultDenyReads )
 import Infrastructure.Sandbox.Protocol
 import Infrastructure.Sandbox.Scope
-import System.Directory (doesDirectoryExist)
+import System.Directory (doesDirectoryExist, doesFileExist)
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
@@ -110,7 +110,7 @@ runRunner cfg backend caps scope = do
       case frame of
         Right Shutdown -> shutdownAll sessions
         Right (Exec cid argv cwd env mstdin mtimeout) -> do
-          deny <- existingDenyReads (rcBaseEnv cfg)
+          (denyDirs, denyFiles) <- existingDenyReads (rcBaseEnv cfg)
           let request = LaunchRequest
                 { lrArgv = argv
                 , lrCwd = AbsolutePath (T.unpack cwd)
@@ -118,7 +118,8 @@ runRunner cfg backend caps scope = do
                 , lrEnv = Map.toList (Map.fromList (rcBaseEnv cfg <> env))
                 , lrStdin = StdinClosed
                 , lrTimeoutMs = mtimeout <|> policyWallMs (scPolicy scope)
-                , lrDenyReads = deny
+                , lrDenyReads = denyDirs
+                , lrDenyFiles = denyFiles
                 }
           case planWith backend caps scope request of
             Left err -> writeFrame out (Error (Just cid) "policy" (renderError err))
@@ -152,15 +153,18 @@ addRuntimeDir env
       exists <- doesDirectoryExist dir
       pure $ if exists then ("XDG_RUNTIME_DIR", T.pack dir) : env else env
 
--- | Credential dirs that exist in the host home.  Only those can be masked
--- with an empty tmpfs (bwrap refuses a tmpfs over a missing path).
-existingDenyReads :: [(Text, Text)] -> IO [AbsolutePath]
+-- | Credential paths that exist in the host home, split into directories
+-- (masked with an empty tmpfs) and files (masked by binding @/dev/null@).
+-- bwrap refuses a mount over a missing path, so both lists are filtered.
+existingDenyReads :: [(Text, Text)] -> IO ([AbsolutePath], [AbsolutePath])
 existingDenyReads env = case [ v | (k, v) <- env, T.toUpper k == "HOME", not (T.null v) ] of
   (homeT : _) -> do
     let home = T.unpack homeT
-    present <- filterM (doesDirectoryExist . (home </>)) defaultDenyReads
-    pure (map (AbsolutePath . (home </>)) present)
-  [] -> pure []
+    dirs <- filterM (doesDirectoryExist . (home </>)) defaultDenyReads
+    files <- filterM (doesFileExist . (home </>)) defaultDenyFiles
+    pure ( map (AbsolutePath . (home </>)) dirs
+         , map (AbsolutePath . (home </>)) files )
+  [] -> pure ([], [])
 
 -- | The config's wall limit applies when the @exec@ frame carries none, so a
 -- `sandbox.yaml` `limits.wallMs` is not decorative.

@@ -73,6 +73,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
               , lrStdin = StdinClosed
               , lrTimeoutMs = Just 60000
               , lrDenyReads = []
+              , lrDenyFiles = []
               }
         case planWith Linux.backend c (probeScope ws) request of
           Left e -> expectationFailure (show e)
@@ -110,6 +111,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
               , lrStdin = StdinClosed
               , lrTimeoutMs = Just 30000
               , lrDenyReads = []
+              , lrDenyFiles = []
               }
         case planWith Linux.backend c scope request of
           Left e -> expectationFailure (show e)
@@ -140,6 +142,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
               , lrStdin = StdinClosed
               , lrTimeoutMs = Just 30000
               , lrDenyReads = []
+              , lrDenyFiles = []
               }
         case planWith Linux.backend c (probeScope ws) request of
           Left e -> expectationFailure (show e)
@@ -196,6 +199,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
                   , lrStdin = StdinClosed
                   , lrTimeoutMs = Just 30000
                   , lrDenyReads = []
+                  , lrDenyFiles = []
                   }
             case planWith Linux.backend c scopeA request of
               Left e -> expectationFailure (show e)

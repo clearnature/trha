@@ -32,9 +32,12 @@ data LaunchRequest = LaunchRequest
   , lrStdin     :: StdinMode
   , lrTimeoutMs :: Maybe Int
   , lrDenyReads :: [AbsolutePath]
-    -- ^ Paths the backend must hide from the guest (an empty tmpfs is mounted
-    -- over each).  The caller filters to paths that actually exist: the
-    -- renderer is pure and cannot @stat@.
+    -- ^ Directories the backend must hide from the guest (an empty tmpfs is
+    -- mounted over each).  The caller filters to paths that actually exist:
+    -- the renderer is pure and cannot @stat@.
+  , lrDenyFiles :: [AbsolutePath]
+    -- ^ Credential *files* to hide.  A tmpfs cannot mask a file, so backends
+    -- bind @/dev/null@ over these instead.
   } deriving (Eq, Show)
 
 data LaunchPlan = LaunchPlan

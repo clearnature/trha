@@ -102,9 +102,13 @@ renderLinux scope req = do
       -- Credential dirs stay readable through `--ro-bind / /` otherwise; an
       -- empty tmpfs makes them disappear from the sandbox view (T1.2).  The
       -- caller already filtered to existing paths (the renderer is pure).
-      denyArgs = concatMap one (lrDenyReads req)
+      denyArgs = concatMap one (lrDenyReads req) <> concatMap oneFile (lrDenyFiles req)
       one (AbsolutePath p) =
         let t = T.pack p in ["--dir", t, "--tmpfs", t]
+      -- A file cannot be masked with a tmpfs; binding /dev/null over it makes
+      -- the path unreadable without changing its type.
+      oneFile (AbsolutePath p) =
+        let t = T.pack p in ["--ro-bind", "/dev/null", t]
       -- Read-only roots may be absent (e.g. /nix/store on a non-Nix host), so
       -- they use --ro-bind-try; writable roots stay strict (--bind) because a
       -- missing workspace must fail loudly instead of silently vanishing.

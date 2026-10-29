@@ -25,6 +25,7 @@ module Infrastructure.Sandbox.Policy
   , emptyReadOnlyPolicy
   , defaultResourceLimits
   , defaultDenyReads
+  , defaultDenyFiles
     -- * Capabilities and enforcement
   , Capability(..)
   , Enforcement(..)
@@ -86,6 +87,22 @@ defaultDenyReads :: [FilePath]
 defaultDenyReads =
   [ ".ssh", ".aws", ".gnupg", ".kube", ".docker"
   , ".config" </> "gh", ".config" </> "gcloud"
+  , ".config" </> "@deepseek-ai", ".config" </> "Codex"
+  , ".config" </> "gist"
+  ]
+
+-- | Credential *files* hidden from every sandbox.
+--
+-- A file cannot be masked with a tmpfs, so the renderer binds @/dev/null@ over
+-- it instead. Measured gaps (docs/evidence/sandbox-ubuntu-probe-2026-10-30.md):
+-- plaintext tokens in @~/.git-credentials@ and API keys in a
+-- @claude_code_zai_env.sh@-style script were readable inside the sandbox
+-- because only directories were listed before.
+defaultDenyFiles :: [FilePath]
+defaultDenyFiles =
+  [ ".git-credentials", ".netrc", "_netrc"
+  , ".config" </> "git" </> "credentials"
+  , "claude_code_zai_env.sh"
   ]
 
 data ReadOnlyPolicy = ReadOnlyPolicy

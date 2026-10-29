@@ -106,6 +106,7 @@ runProbe backend caps scope probe = do
         , lrStdin = StdinClosed
         , lrTimeoutMs = Just 15000
         , lrDenyReads = deny
+        , lrDenyFiles = []
         }
   case planWith backend caps scope request of
     Left err -> pure (result probe' False (renderError err))

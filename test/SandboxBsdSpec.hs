@@ -92,6 +92,7 @@ writeRequest = LaunchRequest
   , lrStdin = StdinClosed
   , lrTimeoutMs = Just 5000
   , lrDenyReads = []
+  , lrDenyFiles = []
   }
 
 writePolicy :: Policy
