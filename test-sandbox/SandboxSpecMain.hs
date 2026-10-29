@@ -10,10 +10,12 @@ import Test.Hspec
 import AuditSpec (auditSpec)
 import ConfigSpec (configSpec)
 import ExperimentSpec (experimentSpec)
+import SandboxCgroupSpec (sandboxCgroupSpec)
 import SandboxLinuxSpec (sandboxLinuxSpec)
 import SandboxMacSpec (sandboxMacSpec)
 import SandboxRunnerSpec (sandboxRunnerSpec)
 import SandboxSpec (sandboxSpec)
+import SandboxWindowsSpec (sandboxWindowsSpec)
 
 main :: IO ()
 main = hspec $ do
@@ -21,6 +23,8 @@ main = hspec $ do
   sandboxLinuxSpec
   sandboxMacSpec
   sandboxRunnerSpec
+  sandboxCgroupSpec
+  sandboxWindowsSpec
   auditSpec
   experimentSpec
   configSpec

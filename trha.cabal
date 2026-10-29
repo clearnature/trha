@@ -156,6 +156,7 @@ library trha-infra
     Infrastructure.Sandbox.Audit
     Infrastructure.Sandbox.Experiment
     Infrastructure.Sandbox.Process
+    Infrastructure.Sandbox.Cgroup
     Infrastructure.Telemetry.Metrics
   hs-source-dirs:   src/infra
   build-depends:    base ^>=4.22
@@ -312,6 +313,8 @@ test-suite trha-sandbox-test
                   , SandboxLinuxSpec
                   , SandboxMacSpec
                   , SandboxRunnerSpec
+                  , SandboxCgroupSpec
+                  , SandboxWindowsSpec
                   , AuditSpec
                   , ExperimentSpec
                   , ConfigSpec

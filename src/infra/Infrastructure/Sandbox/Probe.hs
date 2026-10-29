@@ -9,6 +9,8 @@ module Infrastructure.Sandbox.Probe
   , ProbeExpect(..)
   , defaultProbes
   , macProbes
+  , windowsProbes
+  , windowsReadOnlyProbes
   , runProbes
   , runProbesWith
   , runProbe
@@ -23,6 +25,7 @@ import Infrastructure.Sandbox.Plan
 import Infrastructure.Sandbox.Policy
 import Infrastructure.Sandbox.Scope
 import System.Exit (ExitCode(..))
+import System.Info (os)
 import System.Process (readProcessWithExitCode)
 
 data ProbeExpect = ExpectSuccess | ExpectFailure
@@ -44,7 +47,33 @@ defaultProbes =
   , Probe "network" "getent hosts example.com" ExpectFailure
   ]
 
-runProbes :: Backend -> BackendCapabilities -> Scope -> IO [ProbeResult]
+-- | Windows probe set (T4.6). Commands are `cmd.exe /c` syntax; `runProbe`
+-- picks the platform shell, so each probe still goes through `renderWindows`
+-- and can never take a weaker path than a real tool call.
+--
+-- `write-workspace` must succeed under workspace-write; `write-system` and
+-- `read-user-secret` must fail. A junction pointing outside the workspace is
+-- the T4.5 escape hatch: it has to fail too.
+windowsProbes :: [Probe]
+windowsProbes =
+  [ Probe "write-workspace" "echo probe> .trha-probe" ExpectSuccess
+  , Probe "write-system" "echo probe > C:\\Windows\\trha-probe" ExpectFailure
+  , Probe "read-user-secret" "type \"%USERPROFILE%\\.ssh\\id_rsa\"" ExpectFailure
+  , Probe "junction-escape" "type \"%TRHA_JUNCTION%\\trha-probe-outside\"" ExpectFailure
+  , Probe "network" "curl -s --max-time 3 https://example.com" ExpectFailure
+  ]
+
+-- | The same set under `read-only`: even the workspace write must fail.
+windowsReadOnlyProbes :: [Probe]
+windowsReadOnlyProbes =
+  [ Probe "write-workspace" "echo probe> .trha-probe" ExpectFailure
+  , Probe "write-system" "echo probe > C:\\Windows\\trha-probe" ExpectFailure
+  , Probe "read-user-secret" "type \"%USERPROFILE%\\.ssh\\id_rsa\"" ExpectFailure
+  , Probe "junction-escape" "type \"%TRHA_JUNCTION%\\trha-probe-outside\"" ExpectFailure
+  , Probe "network" "curl -s --max-time 3 https://example.com" ExpectFailure
+  ]
+
+
 runProbes backend caps scope = runProbesWith backend caps scope defaultProbes
 
 runProbesWith :: Backend -> BackendCapabilities -> Scope -> [Probe] -> IO [ProbeResult]
@@ -81,12 +110,18 @@ runProbe backend caps scope probe =
                   }
   where
     request = LaunchRequest
-      { lrArgv = ["bash", "-lc", prCommand probe]
+      { lrArgv = probeShell <> [prCommand probe]
       , lrCwd = workspaceOf (scPolicy scope)
       , lrEnv = []
       , lrStdin = StdinClosed
       , lrTimeoutMs = Just 15000
       }
+    -- Windows has no bash: the helper's one-shot form runs the command under
+    -- cmd.exe, so the probe strings use cmd syntax there.
+    probeShell :: [Text]
+    probeShell
+      | os == "mingw32" = ["cmd.exe", "/c"]
+      | otherwise = ["bash", "-lc"]
     result ok actual = ProbeResult
       { probeName = prId probe
       , probeOk = ok
