@@ -98,7 +98,10 @@ renderLinux scope req = do
       -- this, cabal cannot see its package store and every dependency looks
       -- like "requires build".
       cacheDir = T.pack (guestHome scope) <> "/.cache"
-      cacheArgs = ["--dir", cacheDir]
+      -- cabal writes ~/.cache/cabal/logs/build.log before compiling anything;
+      -- --dir only creates the leaf it names, so the log directory has to be
+      -- listed explicitly or every in-sandbox build dies at the log step.
+      cacheArgs = ["--dir", cacheDir, "--dir", cacheDir <> "/cabal/logs"]
       -- Credential dirs stay readable through `--ro-bind / /` otherwise; an
       -- empty tmpfs makes them disappear from the sandbox view (T1.2).  The
       -- caller already filtered to existing paths (the renderer is pure).
