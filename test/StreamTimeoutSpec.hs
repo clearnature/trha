@@ -10,6 +10,7 @@
 module StreamTimeoutSpec (streamTimeoutSpec) where
 
 import Control.Concurrent (threadDelay)
+import Control.Monad (forM_)
 import Data.Aeson (object, (.=))
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as T
@@ -31,8 +32,33 @@ stallingApp _req respond =
     flush
     threadDelay 5000000   -- far longer than the test's timeout
 
+-- | Eight frames, 100 ms apart: the stream lives ~800 ms, which is longer than
+-- the 300 ms budget in the test. Under a *total* timeout this would be killed;
+-- under the per-read idle timeout it must survive.
+slowApp :: Application
+slowApp _req respond =
+  respond $ responseStream status200 [("Content-Type", "text/event-stream")] $ \write flush -> do
+    forM_ [1 :: Int .. 8] $ \i -> do
+      write $ Builder.string8 ("data: {\"choices\":[{\"delta\":{\"content\":\"t" <> show i <> "\"}}]}\n\n")
+      flush
+      threadDelay 100000
+    write $ Builder.string8 "data: [DONE]\n\n"
+    flush
+
 streamTimeoutSpec :: Spec
 streamTimeoutSpec = describe "stream timeouts" $ do
+  it "keeps a slow but live stream instead of enforcing a total deadline" $ do
+    setEnv "TRHA_STREAM_TIMEOUT_MS" "300"
+    testWithApplication (pure slowApp) $ \port -> do
+      turn <- Stream.openAICompatStreamCall
+        ("http://127.0.0.1:" <> show port <> "/v1/chat/completions")
+        [("Authorization", "Bearer k")]
+        (object ["model" .= ("test" :: String), "stream" .= True])
+        (\_ -> pure ())
+      unsetEnv "TRHA_STREAM_TIMEOUT_MS"
+      ctError turn `shouldBe` Nothing
+      ctContent turn `shouldBe` "t1t2t3t4t5t6t7t8"
+
   it "abandons a silent stream and reports the timeout" $ do
     setEnv "TRHA_STREAM_TIMEOUT_MS" "300"
     testWithApplication (pure stallingApp) $ \port -> do

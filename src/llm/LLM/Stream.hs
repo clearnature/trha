@@ -83,7 +83,11 @@ streamChatCompletion cfg onEvent = do
         , responseTimeout = responseTimeoutNone
         }
   ms <- streamTimeoutMs
-  result <- try $ timeout (ms * 1000) $ withResponse request mgr $ \response -> do
+  stalledRef <- newIORef False
+  -- Outer budget is only a backstop against "always trickling, never ending";
+  -- the per-read idle timeout below fires first for a dead provider.
+  let totalMs = ms * 60
+  result <- try $ timeout (totalMs * 1000) $ withResponse request mgr $ \response -> do
     let status = statusCode (responseStatus response)
     if status >= 400
       then do
@@ -92,18 +96,26 @@ streamChatCompletion cfg onEvent = do
       else do
         let reader = responseBody response
         bufferRef <- newIORef BS.empty
-        drainReader (scFormat cfg) onEvent reader bufferRef
+        drainReader ms (scFormat cfg) onEvent reader bufferRef stalledRef
         return (Right ())
+  stalled <- readIORef stalledRef
   case result of
     Left (ex :: SomeException) -> return $ Left (show ex)
-    Right Nothing -> return $ Left ("stream timed out after " <> show ms <> " ms")
-    Right (Just r) -> return r
+    Right Nothing -> return $ Left ("stream timed out after " <> show totalMs <> " ms")
+    Right (Just r)
+      | stalled -> return $ Left ("stream timed out after " <> show ms <> " ms of silence")
+      | otherwise -> return r
 
 -- | How long a streamed call may stay silent before it is abandoned.
 --
--- @responseTimeoutNone@ means a stalled provider hangs the whole step forever,
--- so the read is bounded here instead. Overridable for tests and for slow
--- deployments.
+-- Enforced *per read* (`drainReader` / `streamPostSse`'s `go`): a slow but
+-- live answer may legitimately take minutes, while silence for this long means
+-- the provider is gone. The outer budget is only a backstop (@ms * 60@), so a
+-- long generation is never cut short just for being long.
+--
+-- @responseTimeoutNone@ means a stalled provider would otherwise hang the whole
+-- step forever, which is why this bound exists at all. Overridable for tests
+-- and for slow deployments (@TRHA_STREAM_TIMEOUT_MS@).
 streamTimeoutMs :: IO Int
 streamTimeoutMs = do
   raw <- lookupEnv "TRHA_STREAM_TIMEOUT_MS"
@@ -166,21 +178,25 @@ streamAnthropic apiKey model messages onEvent = do
     roleToText Assistant = "assistant"
 
 -- Internal: chunked reader with line buffering
-drainReader :: StreamFormat -> (StreamEvent -> IO ()) -> BodyReader -> IORef BS.ByteString -> IO ()
-drainReader fmt onEvent reader bufferRef = do
-  chunk <- brRead reader
-  if BS.null chunk
-    then do
-      remainder <- readIORef bufferRef
-      when (not $ BS.null remainder) $
-        dispatchLine fmt onEvent remainder
-    else do
-      buffer <- readIORef bufferRef
-      let combined = buffer <> chunk
-      let (lines', remainder) = splitLines combined
-      writeIORef bufferRef remainder
-      mapM_ (dispatchLine fmt onEvent) lines'
-      drainReader fmt onEvent reader bufferRef
+drainReader :: Int -> StreamFormat -> (StreamEvent -> IO ()) -> BodyReader -> IORef BS.ByteString -> IORef Bool -> IO ()
+drainReader idleMs fmt onEvent reader bufferRef stalledRef = do
+  -- The budget is per read, not per stream: a long answer may legitimately
+  -- take minutes, while a provider that stops sending for `idleMs` is dead.
+  next <- timeout (idleMs * 1000) (brRead reader)
+  case next of
+    Nothing -> writeIORef stalledRef True
+    Just chunk
+      | BS.null chunk -> do
+          remainder <- readIORef bufferRef
+          when (not $ BS.null remainder) $
+            dispatchLine fmt onEvent remainder
+      | otherwise -> do
+          buffer <- readIORef bufferRef
+          let combined = buffer <> chunk
+          let (lines', remainder) = splitLines combined
+          writeIORef bufferRef remainder
+          mapM_ (dispatchLine fmt onEvent) lines'
+          drainReader idleMs fmt onEvent reader bufferRef stalledRef
 
 splitLines :: BS.ByteString -> ([BS.ByteString], BS.ByteString)
 splitLines bs = go bs []
@@ -329,30 +345,39 @@ streamPostSse url headers body onFrame = do
         , responseTimeout = responseTimeoutNone
         }
   ms <- streamTimeoutMs
-  result <- try $ timeout (ms * 1000) $ withResponse req mgr $ \resp -> do
+  stalledRef <- newIORef False
+  let totalMs = ms * 60
+  result <- try $ timeout (totalMs * 1000) $ withResponse req mgr $ \resp -> do
     let code = statusCode (responseStatus resp)
     if code >= 400
       then do
         errBody <- brReadSome (responseBody resp) 4096
         return $ Left ("HTTP " <> T.pack (show code) <> ": " <> TE.decodeUtf8With lenientDecode (BSL.toStrict errBody))
       else do
-        go (responseBody resp) ""
+        go ms stalledRef (responseBody resp) ""
         return (Right ())
+  stalled <- readIORef stalledRef
   case result of
     Left (ex :: SomeException) -> return $ Left (T.pack (show ex))
-    Right Nothing -> return $ Left (T.pack ("stream timed out after " <> show ms <> " ms"))
-    Right (Just r) -> return r
+    Right Nothing -> return $ Left (T.pack ("stream timed out after " <> show totalMs <> " ms"))
+    Right (Just r)
+      | stalled -> return $ Left (T.pack ("stream timed out after " <> show ms <> " ms of silence"))
+      | otherwise -> return r
   where
-    go reader buf = do
-      chunk <- brRead reader
-      if BS.null chunk
-        then pure ()
-        else do
-          let text = TE.decodeUtf8With lenientDecode chunk
-              allFrames = buf <> text
-              (frames, rest) = splitFrames allFrames
-          mapM_ dispatch frames
-          go reader rest
+    go idleMs stalled reader buf = do
+      -- Idle timeout per read, mirroring drainReader: a slow-but-live stream
+      -- must not be killed just because the answer is long.
+      next <- timeout (idleMs * 1000) (brRead reader)
+      case next of
+        Nothing -> writeIORef stalled True
+        Just chunk
+          | BS.null chunk -> pure ()
+          | otherwise -> do
+              let text = TE.decodeUtf8With lenientDecode chunk
+                  allFrames = buf <> text
+                  (frames, rest) = splitFrames allFrames
+              mapM_ dispatch frames
+              go idleMs stalled reader rest
     splitFrames t = case T.breakOn "\n\n" t of
       (frame, rest) | T.null rest -> ([], frame)
                     | otherwise   -> let (f, r) = splitFrames (T.drop 2 rest) in (frame : f, r)
