@@ -70,9 +70,9 @@ start_kernel
 start_scheduler
 
 wait_http "http://127.0.0.1:$KERNEL_PORT/health" \
-  || { echo "kernel:    health check failed (see /tmp/trha-kernel.log)" >&2; exit 1; }
+  || { echo "kernel:    health check failed (see $LOG_DIR/kernel.log)" >&2; exit 1; }
 wait_http "https://127.0.0.1:$SCHED_PORT/health" \
-  || { echo "scheduler: health check failed (see /tmp/trha-scheduler.log)" >&2; exit 1; }
+  || { echo "scheduler: health check failed (see $LOG_DIR/scheduler.log)" >&2; exit 1; }
 
 echo "kernel:    http://127.0.0.1:$KERNEL_PORT/health   ok"
 echo "scheduler: https://127.0.0.1:$SCHED_PORT/health  ok"
