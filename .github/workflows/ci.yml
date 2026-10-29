@@ -72,13 +72,15 @@ jobs:
     
     strategy:
       matrix:
-        node-version: [18, 20]
+        # TypeScript 7 (the Go-native compiler) needs Node 20+; Node 18 is EOL
+        # and its npm refuses the platform binary package.
+        node-version: [20, 22]
     
     steps:
     - uses: actions/checkout@v3
     
     - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
@@ -87,6 +89,13 @@ jobs:
       run: |
         cd packages/scheduler
         npm install
+    
+    - name: TypeScript 7 toolchain (tsc 7.0)
+      run: |
+        cd packages/scheduler
+        npx tsc --version
+        node -e "const v=require('typescript/package.json').version; if (!v.startsWith('7.')) { console.error('expected TypeScript 7.x, got ' + v); process.exit(1); }"
+        npm run typecheck
     
     - name: Build
       run: |
