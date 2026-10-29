@@ -5,7 +5,9 @@ module ConfigSpec (configSpec, sandboxGuestSpec) where
 
 import Infrastructure.Sandbox.Config
 import Infrastructure.Sandbox.Policy (NetworkPolicy(..))
-import System.Directory (doesFileExist, getTemporaryDirectory, removeFile)
+import Data.List (isSuffixOf)
+import System.Directory
+  ( doesFileExist, getHomeDirectory, getTemporaryDirectory, removeFile )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.FilePath ((</>))
 import Test.Hspec
@@ -60,9 +62,15 @@ cleanup path = do
 -- trap this pins down.
 sandboxGuestSpec :: Spec
 sandboxGuestSpec = describe "insideSandbox (fail-open guard)" $ do
-  it "is False on the host (PID 1 is not bwrap, HOME is not scratch)" $ do
+  -- Deliberately environment-agnostic: this suite also runs *inside* the
+  -- sandbox (a guest checking that a guest is detected), where asserting
+  -- "False on the host" would fail for the wrong reason.
+  it "agrees with the observed HOME (guest must never read as not-sandboxed)" $ do
+    home <- getHomeDirectory
     guest <- insideSandbox
-    guest `shouldBe` False
+    if "sandbox-scratch" `isSuffixOf` home
+      then shouldBe guest True
+      else shouldBe guest False
 
   it "detects a guest by HOME ending in sandbox-scratch" $ do
     old <- lookupEnv "HOME"
