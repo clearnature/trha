@@ -23,7 +23,7 @@ import Data.Aeson (Value)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import qualified Data.Text as T
-import System.Directory (doesFileExist)
+import System.Directory (doesFileExist, findExecutable)
 import System.Environment (getExecutablePath, lookupEnv)
 import System.FilePath (takeDirectory, (</>))
 import System.Process
@@ -93,9 +93,25 @@ spawnScheduler = do
     Nothing -> pure False
     Just (dir, entry) -> spawnDetached "node" [entry] (Just dir) >> pure True
 
+-- | Start a service that is *not* our child.
+--
+-- The kernel and scheduler are shared by the TUI, desktop and web clients, so
+-- their lifetime must not be tied to whichever client happened to start them.
+-- @setsid -f@ forks into a new session and exits immediately, so the service is
+-- reparented to the user's session manager: it outlives this process, and when
+-- it is stopped the manager reaps it — no zombie left behind for 'stopService'
+-- to mistake for a live process.
+--
+-- Without this the service was a direct child of the TUI: quitting the TUI
+-- looked like an "orphan" and a stopped service sat as a zombie, which made
+-- Ctrl+Alt+Q wait out the full 5 s liveness budget per service.
 spawnDetached :: FilePath -> [String] -> Maybe FilePath -> IO ()
 spawnDetached cmd args mcwd = do
-  _ <- try (void $ createProcess (proc cmd args)
+  hasSetsid <- findExecutable "setsid"
+  let (prog, argv) = case hasSetsid of
+        Just _  -> ("setsid", "-f" : cmd : args)
+        Nothing -> (cmd, args)   -- no setsid: fall back to a plain spawn
+  _ <- try (void $ createProcess (proc prog argv)
     { cwd = mcwd
     , std_in = NoStream
     , std_out = NoStream
