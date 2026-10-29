@@ -42,7 +42,11 @@ rememberText text = do
   dir <- memoryDir
   createDirectoryIfMissing True dir
   chmodQuiet dir 0o700
-  TIO.appendFile (dir </> "notes.md") ("- " <> T.strip text <> "\n")
+  let path = dir </> "notes.md"
+  TIO.appendFile path ("- " <> T.strip text <> "\n")
+  -- Notes hold whatever the user asked to remember — treat them like
+  -- settings.yaml and the run logs (0600), not like a world-readable file.
+  chmodQuiet path 0o600
 
 -- | Every non-empty @*.md@ under a directory, sorted by file name.
 memoryFiles :: FilePath -> IO [(Text, Text)]
