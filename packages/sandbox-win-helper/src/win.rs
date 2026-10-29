@@ -90,8 +90,80 @@ mod imp {
     use crate::policy::Network;
     use std::io::{BufRead, BufReader, Write};
     use std::process::{Command, Stdio};
+    use windows_sys::Win32::Foundation::HANDLE;
+
+    /// Only read-only is enforceable today: `WRITE_RESTRICTED` with no
+    /// restricting SIDs denies every write, which is exactly that policy.
+    /// workspace-write needs a restricting SID plus a workspace ACE — both
+    /// pieces exist (`create_restricted_token` / `grant_directory_write`) but
+    /// the combination still has to be proven on a real host (T4.6).
+    fn restricted_token(plan: &LaunchPlan) -> Option<HANDLE> {
+        match plan.policy {
+            crate::policy::Policy::ReadOnly => crate::win32::create_restricted_token().ok(),
+            crate::policy::Policy::WorkspaceWrite => None,
+        }
+    }
+
+    fn handle_to_file(handle: HANDLE) -> std::fs::File {
+        use std::os::windows::io::FromRawHandle;
+        unsafe { std::fs::File::from_raw_handle(handle as *mut std::ffi::c_void) }
+    }
+
+    /// Spawn under the restricted token, forwarding the child's output to our
+    /// own stdout/stderr. `None` means "fall back to the plain spawn".
+    fn run_restricted_inherit(plan: &LaunchPlan, token: HANDLE) -> Option<i32> {
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, WaitForSingleObject, INFINITE,
+        };
+        let job = crate::win32::create_job(None, None).ok();
+        let env: Vec<(String, String)> = std::env::vars().collect();
+        let mut child =
+            match crate::win32::spawn_restricted(token, job, &plan.argv, &plan.cwd, &env) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("restricted spawn failed ({e}); falling back to an unconfined spawn");
+                    crate::win32::close(token);
+                    return None;
+                }
+            };
+        let out = handle_to_file(child.stdout);
+        let err = handle_to_file(child.stderr);
+        child.stdout = std::ptr::null_mut();
+        child.stderr = std::ptr::null_mut();
+        // No stdin in one-shot mode: closing the write end gives the child EOF.
+        crate::win32::close(child.stdin);
+        child.stdin = std::ptr::null_mut();
+        let out_thread = std::thread::spawn(move || {
+            let mut src = out;
+            let mut sink = std::io::stdout();
+            let _ = std::io::copy(&mut src, &mut sink);
+        });
+        let err_thread = std::thread::spawn(move || {
+            let mut src = err;
+            let mut sink = std::io::stderr();
+            let _ = std::io::copy(&mut src, &mut sink);
+        });
+        let _ = out_thread.join();
+        let _ = err_thread.join();
+        let mut code: u32 = 0;
+        unsafe {
+            WaitForSingleObject(child.process, INFINITE);
+            GetExitCodeProcess(child.process, &mut code);
+        }
+        crate::win32::close(token);
+        child.close();
+        Some(code as i32)
+    }
 
     pub fn run_inherit(plan: &LaunchPlan) -> i32 {
+        // Preferred path: restricted token (T4.2). Falls back to the plain
+        // spawn only when the token cannot be created — never silently for
+        // workspace-write, which has no token at all yet.
+        if let Some(token) = restricted_token(plan) {
+            if let Some(code) = run_restricted_inherit(plan, token) {
+                return code;
+            }
+        }
         let mut cmd = Command::new(&plan.argv[0]);
         cmd.args(&plan.argv[1..])
             .current_dir(&plan.cwd)

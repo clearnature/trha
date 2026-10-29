@@ -73,11 +73,13 @@ pub struct LaunchPlan {
 impl LaunchPlan {
     /// `enforcement` as reported in the `ready` frame.
     ///
-    /// The restricted token (T4.2) is created but not yet carried into spawn —
-    /// that needs `CreateProcessAsUserW` with inheritable stdio handles. Until
-    /// it is wired, writes are not actually constrained, so **both** policies
-    /// report `Partial`; T4.6's probe suite on a real host is the gate for
-    /// raising this.
+    /// read-only now really denies writes: the child is spawned under a
+    /// `WRITE_RESTRICTED` token with no restricting SIDs (T4.2). It still
+    /// cannot stop reads, so it stays `Partial`.
+    ///
+    /// workspace-write has no token yet — a restricting SID plus a workspace
+    /// ACE is unproven on a real host — so it is `Partial` too, and says so
+    /// instead of pretending. T4.6's probes are the gate for raising either.
     pub fn enforcement(&self) -> &'static str {
         "Partial"
     }

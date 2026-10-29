@@ -276,6 +276,175 @@ pub fn final_path(path: &str) -> Result<String, String> {
     }
 }
 
+// ── T4.2/T4.3: spawn under the restricted token ──────────────────────────
+
+/// A child started with the restricted token; the caller owns the pipes.
+pub struct RestrictedChild {
+    pub pid: u32,
+    pub process: HANDLE,
+    /// Parent-side write end of the child's stdin.
+    pub stdin: HANDLE,
+    /// Parent-side read ends.
+    pub stdout: HANDLE,
+    pub stderr: HANDLE,
+    pub job: Option<HANDLE>,
+}
+
+impl RestrictedChild {
+    /// Close every handle this struct owns (idempotent).
+    pub fn close(&mut self) {
+        for h in [self.stdin, self.stdout, self.stderr, self.process] {
+            close(h);
+        }
+        self.stdin = std::ptr::null_mut();
+        self.stdout = std::ptr::null_mut();
+        self.stderr = std::ptr::null_mut();
+        self.process = std::ptr::null_mut();
+        if let Some(job) = self.job.take() {
+            close(job);
+        }
+    }
+}
+
+/// Start `argv` under `token`, with stdout/stderr/stdin on inheritable pipes.
+///
+/// The child is created suspended, put into `job` (when given) *and only then*
+/// resumed — so nothing can escape by forking before the job is assigned.
+/// The token must come from `create_restricted_token`.
+pub fn spawn_restricted(
+    token: HANDLE,
+    job: Option<HANDLE>,
+    argv: &[String],
+    cwd: &str,
+    env: &[(String, String)],
+) -> Result<RestrictedChild, String> {
+    use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows_sys::Win32::System::Pipes::CreatePipe;
+    use windows_sys::Win32::System::Threading::{
+        CreateProcessAsUserW, ResumeThread, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
+        PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOW,
+    };
+
+    if argv.is_empty() {
+        return Err("empty argv".to_string());
+    }
+
+    let mut command_line = crate::winargs::build_command_line(argv);
+    command_line.push('\0');
+    let mut cmdline: Vec<u16> = command_line.encode_utf16().collect();
+    let mut env_block = crate::winargs::build_env_block(env);
+    let cwd_wide = wide(cwd);
+
+    unsafe {
+        let mut sa: SECURITY_ATTRIBUTES = std::mem::zeroed();
+        sa.nLength = std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32;
+        sa.bInheritHandle = 1;
+
+        let mut handlers: [(HANDLE, HANDLE); 3] =
+            [(std::ptr::null_mut(), std::ptr::null_mut()); 3];
+        let mut created: Vec<HANDLE> = Vec::new();
+        for slot in handlers.iter_mut() {
+            if CreatePipe(&mut slot.0, &mut slot.1, &sa, 0) == 0 {
+                for h in created {
+                    CloseHandle(h);
+                }
+                return Err(format!(
+                    "CreatePipe failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            created.push(slot.0);
+            created.push(slot.1);
+        }
+        let [(stdin_r, stdin_w), (stdout_r, stdout_w), (stderr_r, stderr_w)] = handlers;
+
+        // Only the child-side ends may cross the process boundary.
+        for parent_end in [stdin_w, stdout_r, stderr_r] {
+            SetHandleInformation(parent_end, HANDLE_FLAG_INHERIT, 0);
+        }
+
+        let mut si: STARTUPINFOW = std::mem::zeroed();
+        si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdInput = stdin_r;
+        si.hStdOutput = stdout_w;
+        si.hStdError = stderr_w;
+
+        let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
+        let ok = CreateProcessAsUserW(
+            token,
+            std::ptr::null(),                 // application name: argv[0] is in the command line
+            cmdline.as_mut_ptr(),
+            std::ptr::null(),                 // process attributes
+            std::ptr::null(),                 // thread attributes
+            1,                                // inherit handles (the three stdio ends)
+            CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
+            env_block.as_mut_ptr() as *const std::ffi::c_void,
+            cwd_wide.as_ptr(),
+            &si,
+            &mut pi,
+        );
+        let err = std::io::Error::last_os_error();
+
+        // The child owns these copies now, whether or not the spawn worked.
+        for child_end in [stdin_r, stdout_w, stderr_w] {
+            CloseHandle(child_end);
+        }
+        if ok == 0 {
+            for h in [stdin_w, stdout_r, stderr_r] {
+                CloseHandle(h);
+            }
+            return Err(format!("CreateProcessAsUserW failed: {err}"));
+        }
+
+        if let Some(job) = job {
+            if let Err(e) = assign_handle_to_job(job, pi.hProcess) {
+                let _ = terminate_process(pi.hProcess);
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+                for h in [stdin_w, stdout_r, stderr_r] {
+                    CloseHandle(h);
+                }
+                return Err(e);
+            }
+        }
+
+        ResumeThread(pi.hThread);
+        CloseHandle(pi.hThread);
+
+        Ok(RestrictedChild {
+            pid: pi.dwProcessId,
+            process: pi.hProcess,
+            stdin: stdin_w,
+            stdout: stdout_r,
+            stderr: stderr_r,
+            job,
+        })
+    }
+}
+
+#[cfg(windows)]
+fn assign_handle_to_job(job: HANDLE, process: HANDLE) -> Result<(), String> {
+    use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+    let ok = unsafe { AssignProcessToJobObject(job, process) };
+    if ok == 0 {
+        return Err(format!(
+            "AssignProcessToJobObject failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn terminate_process(process: HANDLE) {
+    use windows_sys::Win32::System::Threading::TerminateProcess;
+    unsafe {
+        TerminateProcess(process, 126);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -11,8 +11,8 @@
 mod path;
 mod policy;
 mod protocol;
-#[cfg(windows)]
 mod win32;
+mod winargs;
 mod win;
 
 use std::io::{BufRead, Write};
@@ -71,8 +71,8 @@ fn parse_args(args: &[String]) -> Result<(Config, Option<Vec<String>>), String> 
     Ok((cfg, command))
 }
 
-/// Both policies report `Partial`: the restricted token (T4.2) is created but
-/// not yet carried into spawn, so writes are unconstrained today.
+/// Both policies report `Partial`: read-only spawns under a `WRITE_RESTRICTED`
+/// token (writes denied, reads untouched); workspace-write has no token yet.
 fn enforcement_for(_policy: Policy) -> &'static str {
     "Partial"
 }
