@@ -123,8 +123,8 @@
 
 > **P5 进度（2026-10-30，无 BSD 主机的前提下的最大推进）**
 >
-> - **T5.1 渲染器完成**：`Backend/FreeBSD.hs` 从 stub 改为纯渲染器，生成 `trha-sandbox-bsd --workspace … --scratch … --policy … --network … -- argv`；非 FreeBSD 上 probe fail-closed；`enforcement` 如实报 `Partial`（capsicum 限制的是已开 fd 的 capability，不是路径）。launcher 本体（预开 fd + `cap_enter` + `cap_rights_limit`）未写，是 T5.1 的剩余部分。
-> - **T5.2 渲染器完成**：`Backend/OpenBSD.hs` 渲染**语义化**参数，便于黄金测试直接断言：`--pledge "<promises>"` 与 `--unveil "path:perms"`。read-only → `stdio rpath proc exec`；workspace-write 追加 `wpath cpath`；网络放行追加 `inet`；workspace 的 unveil 权限随策略是 `:r` 或 `:rw`，系统路径恒 `:r`。launcher（真正调用 pledge/unveil）同样待写。
+> - **T5.1 渲染器 + launcher 骨架完成**：`Backend/FreeBSD.hs` 生成 `trha-sandbox-bsd --workspace … --scratch … --policy … --network … -- argv`；`packages/sandbox-bsd-launcher/launcher.c` 在 `#ifdef __FreeBSD__` 下预开 writable 目录 fd → `cap_rights_limit` → `cap_enter()`，其它平台编译成拒绝执行的 stub（exit 126）。`enforcement` 如实报 `Partial`（capsicum 限制的是已开 fd 的 capability，不是路径）。
+> - **T5.2 渲染器 + launcher 骨架完成**：`Backend/OpenBSD.hs` 渲染**语义化**参数，便于黄金测试直接断言：`--pledge "<promises>"` 与 `--unveil "path:perms"`。read-only → `stdio rpath proc exec`；workspace-write 追加 `wpath cpath`；网络放行追加 `inet`；workspace 的 unveil 权限随策略是 `:r` 或 `:rw`，系统路径恒 `:r`。同一个 `launcher.c` 在 `#ifdef __OpenBSD__` 下依次 `unveil` → 锁定 → `pledge`。两个 launcher 都**未在真机验证**，只经过 `-fsyntax-only` 与 `make check` 的 9 项契约 smoke。
 > - **T5.3 完成**：新增用例「bwrap 存在但无法 unshare → 降级为 `Partial` 且 notes 可见」；`Enforcement = None` 时拒绝执行由既有用例覆盖。
 > - **T5.4 未做**：qemu 跑 FreeBSD/OpenBSD 需要虚拟化环境与镜像分发，不在当前机器能力内。
 > - **T5.5 完成**：§9 索引核对——R1–R7 的 7 个外部仓库根与 R9 的 7 个本仓文件全部存在（逐一 `test -e` 验证）；R9 补记了沙箱落地后的实现文件（Runner / Cgroup / Landlock / Probe / 四个平台渲染器 / Windows helper 的 Rust 模块）。

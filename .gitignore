@@ -230,3 +230,6 @@ __pycache__/
 
 # Rust helper build artifacts (packages/sandbox-win-helper).
 packages/sandbox-win-helper/target/
+
+# BSD sandbox launcher build output (packages/sandbox-bsd-launcher).
+packages/sandbox-bsd-launcher/trha-sandbox-*
