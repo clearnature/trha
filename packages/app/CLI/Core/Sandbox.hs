@@ -144,7 +144,15 @@ runSandboxCommand action = do
     then do
       parsed <- loadSandboxConfig path
       either (failWith . T.unpack) pure parsed
-    else pure defaultSandboxConfig
+    else do
+      -- Inside the sandbox HOME is the scratch dir, so the host config is not
+      -- visible. Inferring "disabled" from a missing file would fail open, so
+      -- refuse and say why instead.
+      guest <- insideSandbox
+      if guest
+        then failWith ("running inside the sandbox: " <> path
+              <> " is not visible here, so 'disabled' cannot be inferred from its absence")
+        else pure defaultSandboxConfig
   case action of
     SandboxStatus asJson -> do
       caps <- Linux.probeLinux

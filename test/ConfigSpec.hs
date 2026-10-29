@@ -1,11 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | sandbox.yaml write side (T2.7/T1.8 wiring): enabled/scratch round-trip.
-module ConfigSpec (configSpec) where
+module ConfigSpec (configSpec, sandboxGuestSpec) where
 
 import Infrastructure.Sandbox.Config
 import Infrastructure.Sandbox.Policy (NetworkPolicy(..))
 import System.Directory (doesFileExist, getTemporaryDirectory, removeFile)
+import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.FilePath ((</>))
 import Test.Hspec
 
@@ -53,3 +54,21 @@ cleanup :: FilePath -> IO ()
 cleanup path = do
   exists <- doesFileExist path
   if exists then removeFile path else pure ()
+
+-- | Fail-open guard (T1.2): inside the sandbox HOME is the scratch dir, so the
+-- host config file is invisible. Inferring "disabled" from that absence is the
+-- trap this pins down.
+sandboxGuestSpec :: Spec
+sandboxGuestSpec = describe "insideSandbox (fail-open guard)" $ do
+  it "is False on the host (PID 1 is not bwrap, HOME is not scratch)" $ do
+    guest <- insideSandbox
+    guest `shouldBe` False
+
+  it "detects a guest by HOME ending in sandbox-scratch" $ do
+    old <- lookupEnv "HOME"
+    setEnv "HOME" "/tmp/trha-probe/sandbox-scratch"
+    guest <- insideSandbox
+    case old of
+      Just h -> setEnv "HOME" h
+      Nothing -> unsetEnv "HOME"
+    guest `shouldBe` True

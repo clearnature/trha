@@ -14,17 +14,22 @@ module Infrastructure.Sandbox.Config
   , loadSandboxConfig
   , saveSandboxConfig
   , networkPolicyOf
+  , insideSandbox
   ) where
 
+import Control.Exception (IOException, try)
 import Control.Monad (unless)
 import Data.Aeson (ToJSON(..), Value(..), object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
+import Data.List (isSuffixOf)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import qualified Data.Yaml as Yaml
 import Infrastructure.Sandbox.Policy
   ( NetworkPolicy(..), ResourceLimits(..), defaultResourceLimits )
+import System.Directory (getHomeDirectory)
 
 data NetworkSpec
   = NetOff
@@ -239,3 +244,22 @@ loadSandboxConfig path = do
   pure $ case parsed of
     Left err -> Left (T.pack (Yaml.prettyPrintParseException err))
     Right value -> parseSandboxConfig value
+
+-- | Are we running *inside* the sandbox?
+--
+-- The renderer points @HOME@ at the scope's scratch directory, so a guest
+-- process reading @~/.trha/sandbox.yaml@ finds no file. Anything that infers
+-- "sandbox disabled" from that absence would fail open. Callers that load the
+-- config must ask this first and refuse to downgrade on a *missing* file.
+--
+-- Detection is deliberately cheap and local: PID 1 inside the pid namespace is
+-- bwrap, and the guest HOME ends in the scratch directory name.
+insideSandbox :: IO Bool
+insideSandbox = do
+  comm <- readTextFile "/proc/1/comm"
+  home <- getHomeDirectory
+  pure $ comm == Just "bwrap" || "sandbox-scratch" `isSuffixOf` home
+  where
+    readTextFile p = do
+      r <- try (TIO.readFile p) :: IO (Either IOException Text)
+      pure (either (const Nothing) (Just . T.strip) r)

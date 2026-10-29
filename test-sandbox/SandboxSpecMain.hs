@@ -8,7 +8,7 @@ module Main (main) where
 
 import Test.Hspec
 import AuditSpec (auditSpec)
-import ConfigSpec (configSpec)
+import ConfigSpec (configSpec, sandboxGuestSpec)
 import ExperimentSpec (experimentSpec)
 import SandboxBsdSpec (sandboxBsdSpec)
 import SandboxCgroupSpec (sandboxCgroupSpec)
@@ -32,3 +32,4 @@ main = hspec $ do
   auditSpec
   experimentSpec
   configSpec
+  sandboxGuestSpec
