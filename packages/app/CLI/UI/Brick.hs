@@ -1413,10 +1413,28 @@ drawStatus st = Widget Greedy Fixed $ do
       (Just used, Just size) | size > 0 ->
         "上下文 " <> shortK used
           <> " (" <> T.pack (show (ctxPct used size)) <> "%)"
+      -- Without a known window we can still show how much was used; hiding it
+      -- entirely (the old behaviour) made the segment look broken whenever
+      -- configCtxSize was unset.
+      (Just used, _) -> "上下文 " <> shortK used
       _ -> ""
     compactSeg = case (appCtxUsed st, appCtxSize st) of
       (Just used, Just size) | size > 0 ->
         "压缩 " <> T.pack (show (max 0 (100 - ctxPct used size))) <> "%"
+      _ -> ""
+    -- Completion throughput of the last turn (computed when usage arrived).
+    tpsSeg = case appLastTps st of
+      Just t | t > 0 -> "速度 " <> T.pack (showFFloat (Just 1) t "") <> " t/s"
+      _ -> ""
+    -- Per-turn token spend, so the "million-token" bill is readable per round.
+    tokensSeg = case appLastUsage st of
+      Just n | n > 0 -> "本轮 " <> shortK n <> " tok"
+      _ -> ""
+    usageSeg = case appUsage st of
+      Just u | usageTotalTokens u > 0 ->
+        "in " <> shortK (usagePromptTokens u)
+          <> " / out " <> shortK (usageCompletionTokens u)
+          <> " / 合计 " <> shortK (usageTotalTokens u)
       _ -> ""
     prices = pricesOf (appModel st) (appEffCfg st)
     costSeg = if hasPrices prices
@@ -1429,8 +1447,34 @@ drawStatus st = Widget Greedy Fixed $ do
       Just b -> "余额 " <> balanceCurrency b
                   <> T.pack (showFFloat (Just 2) (balanceTotal b) "")
       Nothing -> "余额 —"
-    statsLine = T.intercalate "  " (filter (not . T.null)
-      [cacheSeg, ctxSeg, compactSeg, balanceSeg, costSeg, peak])
+    -- The configured order decides what is shown.  \`model\`/\`git\`/\`workspace\`
+    -- /\`session\` live on the first row, so only status-class keys apply here;
+    -- a config with none of them falls back to the full default set.
+    statusKeys :: [Text]
+    statusKeys = [ "cache", "ctx", "compact", "tps", "tokens", "usage"
+                 , "balance", "cost", "peak" ]
+    aliasKey "context" = "ctx"   -- the catalogue alias users tend to write
+    aliasKey k = k
+    configuredKeys =
+      [ aliasKey k | k <- parseMetrics (configMetrics (appEffCfg st))
+                   , aliasKey k `elem` statusKeys ]
+    statsKeys = if null configuredKeys
+                  then [ "cache", "ctx", "compact", "tps", "tokens"
+                       , "balance", "cost", "peak" ]
+                  else configuredKeys
+    segFor k = case k of
+      "cache"   -> cacheSeg
+      "ctx"     -> ctxSeg
+      "compact" -> compactSeg
+      "tps"     -> tpsSeg
+      "tokens"  -> tokensSeg
+      "usage"   -> usageSeg
+      "balance" -> balanceSeg
+      "cost"    -> costSeg
+      "peak"    -> peak
+      _         -> ""
+    statsLine = T.intercalate "  "
+      [ s | k <- statsKeys, s <- [segFor k], not (T.null s) ]
     shortK n
       | n >= 1000000 = T.pack (showFFloat (Just 1) (fromIntegral n / 1e6 :: Double) "") <> "M"
       | n >= 1000    = T.pack (showFFloat (Just 1) (fromIntegral n / 1e3 :: Double) "") <> "K"

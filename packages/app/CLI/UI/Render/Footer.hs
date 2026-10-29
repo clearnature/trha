@@ -59,7 +59,7 @@ footerSegments model mSession status mUsage =
 metricKeys :: [Text]
 metricKeys =
   [ "model", "git", "workspace", "context", "tokens", "session", "usage"
-  , "mode", "cache", "ctx", "compact", "tps"
+  , "mode", "cache", "ctx", "compact", "tps", "balance", "cost", "peak"
   ]
 
 -- | Keys shown by default (order matters).
