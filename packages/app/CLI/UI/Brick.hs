@@ -1434,7 +1434,7 @@ drawStatus st = Widget Greedy Fixed $ do
       _ -> ""
     -- Per-turn token spend, so the "million-token" bill is readable per round.
     tokensSeg = case appLastUsage st of
-      Just n | n > 0 -> "本轮 " <> shortK n <> " tok"
+      Just n | n > 0 -> "本轮 " <> commas n <> " tok"
       _ -> ""
     usageSeg = case appUsage st of
       Just u | usageTotalTokens u > 0 ->
@@ -1452,14 +1452,15 @@ drawStatus st = Widget Greedy Fixed $ do
                 else ""
     outSeg = case appUsage st of
       Just u | usageCompletionTokens u > 0 ->
-        "输出 " <> shortK (usageCompletionTokens u)
+        "输出 " <> commas (usageCompletionTokens u)
       _ -> ""
-    -- Cache-hit token count (not the rate): what the provider billed cheap.
+    -- Cache tokens as the provider bills them: hit and miss side by side.
     cacheTokensSeg = case appCacheNow st of
-      Just (hit, _) | hit > 0 -> "缓存 " <> shortK hit
+      Just (hit, miss) | hit + miss > 0 ->
+        "命中 " <> commas hit <> " | 未命中 " <> commas miss
       _ -> ""
     sessTokensSeg
-      | appSessTokens st > 0 = "会话 " <> shortK (appSessTokens st) <> " tok"
+      | appSessTokens st > 0 = "会话 " <> commas (appSessTokens st) <> " tok"
       | otherwise = ""
     peak = case appNow st of
       Just t | isOffPeak t -> "低峰"
@@ -1480,10 +1481,16 @@ drawStatus st = Widget Greedy Fixed $ do
     configuredKeys =
       [ aliasKey k | k <- parseMetrics (configMetrics (appEffCfg st))
                    , aliasKey k `elem` statusKeys ]
+    defaultStatsKeys = [ "cache", "ctx", "compact", "tps", "tokens", "out"
+                       , "cacheTokens", "sessTokens", "costTurn", "costSession"
+                       , "balance", "peak" ]
+    -- A configured list only decides *order*; everything else still shows.
+    -- Hiding on configuration alone surprised users whose config predated the
+    -- newer keys (they saw three segments and assumed the rest were broken).
     statsKeys = if null configuredKeys
-                  then [ "cache", "ctx", "compact", "tps", "tokens", "out"
-                       , "sessTokens", "costTurn", "costSession", "balance" ]
+                  then defaultStatsKeys
                   else configuredKeys
+                       ++ [ k | k <- defaultStatsKeys, k `notElem` configuredKeys ]
     segFor k = case k of
       "cache"   -> cacheSeg
       "ctx"     -> ctxSeg
@@ -1502,6 +1509,12 @@ drawStatus st = Widget Greedy Fixed $ do
       _         -> ""
     statsLine = T.intercalate "  "
       [ s | k <- statsKeys, s <- [segFor k], not (T.null s) ]
+    -- Thousands separators, matching the reference status line (21,444 not 21.4K).
+    commas :: Int -> Text
+    commas n = T.pack (reverse (go (reverse (show n))))
+      where
+        go [] = []
+        go xs = let (a, b) = splitAt 3 xs in a ++ (if null b then [] else ',' : go b)
     shortK n
       | n >= 1000000 = T.pack (showFFloat (Just 1) (fromIntegral n / 1e6 :: Double) "") <> "M"
       | n >= 1000    = T.pack (showFFloat (Just 1) (fromIntegral n / 1e3 :: Double) "") <> "K"
