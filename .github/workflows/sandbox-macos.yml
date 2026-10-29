@@ -21,6 +21,11 @@ on:
       - 'cabal.project.ci'
   workflow_dispatch:
 
+# 同一 ref 只保留最新一次运行（macOS runner 按 10 倍计费，重复排队尤其贵）。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   macos:
     # macos-latest (SDK 27) ships .tbd stubs with arm64e.x1 markers that

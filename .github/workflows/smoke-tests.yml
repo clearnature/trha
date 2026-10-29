@@ -5,11 +5,17 @@ name: Smoke Tests
 #    现抬到 GHC 9.14.1 + cabal 3.14，并补 wgpu-native 库目录步骤（本机放在被 .gitignore
 #    忽略的 cabal.project.local 里，CI 上没有）。**本工作流未在本机实跑过。**
 
+# 本工作流的 Haskell / benchmarks 用例与 ci.yml 的 haskell / benchmarks job
+# 完全重叠，不再随每次 push 重复跑：手动触发 + 每日夜间回归
+# （UTC 18:00 = 北京时间 02:00）。
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 18 * * *'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -33,23 +39,16 @@ jobs:
         (cd packages/scheduler && npm install)
         (cd benchmarks && npm install)
     
-    - name: Run smoke tests
-      run: |
-        cd benchmarks
-        npm test
-    
-    - name: Run tests with coverage
+    # 一次跑完：coverage 与 JSON 报告都由 benchmarks/vitest.config.ts 的
+    # coverage / reporters(outputFile) 配置产出；原先 test → coverage → report
+    # 三步各起一遍 vitest（三次真实子进程）。
+    - name: Run smoke tests (coverage + json report)
       run: |
         cd benchmarks
         npm run test:coverage
     
-    - name: Generate test report
-      run: |
-        cd benchmarks
-        npm run test:report
-    
     - name: Upload test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: test-results-${{ matrix.node-version }}

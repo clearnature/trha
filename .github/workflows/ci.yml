@@ -18,6 +18,12 @@ on:
   pull_request:
     branches: [ main, master ]
 
+# 同一 ref 只保留最新一次运行：连续 push 时取消上一轮未完成的 run，
+# 否则每个 push 都会并行排队、各自把 7 个 job 跑满。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   haskell:
     runs-on: ubuntu-latest
