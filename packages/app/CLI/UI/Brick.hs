@@ -1401,7 +1401,7 @@ drawStatus st = Widget Greedy Fixed $ do
                 <> (if T.null (appGitStat st) then "" else "  " <> appGitStat st)
     cacheSeg = case (appCacheNow st, appCacheSum st) of
       (Just (h, m), (h0, m0)) | h + m > 0 && h0 + m0 > 0 ->
-        "缓存 本次命中 " <> pct h m <> " · 会话累计 " <> pct h0 m0
+        "缓存 现在 " <> pct h m <> " · 累计 " <> pct h0 m0
           <> turnsSuffix (appCacheTurns st)
       _ -> ""
     -- Turns that reported cache numbers, so a stable percentage is explainable.
