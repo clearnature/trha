@@ -94,13 +94,17 @@ renderMac scope req = do
 
 -- | Build the Seatbelt profile text.
 sbplProfile :: [(FilePath, Bool)] -> [FilePath] -> NetworkPolicy -> Text
+-- SBPL evaluates rules in order and the *first* matching rule wins, so the
+-- specific allows must precede the blanket deny.  Putting `(deny file-write*)`
+-- first shadowed every writable subpath: on the macOS runner the
+-- write-workspace probe failed while the three negative probes "passed"
+-- (everything was denied, which is what they expected).
 sbplProfile writable readable network = T.intercalate "\n" $
   [ "(version 1)"
   , "(allow default)"
-  , "(deny file-write*)"
   ]
     <> writeRules
-    <> [ networkRule ]
+    <> [ "(deny file-write*)", networkRule ]
   where
     writeRules
       | null writable = []

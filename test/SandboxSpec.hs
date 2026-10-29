@@ -210,6 +210,13 @@ sandboxSpec = describe "Infrastructure.Sandbox" $ do
           profile `shouldSatisfy` T.isInfixOf "(deny file-write*)"
           profile `shouldSatisfy` T.isInfixOf "(subpath \"/ws\")"
           profile `shouldSatisfy` T.isInfixOf "(deny network*)"
+          -- SBPL is first-match-wins: the writable allow must precede the
+          -- blanket deny, otherwise every write (including /ws) is rejected.
+          let at s = let (before, after) = T.breakOn s profile
+                     in if T.null after then Nothing else Just (T.length before)
+          case (at "(allow file-write*", at "(deny file-write*)") of
+            (Just a, Just d) -> a `shouldSatisfy` (< d)
+            _ -> expectationFailure "profile must contain both write rules"
 
     it "allows network when the policy does" $ do
       let scope = scopeRoot (ScopeId "s")
