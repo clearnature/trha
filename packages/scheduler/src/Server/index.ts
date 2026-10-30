@@ -47,6 +47,7 @@ import { DEFAULT_AGENT_PRESET, getAgentPreset, listAgentPresets } from './agentP
 // Side effect: registers plane + preset metadata for every tool (step 2 of the
 // plugin migration). Handlers still live in the legacy chains.
 import './toolDeclarations.js';
+import { toolNamesForPreset } from './toolRegistry.js';
 import { snapshotFile } from './fileHistory.js';
 import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
 import { resolveTls } from './tls.js';
@@ -438,7 +439,7 @@ const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
   standard: {
     name: 'standard',
     description: 'Full coding agent with all tools and capabilities',
-    tools: catalogToolDefs().map(t => t.name).filter(n => n !== 'run_code'),
+    tools: catalogToolDefs().map(t => t.name).filter(n => toolNamesForPreset('standard').has(n)),
     persona: {
       enabled: true,
       template: 'You are a coding agent powered by the {{model}} model.\nYour working directory is {{cwd}}.',
@@ -453,7 +454,7 @@ const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
   ptc: {
     name: 'ptc',
     description: 'Program-the-code: model writes a program, one call multi-tool',
-    tools: catalogToolDefs().map(t => t.name).filter(n => !['workflow', 'todo', 'plan'].includes(n)),
+    tools: catalogToolDefs().map(t => t.name).filter(n => toolNamesForPreset('ptc').has(n)),
     persona: {
       enabled: true,
       template: 'You are a coding agent powered by the {{model}} model.\nYour working directory is {{cwd}}.\n\n`run_code` is the only tool you can call directly — a tool call naming any other tool fails.\nReach every tool the SDK declares below from inside the program.',
@@ -472,10 +473,7 @@ const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
   minimal: {
     name: 'minimal',
     description: 'Lightweight: basic tools only, no compaction or plan',
-    // Real catalog names only: the old list advertised `describe_image` and
-    // `ask_user`, neither of which has ever had a handler.
-    tools: catalogToolDefs().map(t => t.name)
-      .filter(n => ['bash', 'read', 'write', 'grep', 'glob', 'edit', 'web_fetch', 'ask_user_question'].includes(n)),
+    tools: catalogToolDefs().map(t => t.name).filter(n => toolNamesForPreset('minimal').has(n)),
     persona: { enabled: false, template: '', maxBytes: 0 },
     compaction: { enabled: false, prunerEnabled: false, thresholdChars: 0, headChars: 0, tailChars: 0 },
     delegation: { enabled: false, forkEnabled: false, ralphEnabled: false, maxRounds: 0 },

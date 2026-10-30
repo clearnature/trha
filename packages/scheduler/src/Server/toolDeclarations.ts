@@ -12,7 +12,7 @@
  * session index, schedules, goals, MCP servers) and are shared by every session;
  * `agent` rows are the model-facing tools a preset chooses to mount.
  */
-import { registerTool, type ToolPlane } from './toolRegistry.js';
+import { declareTool, type ToolPlane } from './toolRegistry.js';
 
 type Preset = string;
 
@@ -54,8 +54,9 @@ const rows: Row[] = [
   { name: 'present', plane: 'agent', presets: FULL },
 
   // ── agent-plane: web ────────────────────────────────────────────────
-  // web_fetch registers its own handler in standardTools.ts; only web_search
-  // still needs its metadata declared here.
+  // `web_fetch` registers its own handler in standardTools.ts; `declareTool`
+  // is additive, so its metadata can live here without a name collision.
+  { name: 'web_fetch', plane: 'agent', presets: FULL },
   { name: 'web_search', plane: 'agent', presets: FULL },
 
   // ── agent-plane: plan / todo / delegation tools ──────────────────────
@@ -133,7 +134,7 @@ const rows: Row[] = [
 ];
 
 for (const row of rows) {
-  registerTool({ name: row.name, plane: row.plane, presets: row.presets });
+  declareTool({ name: row.name, plane: row.plane, presets: row.presets });
 }
 
 /** Exposed for diagnostics (`trha sandbox status`-style listings). */

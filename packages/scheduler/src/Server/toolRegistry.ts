@@ -52,6 +52,26 @@ export function resolveTool(name: string): ToolSpec | undefined {
   return registry.get(name);
 }
 
+/**
+ * Attach plane/preset metadata without a handler — idempotent, so a tool that
+ * registered its own handler elsewhere (`web_fetch`) can still be declared here.
+ */
+export function declareTool(spec: Omit<ToolSpec, 'handler'>): void {
+  const existing = registry.get(spec.name);
+  if (existing) {
+    existing.plane = spec.plane;
+    // `exactOptionalPropertyTypes` forbids assigning an explicit `undefined`.
+    if (spec.presets !== undefined) existing.presets = spec.presets;
+    return;
+  }
+  registry.set(
+    spec.name,
+    spec.presets === undefined
+      ? { name: spec.name, plane: spec.plane }
+      : { name: spec.name, plane: spec.plane, presets: spec.presets },
+  );
+}
+
 /** Every registered tool, optionally narrowed to one preset. */
 export function listTools(preset?: string): ToolSpec[] {
   const all = [...registry.values()];
