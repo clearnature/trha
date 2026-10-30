@@ -1500,6 +1500,15 @@ const editTool = defineTool<string>({
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   presentCall: args => ({ card: 'diff', title: `edit ${oneLine(args.path)}`, rawInput: args.path }),
+  // Closing card titles the outcome (`edited x · 2`) instead of repeating the
+  // opening label.
+  presentResult: (args, result) => {
+    const m = /\((\d+) replacement/.exec(String(result ?? ''));
+    return {
+      card: 'diff' as const,
+      title: `edited ${oneLine(args.path)}${m ? ` · ${m[1]}` : ''}`,
+    };
+  },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     const base = host.sessionCwd ?? host.workspace;
@@ -1548,6 +1557,12 @@ const bashTool = defineTool<string>({
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   presentCall: args => ({ card: 'terminal', title: oneLine(args.command), rawInput: args.command }),
+  // The closing card says how it ended. `presentResult` gets the rendered text
+  // here, so the exit code is read back out of it.
+  presentResult: (_args, result) => {
+    const m = /^exit (\d+)/.exec(String(result ?? ''));
+    return m ? { card: 'terminal' as const, title: `exit ${m[1]}` } : undefined;
+  },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     const cmd = typeof args.command === 'string' ? args.command : '';

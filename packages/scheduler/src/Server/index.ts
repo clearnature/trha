@@ -1439,9 +1439,18 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   ): Promise<void> => {
     const args = Object.entries(input)
       .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`);
-    // Only the opening event carries a card intent: the closing one is about
-    // the outcome, and the tool's `presentResult` lives on a different path.
-    const view = status === 'running' ? resolveTool(name)?.presentCall?.(input) : undefined;
+    // Opening event: how the call should be labelled (`presentCall`). Closing
+    // event: what the tool says it produced (`presentResult`). Without either,
+    // the shell falls back to the tool name.
+    //
+    // `presentResult` receives the *rendered* text here, not the canonical value
+    // `execute` returned — trha renders inside `executeTool`, so that value is
+    // already gone by this point. Tools that only need to summarise the result
+    // (exit code, replacement count) are fine with that.
+    const spec = resolveTool(name);
+    const view = status === 'running'
+      ? spec?.presentCall?.(input)
+      : spec?.presentResult?.(input, output);
     const ev: ToolEvent = {
       callId,
       phase: status === 'running' ? 'start' : 'end',

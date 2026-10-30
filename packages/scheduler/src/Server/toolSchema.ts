@@ -85,6 +85,12 @@ export interface ToolDefinition<T = unknown> {
    * means "use the generic card".
    */
   presentCall?: (args: Record<string, unknown>) => ToolCallView | undefined;
+  /**
+   * Pure completed-state presenter (DSH's `presentResult`): what the closing
+   * card should say. Receives the canonical value `execute` returned.
+   * `undefined` keeps the opening card's label.
+   */
+  presentResult?: (args: Record<string, unknown>, result: unknown) => ToolCallView | undefined;
 }
 
 /**
@@ -170,6 +176,10 @@ export function toolSpecFrom<T>(
     ...(def.presentCall === undefined
       ? {}
       : { presentCall: (args: Record<string, unknown>) => def.presentCall!(args) }),
+    ...(def.presentResult === undefined
+      ? {}
+      : { presentResult: (args: Record<string, unknown>, result: unknown) =>
+          def.presentResult!(args, result) }),
     handler: (args, exec) => def.execute(args, exec),
   };
 }

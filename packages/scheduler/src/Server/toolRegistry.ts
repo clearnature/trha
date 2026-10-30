@@ -138,6 +138,12 @@ export interface ToolSpec {
     title: string;
     rawInput?: unknown;
   } | undefined;
+  /** How the closing card should read (DSH's `presentResult`). */
+  presentResult?: (args: Record<string, unknown>, result: unknown) => {
+    card: 'generic' | 'terminal' | 'diff';
+    title: string;
+    rawInput?: unknown;
+  } | undefined;
 }
 
 const registry = new Map<string, ToolSpec>();
