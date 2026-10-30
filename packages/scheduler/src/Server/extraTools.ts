@@ -67,6 +67,9 @@ export const EXTRA_TOOL_NAMES = [
   'ralph',
 ] as const;
 
+/** Byte cap for one terminal read, matching DSH's `maxResultBytes` intent. */
+const TERMINAL_RESULT_MAX = 96 * 1024;
+
 export function isExtraTool(name: string): boolean {
   return (EXTRA_TOOL_NAMES as readonly string[]).includes(name);
 }
@@ -519,6 +522,15 @@ const terminalReadTool = defineTool<string>({
     since: { type: 'number', description: 'Character offset to read from (default 0).' },
   },
   presentCall: args => ({ card: 'terminal', title: `read ${oneLine(args.id)}` }),
+  // DSH's `tool-terminal` caps the result bytes in `finalizeContent`; the same
+  // cap belongs here. Returning `undefined` keeps the rendered blocks, so short
+  // reads are untouched.
+  finalizeContent: (_exec, result) => {
+    const raw = result.content.map(b => b.text).join('\n');
+    return raw.length <= TERMINAL_RESULT_MAX
+      ? undefined
+      : [{ type: 'text' as const, text: `${raw.slice(0, TERMINAL_RESULT_MAX)}\n…(truncated)` }];
+  },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
