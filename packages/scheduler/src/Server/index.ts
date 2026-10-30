@@ -44,6 +44,9 @@ import { execShell } from './shell.js';
 import { defaultSandboxScope, readSandboxConfig, sandboxEnabled, sandboxedSpawn, sandboxStatus, setSandboxConfigRuntime, setSandboxEnabledRuntime, writeSandboxConfig, type SandboxConfigView } from './sandbox.js';
 import { rateLimit } from './rateLimit.js';
 import { DEFAULT_AGENT_PRESET, getAgentPreset, listAgentPresets } from './agentPresets.js';
+// Side effect: registers plane + preset metadata for every tool (step 2 of the
+// plugin migration). Handlers still live in the legacy chains.
+import './toolDeclarations.js';
 import { snapshotFile } from './fileHistory.js';
 import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
 import { resolveTls } from './tls.js';

@@ -30,7 +30,12 @@ export interface ToolSpec {
   plane: ToolPlane;
   /** Preset ids that expose this tool; omitted = every preset. */
   presets?: string[];
-  handler: ToolHandler;
+  /**
+   * Absent = **declared but not migrated yet**: the entry points fall through to
+   * the legacy if-chain. This lets the plane/preset metadata land in one pass
+   * (so filtering works immediately) while handlers move over one by one.
+   */
+  handler?: ToolHandler;
 }
 
 const registry = new Map<string, ToolSpec>();

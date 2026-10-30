@@ -219,7 +219,7 @@ export async function runStandardTool(
   // Registered tools take precedence over the legacy chain, so migration is
   // one tool at a time: anything not yet registered still runs below.
   const registered = resolveTool(name);
-  if (registered) return registered.handler(args, host);
+  if (registered?.handler) return registered.handler(args, host);
 
   const now = host.now ?? (() => new Date());
 

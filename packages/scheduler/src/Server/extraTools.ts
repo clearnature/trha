@@ -102,7 +102,7 @@ export async function runExtraTool(
   // Same precedence rule as `runStandardTool`: registered plugins first, the
   // legacy chain as the fallback for anything not migrated yet.
   const registered = resolveTool(name);
-  if (registered) return registered.handler(args, host);
+  if (registered?.handler) return registered.handler(args, host);
 
   // ── working directory ────────────────────────────────────────────────
   if (name === 'working_directory') {
