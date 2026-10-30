@@ -1236,6 +1236,30 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     res.json({ id: session.id, title: session.title ?? null, tags: session.tags ?? [] });
   });
 
+  // Change the session's workspace.  This is the *human* channel: the model
+  // has no tool that reaches it (its `cd` is clamped to the current
+  // workspace), so an agent can never widen its own sandbox.  Only the
+  // `/workspace` slash command — typed by a person — calls this.
+  app.post('/api/session/:id/cwd', async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    const raw = typeof req.body?.cwd === 'string' ? req.body.cwd.trim() : '';
+    if (!raw || !path.isAbsolute(raw)) {
+      return res.status(400).json({ error: 'cwd must be an absolute path' });
+    }
+    const abs = path.resolve(raw);
+    if (abs === path.parse(abs).root) {
+      return res.status(400).json({ error: 'cwd must not be the filesystem root' });
+    }
+    if (!existsSync(abs)) {
+      return res.status(400).json({ error: `no such directory: ${abs}` });
+    }
+    session.cwd = abs;
+    // Await: a restart on the same stateDir must see the new workspace.
+    await persistSession(session);
+    res.json({ cwd: session.cwd });
+  });
+
   // ── Agent step ────────────────────────────────────────────────────────
 
   // Run one full agent step and return the (aggregated) reply text.

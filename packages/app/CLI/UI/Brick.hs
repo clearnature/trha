@@ -26,7 +26,7 @@ import Control.Monad.IO.Class (liftIO)
 import System.Timeout (timeout)
 import Core.Clipboard (saveClipboardImage)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.RunState (stopAll, stopResultText)
 import Core.Export (exportMarkdown, exportJson, defaultExportName)
@@ -2980,6 +2980,25 @@ handleSlash input = do
       local <- liftIO (listLocalSessionsIn cwd)
       modify $ \s -> s { appRoute = RouteHome, appRecent = local
                        , appStatus = tr (appLang s) "Home" }
+    -- Human channel: move the session's workspace.  No tool reaches this
+    -- endpoint, so an agent cannot widen its own sandbox root.
+    "/workspace" -> do
+      st2 <- get
+      let arg = T.strip (T.drop (T.length "/workspace") input)
+      case appSessionId st2 of
+        Nothing -> appendMsg (mkMsg "system" (tr lang "No active session.") t)
+        Just sid
+          | T.null arg ->
+              appendMsg (mkMsg "system"
+                (tr lang "Usage: /workspace <absolute-path>  (shows the sandbox root)") t)
+          | otherwise -> do
+              r <- liftIO (setSessionCwd (appBridge st2) sid (T.unpack arg))
+              case r of
+                Left e -> appendMsg (mkMsg "error"
+                            (tr lang "Error: " <> T.pack (show e)) t)
+                Right p -> do
+                  modify $ \s -> s { appCwd = Just (T.pack p) }
+                  appendMsg (mkMsg "system" ("Workspace: " <> T.pack p) t)
     _ | cmd == "/fav" || "/fav " `T.isPrefixOf` cmd -> do
       st2 <- get
       let arg = T.strip (T.drop 4 input)

@@ -58,6 +58,7 @@ module Bridge.Scheduler
   , setInUseProvider
   , setSandboxConfig
   , fetchSandboxConfig
+  , setSessionCwd
   , startLoop
   , fetchLoops
   , stopLoops
@@ -483,6 +484,19 @@ setSandboxConfig bridge enabled policy network scratch = do
   pure $ case r of
     Left e  -> Left e
     Right _ -> Right ()
+
+-- | Point the session at a different workspace.
+--
+-- This is the human channel: the model has no tool that reaches this endpoint
+-- (its `cd` is clamped to the current workspace), so an agent can never widen
+-- its own sandbox. Reached only through the `/workspace` slash command.
+setSessionCwd :: SchedulerBridge -> SessionId -> FilePath -> IO (Either CLIError FilePath)
+setSessionCwd bridge sid dir = do
+  r <- (httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/cwd")
+         (object [ "cwd" .= T.pack dir ])) :: IO (Either CLIError Value)
+  pure $ case r of
+    Left e  -> Left e
+    Right _ -> Right dir
 
 -- | Copy this session into a child (/fork); @upto@ truncates the history.
 forkSession :: SchedulerBridge -> SessionId -> Maybe Int -> IO (Either CLIError SessionId)

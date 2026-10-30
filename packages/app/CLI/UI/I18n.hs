@@ -467,6 +467,7 @@ zhDict = M.fromList
   , ("Replay the current session transcript", "回放当前会话的转写")
   , ("Retry the last turn exactly", "精确重试上一轮")
   , ("Ask a side question without changing the conversation", "旁路提问，不改变会话")
+  , ("Show or change the session workspace (human-only; agents cannot reach it)", "查看或修改会话工作区（仅人类可用，智能体无法触达）")
   , ("Summarize the conversation so far", "摘要当前会话")
   , ("Queue a message for after this turn (usage: /queue [message])", "排队一条消息，在当前轮结束后发送（用法：/queue [message]）")
   , ("Steer the running turn (usage: /steer <prompt>)", "转向当前轮（用法：/steer <prompt>）")

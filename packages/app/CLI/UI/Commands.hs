@@ -15,7 +15,7 @@ module UI.Commands
 
 import Data.Aeson (object, (.=))
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, fetchUsageStats, UsageRow(..), compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, fetchUsageStats, UsageRow(..), compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setSessionCwd, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus)
 import UI.ProviderPresets (presets, preBaseUrl, preKind, preName)
 import Core.Currency (CurrencyTable(..), loadCurrency, saveCurrency)
 import Core.Replay (ReplayBlock(..), renderReplay, renderReplayText)
@@ -673,6 +673,23 @@ executeCommand lang bridge sessionRef _ (Btw question) = do
           return $ Just $ case r of
             Left e -> tr lang "Error: " <> T.pack (show e)
             Right answer -> answer
+
+-- | Change the session's workspace.
+--
+-- The *human* channel: the model has no tool that reaches this endpoint — its
+-- `cd` is clamped to the current workspace — so only a person typing this can
+-- move the sandbox root.
+executeCommand lang bridge sessionRef _ (Workspace mdir) = do
+  cur <- readIORef sessionRef
+  case cur of
+    Nothing -> return $ Just (tr lang "No active session.")
+    Just sid -> case mdir of
+      Nothing -> return $ Just (tr lang "Usage: /workspace <absolute-path>")
+      Just dir -> do
+        r <- setSessionCwd bridge sid (T.unpack (T.strip dir))
+        return $ Just $ case r of
+          Left e  -> tr lang "Error: " <> T.pack (show e)
+          Right p -> tr lang "Workspace: " <> T.pack p
 
 executeCommand lang bridge sessionRef _ Retry = do
   cur <- readIORef sessionRef
