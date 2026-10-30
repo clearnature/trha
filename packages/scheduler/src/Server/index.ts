@@ -47,7 +47,6 @@ import { DEFAULT_AGENT_PRESET, getAgentPreset, listAgentPresets } from './agentP
 // Side effect: registers plane + preset metadata for every tool (step 2 of the
 // plugin migration). Handlers still live in the legacy chains.
 import './toolDeclarations.js';
-import { resolveReadPath } from './fsWalk.js';
 import { renderToolValue, resolveTool, toolNamesForPreset } from './toolRegistry.js';
 import { snapshotFile } from './fileHistory.js';
 import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
@@ -1594,20 +1593,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       return limitOutput(r.note ? `${body}\n${r.note}` : body);
     }
     if (name === 'read') {
-      const target = resolveReadPath(argsObj.path, cwd);
-      if (!target) return 'ERROR: missing/invalid path argument';
-      try {
-        const text = await readFile(target, 'utf8');
-        const lines = text.split('\n');
-        const offset = Number(argsObj.offset);
-        const limit = Number(argsObj.limit);
-        const start = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) - 1 : 0;
-        const count = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : lines.length;
-        const slice = lines.slice(start, start + count);
-        return limitOutput(slice.map((l, i) => `${start + i + 1}\t${l}`).join('\n'));
-      } catch (e) {
-        return `ERROR: ${(e as Error).message}`;
-      }
+      // Migrated to the registry (full DSH contract); the core-chain pre-check
+      // above resolves it before this line is ever reached.
     }
     if (name === 'write' || name === 'append_file') {
       if (typeof argsObj.path !== 'string') return 'ERROR: path must be a string';

@@ -23,6 +23,7 @@ import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedSpa
 import { registerTool, renderToolValue, resolveTool } from './toolRegistry.js';
 import { defineTool, textBlock, toolSpecFrom } from './toolSchema.js';
 import { globToRegExp, resolveReadPath, walkFiles } from './fsWalk.js';
+import { limitOutput } from './toolGuard.js';
 import { lspQuery, type LspOperation } from './lsp.js';
 import { browserClose, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 
@@ -1382,3 +1383,31 @@ const grepTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(grepTool, { plane: 'agent' }));
+
+/** `read` — read a text file, optionally a line window. */
+const readTool = defineTool<string>({
+  name: 'read',
+  description: 'Read a text file. Lines come back numbered; `offset`/`limit` window them.',
+  parameters: {
+    path: { type: 'string', description: 'File path, absolute or relative to cwd.' },
+    offset: { type: 'number', description: '1-based first line to return.' },
+    limit: { type: 'number', description: 'How many lines to return.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const base = host.sessionCwd ?? host.workspace;
+    const target = resolveReadPath(args.path, base);
+    if (!target) throw new Error('missing/invalid path argument');
+    const text = await readFile(target, 'utf8');
+    const lines = text.split('\n');
+    const offset = Number(args.offset);
+    const limit = Number(args.limit);
+    const start = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) - 1 : 0;
+    const count = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : lines.length;
+    const slice = lines.slice(start, start + count);
+    return limitOutput(slice.map((l, i) => `${start + i + 1}\t${l}`).join('\n'));
+  },
+});
+
+registerTool(toolSpecFrom(readTool, { plane: 'agent' }));
