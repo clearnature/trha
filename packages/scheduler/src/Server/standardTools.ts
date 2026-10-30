@@ -619,34 +619,11 @@ export async function runStandardTool(
     return `OK: deleted ${id}`;
   }
 
-  if (name === 'job_list') {
-    const list = [...host.jobs.values()];
-    if (list.length === 0) return '(no jobs)';
-    return list.map(j =>
-      `${j.id}\t${j.status}${j.exitCode !== undefined ? ` (${j.exitCode})` : ''}\t${j.command.slice(0, 80)}`,
-    ).join('\n');
-  }
+  if (name === 'job_list') return jobListHandler(host);
 
-  if (name === 'job_output') {
-    const id = typeof args.id === 'string' ? args.id : '';
-    const job = host.jobs.get(id);
-    if (!job) return `ERROR: no job ${id}`;
-    const out = job.output.join('');
-    return `status: ${job.status}${job.exitCode !== undefined ? ` exit=${job.exitCode}` : ''}\n`
-      + clip(out || '(no output yet)');
-  }
+  if (name === 'job_output') return jobOutputHandler(args, host);
 
-  if (name === 'job_kill') {
-    const id = typeof args.id === 'string' ? args.id : '';
-    const job = host.jobs.get(id);
-    if (!job) return `ERROR: no job ${id}`;
-    if (job.status === 'running') {
-      job.child?.kill('SIGTERM');
-      job.status = 'exited';
-      return `OK: killed ${id}`;
-    }
-    return `OK: ${id} already exited`;
-  }
+  if (name === 'job_kill') return jobKillHandler(args, host);
 
   if (name === 'skill') {
     const wanted = typeof args.name === 'string' ? args.name.trim() : '';
@@ -735,3 +712,45 @@ async function presentHandler(args: Record<string, unknown>): Promise<string> {
 }
 
 registerTool({ name: 'present', plane: 'agent', handler: args => presentHandler(args) });
+
+/** `job_list` — background jobs owned by this host. */
+async function jobListHandler(host: StandardToolHost): Promise<string> {
+  const list = [...host.jobs.values()];
+  if (list.length === 0) return '(no jobs)';
+  return list.map(j =>
+    `${j.id}\t${j.status}${j.exitCode !== undefined ? ` (${j.exitCode})` : ''}\t${j.command.slice(0, 80)}`,
+  ).join('\n');
+}
+
+/** `job_output` — collected stdout/stderr of one background job. */
+async function jobOutputHandler(
+  args: Record<string, unknown>,
+  host: StandardToolHost,
+): Promise<string> {
+  const id = typeof args.id === 'string' ? args.id : '';
+  const job = host.jobs.get(id);
+  if (!job) return `ERROR: no job ${id}`;
+  const out = job.output.join('');
+  return `status: ${job.status}${job.exitCode !== undefined ? ` exit=${job.exitCode}` : ''}\n`
+    + clip(out || '(no output yet)');
+}
+
+/** `job_kill` — SIGTERM one background job. */
+async function jobKillHandler(
+  args: Record<string, unknown>,
+  host: StandardToolHost,
+): Promise<string> {
+  const id = typeof args.id === 'string' ? args.id : '';
+  const job = host.jobs.get(id);
+  if (!job) return `ERROR: no job ${id}`;
+  if (job.status === 'running') {
+    job.child?.kill('SIGTERM');
+    job.status = 'exited';
+    return `OK: killed ${id}`;
+  }
+  return `OK: ${id} already exited`;
+}
+
+registerTool({ name: 'job_list', plane: 'host', handler: (_a, h) => jobListHandler(h as StandardToolHost) });
+registerTool({ name: 'job_output', plane: 'host', handler: (a, h) => jobOutputHandler(a, h as StandardToolHost) });
+registerTool({ name: 'job_kill', plane: 'host', handler: (a, h) => jobKillHandler(a, h as StandardToolHost) });
