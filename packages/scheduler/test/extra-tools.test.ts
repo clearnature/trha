@@ -136,7 +136,8 @@ describe('session queries', () => {
   it('waits for an idle agent and reports unknown ones', async () => {
     const h = makeHost({ agents });
     expect(await runExtraTool('wait_agent', { id: 's1' }, h)).toMatch(/idle/);
-    expect(await runExtraTool('wait_agent', { id: 'nope' }, h)).toMatch(/no agent/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('wait_agent', { id: 'nope' }, h)).rejects.toThrow(/no agent/);
     expect(await runExtraTool('wait_agent', { id: 'busy-1', timeout_ms: 150 }, h)).toMatch(/TIMEOUT/);
   });
 
@@ -432,7 +433,8 @@ describe('closing the remaining branches', () => {
     const bare = makeHost();
     await expect(runExtraTool('team_task_get', { id: 't1' }, bare))
       .rejects.toThrow(/not available/);
-    expect(await runExtraTool('spawn_teammate', { task: 'x' }, bare)).toMatch(/not available/);
-    expect(await runExtraTool('wait_agent', { id: 'x' }, bare)).toMatch(/no agent/);
+    await expect(runExtraTool('spawn_teammate', { task: 'x' }, bare))
+      .rejects.toThrow(/not available/);
+    await expect(runExtraTool('wait_agent', { id: 'x' }, bare)).rejects.toThrow(/no agent/);
   });
 });

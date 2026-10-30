@@ -195,30 +195,8 @@ export async function runExtraTool(
   }
 
   // ── agents ───────────────────────────────────────────────────────────
-  if (name === 'wait_agent') {
-    const id = typeof args.id === 'string' ? args.id : '';
-    const timeout = typeof args.timeout_ms === 'number' ? args.timeout_ms : 30_000;
-    if (!id) return 'ERROR: id is required';
-    const deadline = Date.now() + Math.min(timeout, 120_000);
-    while (Date.now() < deadline) {
-      const ref = host.agents?.list().find(a => a.id === id);
-      if (!ref) return `ERROR: no agent ${id}`;
-      if (!ref.busy) return `OK: ${id} is idle (${ref.messages} msgs)`;
-      await new Promise(r => setTimeout(r, 100));
-    }
-    return `TIMEOUT: ${id} still busy after ${timeout} ms`;
-  }
-  if (name === 'spawn_teammate') {
-    if (!host.agents) return 'ERROR: subagents are not available in this host';
-    const task = typeof args.task === 'string' ? args.task : '';
-    if (!task.trim()) return 'ERROR: task is required';
-    const teammate = typeof args.name === 'string' ? args.name : 'teammate';
-    const r = await host.agents.spawn(task, teammate);
-    // A teammate is also a team-list entry, so the shared list names it.
-    const tasks = host.agents.teamTasks();
-    const entry: TeamTask = { id: `t${tasks.length + 1}`, subject: `teammate ${teammate}: ${task.slice(0, 60)}`, status: 'in_progress', assignee: r.id };
-    host.agents.setTeamTasks([...tasks, entry]);
-    return `teammate ${r.id} finished:\n${clip(r.reply)}`;
+  if (name === 'wait_agent' || name === 'spawn_teammate') {
+    // Migrated to the registry (full DSH contract): two separate tools now.
   }
   if (name === 'team_task_get') {
     // Migrated to the registry (full DSH contract); `resolveTool` wins for this
@@ -370,8 +348,7 @@ export async function runExtraTool(
     return `ERROR: no search backend answered for "${query}" — set TRHA_SEARX_URL to a SearXNG instance (json format), or check the network/proxy`;
   }
   if (name === 'list_subagent_models') {
-    const models = host.models?.() ?? [];
-    return models.length ? models.map(m => `${m.name}\t${m.description ?? ''}`).join('\n') : '(no models configured)';
+    // Migrated to the registry (full DSH contract).
   }
   if (name === 'plugin_manager' || name === 'cordis_inspect_list') {
     // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
@@ -1004,3 +981,79 @@ registerTool(toolSpecFrom(pluginManagerTool, { plane: 'host' }));
 registerTool(toolSpecFrom(cordisInspectListTool, { plane: 'host' }));
 registerTool(toolSpecFrom(cordisInspectQueryTool, { plane: 'host' }));
 registerTool(toolSpecFrom(pluginMarketTool, { plane: 'host' }));
+
+/** `wait_agent` — block until a subagent goes idle (bounded). */
+const waitAgentTool = defineTool<string>({
+  name: 'wait_agent',
+  description: 'Wait until a subagent goes idle, up to a bounded timeout.',
+  parameters: {
+    id: { type: 'string', description: 'Subagent id.' },
+    timeout_ms: {
+      type: 'number',
+      description: 'Maximum wait in ms (default 30000, capped at 120000).',
+    },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const id = typeof args.id === 'string' ? args.id : '';
+    const timeout = typeof args.timeout_ms === 'number' ? args.timeout_ms : 30_000;
+    if (!id) throw new Error('id is required');
+    const deadline = Date.now() + Math.min(timeout, 120_000);
+    while (Date.now() < deadline) {
+      const ref = host.agents?.list().find(a => a.id === id);
+      if (!ref) throw new Error(`no agent ${id}`);
+      if (!ref.busy) return `OK: ${id} is idle (${ref.messages} msgs)`;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    return `TIMEOUT: ${id} still busy after ${timeout} ms`;
+  },
+});
+
+/** `spawn_teammate` — spawn a teammate for one task and record it on the team list. */
+const spawnTeammateTool = defineTool<string>({
+  name: 'spawn_teammate',
+  description: 'Spawn a teammate subagent for one task; it also lands on the shared team list.',
+  parameters: {
+    task: { type: 'string', description: 'What the teammate should do.' },
+    name: { type: 'string', description: 'Teammate name (default "teammate").' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    if (!host.agents) throw new Error('subagents are not available in this host');
+    const task = typeof args.task === 'string' ? args.task : '';
+    if (!task.trim()) throw new Error('task is required');
+    const teammate = typeof args.name === 'string' ? args.name : 'teammate';
+    const r = await host.agents.spawn(task, teammate);
+    // A teammate is also a team-list entry, so the shared list names it.
+    const tasks = host.agents.teamTasks();
+    const entry: TeamTask = {
+      id: `t${tasks.length + 1}`,
+      subject: `teammate ${teammate}: ${task.slice(0, 60)}`,
+      status: 'in_progress',
+      assignee: r.id,
+    };
+    host.agents.setTeamTasks([...tasks, entry]);
+    return `teammate ${r.id} finished:\n${clip(r.reply)}`;
+  },
+});
+
+/** `list_subagent_models` — models a subagent can be spawned with. */
+const listSubagentModelsTool = defineTool<string>({
+  name: 'list_subagent_models',
+  description: 'List the models a subagent can be spawned with.',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as ExtraHost;
+    const models = host.models?.() ?? [];
+    return models.length
+      ? models.map(m => `${m.name}\t${m.description ?? ''}`).join('\n')
+      : '(no models configured)';
+  },
+});
+
+registerTool(toolSpecFrom(waitAgentTool, { plane: 'host' }));
+registerTool(toolSpecFrom(spawnTeammateTool, { plane: 'host' }));
+registerTool(toolSpecFrom(listSubagentModelsTool, { plane: 'host' }));

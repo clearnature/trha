@@ -285,32 +285,8 @@ export async function runStandardTool(
     return `subagent ${r.id} finished:\n${clip(r.reply)}`;
   }
 
-  if (name === 'list_agents') {
-    if (!host.agents) return 'ERROR: subagents are not available in this host';
-    const list = host.agents.list();
-    if (list.length === 0) return '(no agents)';
-    return list.map(a =>
-      `${a.id}\t${a.busy ? 'busy' : 'idle'}\t${a.messages} msgs${a.parentId ? `\tparent=${a.parentId}` : ''}`,
-    ).join('\n');
-  }
-
-  if (name === 'send_message') {
-    if (!host.agents) return 'ERROR: subagents are not available in this host';
-    const to = typeof args.to === 'string' ? args.to : '';
-    const text = typeof args.text === 'string' ? args.text : (typeof args.message === 'string' ? args.message : '');
-    if (!to || !text.trim()) return 'ERROR: to and text are required';
-    const r = await host.agents.send(to, text.trim());
-    if (!r.delivered) return `ERROR: no agent ${to}`;
-    return r.reply !== undefined ? `reply from ${to}:\n${clip(r.reply)}` : `queued for ${to}`;
-  }
-
-  if (name === 'interrupt_agent') {
-    if (!host.agents) return 'ERROR: subagents are not available in this host';
-    const id = typeof args.id === 'string' ? args.id : '';
-    if (!id) return 'ERROR: id is required';
-    // The running loop checks this flag between rounds and between tool calls.
-    const wasBusy = host.agents.interrupt(id);
-    return wasBusy ? `OK: interrupted ${id}` : `OK: ${id} was idle`;
+  if (name === 'list_agents' || name === 'send_message' || name === 'interrupt_agent') {
+    // Migrated to the registry (full DSH contract): three separate tools now.
   }
 
   if (name === 'team_task_create') {
@@ -1163,3 +1139,65 @@ registerTool(toolSpecFrom(browserNavigateTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(browserExtractTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(browserScreenshotTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(browserCloseTool, { plane: 'agent' }));
+
+/** `list_agents` — the subagents of this session. */
+const listAgentsTool = defineTool<string>({
+  name: 'list_agents',
+  description: 'List this session\'s subagents: id, busy/idle, message count, parent.',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as StandardToolHost;
+    if (!host.agents) throw new Error('subagents are not available in this host');
+    const list = host.agents.list();
+    if (list.length === 0) return '(no agents)';
+    return list.map(a =>
+      `${a.id}\t${a.busy ? 'busy' : 'idle'}\t${a.messages} msgs${a.parentId ? `\tparent=${a.parentId}` : ''}`,
+    ).join('\n');
+  },
+});
+
+/** `send_message` — deliver a message to one subagent. */
+const sendMessageTool = defineTool<string>({
+  name: 'send_message',
+  description: 'Send a message to one subagent; returns its reply when it answers inline.',
+  parameters: {
+    to: { type: 'string', description: 'Subagent id.' },
+    text: { type: 'string', description: 'Message body.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    if (!host.agents) throw new Error('subagents are not available in this host');
+    const to = typeof args.to === 'string' ? args.to : '';
+    const text = typeof args.text === 'string'
+      ? args.text
+      : (typeof args.message === 'string' ? args.message : '');
+    if (!to || !text.trim()) throw new Error('to and text are required');
+    const r = await host.agents.send(to, text.trim());
+    if (!r.delivered) throw new Error(`no agent ${to}`);
+    return r.reply !== undefined ? `reply from ${to}:\n${clip(r.reply)}` : `queued for ${to}`;
+  },
+});
+
+/** `interrupt_agent` — set the interrupt flag on one subagent. */
+const interruptAgentTool = defineTool<string>({
+  name: 'interrupt_agent',
+  description:
+    'Interrupt a subagent. The running loop checks the flag between rounds and between '
+    + 'tool calls.',
+  parameters: { id: { type: 'string', description: 'Subagent id.' } },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    if (!host.agents) throw new Error('subagents are not available in this host');
+    const id = typeof args.id === 'string' ? args.id : '';
+    if (!id) throw new Error('id is required');
+    const wasBusy = host.agents.interrupt(id);
+    return wasBusy ? `OK: interrupted ${id}` : `OK: ${id} was idle`;
+  },
+});
+
+registerTool(toolSpecFrom(listAgentsTool, { plane: 'host' }));
+registerTool(toolSpecFrom(sendMessageTool, { plane: 'host' }));
+registerTool(toolSpecFrom(interruptAgentTool, { plane: 'host' }));
