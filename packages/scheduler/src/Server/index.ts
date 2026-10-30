@@ -47,7 +47,7 @@ import { DEFAULT_AGENT_PRESET, getAgentPreset, listAgentPresets } from './agentP
 // Side effect: registers plane + preset metadata for every tool (step 2 of the
 // plugin migration). Handlers still live in the legacy chains.
 import './toolDeclarations.js';
-import { toolNamesForPreset } from './toolRegistry.js';
+import { renderToolValue, resolveTool, toolNamesForPreset } from './toolRegistry.js';
 import { snapshotFile } from './fileHistory.js';
 import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
 import { resolveTls } from './tls.js';
@@ -1607,6 +1607,26 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         return `REQUIRE_APPROVAL: ${verdict.reason}`;
       }
     }
+    // Registered tools win over the core chain as well, so a preset or an
+    // external plugin can replace `bash`/`read`/`write`/`grep`/`glob`. The chain
+    // below stays as the fallback for everything not migrated yet.
+    {
+      const registeredCore = resolveTool(name);
+      if (registeredCore?.handler) {
+        const session = sessionId ? sessions.get(sessionId) : undefined;
+        if (!session) return `ERROR: ${name} needs a live session`;
+        const out = await renderToolValue(registeredCore, argsObj, {
+          workspace: WORKSPACE,
+          state: session,
+          jobs: jobsFor(sessionId!),
+          sessionId: sessionId!,
+          agents: agentHooksFor(session),
+        }).catch((e: unknown) => `ERROR: ${String(e)}`);
+        if (!out.startsWith('UNCHANGED:')) await persistSession(session);
+        return out;
+      }
+    }
+
     if (name === 'bash') {
       const cmd = typeof argsObj.command === 'string' ? argsObj.command : '';
       if (!cmd.trim()) return 'ERROR: missing command';
