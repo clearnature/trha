@@ -139,6 +139,10 @@ data ToolSpec = ToolSpec
   { tsName        :: Text
   , tsDescription :: Text
   , tsParameters  :: Value -- ^ JSON schema object
+  , tsDeferLoading :: Bool
+    -- ^ Anthropic's @defer_loading@: let the provider pull this definition into
+    -- context on demand instead of declaring it up front. Providers without the
+    -- feature ignore it, so the flag is safe to set unconditionally.
   } deriving (Show, Eq)
 
 -- | One assistant turn from a function-calling request.
@@ -184,7 +188,7 @@ defaultGenParams :: GenParams
 defaultGenParams = GenParams Nothing Nothing Nothing Nothing Nothing
 
 instance ToJSON ToolSpec where
-  toJSON ts = object
+  toJSON ts = object $
     [ "type" .= ("function" :: Text)
     , "function" .= object
         [ "name" .= tsName ts
@@ -192,11 +196,16 @@ instance ToJSON ToolSpec where
         , "parameters" .= tsParameters ts
         ]
     ]
+    ++ [ "deferLoading" .= True | tsDeferLoading ts ]
 
 instance FromJSON ToolSpec where
   parseJSON = withObject "ToolSpec" $ \v -> do
     fn <- v .: "function"
+    -- The flag rides at the top level (next to `function`), which is where the
+    -- scheduler puts it; an absent field means "declare it normally".
+    defer' <- v .:? "deferLoading" .!= False
     ToolSpec <$> fn .: "name" <*> fn .: "description" <*> fn .: "parameters"
+             <*> pure defer'
 
 instance ToJSON ToolCall where
   toJSON tc = object

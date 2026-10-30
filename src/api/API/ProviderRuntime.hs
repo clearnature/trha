@@ -645,11 +645,14 @@ toAnthropicMessages msgs = (T.intercalate "\n\n" systems, go msgs)
 
 -- | A tool as Anthropic declares it.
 anthropicTool :: ToolSpec -> Value
-anthropicTool s = object
+anthropicTool s = object $
   [ "name"         .= tsName s
   , "description"  .= tsDescription s
   , "input_schema" .= tsParameters s
   ]
+  -- Anthropic's own field name. Only sent when set, so every other provider
+  -- and every unflagged tool keeps the exact previous body.
+  ++ [ "defer_loading" .= True | tsDeferLoading s ]
 
 -- | A tool as the Responses API declares it.
 responsesTool :: ToolSpec -> Value
