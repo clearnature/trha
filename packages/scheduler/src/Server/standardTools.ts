@@ -1565,7 +1565,30 @@ registerTool(toolSpecFrom(writeTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(appendFileTool, { plane: 'agent' }));
 
 /** `edit` — replace one string in a file, with a unified diff in the result. */
-const editTool = defineTool<string>({
+/**
+ * What `edit` produces — DSH's `tool-fs/edit` returns `{ path, before, after }`,
+ * which is what lets its `presentationMeta` build hunk diffs.
+ */
+export interface EditResult {
+  /** Absolute path actually written. */
+  path: string;
+  /** How many occurrences were replaced. */
+  replacements: number;
+  /** The unified diff, computed once in `execute`. */
+  diff: string;
+  /** The two fragments; DSH derives presentation hunks from these. */
+  oldText: string;
+  newText: string;
+}
+
+/** Reproduce the pre-refactor text byte for byte. */
+const renderEdit = (v: EditResult): string => {
+  const summary = `OK: edit -> ${v.path} `
+    + `(${v.replacements} replacement${v.replacements === 1 ? '' : 's'})`;
+  return v.diff ? `${summary}\n\n${v.diff}` : summary;
+};
+
+const editTool = defineTool<EditResult>({
   name: 'edit',
   description:
     'Replace a string in a file. Fails when the old string is missing or matches more '
@@ -1576,15 +1599,32 @@ const editTool = defineTool<string>({
     new_string: { type: 'string', description: 'Replacement text.' },
     replace_all: { type: 'boolean', description: 'Replace every occurrence.' },
   },
-  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  output: {
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        path: { type: 'string' },
+        replacements: { type: 'number' },
+        diff: { type: 'string' },
+        oldText: { type: 'string' },
+        newText: { type: 'string' },
+      },
+    },
+    render: (_args, value) => [textBlock(renderEdit(value))],
+    // DSH's tool-fs/edit shape: the path plus the fragments that produced hunks.
+    presentationMeta: (_args, value) => ({
+      path: value.path,
+      diffs: [{ path: value.path, oldText: value.oldText, newText: value.newText }],
+    }),
+  },
   presentCall: args => ({ card: 'diff', title: `edit ${oneLine(args.path)}`, rawInput: args.path }),
-  // Closing card titles the outcome (`edited x · 2`) instead of repeating the
-  // opening label.
   presentResult: (args, result) => {
-    const m = /\((\d+) replacement/.exec(String(result ?? ''));
+    // The canonical value, not the rendered text.
+    const v = result as EditResult;
     return {
       card: 'diff' as const,
-      title: `edited ${oneLine(args.path)}${m ? ` · ${m[1]}` : ''}`,
+      title: `edited ${oneLine(args.path)}${v?.replacements ? ` · ${v.replacements}` : ''}`,
     };
   },
   async execute(args, exec) {
@@ -1615,9 +1655,13 @@ const editTool = defineTool<string>({
       : [parts[0], ...parts.slice(1)].join(newString);
     await snapshotFile(target);
     await writeFile(target, after, 'utf8');
-    const summary = `OK: edit -> ${target} (${hits} replacement${hits === 1 ? '' : 's'})`;
-    const diff = editDiff(before, oldString, newString);
-    return diff ? `${summary}\n\n${diff}` : summary;
+    return {
+      path: target,
+      replacements: hits,
+      diff: editDiff(before, oldString, newString),
+      oldText: oldString,
+      newText: newString,
+    };
   },
 });
 

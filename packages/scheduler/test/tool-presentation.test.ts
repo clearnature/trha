@@ -33,19 +33,28 @@ describe('tool presentation hooks', () => {
   });
 
   it('bash reports the exit code on the closing card', () => {
-    expect(resolveTool('bash')?.presentResult?.({}, 'exit 3\nboom')).toEqual({
+    // `presentResult` receives the canonical `BashResult`, not the rendered text.
+    expect(resolveTool('bash')?.presentResult?.({}, { code: 3, cwd: '/tmp' })).toEqual({
       card: 'terminal',
       title: 'exit 3',
     });
   });
 
-  it('bash has no closing label when the output carries no exit code', () => {
-    expect(resolveTool('bash')?.presentResult?.({}, 'garbage')).toBeUndefined();
+  it('bash names the job when the call ran in the background', () => {
+    expect(resolveTool('bash')?.presentResult?.({}, { jobId: 'job-2', cwd: '/tmp' })).toEqual({
+      card: 'terminal',
+      title: 'job job-2',
+    });
+  });
+
+  it('bash has no closing label when there is no exit code', () => {
+    expect(resolveTool('bash')?.presentResult?.({}, { cwd: '/tmp' })).toBeUndefined();
   });
 
   it('edit counts replacements in its closing label', () => {
-    const out = 'OK: edit -> /tmp/a.txt (2 replacements)\n\n@@ -1,1 +1,1 @@';
-    expect(resolveTool('edit')?.presentResult?.({ path: 'a.txt' }, out)?.title)
+    // The canonical `EditResult`, not the rendered text.
+    const value = { path: '/tmp/a.txt', replacements: 2, diff: '', oldText: 'a', newText: 'b' };
+    expect(resolveTool('edit')?.presentResult?.({ path: 'a.txt' }, value)?.title)
       .toBe('edited a.txt · 2');
   });
 
