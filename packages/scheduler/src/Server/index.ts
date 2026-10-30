@@ -1124,11 +1124,33 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     const askTimeout = typeof req.body.askTimeout === 'number' && req.body.askTimeout > 0
       ? Math.round(req.body.askTimeout * 1000)
       : undefined;
+    // Per-session workspace.  The scheduler is shared by every client (TUI,
+    // desktop, web), so a single process-wide WORKSPACE cannot serve people
+    // working in different projects: whichever client started the scheduler
+    // would decide the workspace for all of them.  The caller knows its own
+    // directory, so let it say — validated here, because this value becomes
+    // the tool layer's read/write boundary.
+    const requestedCwd = typeof req.body.cwd === 'string' ? req.body.cwd.trim() : '';
+    let sessionCwd: string | undefined;
+    if (requestedCwd) {
+      if (!path.isAbsolute(requestedCwd)) {
+        return res.status(400).json({ error: 'cwd must be an absolute path' });
+      }
+      const abs = path.resolve(requestedCwd);
+      if (abs === path.parse(abs).root) {
+        return res.status(400).json({ error: 'cwd must not be the filesystem root' });
+      }
+      if (!existsSync(abs)) {
+        return res.status(400).json({ error: `cwd does not exist: ${abs}` });
+      }
+      sessionCwd = abs;
+    }
     const created = {
       id: sessionId, mode, messages: [] as SessionMessage[],
       pendingApproval: null, createdAt: new Date(),
       permissionMode: approval, planMode,
       yoloRestore: null as PermissionMode | null,
+      ...(sessionCwd !== undefined ? { cwd: sessionCwd } : {}),
       ...(askTimeout !== undefined ? { askTimeoutMs: askTimeout } : {}),
     };
     sessions.set(sessionId, created);
@@ -1527,7 +1549,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       // Relative paths are relative to the *workspace*, not to whatever cwd the
       // scheduler happens to have — the model has no way to know the latter,
       // and "path escapes the workspace" for "hello.txt" is a dead end.
-      const target = await confineWritePath(WORKSPACE, workspaceRelative(argsObj.path, cwd), extraWriteRoots);
+      // Confine to the *session's* workspace, not the process-wide one: with
+      // several clients on different projects, WORKSPACE belongs to whoever
+      // happened to start the scheduler.
+      const target = await confineWritePath(cwd, workspaceRelative(argsObj.path, cwd), extraWriteRoots);
       if (!target) return 'ERROR: path escapes the workspace';
       const rawContent = argsObj.content;
       if (rawContent === undefined || rawContent === null) return 'ERROR: missing content';
@@ -1552,7 +1577,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       const newString = argsObj.new_string;
       if (typeof oldString !== 'string' || oldString === '') return 'ERROR: old_string is required';
       if (typeof newString !== 'string') return 'ERROR: new_string is required';
-      const target = await confineWritePath(WORKSPACE, workspaceRelative(argsObj.path, cwd), extraWriteRoots);
+      const target = await confineWritePath(cwd, workspaceRelative(argsObj.path, cwd), extraWriteRoots);
       if (!target) return 'ERROR: path escapes the workspace';
       try {
         const before = await readFile(target, 'utf8');

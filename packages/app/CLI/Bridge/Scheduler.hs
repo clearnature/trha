@@ -118,6 +118,7 @@ import qualified Data.ByteString as BS
 import Control.Concurrent (forkIO, killThread, newEmptyMVar, putMVar, takeMVar)
 import Control.Monad (join, void, when)
 import Data.Maybe (fromMaybe)
+import System.Directory (getCurrentDirectory)
 import System.Timeout (timeout)
 import Control.Exception (SomeAsyncException, SomeException, catch, fromException, throwIO)
 import Data.Text (Text)
@@ -159,12 +160,18 @@ createSchedulerBridge config = do
 --------------------------------------------------------------------------------
 
 -- | Create a session on the orchestration layer.
+--
+-- @cwd@ is the client's own directory: the scheduler serves every client
+-- (TUI/desktop/web), so the session — not the process — must say which
+-- project it belongs to.
 createSession :: SchedulerBridge -> IO (Either CLIError SessionId)
 createSession bridge = do
   cfg <- resolveConfig defaultCLIConfig
+  cwd <- getCurrentDirectory
   result <- httpPost (bridgeHTTP bridge) "/api/session/start"
     (object [ "mode" .= ("standard" :: Text)
-            , "askTimeout" .= configAskTimeout cfg ])
+            , "askTimeout" .= configAskTimeout cfg
+            , "cwd" .= T.pack cwd ])
   return $ case result of
     Right (Object r) -> case parseMaybe (.: "sessionId") r of
       Just sessionId -> Right sessionId
