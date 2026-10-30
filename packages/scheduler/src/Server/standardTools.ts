@@ -255,14 +255,8 @@ export async function runStandardTool(
   }
 
   if (name === 'subagent') {
-    if (!host.agents) return 'ERROR: subagents are not available in this host';
-    const task = typeof args.task === 'string' ? args.task.trim() : '';
-    if (!task) return 'ERROR: task is required';
-    const nameHint = typeof args.name === 'string' ? args.name : undefined;
-    // Named agent definition (~/.trha/agents/<name>/), optional.
-    const agentName = typeof args.agent === 'string' ? args.agent : undefined;
-    const r = await host.agents.spawn(task, nameHint, agentName);
-    return `subagent ${r.id} finished:\n${clip(r.reply)}`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   if (name === 'list_agents' || name === 'send_message' || name === 'interrupt_agent') {
@@ -283,22 +277,7 @@ export async function runStandardTool(
   }
 
   if (name === 'workflow') {
-    if (!host.agents) return 'ERROR: workflow is not available in this host';
-    const steps = Array.isArray(args.steps) ? args.steps : [];
-    if (steps.length === 0) return 'ERROR: steps must be a non-empty array of {name, task}';
-    const out: Array<Record<string, unknown>> = [];
-    for (const raw of steps) {
-      const o = raw as { name?: unknown; task?: unknown };
-      const task = typeof o.task === 'string' ? o.task.trim() : '';
-      if (!task) { out.push({ name: String(o.name ?? ''), error: 'missing task' }); continue; }
-      try {
-        const r = await host.agents.spawn(task, typeof o.name === 'string' ? o.name : undefined);
-        out.push({ name: String(o.name ?? r.id), agent: r.id, reply: clip(r.reply, 4000) });
-      } catch (e) {
-        out.push({ name: String(o.name ?? ''), error: String(e) });
-      }
-    }
-    return clip(JSON.stringify(out, null, 2));
+    // Migrated to the registry (full DSH contract).
   }
 
   if (name === 'ask_user_question') {
@@ -1226,3 +1205,68 @@ const lspTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(lspTool, { plane: 'host' }));
+
+/** `subagent` — spawn one subagent for a task and wait for its reply. */
+const subagentTool = defineTool<string>({
+  name: 'subagent',
+  description: 'Spawn a subagent for one task and return its final reply.',
+  parameters: {
+    task: { type: 'string', description: 'What the subagent should do.' },
+    name: { type: 'string', description: 'Name hint for the subagent.' },
+    agent: { type: 'string', description: 'Named agent definition (~/.trha/agents/<name>/).' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    if (!host.agents) throw new Error('subagents are not available in this host');
+    const task = typeof args.task === 'string' ? args.task.trim() : '';
+    if (!task) throw new Error('task is required');
+    const nameHint = typeof args.name === 'string' ? args.name : undefined;
+    // Named agent definition (~/.trha/agents/<name>/), optional.
+    const agentName = typeof args.agent === 'string' ? args.agent : undefined;
+    const r = await host.agents.spawn(task, nameHint, agentName);
+    return `subagent ${r.id} finished:\n${clip(r.reply)}`;
+  },
+});
+
+/** `workflow` — run a list of {name, task} steps through fresh subagents. */
+const workflowTool = defineTool<string>({
+  name: 'workflow',
+  description: 'Run named steps in order, each executed by a fresh subagent; returns JSON.',
+  parameters: {
+    steps: {
+      type: 'array',
+      description: 'Steps to run in order.',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Label for this step.' },
+          task: { type: 'string', description: 'Task for the subagent.' },
+        },
+      },
+    },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    if (!host.agents) throw new Error('workflow is not available in this host');
+    const steps = Array.isArray(args.steps) ? args.steps : [];
+    if (steps.length === 0) throw new Error('steps must be a non-empty array of {name, task}');
+    const out: Array<Record<string, unknown>> = [];
+    for (const raw of steps) {
+      const o = raw as { name?: unknown; task?: unknown };
+      const task = typeof o.task === 'string' ? o.task.trim() : '';
+      if (!task) { out.push({ name: String(o.name ?? ''), error: 'missing task' }); continue; }
+      try {
+        const r = await host.agents.spawn(task, typeof o.name === 'string' ? o.name : undefined);
+        out.push({ name: String(o.name ?? r.id), agent: r.id, reply: clip(r.reply, 4000) });
+      } catch (e) {
+        out.push({ name: String(o.name ?? ''), error: String(e) });
+      }
+    }
+    return clip(JSON.stringify(out, null, 2));
+  },
+});
+
+registerTool(toolSpecFrom(subagentTool, { plane: 'host' }));
+registerTool(toolSpecFrom(workflowTool, { plane: 'agent' }));
