@@ -214,6 +214,8 @@ interface SchedulerSession {
   /** Instructions injected with /steer; consumed at the next model call. */
   steer?: string[];
   createdAt: Date;
+  /** When a `time-context` reading was last injected into this history. */
+  lastTimeContextAt?: number;
   /** Provider-reported prompt tokens of the previous request (ground truth). */
   lastPromptTokens?: number;
   cacheHitTokens?: number;
@@ -1715,6 +1717,24 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         // Repair an incomplete tool_calls group before it reaches the provider
         // (interrupt / approval park / throwing tool).
         session.messages = repairToolPairs(session.messages);
+        // DSH's `time-context`: a durable clock reading in the history, so the
+        // model knows what "today" is. Rate-limited because every injection
+        // rewrites the request prefix and costs a cache miss; 0 disables it.
+        // Ported from `packages/context/time-context` (default 600000 ms).
+        const timeContextMs = Number(process.env.TRHA_TIME_CONTEXT_MS ?? 600_000);
+        if (timeContextMs > 0
+            && (session.lastTimeContextAt === undefined
+                || Date.now() - session.lastTimeContextAt >= timeContextMs)) {
+          const now = new Date();
+          session.messages.push({
+            role: 'user',
+            content: `[time-context] now is ${now.toISOString()}`
+              + ` (${Intl.DateTimeFormat().resolvedOptions().timeZone})`,
+            source: 'time-context',
+          });
+          session.lastTimeContextAt = Date.now();
+          persistSession(session);
+        }
         const promptMessages = await withSystemPrompt(
           mode, target.model ?? 'deepseek-flash',
           session.cwd ?? WORKSPACE, session.messages,
