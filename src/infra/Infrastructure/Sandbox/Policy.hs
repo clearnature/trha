@@ -89,6 +89,12 @@ defaultDenyReads =
   , ".config" </> "gh", ".config" </> "gcloud"
   , ".config" </> "@deepseek-ai", ".config" </> "Codex"
   , ".config" </> "gist"
+    -- The whole ~/.trha: runtime.json carries the kernel **and scheduler**
+    -- tokens, and PUT /api/sandbox/config only checks that token. Readable
+    -- from a guest (the root is mounted read-only), an agent could take its
+    -- own sandbox down. HOME already points at scratch, so nothing in here
+    -- is needed inside.
+  , ".trha"
   ]
 
 -- | Credential *files* hidden from every sandbox.
