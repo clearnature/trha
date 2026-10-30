@@ -207,70 +207,7 @@ export async function runExtraTool(
 
   // ── search / models / plugins ────────────────────────────────────────
   if (name === 'web_search') {
-    // Same reason as `web_fetch`: this runs `fetch` in the scheduler process,
-    // so `network: off` (which only unsets the child's netns) would not stop it.
-    if (sandboxBlocksNetwork()) {
-      return 'ERROR: network access is disabled by the sandbox policy (network: off). '
-           + 'Enable it under /sandbox, or run outside the sandbox.';
-    }
-    const query = typeof args.query === 'string' ? args.query.trim() : '';
-    if (!query) return 'ERROR: query is required';
-    const searx = process.env.TRHA_SEARX_URL;
-    const ua = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
-    const strip = (s: string): string =>
-      s.replace(/<[^>]+>/g, ' ')
-        .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#x27;/g, "'")
-        .replace(/\s+/g, ' ').trim();
-    const fromBing = (html: string): string[] => {
-      const out: string[] = [];
-      const re = /<li class="b_algo"[\s\S]*?<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:<p[^>]*>([\s\S]*?)<\/p>)?/gi;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(html)) && out.length < 10) {
-        out.push(`${strip(m[2] ?? '')}\n${m[1] ?? ''}\n${strip(m[3] ?? '').slice(0, 200)}`);
-      }
-      return out;
-    };
-    const fromDdg = (html: string): string[] => {
-      const out: string[] = [];
-      const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(html)) && out.length < 10) {
-        out.push(`${strip(m[2] ?? '')}\n${m[1] ?? ''}`);
-      }
-      return out;
-    };
-    if (searx) {
-      try {
-        const url = `${searx.replace(/\/$/, '')}/search?q=${encodeURIComponent(query)}&format=json`;
-        const res = await fetch(url, { headers: { 'User-Agent': ua } });
-        const body = await res.text();
-        if (res.ok) {
-          const data = JSON.parse(body) as { results?: Array<{ title?: string; url?: string; content?: string }> };
-          const rows = (data.results ?? []).slice(0, 10)
-            .map(r => `${r.title ?? ''}\n${r.url ?? ''}\n${(r.content ?? '').slice(0, 200)}`);
-          if (rows.length) return clip(rows.join('\n\n'));
-        }
-      } catch { /* fall through to the HTML backends */ }
-    }
-    // DuckDuckGo now answers machine traffic with a 202 challenge page, so Bing
-    // is the primary HTML fallback.  Both must return a real 200 with parsed
-    // rows; a challenge page is never reported as a result.
-    const backends: Array<{ name: string; url: string; parse: (h: string) => string[] }> = [
-      { name: 'bing', url: `https://www.bing.com/search?q=${encodeURIComponent(query)}`, parse: fromBing },
-      { name: 'duckduckgo', url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, parse: fromDdg },
-    ];
-    for (const b of backends) {
-      try {
-        const res = await fetch(b.url, {
-          headers: { 'User-Agent': ua, 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
-        });
-        const body = await res.text();
-        if (!res.ok) continue; // 202 = DuckDuckGo challenge, 403 = blocked
-        const rows = b.parse(body);
-        if (rows.length) return clip(rows.join('\n\n'));
-      } catch { /* try the next backend */ }
-    }
-    return `ERROR: no search backend answered for "${query}" — set TRHA_SEARX_URL to a SearXNG instance (json format), or check the network/proxy`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
   if (name === 'list_subagent_models') {
     // Migrated to the registry (full DSH contract).
@@ -1147,3 +1084,92 @@ const loadWorkspaceDependenciesTool = defineTool<string>({
 
 registerTool(toolSpecFrom(createWorktreeTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(loadWorkspaceDependenciesTool, { plane: 'agent' }));
+
+/** `web_search` — SearXNG first, then the Bing / DuckDuckGo HTML backends. */
+const webSearchTool = defineTool<string>({
+  name: 'web_search',
+  description:
+    'Search the web. Uses TRHA_SEARX_URL (a SearXNG instance in JSON mode) when set, '
+    + 'otherwise the Bing and DuckDuckGo HTML backends. Subject to the sandbox network '
+    + 'policy: with `network: off` the search is refused outright.',
+  parameters: {
+    query: { type: 'string', description: 'Search terms.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  timeoutMs: 60_000,
+  async execute(args) {
+    // Same reason as `web_fetch`: this runs `fetch` in the scheduler process,
+    // so `network: off` (which only unsets the child's netns) would not stop it.
+    if (sandboxBlocksNetwork()) {
+      throw new Error(
+        'network access is disabled by the sandbox policy (network: off). '
+        + 'Enable it under /sandbox, or run outside the sandbox.',
+      );
+    }
+    const query = typeof args.query === 'string' ? args.query.trim() : '';
+    if (!query) throw new Error('query is required');
+    const searx = process.env.TRHA_SEARX_URL;
+    const ua = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
+    const strip = (s: string): string =>
+      s.replace(/<[^>]+>/g, ' ')
+        .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#x27;/g, "'")
+        .replace(/\s+/g, ' ').trim();
+    const fromBing = (html: string): string[] => {
+      const out: string[] = [];
+      const re = /<li class="b_algo"[\s\S]*?<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:<p[^>]*>([\s\S]*?)<\/p>)?/gi;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(html)) && out.length < 10) {
+        out.push(`${strip(m[2] ?? '')}\n${m[1] ?? ''}\n${strip(m[3] ?? '').slice(0, 200)}`);
+      }
+      return out;
+    };
+    const fromDdg = (html: string): string[] => {
+      const out: string[] = [];
+      const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(html)) && out.length < 10) {
+        out.push(`${strip(m[2] ?? '')}\n${m[1] ?? ''}`);
+      }
+      return out;
+    };
+    if (searx) {
+      try {
+        const url = `${searx.replace(/\/$/, '')}/search?q=${encodeURIComponent(query)}&format=json`;
+        const res = await fetch(url, { headers: { 'User-Agent': ua } });
+        const body = await res.text();
+        if (res.ok) {
+          const data = JSON.parse(body) as {
+            results?: Array<{ title?: string; url?: string; content?: string }>;
+          };
+          const rows = (data.results ?? []).slice(0, 10)
+            .map(r => `${r.title ?? ''}\n${r.url ?? ''}\n${(r.content ?? '').slice(0, 200)}`);
+          if (rows.length) return clip(rows.join('\n\n'));
+        }
+      } catch { /* fall through to the HTML backends */ }
+    }
+    // DuckDuckGo now answers machine traffic with a 202 challenge page, so Bing
+    // is the primary HTML fallback. Both must return a real 200 with parsed
+    // rows; a challenge page is never reported as a result.
+    const backends: Array<{ name: string; url: string; parse: (h: string) => string[] }> = [
+      { name: 'bing', url: `https://www.bing.com/search?q=${encodeURIComponent(query)}`, parse: fromBing },
+      { name: 'duckduckgo', url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, parse: fromDdg },
+    ];
+    for (const b of backends) {
+      try {
+        const res = await fetch(b.url, {
+          headers: { 'User-Agent': ua, 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
+        });
+        const body = await res.text();
+        if (!res.ok) continue; // 202 = DuckDuckGo challenge, 403 = blocked
+        const rows = b.parse(body);
+        if (rows.length) return clip(rows.join('\n\n'));
+      } catch { /* try the next backend */ }
+    }
+    throw new Error(
+      `no search backend answered for "${query}" — set TRHA_SEARX_URL to a SearXNG `
+      + 'instance (json format), or check the network/proxy',
+    );
+  },
+});
+
+registerTool(toolSpecFrom(webSearchTool, { plane: 'agent' }));
