@@ -191,7 +191,9 @@ describe('models, plugins, search', () => {
     expect(await runExtraTool('list_subagent_models', {}, h)).toContain('deepseek-flash');
     expect(await runExtraTool('plugin_manager', {}, h)).toContain('demo');
     expect(await runExtraTool('cordis_inspect_query', { name: 'demo' }, h)).toContain('onInit');
-    expect(await runExtraTool('cordis_inspect_query', { name: 'x' }, h)).toMatch(/no plugin/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('cordis_inspect_query', { name: 'x' }, h))
+      .rejects.toThrow(/no plugin/);
   });
 
   it('queries SearXNG when configured', async () => {
@@ -209,7 +211,9 @@ describe('models, plugins, search', () => {
 
   it('explains a missing plugin market instead of failing silently', async () => {
     delete process.env.TRHA_PLUGIN_MARKET;
-    expect(await runExtraTool('plugin_market', {}, host)).toMatch(/needs TRHA_PLUGIN_MARKET/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('plugin_market', {}, host))
+      .rejects.toThrow(/needs TRHA_PLUGIN_MARKET/);
   });
 });
 

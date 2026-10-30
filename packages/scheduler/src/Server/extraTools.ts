@@ -374,36 +374,13 @@ export async function runExtraTool(
     return models.length ? models.map(m => `${m.name}\t${m.description ?? ''}`).join('\n') : '(no models configured)';
   }
   if (name === 'plugin_manager' || name === 'cordis_inspect_list') {
-    if (!host.plugins) return 'ERROR: plugin introspection is not available in this host';
-    const list = host.plugins.list();
-    return list.length ? list.map(p => `${p.name}\t${p.enabled ? 'enabled' : 'disabled'}\t${p.hooks.join(',')}`).join('\n') : '(no plugins)';
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
   if (name === 'cordis_inspect_query') {
-    if (!host.plugins) return 'ERROR: plugin introspection is not available in this host';
-    const target = typeof args.name === 'string' ? args.name : '';
-    if (!target) return 'ERROR: name is required';
-    const info = host.plugins.inspect(target);
-    return info === undefined ? `ERROR: no plugin ${target}` : clip(JSON.stringify(info, null, 2));
+    // Migrated to the registry (full DSH contract).
   }
   if (name === 'plugin_market') {
-    const source = process.env.TRHA_PLUGIN_MARKET;
-    if (!source) return 'ERROR: plugin_market needs TRHA_PLUGIN_MARKET (URL or JSON file)';
-    // A URL source is egress; a local file is not.
-    if (/^https?:/i.test(source) && sandboxBlocksNetwork()) {
-      return 'ERROR: network access is disabled by the sandbox policy (network: off).';
-    }
-    try {
-      const raw = /^https?:/i.test(source)
-        ? await (await fetch(source)).text()
-        : await readFile(source, 'utf8');
-      const parsed = JSON.parse(raw) as Array<{ name?: string; version?: string; description?: string }> | { plugins?: unknown[] };
-      const list = Array.isArray(parsed) ? parsed : (parsed.plugins ?? []) as Array<{ name?: string; version?: string; description?: string }>;
-      return list.length
-        ? clip(list.map(p => `${p.name ?? '?'}\t${p.version ?? ''}\t${p.description ?? ''}`).join('\n'))
-        : '(market is empty)';
-    } catch (e) {
-      return `ERROR: ${(e as Error).message}`;
-    }
+    // Migrated to the registry (full DSH contract).
   }
 
   // ── stagehand aliases (same CDP browser as browser_*) ────────────────
@@ -945,3 +922,85 @@ registerTool(toolSpecFrom(stagehandScreenshotTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(stagehandTabsTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(stagehandObserveTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(stagehandActTool, { plane: 'agent' }));
+
+/** `plugin_manager` — list the plugins loaded in this process. */
+const pluginManagerTool = defineTool<string>({
+  name: 'plugin_manager',
+  description: 'List the loaded plugins: name, state and the events they hook.',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as ExtraHost;
+    if (!host.plugins) throw new Error('plugin introspection is not available in this host');
+    const list = host.plugins.list();
+    return list.length
+      ? list.map(p => `${p.name}\t${p.enabled ? 'enabled' : 'disabled'}\t${p.hooks.join(',')}`).join('\n')
+      : '(no plugins)';
+  },
+});
+
+/** `cordis_inspect_list` — Cordis name for `plugin_manager`. */
+const cordisInspectListTool = defineTool<string>({
+  name: 'cordis_inspect_list',
+  description: 'List the loaded plugins (Cordis alias of plugin_manager).',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as ExtraHost;
+    if (!host.plugins) throw new Error('plugin introspection is not available in this host');
+    const list = host.plugins.list();
+    return list.length
+      ? list.map(p => `${p.name}\t${p.enabled ? 'enabled' : 'disabled'}\t${p.hooks.join(',')}`).join('\n')
+      : '(no plugins)';
+  },
+});
+
+/** `cordis_inspect_query` — one plugin's full descriptor. */
+const cordisInspectQueryTool = defineTool<string>({
+  name: 'cordis_inspect_query',
+  description: 'Show one plugin\'s descriptor as JSON.',
+  parameters: { name: { type: 'string', description: 'Plugin name.' } },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    if (!host.plugins) throw new Error('plugin introspection is not available in this host');
+    const target = typeof args.name === 'string' ? args.name : '';
+    if (!target) throw new Error('name is required');
+    const info = host.plugins.inspect(target);
+    if (info === undefined) throw new Error(`no plugin ${target}`);
+    return clip(JSON.stringify(info, null, 2));
+  },
+});
+
+/** `plugin_market` — read the plugin registry (URL or local JSON). */
+const pluginMarketTool = defineTool<string>({
+  name: 'plugin_market',
+  description: 'Read the plugin market configured by TRHA_PLUGIN_MARKET (URL or JSON file).',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute() {
+    const source = process.env.TRHA_PLUGIN_MARKET;
+    if (!source) throw new Error('plugin_market needs TRHA_PLUGIN_MARKET (URL or JSON file)');
+    // A URL source is egress; a local file is not.
+    if (/^https?:/i.test(source) && sandboxBlocksNetwork()) {
+      throw new Error('network access is disabled by the sandbox policy (network: off).');
+    }
+    const raw = /^https?:/i.test(source)
+      ? await (await fetch(source)).text()
+      : await readFile(source, 'utf8');
+    const parsed = JSON.parse(raw) as
+      | Array<{ name?: string; version?: string; description?: string }>
+      | { plugins?: unknown[] };
+    const list = Array.isArray(parsed)
+      ? parsed
+      : (parsed.plugins ?? []) as Array<{ name?: string; version?: string; description?: string }>;
+    return list.length
+      ? clip(list.map(p => `${p.name ?? '?'}\t${p.version ?? ''}\t${p.description ?? ''}`).join('\n'))
+      : '(market is empty)';
+  },
+});
+
+registerTool(toolSpecFrom(pluginManagerTool, { plane: 'host' }));
+registerTool(toolSpecFrom(cordisInspectListTool, { plane: 'host' }));
+registerTool(toolSpecFrom(cordisInspectQueryTool, { plane: 'host' }));
+registerTool(toolSpecFrom(pluginMarketTool, { plane: 'host' }));
