@@ -156,10 +156,23 @@ export function registerTool(spec: ToolSpec): void {
   const existing = registry.get(spec.name);
   if (existing) {
     if (existing.handler) throw new Error(`tool "${spec.name}" is already registered`);
+    // A declaration carries metadata only; the registration that follows fills in
+    // the implementation. Every present field must be copied, not just `handler`:
+    // dropping `description` / `output` / `presentCall` / `timeoutMs` here made
+    // all of them silently absent for every tool in the registry.
     existing.plane = spec.plane;
     if (spec.origin !== undefined) existing.origin = spec.origin;
     if (spec.presets !== undefined) existing.presets = spec.presets;
     if (spec.handler) existing.handler = spec.handler;
+    if (spec.description !== undefined) existing.description = spec.description;
+    if (spec.parameters !== undefined) existing.parameters = spec.parameters;
+    if (spec.output !== undefined) existing.output = spec.output;
+    if (spec.timeoutMs !== undefined) existing.timeoutMs = spec.timeoutMs;
+    if (spec.finalizeContent !== undefined) existing.finalizeContent = spec.finalizeContent;
+    if (spec.deferLoading !== undefined) existing.deferLoading = spec.deferLoading;
+    if (spec.isConcurrencySafe !== undefined) existing.isConcurrencySafe = spec.isConcurrencySafe;
+    if (spec.presentCall !== undefined) existing.presentCall = spec.presentCall;
+    if (spec.presentResult !== undefined) existing.presentResult = spec.presentResult;
     return;
   }
   registry.set(spec.name, { origin: 'builtin', ...spec });

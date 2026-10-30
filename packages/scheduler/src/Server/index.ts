@@ -1451,11 +1451,15 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     const view = status === 'running'
       ? spec?.presentCall?.(input)
       : spec?.presentResult?.(input, output);
+    // A tool that cannot produce a meaningful label must fall back to the
+    // generic row: `oneLine('')` yields '', so `title: `present ${...}`` could
+    // render as `present ` — worse than the plain tool name.
+    const usableView = view !== undefined && view.title.trim() !== '' ? view : undefined;
     const ev: ToolEvent = {
       callId,
       phase: status === 'running' ? 'start' : 'end',
       name, input, args, status,
-      ...(view === undefined ? {} : { view }),
+      ...(usableView === undefined ? {} : { view: usableView }),
       ...(error !== undefined ? { error } : {}),
       ...(startedAt !== undefined ? { durationMs: Date.now() - startedAt } : {}),
       ...(output !== undefined ? { output } : {}),
