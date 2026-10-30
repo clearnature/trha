@@ -33,6 +33,14 @@ scheduler `vitest` 相关文件 → 60 passed。
 
 ## 3. 下一步（按「能否在无真机下推进」排序）
 
+> **2026-10-30 第二轮更新**：无平台依赖的代码缺口已全部收口——
+> ① read.deny 接线（`2f4e650`，bwrap 端到端双向实测）；② repro.json 全字段 +
+> policyHash 跨语言差分互钉（`ede7f6b`）；③ 实验批入口 CLI `trha sandbox
+> experiment` + `POST /api/sandbox/experiment`（`8055d53`）。
+> `trha-sandbox-test` 被 `3bc07b5` 错挂的 ToolDeferSpec 也已摘除（`3fd9253`），
+> 当前 **94 examples 0 failures, 2 pending；vitest sandbox 33 passed；CLI 套件
+> 629 examples 0 failures**。剩余全部需要真机/额度（见原列表）。
+
 1. **T4.6 真机探针**（需要一台 Windows 10/11）：把 `windowsProbes` 跑一遍，
    `write-system` / `read-user-secret` / `junction-escape` 必须失败，
    `write-workspace` 在 workspace-write 下必须成功。全绿后才有资格把
