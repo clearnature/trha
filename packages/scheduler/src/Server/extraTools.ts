@@ -176,90 +176,22 @@ export async function runExtraTool(
 
   // ── persistent terminals ─────────────────────────────────────────────
   if (name === 'terminal_open') {
-    const id = `term-${host.terminals.size + 1}`;
-    const ish = interactiveShell();
-    const term: Terminal = { id, output: '', status: 'running', write: () => {}, kill: () => {} };
-    const push = (chunk: string): void => {
-      term.output += chunk;
-      if (term.output.length > 200_000) term.output = term.output.slice(-200_000);
-    };
-
-    // No bypass path when the seam is on: the persistent shell runs inside the
-    // sandbox too, driven by stdin frames over the same NDJSON protocol as
-    // one-shot commands. A runner failure is a failed tool call.
-    if (sandboxEnabled()) {
-      let session: SandboxSession;
-      try {
-        session = await sandboxedInteractive(defaultSandboxScope(host.cwd()), {
-          argv: [ish.cmd, ...ish.args],
-          cwd: host.cwd(),
-          env: { PS1: '' },
-        });
-      } catch (e) {
-        return `ERROR: sandboxed terminal unavailable: ${(e as Error).message}`;
-      }
-      term.write = (data: string) => session.write(data);
-      term.kill = () => session.kill();
-      session.onData(push);
-      session.onExit(code => {
-        term.status = 'exited';
-        term.exitCode = code;
-      });
-      host.terminals.set(id, term);
-      return `OK: ${id} (sandboxed shell ${session.id})`;
-    }
-
-    const child = spawn(ish.cmd, ish.args, {
-      cwd: host.cwd(),
-      // PS1 is a bash concept; PowerShell needs no prompt scrubbing
-      env: hardenedEnv(undefined, process.platform === 'win32' ? process.env : { ...process.env, PS1: '' }),
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }) as ChildProcessWithoutNullStreams;
-    term.write = (data: string) => { child.stdin.write(data); };
-    term.kill = (signal?: NodeJS.Signals) => { child.kill(signal); };
-    child.stdout.on('data', (b: Buffer) => push(b.toString('utf8')));
-    child.stderr.on('data', (b: Buffer) => push(b.toString('utf8')));
-    child.on('exit', code => { term.status = 'exited'; term.exitCode = code ?? -1; });
-    host.terminals.set(id, term);
-    return `OK: ${id} (shell pid ${child.pid ?? '?'})`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
   if (name === 'terminal_send') {
-    const id = typeof args.id === 'string' ? args.id : '';
-    const input = typeof args.input === 'string' ? args.input : '';
-    const term = host.terminals.get(id);
-    if (!term) return `ERROR: no terminal ${id}`;
-    if (term.status !== 'running') return `ERROR: ${id} has exited`;
-    term.write(input.endsWith('\n') ? input : `${input}\n`);
-    return `OK: sent ${input.length} chars to ${id}`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
   if (name === 'terminal_read') {
-    const id = typeof args.id === 'string' ? args.id : '';
-    const term = host.terminals.get(id);
-    if (!term) return `ERROR: no terminal ${id}`;
-    const since = typeof args.since === 'number' ? args.since : 0;
-    const chunk = term.output.slice(since);
-    return clip(`status: ${term.status}${term.exitCode !== undefined ? ` exit=${term.exitCode}` : ''}\n${chunk || '(no output yet)'}`);
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
   if (name === 'terminal_signal') {
-    const id = typeof args.id === 'string' ? args.id : '';
-    const sig = typeof args.signal === 'string' ? args.signal : 'SIGINT';
-    const term = host.terminals.get(id);
-    if (!term) return `ERROR: no terminal ${id}`;
-    term.kill(sig as NodeJS.Signals);
-    return `OK: sent ${sig} to ${id}`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
   if (name === 'terminal_close') {
-    const id = typeof args.id === 'string' ? args.id : '';
-    const term = host.terminals.get(id);
-    if (!term) return `ERROR: no terminal ${id}`;
-    term.kill('SIGTERM');
-    host.terminals.delete(id);
-    return `OK: closed ${id}`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
   if (name === 'terminal_list') {
-    if (host.terminals.size === 0) return '(no terminals)';
-    return [...host.terminals.values()]
-      .map(t => `${t.id}\t${t.status}\t${t.output.length} chars`).join('\n');
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
 
   // ── agents ───────────────────────────────────────────────────────────
@@ -753,3 +685,161 @@ registerTool(toolSpecFrom(sessionTraceTool, { plane: 'host' }));
 registerTool(toolSpecFrom(sessionEventReadTool, { plane: 'host' }));
 registerTool(toolSpecFrom(sessionEventSearchTool, { plane: 'host' }));
 registerTool(toolSpecFrom(sessionEventTraceTool, { plane: 'host' }));
+
+/** `terminal_open` — start a persistent shell (sandboxed when the seam is on). */
+const terminalOpenTool = defineTool<string>({
+  name: 'terminal_open',
+  description:
+    'Open a persistent shell. When the sandbox is enabled the shell runs inside it, '
+    + 'driven over the same stdin-frame protocol as one-shot commands.',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as ExtraHost;
+    const id = `term-${host.terminals.size + 1}`;
+    const ish = interactiveShell();
+    const term: Terminal = { id, output: '', status: 'running', write: () => {}, kill: () => {} };
+    const push = (chunk: string): void => {
+      term.output += chunk;
+      if (term.output.length > 200_000) term.output = term.output.slice(-200_000);
+    };
+
+    // No bypass path when the seam is on: the persistent shell runs inside the
+    // sandbox too, driven by stdin frames over the same NDJSON protocol as
+    // one-shot commands. A runner failure is a failed tool call.
+    if (sandboxEnabled()) {
+      let session: SandboxSession;
+      try {
+        session = await sandboxedInteractive(defaultSandboxScope(host.cwd()), {
+          argv: [ish.cmd, ...ish.args],
+          cwd: host.cwd(),
+          env: { PS1: '' },
+        });
+      } catch (e) {
+        throw new Error(`sandboxed terminal unavailable: ${(e as Error).message}`);
+      }
+      term.write = (data: string) => session.write(data);
+      term.kill = () => session.kill();
+      session.onData(push);
+      session.onExit(code => {
+        term.status = 'exited';
+        term.exitCode = code;
+      });
+      host.terminals.set(id, term);
+      return `OK: ${id} (sandboxed shell ${session.id})`;
+    }
+
+    const child = spawn(ish.cmd, ish.args, {
+      cwd: host.cwd(),
+      // PS1 is a bash concept; PowerShell needs no prompt scrubbing
+      env: hardenedEnv(undefined, process.platform === 'win32' ? process.env : { ...process.env, PS1: '' }),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }) as ChildProcessWithoutNullStreams;
+    term.write = (data: string) => { child.stdin.write(data); };
+    term.kill = (signal?: NodeJS.Signals) => { child.kill(signal); };
+    child.stdout.on('data', (b: Buffer) => push(b.toString('utf8')));
+    child.stderr.on('data', (b: Buffer) => push(b.toString('utf8')));
+    child.on('exit', code => { term.status = 'exited'; term.exitCode = code ?? -1; });
+    host.terminals.set(id, term);
+    return `OK: ${id} (shell pid ${child.pid ?? '?'})`;
+  },
+});
+
+/** `terminal_send` — write one line into a persistent shell. */
+const terminalSendTool = defineTool<string>({
+  name: 'terminal_send',
+  description: 'Send input to a persistent shell. A trailing newline is added when missing.',
+  parameters: {
+    id: { type: 'string', description: 'Terminal id from terminal_open / terminal_list.' },
+    input: { type: 'string', description: 'Text to type.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const id = typeof args.id === 'string' ? args.id : '';
+    const input = typeof args.input === 'string' ? args.input : '';
+    const term = host.terminals.get(id);
+    if (!term) throw new Error(`no terminal ${id}`);
+    if (term.status !== 'running') throw new Error(`${id} has exited`);
+    term.write(input.endsWith('\n') ? input : `${input}\n`);
+    return `OK: sent ${input.length} chars to ${id}`;
+  },
+});
+
+/** `terminal_read` — collected output of one shell. */
+const terminalReadTool = defineTool<string>({
+  name: 'terminal_read',
+  description: 'Read a persistent shell\'s output, optionally from a character offset.',
+  parameters: {
+    id: { type: 'string', description: 'Terminal id.' },
+    since: { type: 'number', description: 'Character offset to read from (default 0).' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const id = typeof args.id === 'string' ? args.id : '';
+    const term = host.terminals.get(id);
+    if (!term) throw new Error(`no terminal ${id}`);
+    const since = typeof args.since === 'number' ? args.since : 0;
+    const chunk = term.output.slice(since);
+    return clip(`status: ${term.status}${term.exitCode !== undefined ? ` exit=${term.exitCode}` : ''}\n${chunk || '(no output yet)'}`);
+  },
+});
+
+/** `terminal_signal` — send a signal to one shell. */
+const terminalSignalTool = defineTool<string>({
+  name: 'terminal_signal',
+  description: 'Signal a persistent shell (default SIGINT).',
+  parameters: {
+    id: { type: 'string', description: 'Terminal id.' },
+    signal: { type: 'string', description: 'Signal name, e.g. SIGINT or SIGTERM.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const id = typeof args.id === 'string' ? args.id : '';
+    const sig = typeof args.signal === 'string' ? args.signal : 'SIGINT';
+    const term = host.terminals.get(id);
+    if (!term) throw new Error(`no terminal ${id}`);
+    term.kill(sig as NodeJS.Signals);
+    return `OK: sent ${sig} to ${id}`;
+  },
+});
+
+/** `terminal_close` — SIGTERM and forget one shell. */
+const terminalCloseTool = defineTool<string>({
+  name: 'terminal_close',
+  description: 'Close a persistent shell.',
+  parameters: { id: { type: 'string', description: 'Terminal id.' } },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const id = typeof args.id === 'string' ? args.id : '';
+    const term = host.terminals.get(id);
+    if (!term) throw new Error(`no terminal ${id}`);
+    term.kill('SIGTERM');
+    host.terminals.delete(id);
+    return `OK: closed ${id}`;
+  },
+});
+
+/** `terminal_list` — every persistent shell on this session. */
+const terminalListTool = defineTool<string>({
+  name: 'terminal_list',
+  description: 'List the persistent shells and how much output each holds.',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as ExtraHost;
+    if (host.terminals.size === 0) return '(no terminals)';
+    return [...host.terminals.values()]
+      .map(t => `${t.id}\t${t.status}\t${t.output.length} chars`).join('\n');
+  },
+});
+
+registerTool(toolSpecFrom(terminalOpenTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(terminalSendTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(terminalReadTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(terminalSignalTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(terminalCloseTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(terminalListTool, { plane: 'agent' }));

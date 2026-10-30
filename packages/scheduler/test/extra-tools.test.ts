@@ -83,7 +83,8 @@ describe('persistent terminals', () => {
     expect(await runExtraTool('terminal_list', {}, host)).toContain(id!);
     expect(await runExtraTool('terminal_close', { id }, host)).toMatch(/closed/);
     expect(host.terminals.size).toBe(0);
-    expect(await runExtraTool('terminal_read', { id }, host)).toMatch(/no terminal/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('terminal_read', { id }, host)).rejects.toThrow(/no terminal/);
   });
 });
 
@@ -269,9 +270,13 @@ describe('remaining branches', () => {
   });
 
   it('terminal errors name the missing terminal', async () => {
-    expect(await runExtraTool('terminal_send', { id: 'term-9', input: 'x' }, host)).toMatch(/no terminal/);
-    expect(await runExtraTool('terminal_signal', { id: 'term-9' }, host)).toMatch(/no terminal/);
-    expect(await runExtraTool('terminal_close', { id: 'term-9' }, host)).toMatch(/no terminal/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('terminal_send', { id: 'term-9', input: 'x' }, host))
+      .rejects.toThrow(/no terminal/);
+    await expect(runExtraTool('terminal_signal', { id: 'term-9' }, host))
+      .rejects.toThrow(/no terminal/);
+    await expect(runExtraTool('terminal_close', { id: 'term-9' }, host))
+      .rejects.toThrow(/no terminal/);
     expect(await runExtraTool('terminal_list', {}, host)).toBe('(no terminals)');
   });
 
@@ -384,7 +389,8 @@ describe('closing the remaining branches', () => {
     await new Promise(r => setTimeout(r, 250));
     const after = await runExtraTool('terminal_read', { id: 'term-1', since: cursor }, h);
     expect(after).toMatch(/status: exited/);
-    expect(await runExtraTool('terminal_send', { id: 'term-1', input: 'x' }, h)).toMatch(/has exited/);
+    await expect(runExtraTool('terminal_send', { id: 'term-1', input: 'x' }, h))
+      .rejects.toThrow(/has exited/);
   });
 
   it('plugin_market accepts a URL', async () => {
