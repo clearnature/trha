@@ -567,10 +567,20 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // the Reasonix loopback gate.  Cross-origin browsers are always refused;
   // token-less non-browser callers keep working through the Bearer check.
   app.use((req, res, next) => {
-    if (req.path === '/health' || req.path.startsWith('/v1/') || req.path.startsWith('/studio')) return next();
+    const loopbackOnly = (config.host ?? '127.0.0.1') === '127.0.0.1';
+    // `/health` is always open (the CLI probes it before it has a token).
+    //
+    // `/v1/*` and `/studio` are "same-host only": they exist for local tools
+    // and the bundled UI on this loopback listener.  Exempting them
+    // unconditionally is how a harness leaks an unauthenticated LLM endpoint
+    // the moment someone sets `TRHA_HOST=0.0.0.0` — the incident that pushed
+    // comparable tools to SSH tunnels instead of public ports.
+    if (req.path === '/health') return next();
+    if (loopbackOnly && (req.path.startsWith('/v1/') || req.path.startsWith('/studio'))) {
+      return next();
+    }
     const origin = req.headers.origin;
     const isRead = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
-    const loopbackOnly = (config.host ?? '127.0.0.1') === '127.0.0.1';
     const sessionOk = cookieValue(req.headers.cookie, SESSION_COOKIE) === sessionSecret;
     const authOk = req.headers.authorization === `Bearer ${config.token}`
       || req.query.token === config.token;
