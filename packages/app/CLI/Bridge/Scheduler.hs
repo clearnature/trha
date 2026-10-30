@@ -172,6 +172,9 @@ createSession bridge = do
   result <- httpPost (bridgeHTTP bridge) "/api/session/start"
     (object [ "mode" .= ("standard" :: Text)
             , "askTimeout" .= configAskTimeout cfg
+            -- The agent preset decides which tools the model is offered; without
+            -- it the scheduler falls back to `standard` (the full set).
+            , "agentPreset" .= configAgentPreset cfg
             , "cwd" .= T.pack cwd ])
   return $ case result of
     Right (Object r) -> case parseMaybe (.: "sessionId") r of
