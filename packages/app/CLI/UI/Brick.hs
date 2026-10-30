@@ -713,7 +713,11 @@ resumeSession selText = do
   lang <- gets appLang
   t <- liftIO now
   cwd <- liftIO getCurrentDirectory
-  local <- liftIO (listLocalSessionsIn cwd)
+  -- `--all` is the escape hatch for transcripts written before sessions
+  -- recorded their cwd: they are invisible to the per-project list but still
+  -- resumable when asked for explicitly.
+  let wantAll = T.strip selText == "--all"
+  local <- liftIO (if wantAll then listLocalSessions else listLocalSessionsIn cwd)
   case pickLocalSession (T.unpack selText) local of
     Nothing -> do
       let recent = take 5 local
@@ -3203,10 +3207,12 @@ handleSlash input = do
       cwd <- liftIO getCurrentDirectory
       local <- liftIO (listLocalSessionsIn cwd)
       if null local
-        then appendMsg (mkMsg "system" (tr lang "No local sessions in this directory yet. Run a conversation first.") t)
+        then do
+          appendMsg (mkMsg "system" (tr lang "No local sessions in this directory yet.") t)
+          appendMsg (mkMsg "system" (tr lang "/resume --all shows sessions from other (or older) projects.") t)
         else do
           appendMsg (mkMsg "system" ("Local sessions:\n" <> T.unlines (localSessionLines (appLang st) local)) t)
-          appendMsg (mkMsg "system" (tr lang "Resume with /resume <number-or-id>.") t)
+          appendMsg (mkMsg "system" (tr lang "Resume with /resume <number-or-id>  (/resume --all for every project).") t)
     _ 
       | "/resume " `T.isPrefixOf` cmd -> resumeSession (T.strip (T.drop 8 input))
       | cmd == "/plan" ->
