@@ -280,12 +280,34 @@ data ToolRunStatus
   deriving (Show, Eq)
 
 -- | One tool lifecycle event.
+-- | How a tool wants its call labelled (DSH's @presentCall@).
+--
+-- 'Nothing' means the shell draws its generic row, which is what every tool
+-- does today. Carried on the opening event only.
+data ToolCallView = ToolCallView
+  { tvCard  :: Text -- ^ @generic@ | @terminal@ | @diff@
+  , tvTitle :: Text -- ^ short, always-visible label for this call
+  } deriving (Show, Eq)
+
+instance FromJSON ToolCallView where
+  parseJSON = withObject "ToolCallView" $ \o -> do
+    card  <- o .:? "card" .!= ("generic" :: Text)
+    title <- o .:? "title" .!= ("" :: Text)
+    pure (ToolCallView card title)
+
+instance ToJSON ToolCallView where
+  toJSON (ToolCallView card title) =
+    object ["card" .= card, "title" .= title]
+
 data ToolEvent = ToolEvent
-  { teName       :: ToolName
+  { teCallId     :: Text        -- ^ provider tool_call id; stable pairing key
+  , tePhase      :: Maybe Text  -- ^ @start@ | @end@; 'Nothing' from older servers
+  , teName       :: ToolName
   , teArgs       :: [Text]
   , teStatus     :: ToolRunStatus
   , teDurationMs :: Maybe Int
   , teOutput     :: Maybe Text -- ^ tail output preview (kernel, succeeded only)
+  , teView       :: Maybe ToolCallView -- ^ tool-supplied card intent
   } deriving (Show, Eq)
 
 instance FromJSON ToolRunStatus where
@@ -303,6 +325,8 @@ instance ToJSON ToolRunStatus where
 
 instance FromJSON ToolEvent where
   parseJSON = withObject "ToolEvent" $ \o -> do
+    callId <- o .:? "callId" .!= ("" :: Text)
+    phase  <- o .:? "phase"
     name <- o .: "name"
     args <- o .:? "args" .!= ([] :: [Text])
     dur  <- o .:? "durationMs"
@@ -312,8 +336,9 @@ instance FromJSON ToolEvent where
       "succeeded" -> pure ToolRunSucceeded
       "failed"    -> ToolRunFailed <$> o .:? "error" .!= ""
       _           -> fail "unknown tool status"
-    out <- o .:? "output"
-    pure $ ToolEvent name args status dur out
+    out  <- o .:? "output"
+    view <- o .:? "view"
+    pure $ ToolEvent callId phase name args status dur out view
 
 -- | Status of one team task (the agent's TODO list).
 data TodoStatus = TodoPending | TodoInProgress | TodoDone
@@ -443,15 +468,18 @@ modelForProvider p current
   | otherwise                  = current
 
 instance ToJSON ToolEvent where
-  toJSON (ToolEvent name args st dur out) =
+  toJSON (ToolEvent cid phase name args st dur out view) =
     object $
-      [ "name" .= name
+      [ "callId" .= cid
+      , "name" .= name
       , "args" .= args
       , "status" .= statusTag st
       , "durationMs" .= dur
       ]
+      ++ [ "phase" .= p | Just p <- [phase] ]
       ++ [ "error" .= err | ToolRunFailed err <- [st], err /= "" ]
       ++ [ "output" .= o | Just o <- [out] ]
+      ++ [ "view" .= v | Just v <- [view] ]
     where
       statusTag ToolRunRunning   = ("running" :: Text)
       statusTag ToolRunSucceeded = "succeeded"
