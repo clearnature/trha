@@ -164,47 +164,8 @@ export async function runExtraTool(
     // Migrated to the registry (full DSH contract).
   }
   if (name === 'pwsh') {
-    const cmd = typeof args.command === 'string' ? args.command : '';
-    if (!cmd) return 'ERROR: command is required';
-    // PS7 (pwsh) first; Windows PowerShell 5 (powershell.exe) as the win32 fallback
-    let r: { code: number; out: string } = { code: 127, out: '' };
-    for (const exe of powerShellCandidates()) {
-      // T1.6 execution point #5: never spawn unconfined once the seam is on.
-      // Windows has no backend yet (ADR-007), so this fails closed with
-      // SandboxUnavailable instead of silently running outside the boundary.
-      if (sandboxEnabled()) {
-        try {
-          const res = await sandboxedSpawn(defaultSandboxScope(host.cwd()), {
-            argv: [exe, '-NoLogo', '-Command', cmd],
-            cwd: host.cwd(),
-          });
-          return clip(`exit ${res.code ?? -1}\n${res.stdout}${res.stderr}`);
-        } catch (e) {
-          return `ERROR: sandbox unavailable for pwsh: ${(e as Error).message}`;
-        }
-      }
-      r = await new Promise<{ code: number; out: string }>(resolve => {
-        const child = spawn(exe, ['-NoLogo', '-Command', cmd], { cwd: host.cwd(), env: hardenedEnv() });
-        const out: string[] = [];
-        child.stdout.on('data', (b: Buffer) => out.push(b.toString('utf8')));
-        child.stderr.on('data', (b: Buffer) => out.push(b.toString('utf8')));
-        child.on('error', e => resolve({ code: 127, out: e.message }));
-        child.on('exit', code => resolve({ code: code ?? -1, out: out.join('') }));
-      });
-      if (r.code !== 127) break; // executable missing -> try the next candidate
-    }
-    if (r.code === 127) {
-      // Keep the historical "neither pwsh nor powershell.exe is installed"
-      // wording (tests and docs key on it) but say which candidates were tried
-      // and, off Windows, that no candidate can exist at all.
-      const note = process.platform === 'win32'
-        ? ''
-        : ' — PowerShell is Windows-only; use run_code (bash/python/node) here';
-      return `ERROR: neither pwsh nor powershell.exe is installed (tried ${powerShellCandidates().join(' / ')})${note}: ${r.out}`;
-    }
-    return clip(`exit ${r.code}\n${r.out}`);
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
-
   // ── search / models / plugins ────────────────────────────────────────
   if (name === 'web_search') {
     // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
@@ -1173,3 +1134,66 @@ const webSearchTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(webSearchTool, { plane: 'agent' }));
+
+/** `pwsh` — run a PowerShell command (Windows-only). */
+const pwshTool = defineTool<string>({
+  name: 'pwsh',
+  description:
+    'Run a PowerShell command. Windows-only: off Windows this fails with an explanatory '
+    + 'error, use run_code (bash/python/node) instead.',
+  parameters: {
+    command: { type: 'string', description: 'The PowerShell command.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  timeoutMs: 120_000,
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const cmd = typeof args.command === 'string' ? args.command : '';
+    if (!cmd) throw new Error('command is required');
+    // PS7 (pwsh) first; Windows PowerShell 5 (powershell.exe) as the win32 fallback.
+    let r: { code: number; out: string } = { code: 127, out: '' };
+    for (const exe of powerShellCandidates()) {
+      // T1.6 execution point #5: never spawn unconfined once the seam is on.
+      // Windows has no backend yet (ADR-007), so this fails closed with
+      // SandboxUnavailable instead of silently running outside the boundary.
+      if (sandboxEnabled()) {
+        try {
+          const res = await sandboxedSpawn(defaultSandboxScope(host.cwd()), {
+            argv: [exe, '-NoLogo', '-Command', cmd],
+            cwd: host.cwd(),
+          });
+          return clip(`exit ${res.code ?? -1}\n${res.stdout}${res.stderr}`);
+        } catch (e) {
+          throw new Error(`sandbox unavailable for pwsh: ${(e as Error).message}`);
+        }
+      }
+      r = await new Promise<{ code: number; out: string }>(resolve => {
+        const child = spawn(exe, ['-NoLogo', '-Command', cmd], {
+          cwd: host.cwd(),
+          env: hardenedEnv(),
+        });
+        const out: string[] = [];
+        child.stdout.on('data', (b: Buffer) => out.push(b.toString('utf8')));
+        child.stderr.on('data', (b: Buffer) => out.push(b.toString('utf8')));
+        child.on('error', e => resolve({ code: 127, out: e.message }));
+        child.on('exit', code => resolve({ code: code ?? -1, out: out.join('') }));
+      });
+      if (r.code !== 127) break; // executable missing -> try the next candidate
+    }
+    if (r.code === 127) {
+      // Keep the historical "neither pwsh nor powershell.exe is installed"
+      // wording (tests and docs key on it) but say which candidates were tried
+      // and, off Windows, that no candidate can exist at all.
+      const note = process.platform === 'win32'
+        ? ''
+        : ' — PowerShell is Windows-only; use run_code (bash/python/node) here';
+      throw new Error(
+        `neither pwsh nor powershell.exe is installed `
+        + `(tried ${powerShellCandidates().join(' / ')})${note}: ${r.out}`,
+      );
+    }
+    return clip(`exit ${r.code}\n${r.out}`);
+  },
+});
+
+registerTool(toolSpecFrom(pwshTool, { plane: 'agent' }));

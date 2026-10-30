@@ -45,7 +45,6 @@ const rows: Row[] = [
   // ── agent-plane: editing / navigation helpers ────────────────────────
   { name: 'unified_edit', plane: 'agent', presets: FULL },
   { name: 'str_replace_editor', plane: 'agent', presets: FULL },
-  { name: 'string', plane: 'agent', presets: FULL },
   { name: 'working_directory', plane: 'agent', presets: FULL },
   { name: 'create_worktree', plane: 'agent', presets: FULL },
   { name: 'load_workspace_dependencies', plane: 'agent', presets: FULL },

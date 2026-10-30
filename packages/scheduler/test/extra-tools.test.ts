@@ -317,8 +317,14 @@ describe('remaining branches', () => {
   });
 
   it('pwsh reports a missing binary clearly', async () => {
-    const out = await runExtraTool('pwsh', { command: 'echo hi' }, host);
-    expect(out).toMatch(/^ERROR: neither pwsh nor powershell\.exe is installed|^exit 0/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`; on a host
+    // where pwsh exists the call succeeds instead, so accept both.
+    try {
+      const out = await runExtraTool('pwsh', { command: 'echo hi' }, host);
+      expect(out).toMatch(/^exit 0/);
+    } catch (e) {
+      expect(String(e)).toMatch(/neither pwsh nor powershell\.exe is installed/);
+    }
   });
 
   it('session events degrade when the kernel is unreachable', async () => {
