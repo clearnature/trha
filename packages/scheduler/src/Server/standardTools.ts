@@ -113,6 +113,8 @@ export interface StandardToolHost {
    * Named `sessionCwd` because `ExtraHost.cwd` is a getter function.
    */
   sessionCwd?: string;
+  /** Extra roots the user allowed for writes (GET/PUT /api/extra-roots). */
+  writeRoots?: string[];
   now?: () => Date;
 }
 
