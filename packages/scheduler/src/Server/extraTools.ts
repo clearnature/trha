@@ -104,14 +104,14 @@ export async function runExtraTool(
   host: ExtraHost,
   // Optional sink for the canonical value; the turn loop uses it to feed
   // `presentResult`. Callers that only want text can omit it.
-  out?: { value?: unknown },
+  out?: { value?: unknown; meta?: unknown },
 ): Promise<string | null> {
   // Same precedence rule as `runStandardTool`: registered plugins first, the
   // legacy chain as the fallback for anything not migrated yet.
   const registered = resolveTool(name);
   if (registered?.handler) {
     const rendered = await renderToolValue(registered, args, host);
-    if (out) out.value = rendered.value;
+    if (out) { out.value = rendered.value; if (rendered.meta !== undefined) out.meta = rendered.meta; }
     return rendered.text;
   }
 

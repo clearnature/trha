@@ -54,6 +54,12 @@ export interface RenderedTool {
   /** What the model sees. */
   text: string;
   /**
+   * Replayable presentation metadata (DSH's `output.presentationMeta`): what a
+   * shell needs to redraw this call's card later. Absent when the tool declares
+   * no `presentationMeta`.
+   */
+  meta?: unknown;
+  /**
    * The canonical value `execute` returned. DSH hands this to `presentResult`
    * so a tool can summarise its own result instead of the shell re-parsing the
    * rendered text.
@@ -78,7 +84,14 @@ export async function renderToolValue(
   // `undefined` keeps the rendered blocks, so a tool that does not set the hook
   // behaves exactly as before.
   const finalized = spec.finalizeContent?.({ args, host }, { value, content: blocks });
-  return { text: (finalized ?? blocks).map((b: ContentBlock) => b.text).join('\n'), value };
+  // DSH's `output.presentationMeta` was declared, forwarded and validated but
+  // never called — the field existed and no card could ever be redrawn from it.
+  const meta = spec.output?.presentationMeta?.(args, value);
+  return {
+    text: (finalized ?? blocks).map((b: ContentBlock) => b.text).join('\n'),
+    value,
+    ...(meta === undefined ? {} : { meta }),
+  };
 }
 
 async function withTimeout<T>(work: Promise<T>, ms: number | undefined, name: string): Promise<T> {

@@ -1551,7 +1551,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     sessionId?: string,
     // Sink for the canonical value `renderToolValue` returns; the turn loop
     // forwards it to `presentResult`.
-    valueSink?: { value?: unknown },
+    valueSink?: { value?: unknown; meta?: unknown },
   ): Promise<string> => {
     let argsObj: Record<string, unknown> = {};
     try {
@@ -1597,8 +1597,11 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           sessionCwd: cwd,
           writeRoots: extraWriteRoots,
           agents: agentHooksFor(session),
-        }).catch((e: unknown) => ({ text: `ERROR: ${String(e)}`, value: undefined }));
-        if (rendered.value !== undefined && valueSink) valueSink.value = rendered.value;
+        }).catch((e: unknown) => ({ text: `ERROR: ${String(e)}`, value: undefined, meta: undefined }));
+        if (valueSink) {
+          if (rendered.value !== undefined) valueSink.value = rendered.value;
+          if (rendered.meta !== undefined) valueSink.meta = rendered.meta;
+        }
         if (!rendered.text.startsWith('UNCHANGED:')) await persistSession(session);
         return rendered.text;
       }
