@@ -3355,7 +3355,42 @@ refreshSidebar bridge chan sid = do
 -- While the step runs, tool lifecycle events arrive over SSE; they are
 -- recorded to the transcript and surfaced through 'EvTool'.
 handleChat :: Text -> EventM ResourceName AppState ()
-handleChat input = handleChatWith input input
+handleChat input = do
+  -- DSH's `context/file-reference`: `@path` becomes the file's body. Expanded
+  -- here (not in the scheduler) because the path is relative to the user's cwd.
+  expanded <- liftIO (expandFileReferences input)
+  handleChatWith input expanded
+
+-- | Expand `@path` references in a prompt into fenced file bodies.
+--
+-- Ported from `deepseek-harness/packages/context/file-reference`: a token that
+-- starts with `@` and names an existing file is kept and followed by that file's
+-- contents, so the model reads it without spending a tool round trip.
+--
+-- A missing path — or a stray `@` in ordinary prose — is left untouched:
+-- expansion must never turn a typo into a failed turn. Bodies are capped at the
+-- same size the `read` tool caps at.
+expandFileReferences :: Text -> IO Text
+expandFileReferences input
+  | not (T.any (== '@') input) = pure input
+  | otherwise = T.unwords <$> mapM expand (T.words input)
+  where
+    expand tok
+      | T.length tok > 1 && "@" `T.isPrefixOf` tok && not ("@@" `T.isPrefixOf` tok) = do
+          let p = T.unpack (T.drop 1 tok)
+          isFile <- doesFileExist p
+          if not isFile
+            then pure tok
+            else do
+              body <- try (TIO.readFile p) :: IO (Either IOException Text)
+              pure $ case body of
+                Left _ -> tok
+                Right b ->
+                  let capped = if T.length b > 20000
+                                 then T.take 20000 b <> "\n… (file truncated)"
+                                 else b
+                   in tok <> "\n```\n" <> capped <> "\n```"
+      | otherwise = pure tok
 
 -- | 'handleChat' with a separate visible text.  A skill sends its instructions
 -- as the model turn while the transcript/UI keeps the @/skill:<name>@ trigger
