@@ -1022,22 +1022,31 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   });
 
   // ── Service status (sidebar: LSP / MCP) ───────────────────────────────
-  // Metered endpoints get a rate limit: a polling UI or a script could
-  // otherwise burn the user's provider quota (the same class of abuse as
-  // hammering the provider directly).
-  const balanceLimit = rateLimit(60_000, 6);
+  // Balance is a *read-only* query: DeepSeek documents no rate limit for it and
+  // it costs nothing, so refusing calls would be wrong — the TUI refreshes it
+  // on every turn, and a 429 would freeze the displayed value at a stale
+  // number. Cache instead: repeat calls inside the TTL are served locally, so a
+  // polling script cannot hammer the provider while event-driven refreshes keep
+  // working.
+  const BALANCE_TTL_MS = 10_000;
+  let balanceCache: { at: number; value: Awaited<ReturnType<typeof fetchBalance>> } | null = null;
   app.get('/api/balance', async (_req, res) => {
-    if (!balanceLimit()) {
-      return res.status(429).json({ error: 'too many balance queries; retry in a minute' });
+    const now = Date.now();
+    if (balanceCache && now - balanceCache.at < BALANCE_TTL_MS) {
+      return res.json(balanceCache.value);
     }
     try {
-      res.json(await fetchBalance());
+      const value = await fetchBalance();
+      balanceCache = { at: Date.now(), value };
+      res.json(value);
     } catch (e) {
       res.status(503).json({ error: String(e) });
     }
   });
 
   // ── Voice transcription (MiMo ASR contract) ───────────────────────────
+  // This one *is* metered (an ASR call per request), so a sliding window is the
+  // right control: sustained hammering is a cost attack, not a UI refresh.
   const transcribeLimit = rateLimit(60_000, 10);
   app.post('/api/transcribe', async (req, res) => {
     if (!transcribeLimit()) {
