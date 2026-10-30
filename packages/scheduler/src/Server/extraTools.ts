@@ -111,67 +111,8 @@ export async function runExtraTool(
 
   // ── editor-style file ops (dsh's str_replace_editor / unified_edit) ──
   if (name === 'str_replace_editor' || name === 'unified_edit') {
-    const command = typeof args.command === 'string' ? args.command : 'view';
-    const rawPath = typeof args.path === 'string' ? args.path : '';
-    if (!rawPath) return 'ERROR: path is required';
-    const file = path.resolve(host.cwd(), rawPath);
-    // Every write below is confined exactly like `write`/`edit`
-    // (Server/toolGuard): this alias used to resolve an absolute path verbatim,
-    // so `create` could write anywhere on disk while the documented `write`
-    // tool would have refused the same path.
-    const writeTarget = async (): Promise<string | null> =>
-      confineWritePath(host.workspace, file, host.extraWriteRoots?.() ?? []);
-    if (command === 'view') {
-      try {
-        const text = await readFile(file, 'utf8');
-        const num = text.split('\n').map((l, i) => `${i + 1}\t${l}`).join('\n');
-        return clip(num);
-      } catch (e) {
-        // viewing a directory lists it
-        try {
-          const entries = await readdir(file, { withFileTypes: true });
-          return entries.map(e2 => `${e2.isDirectory() ? 'd' : 'f'} ${e2.name}`).join('\n');
-        } catch {
-          return `ERROR: ${(e as Error).message}`;
-        }
-      }
-    }
-    if (command === 'create') {
-      const target = await writeTarget();
-      if (!target) return `ERROR: path escapes the workspace: ${rawPath}`;
-      const body = typeof args.file_text === 'string' ? args.file_text : '';
-      await mkdir(path.dirname(target), { recursive: true });
-      await writeFile(target, body, 'utf8');
-      return `OK: created ${target} (${body.length} chars)`;
-    }
-    if (command === 'str_replace') {
-      const oldStr = typeof args.old_str === 'string' ? args.old_str : '';
-      const newStr = typeof args.new_str === 'string' ? args.new_str : '';
-      if (!oldStr) return 'ERROR: old_str is required';
-      const target = await writeTarget();
-      if (!target) return `ERROR: path escapes the workspace: ${rawPath}`;
-      let text: string;
-      try { text = await readFile(target, 'utf8'); } catch (e) { return `ERROR: ${(e as Error).message}`; }
-      const count = text.split(oldStr).length - 1;
-      if (count === 0) return 'ERROR: old_str not found';
-      if (count > 1) return `ERROR: old_str appears ${count} times; make it unique`;
-      await writeFile(target, text.replace(oldStr, newStr), 'utf8');
-      return `OK: replaced 1 occurrence in ${target}`;
-    }
-    if (command === 'insert') {
-      const line = typeof args.insert_line === 'number' ? args.insert_line : 0;
-      const text = typeof args.new_str === 'string' ? args.new_str : '';
-      const target = await writeTarget();
-      if (!target) return `ERROR: path escapes the workspace: ${rawPath}`;
-      let body: string;
-      try { body = await readFile(target, 'utf8'); } catch (e) { return `ERROR: ${(e as Error).message}`; }
-      const lines = body.split('\n');
-      const at = Math.max(0, Math.min(lines.length, line));
-      lines.splice(at, 0, ...text.split('\n'));
-      await writeFile(target, lines.join('\n'), 'utf8');
-      return `OK: inserted ${text.split('\n').length} line(s) at ${at + 1}`;
-    }
-    return `ERROR: unknown command "${command}" (view|create|str_replace|insert)`;
+    // Migrated to the registry (full DSH contract): two definitions sharing one
+    // implementation.
   }
 
   // ── persistent terminals ─────────────────────────────────────────────
@@ -1057,3 +998,111 @@ const listSubagentModelsTool = defineTool<string>({
 registerTool(toolSpecFrom(waitAgentTool, { plane: 'host' }));
 registerTool(toolSpecFrom(spawnTeammateTool, { plane: 'host' }));
 registerTool(toolSpecFrom(listSubagentModelsTool, { plane: 'host' }));
+
+/** Shared execute body for `str_replace_editor` and `unified_edit`. */
+async function strReplaceEditorExecute(
+  args: Record<string, unknown>,
+  exec: { host: unknown },
+): Promise<string> {
+  const host = exec.host as ExtraHost;
+  const command = typeof args.command === 'string' ? args.command : 'view';
+  const rawPath = typeof args.path === 'string' ? args.path : '';
+  if (!rawPath) throw new Error('path is required');
+  const file = path.resolve(host.cwd(), rawPath);
+  // Every write below is confined exactly like `write`/`edit` (Server/toolGuard):
+  // this alias used to resolve an absolute path verbatim, so `create` could write
+  // anywhere on disk while the documented `write` tool would have refused it.
+  const writeTarget = async (): Promise<string | null> =>
+    confineWritePath(host.workspace, file, host.extraWriteRoots?.() ?? []);
+
+  if (command === 'view') {
+    try {
+      const text = await readFile(file, 'utf8');
+      return clip(text.split('\n').map((l, i) => `${i + 1}\t${l}`).join('\n'));
+    } catch (e) {
+      // viewing a directory lists it
+      try {
+        const entries = await readdir(file, { withFileTypes: true });
+        return entries.map(e2 => `${e2.isDirectory() ? 'd' : 'f'} ${e2.name}`).join('\n');
+      } catch {
+        throw new Error((e as Error).message);
+      }
+    }
+  }
+  if (command === 'create') {
+    const target = await writeTarget();
+    if (!target) throw new Error(`path escapes the workspace: ${rawPath}`);
+    const body = typeof args.file_text === 'string' ? args.file_text : '';
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, body, 'utf8');
+    return `OK: created ${target} (${body.length} chars)`;
+  }
+  if (command === 'str_replace') {
+    const oldStr = typeof args.old_str === 'string' ? args.old_str : '';
+    const newStr = typeof args.new_str === 'string' ? args.new_str : '';
+    if (!oldStr) throw new Error('old_str is required');
+    const target = await writeTarget();
+    if (!target) throw new Error(`path escapes the workspace: ${rawPath}`);
+    let text: string;
+    try {
+      text = await readFile(target, 'utf8');
+    } catch (e) {
+      throw new Error((e as Error).message);
+    }
+    const count = text.split(oldStr).length - 1;
+    if (count === 0) throw new Error('old_str not found');
+    if (count > 1) throw new Error(`old_str appears ${count} times; make it unique`);
+    await writeFile(target, text.replace(oldStr, newStr), 'utf8');
+    return `OK: replaced 1 occurrence in ${target}`;
+  }
+  if (command === 'insert') {
+    const line = typeof args.insert_line === 'number' ? args.insert_line : 0;
+    const text = typeof args.new_str === 'string' ? args.new_str : '';
+    const target = await writeTarget();
+    if (!target) throw new Error(`path escapes the workspace: ${rawPath}`);
+    let body: string;
+    try {
+      body = await readFile(target, 'utf8');
+    } catch (e) {
+      throw new Error((e as Error).message);
+    }
+    const lines = body.split('\n');
+    const at = Math.max(0, Math.min(lines.length, line));
+    lines.splice(at, 0, ...text.split('\n'));
+    await writeFile(target, lines.join('\n'), 'utf8');
+    return `OK: inserted ${text.split('\n').length} line(s) at ${at + 1}`;
+  }
+  throw new Error(`unknown command "${command}" (view|create|str_replace|insert)`);
+}
+
+const EDITOR_PARAMETERS = {
+  command: { type: 'string', enum: ['view', 'create', 'str_replace', 'insert'] },
+  path: { type: 'string', description: 'File path, absolute or relative to cwd.' },
+  file_text: { type: 'string', description: 'Body for command=create.' },
+  old_str: { type: 'string', description: 'Snippet to replace (must be unique).' },
+  new_str: { type: 'string', description: 'Replacement text, or text to insert.' },
+  insert_line: { type: 'number', description: 'Zero-based line to insert at.' },
+};
+
+/** `str_replace_editor` — view / create / replace / insert on one file. */
+const strReplaceEditorTool = defineTool<string>({
+  name: 'str_replace_editor',
+  description:
+    'Edit one file: view it, create it, replace a unique snippet, or insert lines. '
+    + 'Writes are confined to the workspace exactly like `write` / `edit`.',
+  parameters: EDITOR_PARAMETERS,
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  execute: strReplaceEditorExecute,
+});
+
+/** `unified_edit` — same implementation, alternate name. */
+const unifiedEditTool = defineTool<string>({
+  name: 'unified_edit',
+  description: 'Edit one file (alias of str_replace_editor): view, create, str_replace, insert.',
+  parameters: EDITOR_PARAMETERS,
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  execute: strReplaceEditorExecute,
+});
+
+registerTool(toolSpecFrom(strReplaceEditorTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(unifiedEditTool, { plane: 'agent' }));

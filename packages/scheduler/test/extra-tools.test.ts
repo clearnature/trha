@@ -48,8 +48,9 @@ describe('editor + working directory', () => {
     expect(await readFile(path.join(dir, 'a.txt'), 'utf8')).toBe('one\nmid\nTWO\n');
     // ambiguous replace is refused
     await runExtraTool('str_replace_editor', { command: 'create', path: 'dup.txt', file_text: 'x x' }, host);
-    expect(await runExtraTool('str_replace_editor', { command: 'str_replace', path: 'dup.txt', old_str: 'x', new_str: 'y' }, host))
-      .toMatch(/appears 2 times/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('str_replace_editor', { command: 'str_replace', path: 'dup.txt', old_str: 'x', new_str: 'y' }, host))
+      .rejects.toThrow(/appears 2 times/);
   });
 
   it('switches cwd inside the workspace and refuses to leave it', async () => {
@@ -271,7 +272,9 @@ describe('remaining branches', () => {
   it('unified_edit behaves like str_replace_editor', async () => {
     expect(await runExtraTool('unified_edit', { command: 'create', path: 'u.txt', file_text: 'a' }, host)).toMatch(/created/);
     expect(await runExtraTool('unified_edit', { command: 'view', path: 'u.txt' }, host)).toContain('a');
-    expect(await runExtraTool('unified_edit', { command: 'nope', path: 'u.txt' }, host)).toMatch(/unknown command/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('unified_edit', { command: 'nope', path: 'u.txt' }, host))
+      .rejects.toThrow(/unknown command/);
   });
 
   it('terminal errors name the missing terminal', async () => {
