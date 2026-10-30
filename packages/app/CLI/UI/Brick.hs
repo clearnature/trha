@@ -809,7 +809,7 @@ blocksToMessages blocks =
   where
     toMsg b = case rbTool b of
       Just (name, args) ->
-        toolMsg "tool" (ToolCard name args Nothing Nothing []) (maybe "" id (rbTime b))
+        toolMsg "tool" (ToolCard name args Nothing Nothing [] "") (maybe "" id (rbTime b))
       Nothing           -> mkMsg (rbRole b) (rbContent b) (maybe "" id (rbTime b))
 
 drawMessages :: AppState -> Widget ResourceName
@@ -2443,7 +2443,7 @@ flushPendingAt musage t1 = do
           withMeta m
             | not (T.null meta) = m { msgMeta = Just meta }
             | otherwise = m
-          toolMsgs = [ toolMsg "tool" (ToolCard (tiName inv) (tiArgs inv) Nothing Nothing []) (pmStart pm)
+          toolMsgs = [ toolMsg "tool" (ToolCard (tiName inv) (tiArgs inv) Nothing Nothing [] "") (pmStart pm)
                      | inv <- reverse (pmTools pm) ]
           thinkText = flushThinking pm
           thinkSecs = case appTurnStart st of
@@ -2831,6 +2831,7 @@ toolCardMsg ev t = toolMsg "tool" card t
     card = ToolCard (teName ev) (teArgs ev)
                     (Just (toCardStatus (teStatus ev))) (teDurationMs ev)
                     (maybe [] T.lines (teOutput ev))
+                    (maybe "generic" tvCard (teView ev))
 
 -- | Approve the pending step, run it as an ordinary agent turn, then report the
 -- result.
