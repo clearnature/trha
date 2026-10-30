@@ -43,6 +43,7 @@ import { resolveWorkspace } from './workspace.js';
 import { execShell } from './shell.js';
 import { defaultSandboxScope, readSandboxConfig, sandboxEnabled, sandboxedSpawn, sandboxStatus, setSandboxConfigRuntime, setSandboxEnabledRuntime, writeSandboxConfig, type SandboxConfigView } from './sandbox.js';
 import { rateLimit } from './rateLimit.js';
+import { DEFAULT_AGENT_PRESET, getAgentPreset, listAgentPresets } from './agentPresets.js';
 import { snapshotFile } from './fileHistory.js';
 import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
 import { resolveTls } from './tls.js';
@@ -1019,6 +1020,20 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     const roots = Array.isArray(req.body?.roots) ? req.body.roots.filter((x: unknown) => typeof x === 'string') : [];
     extraWriteRoots = roots;
     res.json({ roots: extraWriteRoots });
+  });
+
+  // ── Agent presets ─────────────────────────────────────────────────────
+  // One definition for every shell: Desktop used to hold these inline and the
+  // TUI could only guess. `?id=` resolves a single preset (404 when unknown, so
+  // `--agent-preset <typo>` can be rejected instead of silently falling back).
+  app.get('/api/agent/presets', (req, res) => {
+    const id = typeof req.query.id === 'string' ? req.query.id : undefined;
+    if (id !== undefined) {
+      const preset = getAgentPreset(id);
+      if (!preset) return res.status(404).json({ error: `unknown agent preset "${id}"` });
+      return res.json({ default: DEFAULT_AGENT_PRESET, preset });
+    }
+    res.json({ default: DEFAULT_AGENT_PRESET, presets: listAgentPresets() });
   });
 
   // ── Service status (sidebar: LSP / MCP) ───────────────────────────────
