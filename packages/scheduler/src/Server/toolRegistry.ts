@@ -45,17 +45,43 @@ export type ToolHandler = (
  * This is the DSH split: `execute` returns a validated value, `output.render`
  * turns that value into content blocks. Tools that have not migrated yet return
  * a plain string, which passes through unchanged.
+ *
+ * A declared `timeoutMs` is a **cooperative** budget (DSH's wording): it rejects
+ * the promise but cannot hard-kill the work, which is stated on purpose rather
+ * than pretending the call was cancelled.
  */
 export async function renderToolValue(
   spec: ToolSpec,
   args: Record<string, unknown>,
   host: unknown,
 ): Promise<string> {
-  const value = await spec.handler!(args, { host });
+  const value = await withTimeout(
+    spec.handler!(args, { host }),
+    spec.timeoutMs,
+    spec.name,
+  );
   if (spec.output) {
     return spec.output.render(args, value).map((b: ContentBlock) => b.text).join('\n');
   }
   return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+async function withTimeout<T>(work: Promise<T>, ms: number | undefined, name: string): Promise<T> {
+  if (ms === undefined) return work;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`tool ${name} exceeded its ${ms} ms budget`)),
+          ms,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 export interface ToolSpec {

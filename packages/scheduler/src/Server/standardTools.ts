@@ -20,7 +20,8 @@ import { discoverSkills, readSkill, skillDirs } from './skills.js';
 import { listMcpResources, listMcpResourceTemplates, readMcpResource } from './mcp.js';
 import { hardenedEnv, resolveShell, shellRunner } from './shell.js';
 import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedSpawn } from './sandbox.js';
-import { registerTool, resolveTool } from './toolRegistry.js';
+import { registerTool, renderToolValue, resolveTool } from './toolRegistry.js';
+import { defineTool, textBlock, toolSpecFrom } from './toolSchema.js';
 import { lspQuery, type LspOperation } from './lsp.js';
 import { browserClose, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 
@@ -219,7 +220,7 @@ export async function runStandardTool(
   // Registered tools take precedence over the legacy chain, so migration is
   // one tool at a time: anything not yet registered still runs below.
   const registered = resolveTool(name);
-  if (registered?.handler) return registered.handler(args, host);
+  if (registered?.handler) return renderToolValue(registered, args, host);
 
   const now = host.now ?? (() => new Date());
 
@@ -430,7 +431,7 @@ export async function runStandardTool(
     return `WAITING_FOR_APPROVAL: ${plan || 'exit plan mode'}`;
   }
 
-  if (name === 'present') return presentHandler(args);
+
 
   if (name === 'run_code') {
     const language = typeof args.language === 'string' ? args.language : '';
@@ -700,18 +701,36 @@ async function registeredWebFetch(args: Record<string, unknown>): Promise<string
 registerTool({
   name: 'web_fetch',
   plane: 'agent',
-  handler: args => registeredWebFetch(args),
+  handler: (args, _exec) => registeredWebFetch(args),
 });
 
 /** `present` — surface a title/body block to the UI. */
-async function presentHandler(args: Record<string, unknown>): Promise<string> {
-  const title = typeof args.title === 'string' ? args.title : '';
-  const body = typeof args.body === 'string' ? args.body : '';
-  if (!title && !body) return 'ERROR: title or body is required';
-  return `PRESENT: ${JSON.stringify({ title, body })}`;
-}
+const presentTool = defineTool<{ title: string; body: string }>({
+  name: 'present',
+  description:
+    'Show a titled block to the user. Use it for a summary or a decision point '
+    + 'that deserves its own card rather than a chat paragraph.',
+  parameters: {
+    title: { type: 'string', description: 'Short heading.' },
+    body: { type: 'string', description: 'Body text or markdown.' },
+  },
+  output: {
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { title: { type: 'string' }, body: { type: 'string' } },
+    },
+    render: (_args, value) => [textBlock(`PRESENT: ${JSON.stringify(value)}`)],
+  },
+  async execute(args) {
+    const title = typeof args.title === 'string' ? args.title : '';
+    const body = typeof args.body === 'string' ? args.body : '';
+    if (!title && !body) throw new Error('title or body is required');
+    return { title, body };
+  },
+});
 
-registerTool({ name: 'present', plane: 'agent', handler: args => presentHandler(args) });
+registerTool(toolSpecFrom(presentTool, { plane: 'agent' }));
 
 /** `job_list` — background jobs owned by this host. */
 async function jobListHandler(host: StandardToolHost): Promise<string> {
@@ -751,6 +770,6 @@ async function jobKillHandler(
   return `OK: ${id} already exited`;
 }
 
-registerTool({ name: 'job_list', plane: 'host', handler: (_a, h) => jobListHandler(h as StandardToolHost) });
-registerTool({ name: 'job_output', plane: 'host', handler: (a, h) => jobOutputHandler(a, h as StandardToolHost) });
-registerTool({ name: 'job_kill', plane: 'host', handler: (a, h) => jobKillHandler(a, h as StandardToolHost) });
+registerTool({ name: 'job_list', plane: 'host', handler: (_a, exec) => jobListHandler(exec.host as StandardToolHost) });
+registerTool({ name: 'job_output', plane: 'host', handler: (a, exec) => jobOutputHandler(a, exec.host as StandardToolHost) });
+registerTool({ name: 'job_kill', plane: 'host', handler: (a, exec) => jobKillHandler(a, exec.host as StandardToolHost) });
