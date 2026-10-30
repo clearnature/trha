@@ -1183,6 +1183,16 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // directory, so let it say — validated here, because this value becomes
     // the tool layer's read/write boundary.
     const requestedCwd = typeof req.body.cwd === 'string' ? req.body.cwd.trim() : '';
+    // Agent preset narrows the tool set the model is offered. Unknown ids are
+    // refused: a typo would otherwise silently fall back to `standard` (the
+    // full set), which is the opposite of what the caller asked for.
+    const requestedPreset = typeof req.body.agentPreset === 'string'
+      ? req.body.agentPreset.trim()
+      : '';
+    if (requestedPreset && !getAgentPreset(requestedPreset)) {
+      return res.status(400).json({ error: `Unknown agentPreset: ${requestedPreset}` });
+    }
+    const agentPreset = requestedPreset || undefined;
     let sessionCwd: string | undefined;
     if (requestedCwd) {
       if (!path.isAbsolute(requestedCwd)) {
@@ -1203,6 +1213,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       permissionMode: approval, planMode,
       yoloRestore: null as PermissionMode | null,
       ...(sessionCwd !== undefined ? { cwd: sessionCwd, workspaceRoot: sessionCwd } : {}),
+      ...(agentPreset !== undefined ? { agentPreset } : {}),
       ...(askTimeout !== undefined ? { askTimeoutMs: askTimeout } : {}),
     };
     sessions.set(sessionId, created);
