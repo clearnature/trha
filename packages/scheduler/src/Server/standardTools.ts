@@ -1329,3 +1329,56 @@ const globTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(globTool, { plane: 'agent' }));
+
+/** `grep` — regex search across file contents. */
+const grepTool = defineTool<string>({
+  name: 'grep',
+  description:
+    'Search file contents with a regular expression (multiline). Skips binaries and '
+    + 'returns at most 200 hits as path:line:text.',
+  parameters: {
+    pattern: { type: 'string', description: 'Regular expression to search for.' },
+    path: { type: 'string', description: 'Directory to search (default ".").' },
+    glob: { type: 'string', description: 'Only search files matching this glob.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    if (typeof args.pattern !== 'string' || !args.pattern) throw new Error('pattern is required');
+    let re: RegExp;
+    try {
+      re = new RegExp(args.pattern, 'm');
+    } catch (e) {
+      throw new Error(`invalid pattern: ${(e as Error).message}`);
+    }
+    // Resolve against the *session* cwd: `cd` moves it away from the workspace.
+    const base = host.sessionCwd ?? host.workspace;
+    const dir = resolveReadPath(typeof args.path === 'string' ? args.path : '.', base);
+    if (!dir) throw new Error('path must be a string');
+    const only = typeof args.glob === 'string' ? globToRegExp(args.glob) : null;
+    const files = await walkFiles(dir, 4000);
+    const out: string[] = [];
+    for (const f of files) {
+      const rel = path.relative(dir, f);
+      if (only && !only.test(rel)) continue;
+      let text: string;
+      try {
+        text = await readFile(f, 'utf8');
+      } catch {
+        continue;
+      }
+      if (text.includes('\u0000')) continue; // binary
+      const lines = text.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        if (re.test(lines[i] ?? '')) {
+          out.push(`${rel}:${i + 1}:${(lines[i] ?? '').slice(0, 300)}`);
+          if (out.length >= 200) break;
+        }
+      }
+      if (out.length >= 200) break;
+    }
+    return out.length ? out.join('\n') : '(no matches)';
+  },
+});
+
+registerTool(toolSpecFrom(grepTool, { plane: 'agent' }));

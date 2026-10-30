@@ -47,7 +47,7 @@ import { DEFAULT_AGENT_PRESET, getAgentPreset, listAgentPresets } from './agentP
 // Side effect: registers plane + preset metadata for every tool (step 2 of the
 // plugin migration). Handlers still live in the legacy chains.
 import './toolDeclarations.js';
-import { globToRegExp, resolveReadPath, walkFiles } from './fsWalk.js';
+import { resolveReadPath } from './fsWalk.js';
 import { renderToolValue, resolveTool, toolNamesForPreset } from './toolRegistry.js';
 import { snapshotFile } from './fileHistory.js';
 import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
@@ -1669,38 +1669,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       // above resolves it before this line is ever reached.
     }
     if (name === 'grep') {
-      if (typeof argsObj.pattern !== 'string' || !argsObj.pattern) return 'ERROR: pattern is required';
-      let re: RegExp;
-      try {
-        re = new RegExp(argsObj.pattern, 'm');
-      } catch (e) {
-        return `ERROR: invalid pattern: ${(e as Error).message}`;
-      }
-      const dir = resolveReadPath(typeof argsObj.path === 'string' ? argsObj.path : '.', cwd);
-      if (!dir) return 'ERROR: path must be a string';
-      const only = typeof argsObj.glob === 'string' ? globToRegExp(argsObj.glob) : null;
-      try {
-        const files = await walkFiles(dir, 4000);
-        const out: string[] = [];
-        for (const f of files) {
-          const rel = path.relative(dir, f);
-          if (only && !only.test(rel)) continue;
-          let text: string;
-          try { text = await readFile(f, 'utf8'); } catch { continue; }
-          if (text.includes('\u0000')) continue;      // binary
-          const lines = text.split('\n');
-          for (let i = 0; i < lines.length; i++) {
-            if (re.test(lines[i] ?? '')) {
-              out.push(`${rel}:${i + 1}:${(lines[i] ?? '').slice(0, 300)}`);
-              if (out.length >= 200) break;
-            }
-          }
-          if (out.length >= 200) break;
-        }
-        return out.length ? out.join('\n') : '(no matches)';
-      } catch (e) {
-        return `ERROR: ${(e as Error).message}`;
-      }
+      // Migrated to the registry (full DSH contract); the core-chain pre-check
+      // above resolves it before this line is ever reached.
     }
     if (isStandardTool(name)) {
       const session = sessionId ? sessions.get(sessionId) : undefined;
