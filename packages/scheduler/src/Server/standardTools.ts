@@ -489,52 +489,20 @@ export async function runStandardTool(
   }
 
   if (name === 'schedule_create') {
-    const prompt = args.prompt;
-    if (typeof prompt !== 'string' || !prompt.trim()) return 'ERROR: prompt is required';
-    const atRaw = args.at;
-    const at = typeof atRaw === 'string' ? new Date(atRaw) : new Date(Number(atRaw ?? NaN));
-    if (Number.isNaN(at.getTime())) return 'ERROR: at must be an ISO timestamp or epoch ms';
-    const schedule: Schedule = {
-      id: `sch-${(host.state.schedules?.length ?? 0) + 1}`,
-      prompt: prompt.trim(),
-      at: at.toISOString(),
-      repeatMs: typeof args.repeat_ms === 'number' ? args.repeat_ms : undefined,
-      status: 'active',
-    };
-    host.state.schedules = [...(host.state.schedules ?? []), schedule];
-    // The due-check driver lives in Server/index.ts (TRHA_SCHEDULE_TICK_MS):
-    // it fires this record off the session it was persisted on, so a schedule
-    // created here really does turn into a turn.
-    return `OK: scheduled\n${JSON.stringify(schedule)}`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   if (name === 'schedule_list') {
-    const list = host.state.schedules ?? [];
-    return list.length ? list.map(s => JSON.stringify(s)).join('\n') : '(no schedules)';
+    // Migrated to the registry (full DSH contract).
   }
 
   if (name === 'schedule_update') {
-    const id = typeof args.id === 'string' ? args.id : '';
-    const s = (host.state.schedules ?? []).find(x => x.id === id);
-    if (!s) return `ERROR: no schedule ${id}`;
-    if (typeof args.prompt === 'string' && args.prompt.trim()) s.prompt = args.prompt.trim();
-    if (typeof args.at === 'string') {
-      const at = new Date(args.at);
-      if (Number.isNaN(at.getTime())) return 'ERROR: bad at';
-      s.at = at.toISOString();
-    }
-    if (typeof args.repeat_ms === 'number') s.repeatMs = args.repeat_ms;
-    if (args.status === 'active' || args.status === 'cancelled') s.status = args.status;
-    return `OK: updated\n${JSON.stringify(s)}`;
+    // Migrated to the registry (full DSH contract).
   }
 
   if (name === 'schedule_delete') {
-    const id = typeof args.id === 'string' ? args.id : '';
-    const before = host.state.schedules ?? [];
-    const after = before.filter(s => s.id !== id);
-    if (after.length === before.length) return `ERROR: no schedule ${id}`;
-    host.state.schedules = after;
-    return `OK: deleted ${id}`;
+    // Migrated to the registry (full DSH contract).
   }
 
 
@@ -1003,3 +971,98 @@ const updateGoalTool = defineTool<string>({
 registerTool(toolSpecFrom(createGoalTool, { plane: 'host' }));
 registerTool(toolSpecFrom(getGoalTool, { plane: 'host' }));
 registerTool(toolSpecFrom(updateGoalTool, { plane: 'host' }));
+
+/** `schedule_create` — queue a prompt to run at a time, optionally repeating. */
+const scheduleCreateTool = defineTool<string>({
+  name: 'schedule_create',
+  description:
+    'Schedule a prompt to run at a specific time. The due-check driver in '
+    + 'Server/index.ts (TRHA_SCHEDULE_TICK_MS) turns the record into a real turn.',
+  parameters: {
+    prompt: { type: 'string', description: 'The prompt to run.' },
+    at: { type: 'string', description: 'ISO timestamp or epoch milliseconds.' },
+    repeat_ms: { type: 'number', description: 'Repeat interval in milliseconds.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const prompt = args.prompt;
+    if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('prompt is required');
+    const atRaw = args.at;
+    const at = typeof atRaw === 'string' ? new Date(atRaw) : new Date(Number(atRaw ?? NaN));
+    if (Number.isNaN(at.getTime())) throw new Error('at must be an ISO timestamp or epoch ms');
+    const schedule: Schedule = {
+      id: `sch-${(host.state.schedules?.length ?? 0) + 1}`,
+      prompt: prompt.trim(),
+      at: at.toISOString(),
+      repeatMs: typeof args.repeat_ms === 'number' ? args.repeat_ms : undefined,
+      status: 'active',
+    };
+    host.state.schedules = [...(host.state.schedules ?? []), schedule];
+    return `OK: scheduled\n${JSON.stringify(schedule)}`;
+  },
+});
+
+/** `schedule_list` — every schedule on this session. */
+const scheduleListTool = defineTool<string>({
+  name: 'schedule_list',
+  description: 'List the schedules attached to this session.',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as StandardToolHost;
+    const list = host.state.schedules ?? [];
+    return list.length ? list.map(s => JSON.stringify(s)).join('\n') : '(no schedules)';
+  },
+});
+
+/** `schedule_update` — change one schedule's prompt, time, repeat or status. */
+const scheduleUpdateTool = defineTool<string>({
+  name: 'schedule_update',
+  description: 'Update one schedule: prompt, time, repeat interval or status.',
+  parameters: {
+    id: { type: 'string', description: 'Schedule id from schedule_list.' },
+    prompt: { type: 'string' },
+    at: { type: 'string', description: 'ISO timestamp.' },
+    repeat_ms: { type: 'number' },
+    status: { type: 'string', enum: ['active', 'cancelled'] },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const id = typeof args.id === 'string' ? args.id : '';
+    const s = (host.state.schedules ?? []).find(x => x.id === id);
+    if (!s) throw new Error(`no schedule ${id}`);
+    if (typeof args.prompt === 'string' && args.prompt.trim()) s.prompt = args.prompt.trim();
+    if (typeof args.at === 'string') {
+      const at = new Date(args.at);
+      if (Number.isNaN(at.getTime())) throw new Error('bad at');
+      s.at = at.toISOString();
+    }
+    if (typeof args.repeat_ms === 'number') s.repeatMs = args.repeat_ms;
+    if (args.status === 'active' || args.status === 'cancelled') s.status = args.status;
+    return `OK: updated\n${JSON.stringify(s)}`;
+  },
+});
+
+/** `schedule_delete` — remove one schedule. */
+const scheduleDeleteTool = defineTool<string>({
+  name: 'schedule_delete',
+  description: 'Delete one schedule by id.',
+  parameters: { id: { type: 'string', description: 'Schedule id from schedule_list.' } },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const id = typeof args.id === 'string' ? args.id : '';
+    const before = host.state.schedules ?? [];
+    const after = before.filter(s => s.id !== id);
+    if (after.length === before.length) throw new Error(`no schedule ${id}`);
+    host.state.schedules = after;
+    return `OK: deleted ${id}`;
+  },
+});
+
+registerTool(toolSpecFrom(scheduleCreateTool, { plane: 'host' }));
+registerTool(toolSpecFrom(scheduleListTool, { plane: 'host' }));
+registerTool(toolSpecFrom(scheduleUpdateTool, { plane: 'host' }));
+registerTool(toolSpecFrom(scheduleDeleteTool, { plane: 'host' }));
