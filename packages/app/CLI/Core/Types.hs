@@ -24,6 +24,7 @@ module Core.Types
   , parsePlanView
   , renderPlanBrief
   , ToolRunStatus(..)
+  , ToolCallView(..)
   , ToolEvent(..)
   , TodoStatus(..)
   , TodoItem(..)

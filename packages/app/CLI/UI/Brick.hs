@@ -2844,8 +2844,15 @@ statusTagOf (ToolRunFailed _) = "✗"
 -- | Render a tool card with its status footer (message text).
 renderToolEvent :: ToolEvent -> Text
 renderToolEvent ev =
-  T.unlines (toolCardWithStatus (T.pack (teName ev)) (teArgs ev)
+  T.unlines (toolCardWithStatus (cardLabel ev) (teArgs ev)
               (toCardStatus (teStatus ev)) (teDurationMs ev))
+  where
+    -- DSH's `presentCall`: the tool says how this specific call should be
+    -- labelled. Falls back to the tool name when the event carries no view,
+    -- which is every tool today.
+    cardLabel e = case teView e of
+      Just v | not (T.null (tvTitle v)) -> tvTitle v
+      _                                 -> T.pack (teName e)
 
 -- | Map the wire status to the card status type.
 toCardStatus :: ToolRunStatus -> ToolStatus
