@@ -144,8 +144,8 @@ eager 不带、全 deferred 时第一个被取消、**单个** deferred 也被�
 
 上一版这里写的是「未验证」。现在验证了。
 
-内核在 `TRHA_DEBUG_ANTHROPIC=1` 时打印实际发出的形状（`anthropicStream` 里的临时日志，
-保留为调试开关）：
+内核在 `TRHA_DEBUG_ANTHROPIC=1` 时打印实际发出的形状，`=full` 还会 dump 请求体（截到
+4000 字符；API key 在请求头里，不会出现在 body 中）：
 
 ```
 [anthropic] model=deepseek-flash tools=2 \
@@ -159,6 +159,16 @@ eager 不带、全 deferred 时第一个被取消、**单个** deferred 也被�
 - `deferred=["deferred_probe"]` —— 只有标记的那个被延迟，eager 的没被误标；
 - `beta=Just "mid-conversation-tool-changes-2026-07-01"` —— beta 头确实加上了；
 - `ctError = Nothing` —— **上游接受了**。
+
+`=full` 档的 body 里能直接看到标记落在哪个工具上、以及 eager 的那个确实没有
+`defer_loading`：
+
+```json
+{"tools":[
+  {"name":"deferred_probe","defer_loading":true,"input_schema":{"properties":{},"type":"object"}},
+  {"name":"eager_probe","input_schema":{"properties":{},"type":"object"}}
+]}
+```
 
 第一次试的时候拿到 `HTTP 400: Invalid schema for function ...: schema must be a JSON
 Schema of 'type: "object"', got 'type: null'` —— 那是探针的 `input_schema` 用了空对象，

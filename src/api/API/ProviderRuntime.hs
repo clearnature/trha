@@ -34,6 +34,7 @@ import Data.Aeson (Object, Value(..), decode, encode, object, toJSON, (.=))
 import Data.Aeson.Key (fromText, toText)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.Maybe (fromMaybe, isNothing)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -352,17 +353,22 @@ anthropicStream baseUrl apiKey model extraHs mthinking = do
     pending <- newIORef (Nothing :: Maybe (Int, Text, Text, Text))
     thinkingRef <- newIORef T.empty
     sigRef <- newIORef (Nothing :: Maybe Text)
-    -- TEMP verification: TRHA_DEBUG_ANTHROPIC=1 prints what actually goes out.
+    -- Diagnostics: TRHA_DEBUG_ANTHROPIC=1 prints the wire shape,
+    -- =full additionally dumps the request body (clipped; the API key lives in
+    -- a header, so it never appears here).
+    let reqBody = anthropicRequestBody model msgs specs True mthinking
     dbg <- lookupEnv "TRHA_DEBUG_ANTHROPIC"
-    when (dbg == Just "1") $ do
+    when (dbg == Just "1" || dbg == Just "full") $ do
       let hdrs = anthropicHeaders apiKey extraHs specs
           deferred = [tsName x | x <- specs, tsDeferLoading x]
       hPutStrLn stderr $ "[anthropic] model=" <> T.unpack model
         <> " tools=" <> show (length specs)
         <> " deferred=" <> show deferred
         <> " beta=" <> show (lookup "anthropic-beta" hdrs)
+    when (dbg == Just "full") $
+      hPutStrLn stderr $ "[anthropic] body=" <> take 4000 (BLC.unpack (encode reqBody))
     result <- LStream.streamPostSse url (anthropicHeaders apiKey extraHs specs)
-      (anthropicRequestBody model msgs specs True mthinking) $ \v -> do
+      reqBody $ \v -> do
       case anthropicEvent v of
         Just (Left txt) -> onEvent (ChunkDelta txt)
         Just (Right u)  -> onEvent (ChunkDone u)
