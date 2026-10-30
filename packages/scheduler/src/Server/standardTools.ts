@@ -430,12 +430,7 @@ export async function runStandardTool(
     return `WAITING_FOR_APPROVAL: ${plan || 'exit plan mode'}`;
   }
 
-  if (name === 'present') {
-    const title = typeof args.title === 'string' ? args.title : '';
-    const body = typeof args.body === 'string' ? args.body : '';
-    if (!title && !body) return 'ERROR: title or body is required';
-    return `PRESENT: ${JSON.stringify({ title, body })}`;
-  }
+  if (name === 'present') return presentHandler(args);
 
   if (name === 'run_code') {
     const language = typeof args.language === 'string' ? args.language : '';
@@ -730,3 +725,13 @@ registerTool({
   plane: 'agent',
   handler: args => registeredWebFetch(args),
 });
+
+/** `present` — surface a title/body block to the UI. */
+async function presentHandler(args: Record<string, unknown>): Promise<string> {
+  const title = typeof args.title === 'string' ? args.title : '';
+  const body = typeof args.body === 'string' ? args.body : '';
+  if (!title && !body) return 'ERROR: title or body is required';
+  return `PRESENT: ${JSON.stringify({ title, body })}`;
+}
+
+registerTool({ name: 'present', plane: 'agent', handler: args => presentHandler(args) });
