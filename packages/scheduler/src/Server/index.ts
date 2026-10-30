@@ -159,9 +159,23 @@ interface ToolEvent {
 /** Tail-capped output preview for tool cards: last 12 lines, at most 2 KiB. */
 const OUTPUT_PREVIEW_LINES = 12;
 const OUTPUT_PREVIEW_BYTES = 2048;
+/**
+ * A patch gets a much larger budget: cutting it mid-hunk makes the card
+ * unreadable. The TUI renders `tcOutput` with a dedicated diff widget **only in
+ * the expanded state**, so a longer preview never inflates a folded card.
+ */
+const OUTPUT_PREVIEW_LINES_DIFF = 200;
+const OUTPUT_PREVIEW_BYTES_DIFF = 32_768;
+
+/** A unified-diff hunk header — the same shape the TUI keys on. */
+const looksLikeDiff = (text: string): boolean => /^@@ -\d+,\d+ \+\d+,\d+ @@/m.test(text);
+
 const outputPreview = (output: string): string => {
-  const tail = output.split('\n').slice(-OUTPUT_PREVIEW_LINES).join('\n');
-  return tail.length > OUTPUT_PREVIEW_BYTES ? '…' + tail.slice(-OUTPUT_PREVIEW_BYTES) : tail;
+  const diff = looksLikeDiff(output);
+  const lines = diff ? OUTPUT_PREVIEW_LINES_DIFF : OUTPUT_PREVIEW_LINES;
+  const bytes = diff ? OUTPUT_PREVIEW_BYTES_DIFF : OUTPUT_PREVIEW_BYTES;
+  const tail = output.split('\n').slice(-lines).join('\n');
+  return tail.length > bytes ? `…${tail.slice(-bytes)}` : tail;
 };
 
 /**
