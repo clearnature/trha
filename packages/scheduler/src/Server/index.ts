@@ -1919,7 +1919,23 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         persistSession(session);
         return stuck;
       }
+      // Concurrency: consecutive `isConcurrencySafe` calls run **execution** in
+      // parallel. Everything else — the opening event, the closing event, the
+      // transcript push, persistence — stays sequential, because the provider
+      // requires one tool message per call id *in order* and a parallel push
+      // would interleave them. A non-safe call is a barrier: it flushes the
+      // current batch before running on its own.
+      type Batch = { calls: ToolCallData[]; safe: boolean };
+      const batches: Batch[] = [];
       for (const call of calls) {
+        const safe = resolveTool(canonicalToolName(call.name))
+          ?.isConcurrencySafe?.(parseToolInput(call)) ?? false;
+        const last = batches[batches.length - 1];
+        if (safe && last?.safe) last.calls.push(call);
+        else batches.push({ calls: [call], safe });
+      }
+
+      const runOne = async (call: ToolCallData) => {
         const started = Date.now();
         await emitToolLifecycle(session.id, call.id, call.name, parseToolInput(call), 'running');
         // The canonical value behind `output`; `presentResult` prefers it over
@@ -1928,6 +1944,14 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         const output = await executeTool(call, session.id, valueSink).catch(
           (e: unknown) => `ERROR: ${String(e)}`,
         );
+        return { call, started, output, valueSink };
+      };
+
+      for (const batch of batches) {
+        const ran = batch.safe && batch.calls.length > 1
+          ? await Promise.all(batch.calls.map(runOne))
+          : [await runOne(batch.calls[0]!)];
+        for (const { call, started, output, valueSink } of ran) {
         // ask 权限规则：暂停执行并发起确认（批准后重放该工具）
         if (output.startsWith('REQUIRE_APPROVAL:')) {
           await emitToolLifecycle(session.id, call.id, call.name, parseToolInput(call), 'failed', started, output);
@@ -1984,6 +2008,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           events.emit('agent:plan', { sessionId: session.id, status: 'awaiting_approval', message: plan });
           await persistSession(session);
           return plan;
+        }
         }
       }
     }
