@@ -47,6 +47,7 @@ import { DEFAULT_AGENT_PRESET, getAgentPreset, listAgentPresets } from './agentP
 // Side effect: registers plane + preset metadata for every tool (step 2 of the
 // plugin migration). Handlers still live in the legacy chains.
 import './toolDeclarations.js';
+import { globToRegExp, resolveReadPath, walkFiles } from './fsWalk.js';
 import { renderToolValue, resolveTool, toolNamesForPreset } from './toolRegistry.js';
 import { snapshotFile } from './fileHistory.js';
 import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
@@ -1481,57 +1482,6 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // Reads may leave the workspace: `bash` already can, so confining only the
   // read tool would buy no safety while breaking absolute paths that callers
   // legitimately use. Writes stay confined.
-  const resolveReadPath = (raw: unknown, base = WORKSPACE): string | null => {
-    if (typeof raw !== 'string' || !raw.trim()) return null;
-    return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(base, raw);
-  };
-
-  /** Recursive file walk with a depth/file cap and the usual noise skipped. */
-  const walkFiles = async (dir: string, cap: number): Promise<string[]> => {
-    const out: string[] = [];
-    const skip = new Set(['node_modules', '.git', 'dist', 'dist-newstyle', '.lake', 'target']);
-    const walk = async (d: string, depth: number): Promise<void> => {
-      if (out.length >= cap || depth > 12) return;
-      let entries;
-      try { entries = await readdir(d, { withFileTypes: true }); } catch { return; }
-      for (const e of entries) {
-        if (out.length >= cap) return;
-        if (e.name.startsWith('.') && e.isDirectory()) continue;
-        const full = path.join(d, e.name);
-        if (e.isDirectory()) {
-          if (skip.has(e.name)) continue;
-          await walk(full, depth + 1);
-        } else if (e.isFile()) {
-          out.push(full);
-        }
-      }
-    };
-    await walk(dir, 0);
-    return out;
-  };
-
-  /** Minimal glob: `**` spans directories, `*`/`?` stay within a segment. */
-  const globToRegExp = (pattern: string): RegExp => {
-    let re = '';
-    for (let i = 0; i < pattern.length; i++) {
-      const ch = pattern[i];
-      if (ch === '*') {
-        if (pattern[i + 1] === '*') {
-          re += '.*';
-          i += 1;
-          if (pattern[i + 1] === '/') i += 1;
-        } else {
-          re += '[^/]*';
-        }
-      } else if (ch === '?') {
-        re += '[^/]';
-      } else {
-        re += ch !== undefined && '.+^${}()|[]\\'.includes(ch) ? `\\${ch}` : ch;
-      }
-    }
-    return new RegExp(`^${re}$`);
-  };
-
   const workspaceRelative = (raw: string, base = WORKSPACE): string =>
     path.isAbsolute(raw) ? raw : path.join(base, raw);
 
