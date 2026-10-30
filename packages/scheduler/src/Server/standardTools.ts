@@ -409,20 +409,8 @@ export async function runStandardTool(
   }
 
   if (name === 'ask_user_question') {
-    const question = args.question;
-    if (typeof question !== 'string' || !question.trim()) return 'ERROR: question is required';
-    const options = Array.isArray(args.options)
-      ? args.options.filter((o): o is string => typeof o === 'string')
-      : undefined;
-    const pending: PendingQuestion = {
-      id: `q-${Date.now().toString(36)}`,
-      question: question.trim(),
-      ...(options && options.length > 0 ? { options } : {}),
-      askedAt: now().toISOString(),
-    };
-    host.state.pendingQuestion = pending;
-    // The turn must end here: nothing can answer inside the same tool loop.
-    return `WAITING_FOR_INPUT: ${pending.question}`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   if (name === 'exit_plan_mode') {
@@ -892,3 +880,40 @@ const exitPlanModeTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(exitPlanModeTool, { plane: 'agent' }));
+
+/** `ask_user_question` — put a question to the user and end the turn. */
+const askUserQuestionTool = defineTool<string>({
+  name: 'ask_user_question',
+  description:
+    'Ask the user a question and end the turn. Nothing can answer inside the same '
+    + 'tool loop, so this answers WAITING_FOR_INPUT.',
+  parameters: {
+    question: { type: 'string', description: 'The question to ask.' },
+    options: {
+      type: 'array',
+      description: 'Optional choices, rendered as 1 / 2 / 3 …',
+      items: { type: 'string' },
+    },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const question = args.question;
+    if (typeof question !== 'string' || !question.trim()) throw new Error('question is required');
+    const options = Array.isArray(args.options)
+      ? args.options.filter((o): o is string => typeof o === 'string')
+      : undefined;
+    const now = host.now ?? (() => new Date());
+    const pending: PendingQuestion = {
+      id: `q-${Date.now().toString(36)}`,
+      question: question.trim(),
+      ...(options && options.length > 0 ? { options } : {}),
+      askedAt: now().toISOString(),
+    };
+    host.state.pendingQuestion = pending;
+    // The turn must end here: nothing can answer inside the same tool loop.
+    return `WAITING_FOR_INPUT: ${pending.question}`;
+  },
+});
+
+registerTool(toolSpecFrom(askUserQuestionTool, { plane: 'agent' }));
