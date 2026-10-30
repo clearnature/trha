@@ -249,6 +249,12 @@ interface SchedulerSession {
   teamTasks?: TeamTask[];
   /** Tool working directory for this session (inside the workspace). */
   cwd?: string;
+  /**
+   * The session's workspace *root*: set by `/workspace` (or at creation) and
+   * never moved by the `cd` tool.  `cwd` may be any descendant of this; the
+   * tools clamp to it, so an agent cannot walk out of the project it was given.
+   */
+  workspaceRoot?: string;
   /** Cards shown to the user; never part of the model's history. */
   presentations?: Array<{ card: string; at: string }>;
   /** User-facing title and tags (rename/tag; absent until set). */
@@ -1150,7 +1156,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       pendingApproval: null, createdAt: new Date(),
       permissionMode: approval, planMode,
       yoloRestore: null as PermissionMode | null,
-      ...(sessionCwd !== undefined ? { cwd: sessionCwd } : {}),
+      ...(sessionCwd !== undefined ? { cwd: sessionCwd, workspaceRoot: sessionCwd } : {}),
       ...(askTimeout !== undefined ? { askTimeoutMs: askTimeout } : {}),
     };
     sessions.set(sessionId, created);
@@ -1255,6 +1261,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       return res.status(400).json({ error: `no such directory: ${abs}` });
     }
     session.cwd = abs;
+    // Moving the workspace moves its root too: `cd` clamps to the root, so
+    // leaving it behind would strand the session in the old project.
+    session.workspaceRoot = abs;
     // Await: a restart on the same stateDir must see the new workspace.
     await persistSession(session);
     res.json({ cwd: session.cwd });
@@ -1708,6 +1717,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         sessionId: sessionId!,
         agents: agentHooksFor(session),
         cwd: () => session.cwd ?? WORKSPACE,
+        workspaceRoot: () => session.workspaceRoot ?? WORKSPACE,
         setCwd: (dir: string) => {
           session.cwd = dir;
           void persistSession(session);

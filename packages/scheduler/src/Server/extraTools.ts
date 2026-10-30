@@ -30,6 +30,12 @@ export interface ExtraHost extends StandardToolHost {
   /** Session cwd, relative to (or inside) the workspace. */
   cwd: () => string;
   setCwd: (dir: string) => void;
+  /**
+   * The session's workspace root — what `cwd` must stay inside.  Distinct from
+   * `workspace` (the process-wide one): with several clients on different
+   * projects, the process has no idea which project this session belongs to.
+   */
+  workspaceRoot?: () => string;
   terminals: Map<string, Terminal>;
   /** Kernel event log for a session (empty when the kernel is unreachable). */
   kernelEvents?: (sessionId: string) => Promise<Array<Record<string, unknown>>>;
@@ -102,8 +108,10 @@ export async function runExtraTool(
       } catch {
         return `ERROR: no such directory: ${target}`;
       }
-      // A cwd outside the workspace would let fs tools escape; clamp it.
-      const root = path.resolve(host.workspace);
+      // Clamp to the *session's* workspace root, not the process-wide one:
+      // with several clients on different projects, `WORKSPACE` belongs to
+      // whoever happened to start the scheduler.
+      const root = path.resolve(host.workspaceRoot?.() ?? host.workspace);
       if (target !== root && !target.startsWith(root + path.sep)) {
         return `ERROR: working directory must stay inside ${root}`;
       }
