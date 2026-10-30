@@ -1665,23 +1665,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       }
     }
     if (name === 'glob') {
-      if (typeof argsObj.pattern !== 'string' || !argsObj.pattern.trim()) {
-        return 'ERROR: pattern is required';
-      }
-      const root = typeof argsObj.path === 'string' ? argsObj.path : '.';
-      const dir = resolveReadPath(root, cwd);
-      if (!dir) return 'ERROR: path must be a string';
-      try {
-        const found = await walkFiles(dir, 4000);
-        const re = globToRegExp(argsObj.pattern);
-        const hits = found
-          .filter(f => re.test(path.relative(dir, f)))
-          .slice(0, 200)
-          .map(f => path.relative(dir, f));
-        return hits.length ? hits.join('\n') : '(no matches)';
-      } catch (e) {
-        return `ERROR: ${(e as Error).message}`;
-      }
+      // Migrated to the registry (full DSH contract); the core-chain pre-check
+      // above resolves it before this line is ever reached.
     }
     if (name === 'grep') {
       if (typeof argsObj.pattern !== 'string' || !argsObj.pattern) return 'ERROR: pattern is required';

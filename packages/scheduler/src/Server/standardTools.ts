@@ -22,6 +22,7 @@ import { hardenedEnv, resolveShell, shellRunner } from './shell.js';
 import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedSpawn } from './sandbox.js';
 import { registerTool, renderToolValue, resolveTool } from './toolRegistry.js';
 import { defineTool, textBlock, toolSpecFrom } from './toolSchema.js';
+import { globToRegExp, resolveReadPath, walkFiles } from './fsWalk.js';
 import { lspQuery, type LspOperation } from './lsp.js';
 import { browserClose, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 
@@ -1295,3 +1296,36 @@ const runCodeTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(runCodeTool, { plane: 'agent', presets: ['ptc'] }));
+
+/** `glob` — list files under a directory that match a glob pattern. */
+const globTool = defineTool<string>({
+  name: 'glob',
+  description:
+    'List files under a directory that match a glob pattern (`**` spans directories, '
+    + '`*` and `?` stay within a segment).',
+  parameters: {
+    pattern: { type: 'string', description: 'Glob pattern, e.g. src/**/*.ts.' },
+    path: { type: 'string', description: 'Directory to search (default ".").' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    if (typeof args.pattern !== 'string' || !args.pattern.trim()) {
+      throw new Error('pattern is required');
+    }
+    // Resolve against the *session* cwd: `cd` moves it away from the workspace.
+    const base = host.sessionCwd ?? host.workspace;
+    const root = typeof args.path === 'string' ? args.path : '.';
+    const dir = resolveReadPath(root, base);
+    if (!dir) throw new Error('path must be a string');
+    const found = await walkFiles(dir, 4000);
+    const re = globToRegExp(args.pattern);
+    const hits = found
+      .filter(f => re.test(path.relative(dir, f)))
+      .slice(0, 200)
+      .map(f => path.relative(dir, f));
+    return hits.length ? hits.join('\n') : '(no matches)';
+  },
+});
+
+registerTool(toolSpecFrom(globTool, { plane: 'agent' }));
