@@ -11,7 +11,8 @@ export interface AgentPreset {
   name: string;
   description: string;
   tools: string[];
-  persona: { enabled: boolean; maxBytes: number };
+  /** DSH's `persona` plugin: `prefix` is the system-prompt lead-in. */
+  persona: { enabled: boolean; prefix?: string; maxBytes: number };
   compaction: {
     enabled: boolean;
     prunerEnabled: boolean;
@@ -41,7 +42,11 @@ export const AGENT_PRESETS: Record<string, AgentPreset> = {
     name: 'standard',
     description: 'Full coding agent',
     tools: STANDARD_TOOLS,
-    persona: { enabled: true, maxBytes: 65536 },
+    persona: {
+      enabled: true,
+      prefix: 'You are a coding agent powered by the {{model}} model.',
+      maxBytes: 65536,
+    },
     compaction: { enabled: true, prunerEnabled: true, thresholdChars: 8192, headChars: 4096, tailChars: 1024 },
     delegation: { enabled: true, forkEnabled: true, ralphEnabled: true, maxRounds: 64 },
     ptc: { enabled: false, language: '' },
@@ -60,7 +65,11 @@ export const AGENT_PRESETS: Record<string, AgentPreset> = {
     // of orchestrating many tool calls.
     tools: ['bash', 'read', 'write', 'grep', 'glob', 'edit', 'web_search',
       'subagent', 'subagent_fork', 'run_code', 'ask_user', 'skill', 'checkpoint', 'memory'],
-    persona: { enabled: true, maxBytes: 65536 },
+    persona: {
+      enabled: true,
+      prefix: 'You are a coding agent powered by the {{model}} model.',
+      maxBytes: 65536,
+    },
     compaction: { enabled: true, prunerEnabled: true, thresholdChars: 8192, headChars: 4096, tailChars: 1024 },
     delegation: { enabled: true, forkEnabled: true, ralphEnabled: true, maxRounds: 64 },
     ptc: { enabled: true, language: 'typescript' },
@@ -78,7 +87,11 @@ export const AGENT_PRESETS: Record<string, AgentPreset> = {
     // No subagents, no web, no compaction: the smallest environment in which a
     // mechanism can be observed in isolation (the base `dsh-sol-pi` copies this).
     tools: ['bash', 'read', 'write', 'grep', 'glob', 'edit', 'ask_user'],
-    persona: { enabled: false, maxBytes: 0 },
+    persona: {
+      enabled: true,
+      prefix: 'You are a helpful software engineer assistant.',
+      maxBytes: 65536,
+    },
     compaction: { enabled: false, prunerEnabled: false, thresholdChars: 0, headChars: 0, tailChars: 0 },
     delegation: { enabled: false, forkEnabled: false, ralphEnabled: false, maxRounds: 0 },
     ptc: { enabled: false, language: '' },
@@ -96,7 +109,11 @@ export const AGENT_PRESETS: Record<string, AgentPreset> = {
     // No tools at all: everything is supplied by plugins, so the preset defines
     // only the surrounding machinery.
     tools: [],
-    persona: { enabled: false, maxBytes: 0 },
+    persona: {
+      enabled: true,
+      prefix: 'You are a coding agent powered by the {{model}} model.',
+      maxBytes: 65536,
+    },
     compaction: { enabled: true, prunerEnabled: true, thresholdChars: 8192, headChars: 4096, tailChars: 1024 },
     delegation: { enabled: true, forkEnabled: true, ralphEnabled: true, maxRounds: 64 },
     ptc: { enabled: false, language: '' },
