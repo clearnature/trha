@@ -23,6 +23,9 @@ module API.ProviderRuntime
   , anthropicStream
   , responsesStream
   , anthropicRequestBody
+  , anthropicHeaders
+  , anthropicTools
+  , toolChangesBeta
   , StreamCall
   ) where
 
@@ -323,6 +326,19 @@ responsesRequestBody model msgs specs streaming mprev =
 toolChangesBeta :: BS.ByteString
 toolChangesBeta = "mid-conversation-tool-changes-2026-07-01"
 
+-- | Headers for one Anthropic request.
+--
+-- The beta gate is added **only** when a tool asks for deferred loading: opting a
+-- request into a beta surface is the caller's decision, not something a framework
+-- should do on every request. Exported so the wire shape is testable without IO.
+anthropicHeaders :: Text -> [Header] -> [ToolSpec] -> [Header]
+anthropicHeaders apiKey extraHs specs =
+  [ ("Content-Type", "application/json")
+  , ("anthropic-version", "2023-06-01") ]
+  ++ [ ("x-api-key", TE.encodeUtf8 apiKey) | not (T.null (T.strip apiKey)) ]
+  ++ [ ("anthropic-beta", toolChangesBeta) | any tsDeferLoading specs ]
+  ++ extraHs
+
 anthropicStream :: Text -> Text -> Text -> [Header] -> Maybe Text -> IO StreamCall
 anthropicStream baseUrl apiKey model extraHs mthinking = do
   let url = T.unpack (rootOf baseUrl) ++ "/v1/messages"
@@ -334,10 +350,8 @@ anthropicStream baseUrl apiKey model extraHs mthinking = do
     pending <- newIORef (Nothing :: Maybe (Int, Text, Text, Text))
     thinkingRef <- newIORef T.empty
     sigRef <- newIORef (Nothing :: Maybe Text)
-    -- The beta header is only meaningful when something is actually deferred;
-    -- sending it unconditionally would opt every request into a beta surface.
-    let hdrs = headers ++ [("anthropic-beta", toolChangesBeta) | any tsDeferLoading specs]
-    result <- LStream.streamPostSse url hdrs (anthropicRequestBody model msgs specs True mthinking) $ \v -> do
+    result <- LStream.streamPostSse url (anthropicHeaders apiKey extraHs specs)
+      (anthropicRequestBody model msgs specs True mthinking) $ \v -> do
       case anthropicEvent v of
         Just (Left txt) -> onEvent (ChunkDelta txt)
         Just (Right u)  -> onEvent (ChunkDone u)

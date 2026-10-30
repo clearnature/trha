@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import Test.Hspec
+import qualified ToolDeferSpec
 import Test.QuickCheck
 import Kernel.Carrier
   ( Layer (..), initialPoint, dimCarrier, dotC, normC2, basisVec
@@ -119,6 +120,7 @@ main = hspec $ do
   auditSpec
   experimentSpec
   configSpec
+  ToolDeferSpec.spec
 
   describe "Core.Session" $ do
     it "can create a session and append events" $ do
@@ -230,7 +232,7 @@ main = hspec $ do
       decode (encode msg) `shouldBe` (Just msg :: Maybe LLM.ChatMessage)
 
     it "round-trips a tool spec" $ do
-      let spec = LLM.ToolSpec "read_file" "Read a file" (object ["type" .= ("string" :: T.Text)])
+      let spec = LLM.ToolSpec "read_file" "Read a file" (object ["type" .= ("string" :: T.Text)]) False
       decode (encode spec) `shouldBe` (Just spec :: Maybe LLM.ToolSpec)
 
     it "serializes a tool result in OpenAI shape" $ do
@@ -260,7 +262,7 @@ main = hspec $ do
   -- Phase 3 K2: DeepSeek provider function-calling (pure request/parse)
   describe "LLM.DeepSeekTools" $ do
     it "builds a request carrying the tools array" $ do
-      let spec = LLM.ToolSpec "read_file" "Read a file" (object ["type" .= ("string" :: T.Text)])
+      let spec = LLM.ToolSpec "read_file" "Read a file" (object ["type" .= ("string" :: T.Text)]) False
           req  = BLC.unpack (encode (buildDeepSeekChatRequest "deepseek-chat" [LLM.ChatUser "hi"] [spec] Nothing))
       req
         `shouldSatisfy` (\b -> "\"tools\"" `isInfixOf` b
