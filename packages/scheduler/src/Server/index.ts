@@ -138,6 +138,12 @@ interface ToolEvent {
    */
   input?: Record<string, unknown>;
   /**
+   * Replayable presentation metadata (DSH's `output.presentationMeta`): what a
+   * shell needs to redraw this call's card after a reconnect or a resume. Only
+   * present when the tool declares `presentationMeta`.
+   */
+  meta?: unknown;
+  /**
    * Tool-supplied card intent (DSH's `presentCall`): how this specific call
    * should be labelled. Absent means the shell draws its generic row.
    */
@@ -1452,6 +1458,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     output?: string,
     // The canonical value behind `output`, when it survived the trip here.
     value?: unknown,
+    // Replayable card metadata from `output.presentationMeta`, when the tool sets it.
+    meta?: unknown,
   ): Promise<void> => {
     const args = Object.entries(input)
       .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`);
@@ -1478,6 +1486,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       phase: status === 'running' ? 'start' : 'end',
       name, input, args, status,
       ...(usableView === undefined ? {} : { view: usableView }),
+      ...(meta === undefined ? {} : { meta }),
       ...(error !== undefined ? { error } : {}),
       ...(startedAt !== undefined ? { durationMs: Date.now() - startedAt } : {}),
       ...(output !== undefined ? { output } : {}),
@@ -1943,7 +1952,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         await emitToolLifecycle(session.id, call.id, call.name, parseToolInput(call), 'running');
         // The canonical value behind `output`; `presentResult` prefers it over
         // the rendered text so a tool can summarise its own result.
-        const valueSink: { value?: unknown } = {};
+        const valueSink: { value?: unknown; meta?: unknown } = {};
         const output = await executeTool(call, session.id, valueSink).catch(
           (e: unknown) => `ERROR: ${String(e)}`,
         );
@@ -1978,7 +1987,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         await emitToolLifecycle(session.id, call.id, call.name, parseToolInput(call),
           failed ? 'failed' : 'succeeded', started, failed ? output : undefined,
           failed ? undefined : outputPreview(output),
-          failed ? undefined : valueSink.value);
+          failed ? undefined : valueSink.value,
+          failed ? undefined : valueSink.meta);
         session.messages.push({ role: 'tool', tool_call_id: call.id, content: output });
         // `UNCHANGED:` means the tool declined to modify state; writing the
         // session anyway would churn the file (and its mtime) for nothing.
