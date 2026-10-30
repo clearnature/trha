@@ -624,18 +624,8 @@ export async function runStandardTool(
 
 
   if (name === 'skill') {
-    const wanted = typeof args.name === 'string' ? args.name.trim() : '';
-    const dirs = skillDirs(host.workspace);
-    if (!wanted) {
-      const skills = await discoverSkills(dirs);
-      if (skills.length === 0) return `(no skills; looked in ${dirs.join(', ')})`;
-      return skills
-        .map(s => (s.description ? `${s.name} — ${s.description}` : s.name))
-        .join('\n');
-    }
-    const body = await readSkill(dirs, wanted);
-    if (body === null) return `ERROR: no skill "${wanted}" in ${dirs.join(', ')}`;
-    return clip(body);
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   if (name === 'web_fetch') {
@@ -804,3 +794,32 @@ const jobKillTool = defineTool<string>({
 registerTool(toolSpecFrom(jobListTool, { plane: 'host' }));
 registerTool(toolSpecFrom(jobOutputTool, { plane: 'host' }));
 registerTool(toolSpecFrom(jobKillTool, { plane: 'host' }));
+
+/** `skill` — list available skills, or load one by name. */
+const skillTool = defineTool<string>({
+  name: 'skill',
+  description:
+    'List the available skills, or load one by name. Call with no name to list '
+    + 'them; call with a name to read that skill\'s instructions.',
+  parameters: {
+    name: { type: 'string', description: 'Skill name. Omit to list every skill.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const wanted = typeof args.name === 'string' ? args.name.trim() : '';
+    const dirs = skillDirs(host.workspace);
+    if (!wanted) {
+      const skills = await discoverSkills(dirs);
+      if (skills.length === 0) return `(no skills; looked in ${dirs.join(', ')})`;
+      return skills
+        .map(s => (s.description ? `${s.name} — ${s.description}` : s.name))
+        .join('\n');
+    }
+    const body = await readSkill(dirs, wanted);
+    if (body === null) throw new Error(`no skill "${wanted}" in ${dirs.join(', ')}`);
+    return clip(body);
+  },
+});
+
+registerTool(toolSpecFrom(skillTool, { plane: 'agent' }));
