@@ -8,6 +8,8 @@ import type { Server } from 'http';
 import type { AddressInfo } from 'net';
 import type { Express } from 'express';
 import { loadPluginsFrom } from '../src/Plugins/loader.js';
+import { PluginManager } from '../src/Plugins/Plugin.js';
+import { resolveTool, toolNamesForPreset } from '../src/Server/toolRegistry.js';
 import { createServer } from '../src/Server/index.js';
 
 async function listen(app: Express): Promise<{ base: string; server: Server }> {
@@ -73,5 +75,41 @@ describe('plugin loader (Phase 3 A1)', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('DSH-shaped tool plugins', () => {
+  it('loads a module that exports name/apply by name (no version, no description)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'trha-dsh-plugin-'));
+    try {
+      await writeFile(path.join(dir, 'dsh-tool.mjs'), `
+        export const name = 'dsh-tool-demo';
+        export const inject = [];
+        export function apply(ctx) { ctx.on('session:created', () => {}); }
+      `);
+      const plugins = await loadPluginsFrom(dir);
+      expect(plugins.map(p => p.name)).toEqual(['dsh-tool-demo']);
+      expect(typeof plugins[0]?.apply).toBe('function');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts the DSH shape on register and lets apply() register a tool', async () => {
+    const manager = new PluginManager();
+    await manager.register({
+      name: 'dsh-tool-demo',
+      apply(ctx) {
+        ctx.registerTool({
+          name: 'demo_tool',
+          description: 'demo',
+          parameters: {},
+          output: { schema: { type: 'object' }, render: () => [] },
+          execute: async () => ({}),
+        }, { plane: 'agent', presets: ['standard'] });
+      },
+    });
+    expect(resolveTool('demo_tool')?.origin).toBe('external');
+    expect(toolNamesForPreset('standard').has('demo_tool')).toBe(true);
   });
 });
