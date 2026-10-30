@@ -13,7 +13,8 @@ import { confineWritePath } from './toolGuard.js';
 import { browserEvaluate, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 import { hardenedEnv, interactiveShell, powerShellCandidates, resolveShell } from './shell.js';
 import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedInteractive, sandboxedSpawn, type SandboxSession } from './sandbox.js';
-import { registerTool, resolveTool } from './toolRegistry.js';
+import { registerTool, renderToolValue, resolveTool } from './toolRegistry.js';
+import { defineTool, textBlock, toolSpecFrom } from './toolSchema.js';
 import type { StandardToolHost, TeamTask } from './standardTools.js';
 
 export interface Terminal {
@@ -102,10 +103,11 @@ export async function runExtraTool(
   // Same precedence rule as `runStandardTool`: registered plugins first, the
   // legacy chain as the fallback for anything not migrated yet.
   const registered = resolveTool(name);
-  if (registered?.handler) return registered.handler(args, host);
+  if (registered?.handler) return renderToolValue(registered, args, host);
 
   // ── working directory ────────────────────────────────────────────────
-  if (name === 'working_directory') return workingDirectoryHandler(args, host);
+  // Migrated to the registry (full DSH contract), so the chain no longer
+  // handles it — `resolveTool` above always wins for this name.
 
   // ── editor-style file ops (dsh's str_replace_editor / unified_edit) ──
   if (name === 'str_replace_editor' || name === 'unified_edit') {
@@ -595,34 +597,59 @@ export async function runExtraTool(
 // the chain above. `toolDeclarations.ts` supplies the plane/preset metadata,
 // `registerTool` upgrades that declaration with the handler.
 
-/** `working_directory` — read the session cwd, or move it inside the workspace. */
-async function workingDirectoryHandler(
-  args: Record<string, unknown>,
-  host: ExtraHost,
-): Promise<string> {
-  if (typeof args.path === 'string' && args.path.trim()) {
-    const target = path.resolve(host.cwd(), args.path.trim());
+/**
+ * `working_directory` — the first tool on the **full DSH contract**.
+ *
+ * Compare `packages/session/tool-working-directory/src/index.ts` in
+ * deepseek-harness: `defineTool` with `description` + `parameters` +
+ * `output { schema, render }` + `execute(args, exec)`. Two deliberate
+ * differences: trha keeps `path` as the parameter name (DSH uses `cd`) so
+ * existing callers keep working, and the schema check happens at construction
+ * rather than through TS inference.
+ */
+const workingDirectoryTool = defineTool<{ cwd: string }>({
+  name: 'working_directory',
+  description:
+    'Read the current working directory, or change it by passing a path. Relative '
+    + 'paths resolve against the current directory, and the result must stay inside '
+    + 'the session workspace. Existing shells keep their own directories.',
+  parameters: {
+    path: {
+      type: 'string',
+      description: 'Existing directory to enter. Omit to read the current directory.',
+    },
+  },
+  output: {
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { cwd: { type: 'string' } },
+    },
+    render: (_args, value) => [textBlock(value.cwd)],
+  },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const want = typeof args.path === 'string' ? args.path.trim() : '';
+    if (!want) return { cwd: host.cwd() };
+
+    const target = path.resolve(host.cwd(), want);
+    let info;
     try {
-      const s = await stat(target);
-      if (!s.isDirectory()) return `ERROR: not a directory: ${target}`;
+      info = await stat(target);
     } catch {
-      return `ERROR: no such directory: ${target}`;
+      throw new Error(`no such directory: ${target}`);
     }
+    if (!info.isDirectory()) throw new Error(`not a directory: ${target}`);
     // Clamp to the *session's* workspace root, not the process-wide one:
     // with several clients on different projects, `WORKSPACE` belongs to
     // whoever happened to start the scheduler.
     const root = path.resolve(host.workspaceRoot?.() ?? host.workspace);
     if (target !== root && !target.startsWith(root + path.sep)) {
-      return `ERROR: working directory must stay inside ${root}`;
+      throw new Error(`working directory must stay inside ${root}`);
     }
     host.setCwd(target);
-    return `OK: cwd is now ${target}`;
-  }
-  return host.cwd();
-}
-
-registerTool({
-  name: 'working_directory',
-  plane: 'agent',
-  handler: (args, h) => workingDirectoryHandler(args, h as ExtraHost),
+    return { cwd: target };
+  },
 });
+
+registerTool(toolSpecFrom(workingDirectoryTool, { plane: 'agent' }));

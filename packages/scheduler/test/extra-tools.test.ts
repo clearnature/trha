@@ -55,10 +55,15 @@ describe('editor + working directory', () => {
   it('switches cwd inside the workspace and refuses to leave it', async () => {
     await mkdir(path.join(dir, 'sub'));
     expect(await runExtraTool('working_directory', {}, host)).toBe(dir);
-    expect(await runExtraTool('working_directory', { path: 'sub' }, host)).toBe(`OK: cwd is now ${path.join(dir, 'sub')}`);
+    // DSH contract: `output.render` emits the canonical value — the bare path,
+    // not an "OK: cwd is now …" wrapper.
+    expect(await runExtraTool('working_directory', { path: 'sub' }, host)).toBe(path.join(dir, 'sub'));
     expect(await runExtraTool('working_directory', {}, host)).toBe(path.join(dir, 'sub'));
-    expect(await runExtraTool('working_directory', { path: '/etc' }, host)).toMatch(/must stay inside/);
-    expect(await runExtraTool('working_directory', { path: 'nope' }, host)).toMatch(/no such directory/);
+    // Failures throw; the call site turns them into `ERROR: …`.
+    await expect(runExtraTool('working_directory', { path: '/etc' }, host))
+      .rejects.toThrow(/must stay inside/);
+    await expect(runExtraTool('working_directory', { path: 'nope' }, host))
+      .rejects.toThrow(/no such directory/);
   });
 });
 

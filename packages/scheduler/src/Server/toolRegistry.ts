@@ -16,6 +16,8 @@
  * and migration can proceed one tool at a time with no big-bang rewrite.
  */
 
+import type { ContentBlock, ToolExecContext } from './toolSchema.js';
+
 export type ToolPlane = 'host' | 'agent';
 
 /**
@@ -32,7 +34,29 @@ export type ToolPlane = 'host' | 'agent';
 export type ToolOrigin = 'builtin' | 'external';
 
 /** Host objects differ per call site; handlers narrow it themselves. */
-export type ToolHandler = (args: Record<string, unknown>, host: unknown) => Promise<string>;
+export type ToolHandler = (
+  args: Record<string, unknown>,
+  exec: ToolExecContext,
+) => Promise<unknown>;
+
+/**
+ * Run a registered tool and turn its canonical value into model-facing text.
+ *
+ * This is the DSH split: `execute` returns a validated value, `output.render`
+ * turns that value into content blocks. Tools that have not migrated yet return
+ * a plain string, which passes through unchanged.
+ */
+export async function renderToolValue(
+  spec: ToolSpec,
+  args: Record<string, unknown>,
+  host: unknown,
+): Promise<string> {
+  const value = await spec.handler!(args, { host });
+  if (spec.output) {
+    return spec.output.render(args, value).map((b: ContentBlock) => b.text).join('\n');
+  }
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
 
 export interface ToolSpec {
   name: string;
@@ -51,6 +75,20 @@ export interface ToolSpec {
    * (so filtering works immediately) while handlers move over one by one.
    */
   handler?: ToolHandler;
+
+  // ── DSH `defineTool` contract (optional while tools migrate) ──────────
+  /** Sent to the model. */
+  description?: string;
+  /** Per-property parameter schema. */
+  parameters?: Record<string, unknown>;
+  /** Canonical output schema + render (DSH's `output`). */
+  output?: {
+    schema: Record<string, unknown>;
+    render: (args: Record<string, unknown>, value: unknown) => Array<{ type: 'text'; text: string }>;
+    presentationMeta?: (args: Record<string, unknown>, value: unknown) => unknown;
+  };
+  /** Cooperative timeout budget in milliseconds. */
+  timeoutMs?: number;
 }
 
 const registry = new Map<string, ToolSpec>();
