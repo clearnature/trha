@@ -1620,6 +1620,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           state: session,
           jobs: jobsFor(sessionId!),
           sessionId: sessionId!,
+          sessionCwd: cwd,
           agents: agentHooksFor(session),
         }).catch((e: unknown) => `ERROR: ${String(e)}`);
         if (!out.startsWith('UNCHANGED:')) await persistSession(session);
@@ -1776,6 +1777,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         state: session,
         jobs: jobsFor(sessionId!),
         sessionId: sessionId!,
+        sessionCwd: cwd,
         agents: agentHooksFor(session),
       }).catch((e: unknown) => `ERROR: ${String(e)}`);
       if (out !== null) {

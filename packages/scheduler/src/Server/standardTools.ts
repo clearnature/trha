@@ -105,6 +105,12 @@ export interface StandardToolHost {
   /** Jobs are shared per scheduler process, keyed by session. */
   jobs: Map<string, JobRecord>;
   sessionId: string;
+  /**
+   * The session's current directory. May differ from `workspace` after `cd`;
+   * the core file tools (`glob`/`grep`/`read`/`write`) resolve against it.
+   * Named `sessionCwd` because `ExtraHost.cwd` is a getter function.
+   */
+  sessionCwd?: string;
   now?: () => Date;
 }
 
