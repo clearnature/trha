@@ -13,7 +13,7 @@ import { confineWritePath } from './toolGuard.js';
 import { browserEvaluate, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 import { hardenedEnv, interactiveShell, powerShellCandidates, resolveShell } from './shell.js';
 import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedInteractive, sandboxedSpawn, type SandboxSession } from './sandbox.js';
-import { resolveTool } from './toolRegistry.js';
+import { registerTool, resolveTool } from './toolRegistry.js';
 import type { StandardToolHost, TeamTask } from './standardTools.js';
 
 export interface Terminal {
@@ -105,27 +105,7 @@ export async function runExtraTool(
   if (registered?.handler) return registered.handler(args, host);
 
   // ── working directory ────────────────────────────────────────────────
-  if (name === 'working_directory') {
-    if (typeof args.path === 'string' && args.path.trim()) {
-      const target = path.resolve(host.cwd(), args.path.trim());
-      try {
-        const s = await stat(target);
-        if (!s.isDirectory()) return `ERROR: not a directory: ${target}`;
-      } catch {
-        return `ERROR: no such directory: ${target}`;
-      }
-      // Clamp to the *session's* workspace root, not the process-wide one:
-      // with several clients on different projects, `WORKSPACE` belongs to
-      // whoever happened to start the scheduler.
-      const root = path.resolve(host.workspaceRoot?.() ?? host.workspace);
-      if (target !== root && !target.startsWith(root + path.sep)) {
-        return `ERROR: working directory must stay inside ${root}`;
-      }
-      host.setCwd(target);
-      return `OK: cwd is now ${target}`;
-    }
-    return host.cwd();
-  }
+  if (name === 'working_directory') return workingDirectoryHandler(args, host);
 
   // ── editor-style file ops (dsh's str_replace_editor / unified_edit) ──
   if (name === 'str_replace_editor' || name === 'unified_edit') {
@@ -608,3 +588,41 @@ export async function runExtraTool(
 
   return null;
 }
+
+// ── registered handlers (plugin migration) ────────────────────────────
+//
+// Migrated one tool at a time; anything without a handler still runs through
+// the chain above. `toolDeclarations.ts` supplies the plane/preset metadata,
+// `registerTool` upgrades that declaration with the handler.
+
+/** `working_directory` — read the session cwd, or move it inside the workspace. */
+async function workingDirectoryHandler(
+  args: Record<string, unknown>,
+  host: ExtraHost,
+): Promise<string> {
+  if (typeof args.path === 'string' && args.path.trim()) {
+    const target = path.resolve(host.cwd(), args.path.trim());
+    try {
+      const s = await stat(target);
+      if (!s.isDirectory()) return `ERROR: not a directory: ${target}`;
+    } catch {
+      return `ERROR: no such directory: ${target}`;
+    }
+    // Clamp to the *session's* workspace root, not the process-wide one:
+    // with several clients on different projects, `WORKSPACE` belongs to
+    // whoever happened to start the scheduler.
+    const root = path.resolve(host.workspaceRoot?.() ?? host.workspace);
+    if (target !== root && !target.startsWith(root + path.sep)) {
+      return `ERROR: working directory must stay inside ${root}`;
+    }
+    host.setCwd(target);
+    return `OK: cwd is now ${target}`;
+  }
+  return host.cwd();
+}
+
+registerTool({
+  name: 'working_directory',
+  plane: 'agent',
+  handler: (args, h) => workingDirectoryHandler(args, h as ExtraHost),
+});

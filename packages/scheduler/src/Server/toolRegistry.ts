@@ -40,10 +40,18 @@ export interface ToolSpec {
 
 const registry = new Map<string, ToolSpec>();
 
-/** Register one tool. Duplicate names are a programming error, not a merge. */
+/**
+ * Register one tool. A metadata-only declaration (`declareTool`) may later be
+ * upgraded with a handler here; two handlers for the same name remain an error.
+ */
 export function registerTool(spec: ToolSpec): void {
-  if (registry.has(spec.name)) {
-    throw new Error(`tool "${spec.name}" is already registered`);
+  const existing = registry.get(spec.name);
+  if (existing) {
+    if (existing.handler) throw new Error(`tool "${spec.name}" is already registered`);
+    existing.plane = spec.plane;
+    if (spec.presets !== undefined) existing.presets = spec.presets;
+    if (spec.handler) existing.handler = spec.handler;
+    return;
   }
   registry.set(spec.name, spec);
 }
