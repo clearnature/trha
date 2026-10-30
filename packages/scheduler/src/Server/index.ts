@@ -377,8 +377,16 @@ async function withSystemPrompt(
   const langSuffix = code && code.toLowerCase() !== 'auto'
     ? `\n\nReason about the problem in ${reasoningLanguageName(code)}; answer in the user's language.`
     : '';
-  const agentSuffix = extraInstructions?.trim()
-    ? `\n\nAgent instructions:\n\n${extraInstructions.trim()}`
+  // DSH's `agent-instructions` caps the injected text (`maxBytes: 65536`); an
+  // unbounded agent file would otherwise eat the context window one turn at a
+  // time and never recover.
+  const AGENT_INSTRUCTIONS_MAX = 65_536;
+  const rawInstructions = (extraInstructions ?? '').trim();
+  const instructions = rawInstructions.length > AGENT_INSTRUCTIONS_MAX
+    ? `${rawInstructions.slice(0, AGENT_INSTRUCTIONS_MAX)}\n…(agent instructions truncated)`
+    : rawInstructions;
+  const agentSuffix = instructions
+    ? `\n\nAgent instructions:\n\n${instructions}`
     : '';
   const rules = await loadRuleFiles();
   const system = base
