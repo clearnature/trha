@@ -21,7 +21,7 @@ import { listMcpResources, listMcpResourceTemplates, readMcpResource } from './m
 import { hardenedEnv, resolveShell, shellRunner } from './shell.js';
 import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedSpawn } from './sandbox.js';
 import { registerTool, renderToolValue, resolveTool } from './toolRegistry.js';
-import { defineTool, oneLine, textBlock, toolSpecFrom } from './toolSchema.js';
+import { defineTool, oneLine, textBlock, toolSpecFrom, type ToolResult } from './toolSchema.js';
 import { editDiff, globToRegExp, resolveReadPath, walkFiles, workspaceRelative } from './fsWalk.js';
 import { confineWritePath, limitOutput } from './toolGuard.js';
 import { runShell } from './shellRun.js';
@@ -1787,6 +1787,26 @@ const renderBash = (v: BashResult): string => {
   return limitOutput(v.note ? `${body}\n${v.note}` : body);
 };
 
+/**
+ * Split a shell result's trailing exit marker from its body.
+ *
+ * Copied from `deepseek-harness/packages/shell/shell/src/render.ts`: the marker is
+ * what the terminal card turns into its exit pill, so it must not stay in the body.
+ */
+export interface ParsedExitStatus {
+  body: string;
+  exitCode?: number;
+  signal?: string;
+}
+
+export function parseExitStatus(text: string): ParsedExitStatus {
+  const signal = /\n\[killed by signal: ([^\]\n]+)\]$/.exec(text);
+  if (signal?.[1] !== undefined) return { body: text.slice(0, signal.index), signal: signal[1] };
+  const exit = /\n\[exit code: (\d+)\]$/.exec(text);
+  if (exit?.[1] !== undefined) return { body: text.slice(0, exit.index), exitCode: Number(exit[1]) };
+  return { body: text, exitCode: 0 };
+}
+
 /** `bash` — run one shell command (optionally as a background job). */
 const bashTool = defineTool<BashResult>({
   name: 'bash',
@@ -1815,13 +1835,25 @@ const bashTool = defineTool<BashResult>({
     presentationMeta: (_args, value) => ({ cwd: value.cwd }),
   },
   presentCall: args => ({ card: 'terminal', title: oneLine(args.command), rawInput: args.command }),
-  presentResult: (_args, result) => {
-    // The canonical value, not the rendered text: no regex needed any more.
-    const v = result as BashResult;
-    if (v?.jobId !== undefined) return { card: 'terminal' as const, title: `job ${v.jobId}` };
-    return v?.code !== undefined
-      ? { card: 'terminal' as const, title: `exit ${v.code}` }
-      : undefined;
+  // Copied from `deepseek-harness/packages/shell/tool-bash/src/index.ts`
+  // (`presentBashResult`). A model-facing text block is the source: background
+  // acknowledgements, promotions and errors have no exit status, so they keep a
+  // generic card with the raw output; a foreground run splits its trailing exit
+  // marker into `exitCode`/`signal` so the card can show a pill.
+  presentResult: (args, result) => {
+    const r = result as ToolResult;
+    const block = r.content.length === 1 ? r.content[0] : undefined;
+    if (block === undefined || block.type !== 'text') return undefined;
+    const raw = block.text;
+    const isBackground = (args as { background?: unknown }).background === true;
+    if (isBackground || r.isError) {
+      return {
+        card: 'generic' as const,
+        content: [{ type: 'text' as const, text: '```console\n' + raw.replace(/\n+$/, '') + '\n```' }],
+      };
+    }
+    const { body, ...exit } = parseExitStatus(raw);
+    return { card: 'terminal' as const, output: body, ...exit };
   },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;

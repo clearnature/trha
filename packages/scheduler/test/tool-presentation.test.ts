@@ -4,6 +4,7 @@
 // was `tsc`. The assertions below pin the two behaviours that matter — the label
 // a call gets, and what happens when there is nothing meaningful to show.
 import { describe, expect, it } from 'vitest';
+import type { ToolResult } from '../src/Server/toolSchema.js';
 import '../src/Server/toolDeclarations.js';
 import '../src/Server/standardTools.js';
 import '../src/Server/extraTools.js';
@@ -32,23 +33,35 @@ describe('tool presentation hooks', () => {
     });
   });
 
-  it('bash reports the exit code on the closing card', () => {
-    // `presentResult` receives the canonical `BashResult`, not the rendered text.
-    expect(resolveTool('bash')?.presentResult?.({}, { code: 3, cwd: '/tmp' })).toEqual({
+  // `bash`'s presenter is copied from DSH's `presentBashResult`: it reads the
+  // model-facing text out of `result.content`, splits a trailing exit marker into
+  // the card's exit pill, and keeps a generic console card for background calls
+  // and errors (neither has an exit status).
+  const textResult = (text: string, isError = false): ToolResult => ({
+    content: [{ type: 'text', text }],
+    isError,
+  });
+
+  it('bash lifts the exit marker into the card', () => {
+    expect(resolveTool('bash')?.presentResult?.({}, textResult('boom\n[exit code: 3]'))).toEqual({
       card: 'terminal',
-      title: 'exit 3',
+      output: 'boom',
+      exitCode: 3,
     });
   });
 
-  it('bash names the job when the call ran in the background', () => {
-    expect(resolveTool('bash')?.presentResult?.({}, { jobId: 'job-2', cwd: '/tmp' })).toEqual({
-      card: 'terminal',
-      title: 'job job-2',
+  it('bash keeps the raw output for a background call', () => {
+    expect(resolveTool('bash')?.presentResult?.({ background: true }, textResult('job-2'))).toEqual({
+      card: 'generic',
+      content: [{ type: 'text', text: '```console\njob-2\n```' }],
     });
   });
 
-  it('bash has no closing label when there is no exit code', () => {
-    expect(resolveTool('bash')?.presentResult?.({}, { cwd: '/tmp' })).toBeUndefined();
+  it('bash keeps the raw output on error', () => {
+    expect(resolveTool('bash')?.presentResult?.({}, textResult('boom', true))).toEqual({
+      card: 'generic',
+      content: [{ type: 'text', text: '```console\nboom\n```' }],
+    });
   });
 
   it('edit counts replacements in its closing label', () => {

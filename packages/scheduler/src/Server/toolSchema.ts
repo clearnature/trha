@@ -282,7 +282,8 @@ export interface ToolDefinition<T = unknown> {
    * card should say. Receives the canonical value `execute` returned.
    * `undefined` keeps the opening card's label.
    */
-  presentResult?: (args: Record<string, unknown>, result: unknown) => ToolCallView | undefined;
+  presentResult?: (args: Record<string, unknown>, result: unknown)
+    => ToolCallView | ToolResultView | undefined;
   /**
    * Last-mile content transform, applied after `output.render` (DSH's
    * `projectContent` + `finalizeContent`, merged because trha has no
