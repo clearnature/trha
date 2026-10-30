@@ -293,67 +293,8 @@ export async function runStandardTool(
 
 
   if (name === 'run_code') {
-    const language = typeof args.language === 'string' ? args.language : '';
-    const code = typeof args.code === 'string' ? args.code : '';
-    if (!code.trim()) return 'ERROR: code is required';
-    const exts: Record<string, string> = {
-      python: 'py', python3: 'py', javascript: 'mjs', js: 'mjs', node: 'mjs',
-      bash: 'sh', sh: 'sh', lean: 'lean',
-    };
-    const lang = language.toLowerCase();
-    const ext = exts[lang];
-    if (!ext) return `ERROR: unsupported language "${language}" (python|javascript|bash|lean)`;
-    const runner = shellRunner(lang);
-    // shellRunner only ever refuses bash/sh (win32); name the language instead
-    // of blaming bash for a Python request.
-    if (!runner.ok) {
-      const hint = lang === 'bash' || lang === 'sh' ? ' (use pwsh for shell code)' : '';
-      return `ERROR: ${lang} is not available on this platform${hint}`;
-    }
-    // The scratch file must not land in the workspace. `run_code` runs on
-    // almost every turn, and a crash or a kill used to leave `.trha-run-*.py`
-    // sitting next to the user's sources — inside the file-history and write
-    // sandbox surface, and, when the workspace itself was mis-resolved, in
-    // whichever subdirectory the scheduler happened to be launched from.
-    // A private dir under the OS temp root keeps the workspace clean; `cwd`
-    // below stays the workspace, so relative paths in the snippet behave the
-    // same as before.
-    const dir = sandboxEnabled()
-      ? path.join(host.workspace, '.trha-run')
-      : path.join(tmpdir(), 'trha-run');
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    const file = path.join(dir, `run-${Date.now().toString(36)}-${process.pid}.${ext}`);
-    await writeFile(file, code, 'utf8');
-    if (sandboxEnabled()) {
-      try {
-        const result = await sandboxedSpawn(defaultSandboxScope(host.workspace), {
-          argv: [runner.cmd, file],
-          cwd: host.workspace,
-        });
-        await rm(file, { force: true }).catch(() => {});
-        return clip(`exit ${result.code ?? -1}\n${result.stdout}${result.stderr}`);
-      } catch (e) {
-        await rm(file, { force: true }).catch(() => {});
-        return `ERROR: ${(e as Error).message}`;
-      }
-    }
-    return await new Promise<string>(resolve => {
-      const child = spawn(runner.cmd, [file], { cwd: host.workspace, env: hardenedEnv() });
-      const out: string[] = [];
-      const cap = (b: Buffer): void => {
-        out.push(b.toString('utf8'));
-        if (out.join('').length > MAX_OUTPUT_CHARS) out.splice(0, out.length, out.join('').slice(-MAX_OUTPUT_CHARS));
-      };
-      child.stdout.on('data', cap);
-      child.stderr.on('data', cap);
-      child.on('error', e => resolve(`ERROR: ${e.message}`));
-      child.on('exit', code2 => {
-        void (async () => {
-          try { await rm(file, { force: true }); } catch { /* ignore */ }
-          resolve(clip(`exit ${code2 ?? -1}\n${out.join('')}`));
-        })();
-      });
-    });
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   if (name === 'read_image') {
@@ -1270,3 +1211,81 @@ const workflowTool = defineTool<string>({
 
 registerTool(toolSpecFrom(subagentTool, { plane: 'host' }));
 registerTool(toolSpecFrom(workflowTool, { plane: 'agent' }));
+
+/** `run_code` — run a snippet from a scratch file outside the workspace. */
+const runCodeTool = defineTool<string>({
+  name: 'run_code',
+  description:
+    'Run a code snippet (python | javascript | bash | lean). The scratch file lives '
+    + 'outside the workspace; cwd stays the workspace. Sandboxed when the seam is on.',
+  parameters: {
+    language: { type: 'string', enum: ['python', 'javascript', 'bash', 'lean'] },
+    code: { type: 'string', description: 'The program body.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const language = typeof args.language === 'string' ? args.language : '';
+    const code = typeof args.code === 'string' ? args.code : '';
+    if (!code.trim()) throw new Error('code is required');
+    const exts: Record<string, string> = {
+      python: 'py', python3: 'py', javascript: 'mjs', js: 'mjs', node: 'mjs',
+      bash: 'sh', sh: 'sh', lean: 'lean',
+    };
+    const lang = language.toLowerCase();
+    const ext = exts[lang];
+    if (!ext) throw new Error(`unsupported language "${language}" (python|javascript|bash|lean)`);
+    const runner = shellRunner(lang);
+    // shellRunner only ever refuses bash/sh (win32); name the language instead
+    // of blaming bash for a Python request.
+    if (!runner.ok) {
+      const hint = lang === 'bash' || lang === 'sh' ? ' (use pwsh for shell code)' : '';
+      throw new Error(`${lang} is not available on this platform${hint}`);
+    }
+    // The scratch file must not land in the workspace. `run_code` runs on almost
+    // every turn, and a crash or kill used to leave `.trha-run-*.py` next to the
+    // user's sources — inside the file-history and write-sandbox surface. A
+    // private dir under the OS temp root keeps the workspace clean; `cwd` below
+    // stays the workspace, so relative paths in the snippet behave as before.
+    const dir = sandboxEnabled()
+      ? path.join(host.workspace, '.trha-run')
+      : path.join(tmpdir(), 'trha-run');
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const file = path.join(dir, `run-${Date.now().toString(36)}-${process.pid}.${ext}`);
+    await writeFile(file, code, 'utf8');
+    if (sandboxEnabled()) {
+      try {
+        const result = await sandboxedSpawn(defaultSandboxScope(host.workspace), {
+          argv: [runner.cmd, file],
+          cwd: host.workspace,
+        });
+        await rm(file, { force: true }).catch(() => {});
+        return clip(`exit ${result.code ?? -1}\n${result.stdout}${result.stderr}`);
+      } catch (e) {
+        await rm(file, { force: true }).catch(() => {});
+        throw new Error((e as Error).message);
+      }
+    }
+    return await new Promise<string>(resolve => {
+      const child = spawn(runner.cmd, [file], { cwd: host.workspace, env: hardenedEnv() });
+      const out: string[] = [];
+      const cap = (b: Buffer): void => {
+        out.push(b.toString('utf8'));
+        if (out.join('').length > MAX_OUTPUT_CHARS) {
+          out.splice(0, out.length, out.join('').slice(-MAX_OUTPUT_CHARS));
+        }
+      };
+      child.stdout.on('data', cap);
+      child.stderr.on('data', cap);
+      child.on('error', e => resolve(`ERROR: ${e.message}`));
+      child.on('exit', code2 => {
+        void (async () => {
+          try { await rm(file, { force: true }); } catch { /* ignore */ }
+          resolve(clip(`exit ${code2 ?? -1}\n${out.join('')}`));
+        })();
+      });
+    });
+  },
+});
+
+registerTool(toolSpecFrom(runCodeTool, { plane: 'agent', presets: ['ptc'] }));
