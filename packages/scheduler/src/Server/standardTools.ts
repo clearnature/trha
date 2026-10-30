@@ -334,40 +334,16 @@ export async function runStandardTool(
   }
 
   if (name === 'team_task_create') {
-    if (!host.agents) return 'ERROR: team tasks are not available in this host';
-    const subject = typeof args.subject === 'string' ? args.subject.trim() : '';
-    if (!subject) return 'ERROR: subject is required';
-    const tasks = host.agents.teamTasks();
-    const task: TeamTask = {
-      id: `t${tasks.length + 1}`,
-      subject,
-      ...(typeof args.description === 'string' ? { description: args.description } : {}),
-      status: 'pending',
-      ...(typeof args.assignee === 'string' ? { assignee: args.assignee } : {}),
-    };
-    host.agents.setTeamTasks([...tasks, task]);
-    return `OK: ${JSON.stringify(task)}`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   if (name === 'team_task_list') {
-    if (!host.agents) return 'ERROR: team tasks are not available in this host';
-    const tasks = host.agents.teamTasks();
-    return tasks.length ? tasks.map(t => JSON.stringify(t)).join('\n') : '(no team tasks)';
+    // Migrated to the registry (full DSH contract).
   }
 
   if (name === 'team_task_update') {
-    if (!host.agents) return 'ERROR: team tasks are not available in this host';
-    const id = typeof args.id === 'string' ? args.id : '';
-    const tasks = host.agents.teamTasks();
-    const t = tasks.find(x => x.id === id);
-    if (!t) return `ERROR: no team task ${id}`;
-    if (args.status === 'pending' || args.status === 'in_progress' || args.status === 'completed') {
-      t.status = args.status;
-    }
-    if (typeof args.assignee === 'string') t.assignee = args.assignee;
-    if (typeof args.description === 'string') t.description = args.description;
-    host.agents.setTeamTasks(tasks);
-    return `OK: ${JSON.stringify(t)}`;
+    // Migrated to the registry (full DSH contract).
   }
 
   if (name === 'workflow') {
@@ -1066,3 +1042,77 @@ registerTool(toolSpecFrom(scheduleCreateTool, { plane: 'host' }));
 registerTool(toolSpecFrom(scheduleListTool, { plane: 'host' }));
 registerTool(toolSpecFrom(scheduleUpdateTool, { plane: 'host' }));
 registerTool(toolSpecFrom(scheduleDeleteTool, { plane: 'host' }));
+
+/** `team_task_create` — add an entry to the shared team task list. */
+const teamTaskCreateTool = defineTool<string>({
+  name: 'team_task_create',
+  description: 'Add a task to the shared team task list that subagents can pick up.',
+  parameters: {
+    subject: { type: 'string', description: 'One-line summary.' },
+    description: { type: 'string', description: 'What the task involves.' },
+    assignee: { type: 'string', description: 'Teammate name, when already decided.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    if (!host.agents) throw new Error('team tasks are not available in this host');
+    const subject = typeof args.subject === 'string' ? args.subject.trim() : '';
+    if (!subject) throw new Error('subject is required');
+    const tasks = host.agents.teamTasks();
+    const task: TeamTask = {
+      id: `t${tasks.length + 1}`,
+      subject,
+      ...(typeof args.description === 'string' ? { description: args.description } : {}),
+      status: 'pending',
+      ...(typeof args.assignee === 'string' ? { assignee: args.assignee } : {}),
+    };
+    host.agents.setTeamTasks([...tasks, task]);
+    return `OK: ${JSON.stringify(task)}`;
+  },
+});
+
+/** `team_task_list` — every shared team task. */
+const teamTaskListTool = defineTool<string>({
+  name: 'team_task_list',
+  description: 'List the shared team tasks.',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as StandardToolHost;
+    if (!host.agents) throw new Error('team tasks are not available in this host');
+    const tasks = host.agents.teamTasks();
+    return tasks.length ? tasks.map(t => JSON.stringify(t)).join('\n') : '(no team tasks)';
+  },
+});
+
+/** `team_task_update` — change one team task's status, assignee or description. */
+const teamTaskUpdateTool = defineTool<string>({
+  name: 'team_task_update',
+  description: 'Update one shared team task.',
+  parameters: {
+    id: { type: 'string', description: 'Task id from team_task_list.' },
+    status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
+    assignee: { type: 'string' },
+    description: { type: 'string' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    if (!host.agents) throw new Error('team tasks are not available in this host');
+    const id = typeof args.id === 'string' ? args.id : '';
+    const tasks = host.agents.teamTasks();
+    const t = tasks.find(x => x.id === id);
+    if (!t) throw new Error(`no team task ${id}`);
+    if (args.status === 'pending' || args.status === 'in_progress' || args.status === 'completed') {
+      t.status = args.status;
+    }
+    if (typeof args.assignee === 'string') t.assignee = args.assignee;
+    if (typeof args.description === 'string') t.description = args.description;
+    host.agents.setTeamTasks(tasks);
+    return `OK: ${JSON.stringify(t)}`;
+  },
+});
+
+registerTool(toolSpecFrom(teamTaskCreateTool, { plane: 'host' }));
+registerTool(toolSpecFrom(teamTaskListTool, { plane: 'host' }));
+registerTool(toolSpecFrom(teamTaskUpdateTool, { plane: 'host' }));
