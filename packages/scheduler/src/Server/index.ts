@@ -230,6 +230,11 @@ interface SchedulerSession {
   /** Subagent linkage: a child session points at the one that spawned it. */
   parentId?: string;
   depth?: number;
+  /**
+   * Agent preset for this session (`standard` | `ptc` | `minimal` | `cordis`).
+   * Decides which tools the model is offered; unset means the default preset.
+   */
+  agentPreset?: string;
   abortRequested?: boolean;
   /** Team tasks are shared on the root session. */
   teamTasks?: TeamTask[];
@@ -1632,11 +1637,15 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
     // Plugins may rewrite the tool set offered to the model.
     const allTools = (plugins.service('tools') as { list(): BridgeToolSpec[] }).list();
-    // An agent definition can narrow the tool set. Without one, behaviour is
-    // unchanged (every tool the mode exposes).
-    const toolsBase = target.toolsAllow?.length
-      ? allTools.filter(t => target.toolsAllow!.includes(t.name))
-      : allTools;
+    // The agent preset narrows the set first (this is what makes
+    // `--agent-preset minimal` actually hide tools), then an agent definition
+    // can narrow it further. Without either, behaviour is unchanged: the preset
+    // defaults to `standard`, which exposes every tool.
+    const presetTools = toolNamesForPreset(session.agentPreset ?? DEFAULT_AGENT_PRESET);
+    const toolsBase = allTools.filter(t =>
+      presetTools.has(t.name)
+      && (!target.toolsAllow?.length || target.toolsAllow.includes(t.name)),
+    );
     const toolsCfg = (await plugins.runWaterfall('agent:tools', toolsBase)) as BridgeToolSpec[];
     session.messages.push({ role: 'user', content: message });
     events.emit('agent:message', { sessionId: session.id, role: 'user', content: message });
