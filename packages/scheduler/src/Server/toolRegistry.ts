@@ -132,6 +132,12 @@ export interface ToolSpec {
   deferLoading?: boolean;
   /** May this call join a parallel group? (DSH's `isConcurrencySafe`.) */
   isConcurrencySafe?: (args: Record<string, unknown>) => boolean;
+  /** How this call should be labelled (DSH's `presentCall`). */
+  presentCall?: (args: Record<string, unknown>) => {
+    card: 'generic' | 'terminal' | 'diff';
+    title: string;
+    rawInput?: unknown;
+  } | undefined;
 }
 
 const registry = new Map<string, ToolSpec>();

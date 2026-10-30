@@ -49,6 +49,22 @@ export interface ToolOutputDefinition<T = unknown> {
   presentationMeta?: (args: Record<string, unknown>, value: T) => unknown;
 }
 
+/**
+ * DSH's `ToolCallView`, reduced to what a card actually needs today.
+ *
+ * A tool returns one of these from `presentCall` to describe how THIS call
+ * should be labelled — the alternative is every shell guessing from the raw
+ * arguments. Tools that do not implement it get the generic card.
+ */
+export interface ToolCallView {
+  /** Card treatment. `generic` is the default row. */
+  card: 'generic' | 'terminal' | 'diff';
+  /** Short, always-visible label for this specific call. */
+  title: string;
+  /** Salient input for the expanded view (a job id, a path, a command). */
+  rawInput?: unknown;
+}
+
 export interface ToolDefinition<T = unknown> {
   name: string;
   /** Sent to the model. */
@@ -64,6 +80,11 @@ export interface ToolDefinition<T = unknown> {
   deferLoading?: boolean;
   /** May this call join a parallel group? */
   isConcurrencySafe?: (args: Record<string, unknown>) => boolean;
+  /**
+   * Pure pending-state presenter: how this call should be labelled. `undefined`
+   * means "use the generic card".
+   */
+  presentCall?: (args: Record<string, unknown>) => ToolCallView | undefined;
 }
 
 /**
@@ -140,6 +161,9 @@ export function toolSpecFrom<T>(
     ...(def.isConcurrencySafe === undefined
       ? {}
       : { isConcurrencySafe: (args: Record<string, unknown>) => def.isConcurrencySafe!(args) }),
+    ...(def.presentCall === undefined
+      ? {}
+      : { presentCall: (args: Record<string, unknown>) => def.presentCall!(args) }),
     handler: (args, exec) => def.execute(args, exec),
   };
 }

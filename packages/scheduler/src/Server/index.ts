@@ -137,6 +137,15 @@ interface ToolEvent {
    * (kernel state machine, Desktop card, web inspector) should read.
    */
   input?: Record<string, unknown>;
+  /**
+   * Tool-supplied card intent (DSH's `presentCall`): how this specific call
+   * should be labelled. Absent means the shell draws its generic row.
+   */
+  view?: {
+    card: 'generic' | 'terminal' | 'diff';
+    title: string;
+    rawInput?: unknown;
+  };
   /** Legacy `key=value` flattening, kept so older shells keep rendering. */
   args?: string[];
   status: 'running' | 'succeeded' | 'failed';
@@ -1430,10 +1439,14 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   ): Promise<void> => {
     const args = Object.entries(input)
       .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`);
+    // Only the opening event carries a card intent: the closing one is about
+    // the outcome, and the tool's `presentResult` lives on a different path.
+    const view = status === 'running' ? resolveTool(name)?.presentCall?.(input) : undefined;
     const ev: ToolEvent = {
       callId,
       phase: status === 'running' ? 'start' : 'end',
       name, input, args, status,
+      ...(view === undefined ? {} : { view }),
       ...(error !== undefined ? { error } : {}),
       ...(startedAt !== undefined ? { durationMs: Date.now() - startedAt } : {}),
       ...(output !== undefined ? { output } : {}),
