@@ -71,6 +71,8 @@ data StreamFormat = SSEFormat | NDJSONFormat
 -- | Stream a chat completion with callback per event
 streamChatCompletion :: StreamConfig -> (StreamEvent -> IO ()) -> IO (Either String ())
 streamChatCompletion cfg onEvent = do
+  idleMs <- streamTimeoutMs
+  firstMs <- streamFirstByteTimeoutMs
   mgr <- newManager =<< proxyAwareSettings (scUrl cfg) tlsManagerSettings
   initialRequest <- parseRequest (scUrl cfg)
   let request = initialRequest
@@ -81,10 +83,11 @@ streamChatCompletion cfg onEvent = do
             , ("Authorization", "Bearer " <> TE.encodeUtf8 (T.pack (scApiKey cfg)))
             , ("Accept", "text/event-stream")
             ]
-        , responseTimeout = responseTimeoutNone
+        -- Covers the wait for response *headers*: with a big context the
+        -- provider may not even send headers until it has a first token.
+        -- NB: responseTimeoutMicro takes **microseconds**, firstMs is ms.
+        , responseTimeout = responseTimeoutMicro (firstMs * 1000)
         }
-  idleMs <- streamTimeoutMs
-  firstMs <- streamFirstByteTimeoutMs
   stalledRef <- newIORef (Nothing :: Maybe Text)
   -- Outer budget is only a backstop against "always trickling, never ending";
   -- the per-read budgets below fire first for a dead provider.
@@ -102,7 +105,7 @@ streamChatCompletion cfg onEvent = do
         return (Right ())
   stalled <- readIORef stalledRef
   case result of
-    Left (ex :: SomeException) -> return $ Left (show ex)
+    Left (ex :: SomeException) -> return $ Left (T.unpack (renderStreamError firstMs ex))
     Right Nothing -> return $ Left ("stream timed out after " <> show totalMs <> " ms (total budget)")
     Right (Just r) -> return $ case stalled of
       Just "first-byte" -> Left ("stream timed out: no first byte within " <> show firstMs <> " ms")
@@ -125,6 +128,14 @@ streamChatCompletion cfg onEvent = do
 -- (@TRHA_STREAM_TIMEOUT_MS@).
 streamTimeoutMs :: IO Int
 streamTimeoutMs = envMs "TRHA_STREAM_TIMEOUT_MS" 45000
+
+-- | http-client reports the header wait as a @ResponseTimeout@ exception;
+-- spell it out instead of leaking the constructor to the TUI.
+renderStreamError :: Int -> SomeException -> Text
+renderStreamError firstMs ex
+  | "ResponseTimeout" `T.isInfixOf` T.pack (show ex) =
+      "stream timed out: no response headers within " <> T.pack (show firstMs) <> " ms"
+  | otherwise = T.pack (show ex)
 
 -- | How long the *first* byte may take.
 --
@@ -361,6 +372,8 @@ streamPostSse
   -> (Value -> IO ())                  -- ^ per-frame callback
   -> IO (Either Text ())
 streamPostSse url headers body onFrame = do
+  idleMs <- streamTimeoutMs
+  firstMs <- streamFirstByteTimeoutMs
   mgr <- newManager =<< proxyAwareSettings url tlsManagerSettings
   req0 <- parseRequest url
   let req = req0
@@ -368,10 +381,10 @@ streamPostSse url headers body onFrame = do
         , requestBody = RequestBodyLBS (encode body)
         , requestHeaders =
             ("Accept", "text/event-stream") : ("Content-Type", "application/json") : headers
-        , responseTimeout = responseTimeoutNone
+        -- Header wait counts against the first-byte budget (see above).
+        -- Microseconds again: firstMs is in ms.
+        , responseTimeout = responseTimeoutMicro (firstMs * 1000)
         }
-  idleMs <- streamTimeoutMs
-  firstMs <- streamFirstByteTimeoutMs
   stalledRef <- newIORef (Nothing :: Maybe Text)
   let totalMs = idleMs * 60
   result <- try $ timeout (totalMs * 1000) $ withResponse req mgr $ \resp -> do
@@ -385,7 +398,7 @@ streamPostSse url headers body onFrame = do
         return (Right ())
   stalled <- readIORef stalledRef
   case result of
-    Left (ex :: SomeException) -> return $ Left (T.pack (show ex))
+    Left (ex :: SomeException) -> return $ Left (renderStreamError firstMs ex)
     Right Nothing -> return $ Left (T.pack ("stream timed out after " <> show totalMs <> " ms (total budget)"))
     Right (Just r) -> return $ case stalled of
       Just "first-byte" -> Left (T.pack ("stream timed out: no first byte within " <> show firstMs <> " ms"))

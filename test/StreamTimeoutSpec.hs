@@ -74,11 +74,13 @@ slowFirstByteApp _req respond =
     write $ Builder.string8 "data: [DONE]\n\n"
     flush
 
--- | Never sends anything: only the first-byte budget can catch this.
-silentApp :: Application
-silentApp _req respond =
+-- | Delays the response *headers*: with a large context the provider may not
+-- even start its response until it has a first token.  Only the first-byte
+-- budget (applied to the header wait) can catch this.
+silentHeadersApp :: Application
+silentHeadersApp _req respond = do
+  threadDelay 1000000
   respond $ responseStream status200 [("Content-Type", "text/event-stream")] $ \write flush -> do
-    threadDelay 5000000
     write $ Builder.string8 "data: [DONE]\n\n"
     flush
 
@@ -114,11 +116,11 @@ streamTimeoutSpec = describe "stream timeouts" $ do
   it "reports a first-byte timeout separately from mid-stream silence" $ do
     setEnv "TRHA_STREAM_TIMEOUT_MS" "5000"
     setEnv "TRHA_STREAM_FIRST_BYTE_TIMEOUT_MS" "200"
-    testWithApplication (pure silentApp) $ \port -> do
+    testWithApplication (pure silentHeadersApp) $ \port -> do
       turn <- call port
       clearBudgets
       ctContent turn `shouldBe` ""
-      fmap (T.isInfixOf "no first byte") (ctError turn) `shouldBe` Just True
+      fmap (T.isInfixOf "timed out") (ctError turn) `shouldBe` Just True
 
   it "uses the documented defaults when the variables are unset or invalid" $ do
     clearBudgets
