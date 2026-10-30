@@ -42,6 +42,7 @@ import { startPluginWatcher } from '../Plugins/watcher.js';
 import { resolveWorkspace } from './workspace.js';
 import { execShell } from './shell.js';
 import { defaultSandboxScope, readSandboxConfig, sandboxEnabled, sandboxedSpawn, sandboxStatus, setSandboxConfigRuntime, setSandboxEnabledRuntime, writeSandboxConfig, type SandboxConfigView } from './sandbox.js';
+import { rateLimit } from './rateLimit.js';
 import { snapshotFile } from './fileHistory.js';
 import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
 import { resolveTls } from './tls.js';
@@ -1021,7 +1022,14 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   });
 
   // ── Service status (sidebar: LSP / MCP) ───────────────────────────────
+  // Metered endpoints get a rate limit: a polling UI or a script could
+  // otherwise burn the user's provider quota (the same class of abuse as
+  // hammering the provider directly).
+  const balanceLimit = rateLimit(60_000, 6);
   app.get('/api/balance', async (_req, res) => {
+    if (!balanceLimit()) {
+      return res.status(429).json({ error: 'too many balance queries; retry in a minute' });
+    }
     try {
       res.json(await fetchBalance());
     } catch (e) {
@@ -1030,7 +1038,11 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   });
 
   // ── Voice transcription (MiMo ASR contract) ───────────────────────────
+  const transcribeLimit = rateLimit(60_000, 10);
   app.post('/api/transcribe', async (req, res) => {
+    if (!transcribeLimit()) {
+      return res.status(429).json({ error: 'too many transcription requests; retry in a minute' });
+    }
     const file = typeof req.body?.path === 'string' ? req.body.path.trim() : '';
     if (!file) return res.status(400).json({ error: 'path is required' });
     try {
