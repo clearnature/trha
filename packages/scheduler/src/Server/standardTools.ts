@@ -225,34 +225,16 @@ export async function runStandardTool(
   const now = host.now ?? (() => new Date());
 
   if (name === 'list_mcp_resources') {
-    try {
-      const list = await listMcpResources(typeof args.server === 'string' ? args.server : undefined);
-      if (list.length === 0) return '(no resources)';
-      return list.map(r => `${r.uri}\t${r.name ?? ''}\t${r.mimeType ?? ''}`).join('\n');
-    } catch (e) {
-      return `ERROR: ${(e as Error).message}`;
-    }
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   if (name === 'list_mcp_resource_templates') {
-    try {
-      const list = await listMcpResourceTemplates(typeof args.server === 'string' ? args.server : undefined);
-      if (list.length === 0) return '(no resource templates)';
-      return list.map(t => `${t.uriTemplate}\t${t.name ?? ''}`).join('\n');
-    } catch (e) {
-      return `ERROR: ${(e as Error).message}`;
-    }
+    // Migrated to the registry (full DSH contract).
   }
 
   if (name === 'read_mcp_resource') {
-    try {
-      return clip(await readMcpResource(
-        typeof args.uri === 'string' ? args.uri : '',
-        typeof args.server === 'string' ? args.server : undefined,
-      ));
-    } catch (e) {
-      return `ERROR: ${(e as Error).message}`;
-    }
+    // Migrated to the registry (full DSH contract).
   }
 
   if (name === 'browser_navigate') {
@@ -917,3 +899,56 @@ const askUserQuestionTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(askUserQuestionTool, { plane: 'agent' }));
+
+/** `list_mcp_resources` — resources exposed by the configured MCP servers. */
+const listMcpResourcesTool = defineTool<string>({
+  name: 'list_mcp_resources',
+  description: 'List resources exposed by the configured MCP servers.',
+  parameters: {
+    server: { type: 'string', description: 'Limit the listing to one MCP server.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args) {
+    const list = await listMcpResources(typeof args.server === 'string' ? args.server : undefined);
+    if (list.length === 0) return '(no resources)';
+    return list.map(r => `${r.uri}\t${r.name ?? ''}\t${r.mimeType ?? ''}`).join('\n');
+  },
+});
+
+/** `list_mcp_resource_templates` — URI templates the MCP servers advertise. */
+const listMcpResourceTemplatesTool = defineTool<string>({
+  name: 'list_mcp_resource_templates',
+  description: 'List the URI templates advertised by the configured MCP servers.',
+  parameters: {
+    server: { type: 'string', description: 'Limit the listing to one MCP server.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args) {
+    const list = await listMcpResourceTemplates(
+      typeof args.server === 'string' ? args.server : undefined,
+    );
+    if (list.length === 0) return '(no resource templates)';
+    return list.map(t => `${t.uriTemplate}\t${t.name ?? ''}`).join('\n');
+  },
+});
+
+/** `read_mcp_resource` — read one MCP resource by URI. */
+const readMcpResourceTool = defineTool<string>({
+  name: 'read_mcp_resource',
+  description: 'Read one MCP resource by URI.',
+  parameters: {
+    uri: { type: 'string', description: 'Resource URI, as listed by list_mcp_resources.' },
+    server: { type: 'string', description: 'MCP server name, when the URI is ambiguous.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args) {
+    return clip(await readMcpResource(
+      typeof args.uri === 'string' ? args.uri : '',
+      typeof args.server === 'string' ? args.server : undefined,
+    ));
+  },
+});
+
+registerTool(toolSpecFrom(listMcpResourcesTool, { plane: 'host' }));
+registerTool(toolSpecFrom(listMcpResourceTemplatesTool, { plane: 'host' }));
+registerTool(toolSpecFrom(readMcpResourceTool, { plane: 'host' }));
