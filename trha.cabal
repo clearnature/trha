@@ -324,7 +324,6 @@ test-suite trha-sandbox-test
                   , AuditSpec
                   , ExperimentSpec
                   , ConfigSpec
-                  , ToolDeferSpec
   build-depends:    base ^>=4.22
                   , directory
                   , filepath
