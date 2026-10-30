@@ -119,6 +119,18 @@ const catalogToolDefs = (): ToolDef[] => toolCatalog.map(def => {
 // Pushed to /api/events/:sessionId as `tool:update`; mirrors CLI ToolEvent.
 
 interface ToolEvent {
+  /**
+   * The provider's `tool_calls[].id`. Stable across the whole call, so a shell
+   * can pair start with end and an upgraded kernel can key a typed state
+   * machine on it. Every event carries one.
+   */
+  callId: string;
+  /**
+   * Explicit lifecycle phase. `status` says how the call ended; `phase` says
+   * whether this event opens or closes it. Derived from `status` today so old
+   * shells that ignore it keep working.
+   */
+  phase: 'start' | 'end';
   name: string;
   args?: string[];
   status: 'running' | 'succeeded' | 'failed';
@@ -1406,11 +1418,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   const STUCK_REPEATS = 3;
 
   const emitToolLifecycle = async (
-    sessionId: string, name: string, args: string[],
+    sessionId: string, callId: string, name: string, args: string[],
     status: 'running' | 'succeeded' | 'failed', startedAt?: number, error?: string,
     output?: string,
   ): Promise<void> => {
     const ev: ToolEvent = {
+      callId,
+      phase: status === 'running' ? 'start' : 'end',
       name, args, status,
       ...(error !== undefined ? { error } : {}),
       ...(startedAt !== undefined ? { durationMs: Date.now() - startedAt } : {}),
@@ -1784,7 +1798,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       } catch {
         // Kernel unreachable: demo tool lifecycle + mode-context echo
         // (kept for Phase 2 S2 tool-event tests and offline development).
-        const demo: ToolEvent = { name: 'bash', args: ['echo demo-tool'], status: 'running' };
+        const demo: ToolEvent = {
+        callId: 'demo-tool', phase: 'start',
+        name: 'bash', args: ['echo demo-tool'], status: 'running',
+      };
         events.emit('tool:update', { sessionId: session.id, ...demo });
         emitSafe(plugins.emitToolCall(session.id, demo.name, demo.args));
         const started = Date.now();
@@ -1842,13 +1859,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       }
       for (const call of calls) {
         const started = Date.now();
-        await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'running');
+        await emitToolLifecycle(session.id, call.id, call.name, parseToolArgs(call), 'running');
         const output = await executeTool(call, session.id).catch(
           (e: unknown) => `ERROR: ${String(e)}`,
         );
         // ask 权限规则：暂停执行并发起确认（批准后重放该工具）
         if (output.startsWith('REQUIRE_APPROVAL:')) {
-          await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'failed', started, output);
+          await emitToolLifecycle(session.id, call.id, call.name, parseToolArgs(call), 'failed', started, output);
           // Park the call, but keep the history valid: the provider rejects an
           // assistant(tool_calls) message that has no tool reply.  The approval
           // replay replaces this placeholder with the real output.
@@ -1866,7 +1883,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         // message per call id before anything else. So the tool result goes in
         // first, and *then* any marker-derived message (a card, a question).
         const failed = output.startsWith('ERROR');
-        await emitToolLifecycle(session.id, call.name, parseToolArgs(call),
+        await emitToolLifecycle(session.id, call.id, call.name, parseToolArgs(call),
           failed ? 'failed' : 'succeeded', started, failed ? output : undefined,
           failed ? undefined : outputPreview(output));
         session.messages.push({ role: 'tool', tool_call_id: call.id, content: output });
