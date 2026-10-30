@@ -237,36 +237,16 @@ export async function runStandardTool(
   }
 
   if (name === 'browser_navigate') {
-    const url = typeof args.url === 'string' ? args.url : '';
-    if (!url) return 'ERROR: url is required';
-    try {
-      const page = await browserNavigate(host.sessionId, url);
-      return clip(`title: ${page.title}\nurl: ${page.url}\n\n${page.text}`);
-    } catch (e) {
-      return `ERROR: ${(e as Error).message}`;
-    }
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
-
   if (name === 'browser_extract') {
-    try {
-      return clip(await browserExtract(host.sessionId, typeof args.selector === 'string' ? args.selector : undefined));
-    } catch (e) {
-      return `ERROR: ${(e as Error).message}`;
-    }
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
-
   if (name === 'browser_screenshot') {
-    try {
-      const file = await browserScreenshot(host.sessionId, host.workspace, typeof args.path === 'string' ? args.path : undefined);
-      return `OK: screenshot -> ${file}`;
-    } catch (e) {
-      return `ERROR: ${(e as Error).message}`;
-    }
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
-
   if (name === 'browser_close') {
-    await browserClose(host.sessionId);
-    return 'OK: browser closed for this session';
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
 
   if (name === 'lsp') {
@@ -1116,3 +1096,70 @@ const teamTaskUpdateTool = defineTool<string>({
 registerTool(toolSpecFrom(teamTaskCreateTool, { plane: 'host' }));
 registerTool(toolSpecFrom(teamTaskListTool, { plane: 'host' }));
 registerTool(toolSpecFrom(teamTaskUpdateTool, { plane: 'host' }));
+
+/** `browser_navigate` — open a URL in the session's headless browser. */
+const browserNavigateTool = defineTool<string>({
+  name: 'browser_navigate',
+  description: 'Navigate the session\'s headless browser to a URL and return the visible text.',
+  parameters: { url: { type: 'string', description: 'Absolute http(s) URL.' } },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const url = typeof args.url === 'string' ? args.url : '';
+    if (!url) throw new Error('url is required');
+    const page = await browserNavigate(host.sessionId, url);
+    return clip(`title: ${page.title}\nurl: ${page.url}\n\n${page.text}`);
+  },
+});
+
+/** `browser_extract` — text of the current page, optionally one selector. */
+const browserExtractTool = defineTool<string>({
+  name: 'browser_extract',
+  description: 'Extract text from the current page, or from one CSS selector.',
+  parameters: { selector: { type: 'string', description: 'CSS selector to narrow to.' } },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    return clip(await browserExtract(
+      host.sessionId,
+      typeof args.selector === 'string' ? args.selector : undefined,
+    ));
+  },
+});
+
+/** `browser_screenshot` — capture the current page into the workspace. */
+const browserScreenshotTool = defineTool<string>({
+  name: 'browser_screenshot',
+  description: 'Screenshot the current page into the workspace.',
+  parameters: {
+    path: { type: 'string', description: 'Target file; a temp name is used when omitted.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const file = await browserScreenshot(
+      host.sessionId,
+      host.workspace,
+      typeof args.path === 'string' ? args.path : undefined,
+    );
+    return `OK: screenshot -> ${file}`;
+  },
+});
+
+/** `browser_close` — tear down the session's browser. */
+const browserCloseTool = defineTool<string>({
+  name: 'browser_close',
+  description: 'Close the session\'s headless browser.',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as StandardToolHost;
+    await browserClose(host.sessionId);
+    return 'OK: browser closed for this session';
+  },
+});
+
+registerTool(toolSpecFrom(browserNavigateTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(browserExtractTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(browserScreenshotTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(browserCloseTool, { plane: 'agent' }));
