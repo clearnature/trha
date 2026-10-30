@@ -498,23 +498,8 @@ export async function runStandardTool(
   }
 
   if (name === 'read_image') {
-    const raw = args.path;
-    if (typeof raw !== 'string' || !raw.trim()) return 'ERROR: path is required';
-    const file = path.isAbsolute(raw) ? raw : path.join(host.workspace, raw);
-    try {
-      const buf = await readFile(file);
-      if (buf.byteLength > 2 * 1024 * 1024) {
-        return `ERROR: image is ${buf.byteLength} bytes; the cap is 2 MiB`;
-      }
-      const ext = path.extname(file).toLowerCase();
-      const mime = ext === '.png' ? 'image/png'
-        : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
-        : ext === '.gif' ? 'image/gif'
-        : ext === '.webp' ? 'image/webp' : 'application/octet-stream';
-      return `data:${mime};base64,${buf.toString('base64')}`;
-    } catch (e) {
-      return `ERROR: ${(e as Error).message}`;
-    }
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   if (name === 'todo_write') {
@@ -855,3 +840,38 @@ const todoWriteTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(todoWriteTool, { plane: 'agent' }));
+
+/** `read_image` — inline an image file as a data URL. */
+const readImageTool = defineTool<string>({
+  name: 'read_image',
+  description:
+    'Read an image file and return it as a base64 data URL the model can see. '
+    + 'Capped at 2 MiB; png, jpeg, gif and webp are recognised.',
+  parameters: {
+    path: { type: 'string', description: 'Image path: absolute, or relative to the workspace.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const raw = args.path;
+    if (typeof raw !== 'string' || !raw.trim()) throw new Error('path is required');
+    const file = path.isAbsolute(raw) ? raw : path.join(host.workspace, raw);
+    let buf;
+    try {
+      buf = await readFile(file);
+    } catch (error) {
+      throw new Error((error as Error).message);
+    }
+    if (buf.byteLength > 2 * 1024 * 1024) {
+      throw new Error(`image is ${buf.byteLength} bytes; the cap is 2 MiB`);
+    }
+    const ext = path.extname(file).toLowerCase();
+    const mime = ext === '.png' ? 'image/png'
+      : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
+      : ext === '.gif' ? 'image/gif'
+      : ext === '.webp' ? 'image/webp' : 'application/octet-stream';
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  },
+});
+
+registerTool(toolSpecFrom(readImageTool, { plane: 'agent' }));
