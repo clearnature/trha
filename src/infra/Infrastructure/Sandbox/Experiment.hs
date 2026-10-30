@@ -117,9 +117,17 @@ batchScopes parent batch = traverse build pairs
     build (v, s) = (,,) v s <$> variantScope parent batch v s
 
 -- | Reproducibility metadata written next to the results (T2.8).
-reproJson :: ExperimentBatch -> [(Text, Text)] -> Value
-reproJson batch toolchain = object
+--
+-- @cacheState@ / @userId@ are recorded because KVCache makes cost and latency
+-- non-comparable across runs: the same (variant, seed) costs an order of
+-- magnitude more on a cold cache than on a warm one, and a shared @user_id@
+-- lets one variant warm the cache for another. Without these two fields a
+-- rerun looks "reproducible" while its numbers are not.
+reproJson :: Maybe Text -> Maybe Text -> ExperimentBatch -> [(Text, Text)] -> Value
+reproJson cacheState userId batch toolchain = object
   [ "batch" .= unBatchId (ebId batch)
+  , "cacheState" .= cacheState
+  , "userId" .= userId
   , "baseline" .= unAbsolutePath (ebBaseline batch)
   , "root" .= unAbsolutePath (ebRoot batch)
   , "toolchain" .= object [ Key.fromText k .= v | (k, v) <- toolchain ]
