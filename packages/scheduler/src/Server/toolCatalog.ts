@@ -397,11 +397,15 @@ export const toolCatalog: ToolDefinition[] = [
     name: 'web_fetch',
     description: 'Fetch a URL and return readable text (HTML is parsed; no search engine needed)',
     parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
+    // Schema-heavy browser automation: deferred so it does not occupy every request.
+    deferLoading: true,
   },
   {
     name: 'working_directory',
     description: 'Read or change the tool working directory (must stay inside the workspace)',
     parameters: { type: 'object', properties: { path: { type: 'string' } }, required: [] },
+    // Schema-heavy browser automation: deferred so it does not occupy every request.
+    deferLoading: true,
   },
   {
     name: 'str_replace_editor',
@@ -523,19 +527,25 @@ export const toolCatalog: ToolDefinition[] = [
     name: 'stagehand_navigate',
     description: 'Open a URL and return rendered text (alias of browser_navigate)',
     parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
+  
+    deferLoading: true,
   },
   {
     name: 'stagehand_extract',
     description: 'Extract page text or one selector (alias of browser_extract)',
     parameters: { type: 'object', properties: { selector: { type: 'string' } }, required: [] },
+    // Schema-heavy browser automation: deferred so it does not occupy every request.
+    deferLoading: true,
   },
   {
     name: 'stagehand_screenshot',
     description: 'Screenshot the page (alias of browser_screenshot)',
     parameters: { type: 'object', properties: { path: { type: 'string' } }, required: [] },
+  
+    deferLoading: true,
   },
-  { name: 'stagehand_tabs', description: 'Report the current tab', parameters: { type: 'object', properties: {}, required: [] } },
-  { name: 'stagehand_observe', description: 'List interactive elements on the page', parameters: { type: 'object', properties: {}, required: [] } },
+  { name: 'stagehand_tabs', description: 'Report the current tab', parameters: { type: 'object', properties: {}, required: [] }, deferLoading: true },
+  { name: 'stagehand_observe', description: 'List interactive elements on the page', parameters: { type: 'object', properties: {}, required: [] }, deferLoading: true },
   {
     name: 'stagehand_act',
     description: 'Act on the page: click | type a selector',
@@ -549,6 +559,8 @@ export const toolCatalog: ToolDefinition[] = [
       },
       required: ['action', 'selector'],
     },
+    // Schema-heavy browser automation: deferred so it does not occupy every request.
+    deferLoading: true,
   },
   {
     name: 'ralph',

@@ -8,6 +8,7 @@
 // arrives.
 import { describe, expect, it } from 'vitest';
 import { DEFINITION_FIELDS, defineTool, toolSpecFrom } from '../src/Server/toolSchema.js';
+import { toToolSpecs } from '../src/Server/toolCatalog.js';
 
 describe('tool contract completeness', () => {
   it('every declared field reaches the registered spec', () => {
@@ -47,5 +48,21 @@ describe('tool contract completeness', () => {
     for (const field of optional) {
       expect(spec[field], `${field} should be absent`).toBeUndefined();
     }
+  });
+
+  it('stagehand tools opt into deferred loading; core tools stay eager', () => {
+    // Pins both halves of the contract: the six browser-automation tools ask to
+    // be loaded on demand, and enough tools stay eager that the request is legal
+    // (DeepSeek rejects "all tools deferred").
+    const specs = toToolSpecs();
+    const byName = new Map(specs.map(s => [s.name, s]));
+    for (const name of [
+      'stagehand_navigate', 'stagehand_extract', 'stagehand_screenshot',
+      'stagehand_tabs', 'stagehand_observe', 'stagehand_act',
+    ]) {
+      expect(byName.get(name)?.deferLoading, name).toBe(true);
+    }
+    expect(byName.get('bash')?.deferLoading).toBeUndefined();
+    expect(specs.some(s => s.deferLoading !== true), 'at least one eager tool').toBe(true);
   });
 });
