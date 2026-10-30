@@ -60,10 +60,14 @@ export async function renderToolValue(
     spec.timeoutMs,
     spec.name,
   );
-  if (spec.output) {
-    return spec.output.render(args, value).map((b: ContentBlock) => b.text).join('\n');
-  }
-  return typeof value === 'string' ? value : JSON.stringify(value);
+  const blocks: Array<{ type: 'text'; text: string }> = spec.output
+    ? spec.output.render(args, value)
+    : [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }];
+  // DSH's `finalizeContent`: the last word on what reaches the model. Returning
+  // `undefined` keeps the rendered blocks, so a tool that does not set the hook
+  // behaves exactly as before.
+  const finalized = spec.finalizeContent?.({ args, host }, { value, content: blocks });
+  return (finalized ?? blocks).map((b: ContentBlock) => b.text).join('\n');
 }
 
 async function withTimeout<T>(work: Promise<T>, ms: number | undefined, name: string): Promise<T> {
@@ -115,6 +119,19 @@ export interface ToolSpec {
   };
   /** Cooperative timeout budget in milliseconds. */
   timeoutMs?: number;
+  /**
+   * DSH's `projectContent` / `finalizeContent`: a last-mile content transform
+   * applied to every normalized outcome, after `output.render`. Returning
+   * `undefined` preserves the rendered blocks.
+   */
+  finalizeContent?: (
+    exec: { args: Record<string, unknown>; host: unknown },
+    result: { value: unknown; content: Array<{ type: 'text'; text: string }> },
+  ) => Array<{ type: 'text'; text: string }> | undefined;
+  /** Ask the model loop to load this definition lazily (DSH's `deferLoading`). */
+  deferLoading?: boolean;
+  /** May this call join a parallel group? (DSH's `isConcurrencySafe`.) */
+  isConcurrencySafe?: (args: Record<string, unknown>) => boolean;
 }
 
 const registry = new Map<string, ToolSpec>();

@@ -134,6 +134,12 @@ export function toolSpecFrom<T>(
             def.output.presentationMeta!(args, value as T) }),
     },
     ...(def.timeoutMs === undefined ? {} : { timeoutMs: def.timeoutMs }),
+    // DSH declares these on the tool; dropping them here would make a tool that
+    // sets `deferLoading` or `isConcurrencySafe` silently lose the setting.
+    ...(def.deferLoading === undefined ? {} : { deferLoading: def.deferLoading }),
+    ...(def.isConcurrencySafe === undefined
+      ? {}
+      : { isConcurrencySafe: (args: Record<string, unknown>) => def.isConcurrencySafe!(args) }),
     handler: (args, exec) => def.execute(args, exec),
   };
 }
