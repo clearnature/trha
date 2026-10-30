@@ -13,7 +13,7 @@
 //     reported as such rather than pretending to survive a restart.
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { discoverSkills, readSkill, skillDirs } from './skills.js';
@@ -22,8 +22,9 @@ import { hardenedEnv, resolveShell, shellRunner } from './shell.js';
 import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedSpawn } from './sandbox.js';
 import { registerTool, renderToolValue, resolveTool } from './toolRegistry.js';
 import { defineTool, textBlock, toolSpecFrom } from './toolSchema.js';
-import { globToRegExp, resolveReadPath, walkFiles } from './fsWalk.js';
-import { limitOutput } from './toolGuard.js';
+import { globToRegExp, resolveReadPath, walkFiles, workspaceRelative } from './fsWalk.js';
+import { confineWritePath, limitOutput } from './toolGuard.js';
+import { snapshotFile } from './fileHistory.js';
 import { lspQuery, type LspOperation } from './lsp.js';
 import { browserClose, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 
@@ -1413,3 +1414,66 @@ const readTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(readTool, { plane: 'agent' }));
+
+/** Shared execute body for `write` and `append_file`. */
+async function writeFileExecute(
+  args: Record<string, unknown>,
+  exec: { host: unknown },
+  mode: 'write' | 'append',
+): Promise<string> {
+  const host = exec.host as StandardToolHost;
+  const base = host.sessionCwd ?? host.workspace;
+  if (typeof args.path !== 'string') throw new Error('path must be a string');
+  // Relative paths are relative to the *workspace*, not to whatever cwd the
+  // scheduler happens to have — the model has no way to know the latter, and
+  // "path escapes the workspace" for "hello.txt" is a dead end. Confine to the
+  // *session's* workspace, not the process-wide one: with several clients on
+  // different projects, WORKSPACE belongs to whoever started the scheduler.
+  const target = await confineWritePath(
+    base,
+    workspaceRelative(args.path, base),
+    host.writeRoots ?? [],
+  );
+  if (!target) throw new Error('path escapes the workspace');
+  const rawContent = args.content;
+  if (rawContent === undefined || rawContent === null) throw new Error('missing content');
+  const content = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
+  if (mode === 'write') {
+    await mkdir(path.dirname(target), { recursive: true });
+    await snapshotFile(target);
+    await writeFile(target, content, 'utf8');
+  } else {
+    await snapshotFile(target);
+    await appendFile(target, content, 'utf8');
+  }
+  return `OK: ${mode === 'write' ? 'write' : 'append_file'} -> ${target} (${content.length} chars)`;
+}
+
+/** `write` — create or replace a file inside the workspace. */
+const writeTool = defineTool<string>({
+  name: 'write',
+  description:
+    'Create or replace a file inside the workspace. Relative paths resolve against '
+    + 'the cwd; writes outside the workspace are refused.',
+  parameters: {
+    path: { type: 'string', description: 'File path.' },
+    content: { type: 'string', description: 'Full file contents.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  execute: (args, exec) => writeFileExecute(args, exec, 'write'),
+});
+
+/** `append_file` — append to a file inside the workspace. */
+const appendFileTool = defineTool<string>({
+  name: 'append_file',
+  description: 'Append text to a file inside the workspace.',
+  parameters: {
+    path: { type: 'string', description: 'File path.' },
+    content: { type: 'string', description: 'Text to append.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  execute: (args, exec) => writeFileExecute(args, exec, 'append'),
+});
+
+registerTool(toolSpecFrom(writeTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(appendFileTool, { plane: 'agent' }));

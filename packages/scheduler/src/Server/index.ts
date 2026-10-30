@@ -53,7 +53,7 @@ import { snapshotFile } from './fileHistory.js';
 import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
 import { resolveTls } from './tls.js';
 import { resolveKernelToken } from '../Core/KernelToken.js';
-import { mkdir, readdir, readFile, stat, writeFile, appendFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
@@ -1596,31 +1596,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       // above resolves it before this line is ever reached.
     }
     if (name === 'write' || name === 'append_file') {
-      if (typeof argsObj.path !== 'string') return 'ERROR: path must be a string';
-      // Relative paths are relative to the *workspace*, not to whatever cwd the
-      // scheduler happens to have — the model has no way to know the latter,
-      // and "path escapes the workspace" for "hello.txt" is a dead end.
-      // Confine to the *session's* workspace, not the process-wide one: with
-      // several clients on different projects, WORKSPACE belongs to whoever
-      // happened to start the scheduler.
-      const target = await confineWritePath(cwd, workspaceRelative(argsObj.path, cwd), extraWriteRoots);
-      if (!target) return 'ERROR: path escapes the workspace';
-      const rawContent = argsObj.content;
-      if (rawContent === undefined || rawContent === null) return 'ERROR: missing content';
-      const content = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
-      try {
-        if (name === 'write') {
-          await mkdir(path.dirname(target), { recursive: true });
-          await snapshotFile(target);
-          await writeFile(target, content, 'utf8');
-        } else {
-          await snapshotFile(target);
-          await appendFile(target, content, 'utf8');
-        }
-        return `OK: ${name} -> ${target} (${content.length} chars)`;
-      } catch (e) {
-        return `ERROR: ${(e as Error).message}`;
-      }
+      // Migrated to the registry (full DSH contract); the core-chain pre-check
+      // above resolves them before this line is ever reached.
     }
     if (name === 'edit') {
       if (typeof argsObj.path !== 'string') return 'ERROR: path must be a string';
