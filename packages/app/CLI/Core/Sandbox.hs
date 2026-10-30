@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | @trha sandbox@ subcommands (P0 skeleton, docs/plans/sandbox-delivery-plan.md T0.9).
@@ -27,6 +28,7 @@ import qualified Data.Text.IO as TIO
 import Infrastructure.Sandbox
 import Infrastructure.Sandbox.Audit (AuditEvent(..), readAudit)
 import qualified Infrastructure.Sandbox.Backend.Linux as Linux
+import qualified Infrastructure.Sandbox.Backend.Windows as Windows
 import Infrastructure.Sandbox.Config
 import Infrastructure.Sandbox.Probe (runProbes)
 import Infrastructure.Sandbox.Runner (RunnerConfig(..), runRunner)
@@ -467,20 +469,32 @@ platformText (Other name) = name
 -- because the scheduler passes them per scope.
 runRunnerMode :: SandboxConfig -> FilePath -> FilePath -> T.Text -> Maybe String -> T.Text -> IO ()
 runRunnerMode cfg ws scratch policyName experiment network = do
-  caps <- Linux.probeLinux
   home <- getHomeDirectory
   hostEnv <- getEnvironment
   let allow = map T.unpack (dcEnvAllow (scDefaults cfg))
       baseEnv = [ (T.pack k, T.pack v)
                 | (k, v) <- hostEnv
                 , k `elem` allow || k == "HOME" ]
+      scope = mkRunnerScope cfg home ws scratch policyName network
+#ifdef mingw32_HOST_OS
+  -- Windows: the runner delegates to the Rust helper (restricted token) —
+  -- renderWindows already emits `trha-sandbox-win.exe … -- ARGV`. bwrap does
+  -- not exist on this host, so probing the Linux backend here would fail the
+  -- runner before any frame.
+  caps <- Windows.probeWindows
   case caps of
     Left err -> failWith (show err)
     Right c -> runRunner
       (RunnerConfig stdin stdout (T.pack <$> experiment) baseEnv)
-      Linux.backend
-      c
-      (mkRunnerScope cfg home ws scratch policyName network)
+      Windows.backend c scope
+#else
+  caps <- Linux.probeLinux
+  case caps of
+    Left err -> failWith (show err)
+    Right c -> runRunner
+      (RunnerConfig stdin stdout (T.pack <$> experiment) baseEnv)
+      Linux.backend c scope
+#endif
 
 -- | Build the runner scope from the config defaults.
 mkRunnerScope :: SandboxConfig -> FilePath -> FilePath -> FilePath -> T.Text -> T.Text -> Scope

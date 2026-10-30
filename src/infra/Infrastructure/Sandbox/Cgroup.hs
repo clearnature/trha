@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | cgroup v2 pids limits (ADR-008 / T2.3).
@@ -31,7 +32,9 @@ import System.Directory
   ( createDirectory, doesFileExist, findExecutable, removeDirectory )
 import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (</>))
+#ifndef mingw32_HOST_OS
 import System.Posix.Process (getProcessID)
+#endif
 import System.Process (readProcessWithExitCode)
 
 data CgroupSupport = CgroupSupport
@@ -88,6 +91,15 @@ currentCgroupPath = do
         (p : _) -> Just p
         [] -> Nothing
 
+#ifdef mingw32_HOST_OS
+-- Windows pids containment is the helper's Job Object (T4.4); cgroups never
+-- run here, so the detector reports unsupported and callers degrade honestly.
+detectCgroup :: IO (Either Text CgroupSupport)
+detectCgroup = pure (Left "cgroup v2 is a Linux feature (Windows uses the Job Object)")
+
+detectSystemdRun :: IO Bool
+detectSystemdRun = pure False
+#else
 -- | Can we create a child cgroup here *and* set its pids limit?
 probeDir :: FilePath -> IO Bool
 probeDir base = do
@@ -157,3 +169,4 @@ detectSystemdRun = do
       pure $ case r of
         Right (ExitSuccess, _, _) -> True
         _ -> False
+#endif

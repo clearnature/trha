@@ -39,7 +39,11 @@ pub fn is_within(root: &str, candidate: &str) -> bool {
     if c == r {
         return true;
     }
-    let prefix = if r.ends_with('\\') { r } else { format!("{r}\\") };
+    let prefix = if r.ends_with('\\') {
+        r
+    } else {
+        format!("{r}\\")
+    };
     c.starts_with(&prefix)
 }
 

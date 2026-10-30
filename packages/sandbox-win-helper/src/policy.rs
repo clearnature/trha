@@ -17,9 +17,7 @@ impl Policy {
         match text {
             "read-only" => Ok(Policy::ReadOnly),
             "workspace-write" => Ok(Policy::WorkspaceWrite),
-            "danger-full-access" => {
-                Err("danger-full-access must not be rendered".to_string())
-            }
+            "danger-full-access" => Err("danger-full-access must not be rendered".to_string()),
             other => Err(format!("unsupported policy: {other}")),
         }
     }
@@ -156,7 +154,13 @@ mod tests {
 
     #[test]
     fn read_only_has_no_writable_roots_and_is_partial() {
-        let p = plan(Policy::ReadOnly, r"C:\ws", r"C:\scratch", &["cmd.exe".into()]).unwrap();
+        let p = plan(
+            Policy::ReadOnly,
+            r"C:\ws",
+            r"C:\scratch",
+            &["cmd.exe".into()],
+        )
+        .unwrap();
         assert!(p.writable_roots.is_empty());
         assert_eq!(p.enforcement(), "Partial");
     }

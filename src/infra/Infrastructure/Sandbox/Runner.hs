@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -46,11 +47,13 @@ import System.Environment (getEnvironment)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import System.IO (Handle, hClose, hFlush, hIsEOF)
-import System.Posix.User (getEffectiveUserID)
 import System.Process
   ( CreateProcess(..), ProcessHandle, StdStream(..), createProcess, getPid
   , interruptProcessGroupOf, proc, readProcessWithExitCode, terminateProcess, waitForProcess )
+#ifndef mingw32_HOST_OS
+import System.Posix.User (getEffectiveUserID)
 import System.Posix.Types (CPid(..))
+#endif
 import System.Timeout (timeout)
 
 data RunnerConfig = RunnerConfig
@@ -145,6 +148,10 @@ systemdRunWorks = do
 -- | systemd-run needs @XDG_RUNTIME_DIR@ to find the user manager's bus. The
 -- scheduler may have been started without it (cron, bare tmux, ssh).
 addRuntimeDir :: [(Text, Text)] -> IO [(Text, Text)]
+#ifdef mingw32_HOST_OS
+-- Windows: no XDG runtime dir; systemd-run does not exist either.
+addRuntimeDir env = pure env
+#else
 addRuntimeDir env
   | any ((== "XDG_RUNTIME_DIR") . T.toUpper . fst) env = pure env
   | otherwise = do
@@ -152,6 +159,7 @@ addRuntimeDir env
       let dir = "/run/user/" <> show uid
       exists <- doesDirectoryExist dir
       pure $ if exists then ("XDG_RUNTIME_DIR", T.pack dir) : env else env
+#endif
 
 -- | Credential paths that exist in the host home, split into directories
 -- (masked with an empty tmpfs) and files (masked by binding @/dev/null@).
@@ -203,6 +211,11 @@ applyPidsLimit
   -> Maybe Text
   -> ProcessHandle
   -> IO (Maybe PidsCgroup)
+#ifdef mingw32_HOST_OS
+-- Windows: pids containment is the helper's Job Object (T4.4); cgroup v2
+-- does not exist here, so this is a stub that keeps the POSIX call shape.
+applyPidsLimit _ _ _ _ _ _ _ = pure Nothing
+#else
 applyPidsLimit cid limits support scope caps experiment ph =
   case (rlPids limits, support) of
     (n, Right s) | n > 0 -> do
@@ -229,6 +242,7 @@ applyPidsLimit cid limits support scope caps experiment ph =
         ("pids=" <> T.pack (show n) <> " skipped: " <> reason)
       pure Nothing
     _ -> pure Nothing
+#endif
 
 -- | A running child whose stdin can still be fed by later @stdin@ frames.
 data Session = Session

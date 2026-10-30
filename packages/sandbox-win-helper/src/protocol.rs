@@ -119,7 +119,9 @@ pub enum DecodeError {
 impl std::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DecodeError::TooLarge(n) => write!(f, "frame exceeds {MAX_FRAME_BYTES} bytes (got {n})"),
+            DecodeError::TooLarge(n) => {
+                write!(f, "frame exceeds {MAX_FRAME_BYTES} bytes (got {n})")
+            }
             DecodeError::Malformed(m) => write!(f, "malformed frame: {m}"),
             DecodeError::VersionMismatch(v) => {
                 write!(f, "version mismatch: {v} (expected {PROTOCOL_VERSION})")
@@ -166,12 +168,18 @@ mod tests {
             id: "c1".into(),
             argv: vec!["cmd.exe".into(), "/c".into(), "echo hi".into()],
             cwd: "C:\\ws".into(),
-            env: vec![EnvVar { name: "PATH".into(), value: "C:\\bin".into() }],
+            env: vec![EnvVar {
+                name: "PATH".into(),
+                value: "C:\\bin".into(),
+            }],
             stdin: None,
             timeout_ms: Some(5000),
         };
         let text = encode(&frame);
-        assert!(text.contains("\"timeoutMs\":5000"), "wire name must match Haskell: {text}");
+        assert!(
+            text.contains("\"timeoutMs\":5000"),
+            "wire name must match Haskell: {text}"
+        );
         assert_eq!(decode(text.trim_end()).unwrap(), frame);
     }
 

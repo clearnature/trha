@@ -13,7 +13,9 @@
 /// * a run of N backslashes at the end of a quoted argument becomes 2N.
 pub fn quote_arg(arg: &str) -> String {
     let needs_quotes = arg.is_empty()
-        || arg.chars().any(|c| c.is_whitespace() || c == '"' || c == '\t');
+        || arg
+            .chars()
+            .any(|c| c.is_whitespace() || c == '"' || c == '\t');
     if !needs_quotes {
         return arg.to_string();
     }

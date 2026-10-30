@@ -71,9 +71,11 @@ mod imp {
     use std::io::Write;
 
     pub fn run<W: Write>(_plan: &LaunchPlan, _id: &str, _out: &mut W) -> Result<i32, String> {
-        Err("windows backend requires Windows; the helper builds everywhere but only \
+        Err(
+            "windows backend requires Windows; the helper builds everywhere but only \
              enforces on win32"
-            .to_string())
+                .to_string(),
+        )
     }
 
     pub fn run_inherit(_plan: &LaunchPlan) -> i32 {

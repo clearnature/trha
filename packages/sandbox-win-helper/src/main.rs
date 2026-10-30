@@ -11,9 +11,9 @@
 mod path;
 mod policy;
 mod protocol;
+mod win;
 mod win32;
 mod winargs;
-mod win;
 
 use std::io::{BufRead, Write};
 
@@ -113,32 +113,33 @@ fn serve<R: BufRead, W: Write>(cfg: &Config, input: R, mut out: W) -> i32 {
                     pid: std::process::id(),
                 },
             ),
-            Frame::Exec { id, argv, .. } => match plan(cfg.policy, &cfg.workspace, &cfg.scratch, &argv)
-            {
-                Ok(launch) => {
-                    win::launch(&launch, &id, &mut out);
+            Frame::Exec { id, argv, .. } => {
+                match plan(cfg.policy, &cfg.workspace, &cfg.scratch, &argv) {
+                    Ok(launch) => {
+                        win::launch(&launch, &id, &mut out);
+                    }
+                    Err(message) => {
+                        win::emit(
+                            &mut out,
+                            &Frame::Error {
+                                v: PROTOCOL_VERSION,
+                                id: Some(id.clone()),
+                                code: "policy".into(),
+                                message,
+                            },
+                        );
+                        win::emit(
+                            &mut out,
+                            &Frame::Exit {
+                                v: PROTOCOL_VERSION,
+                                id,
+                                code: 126,
+                                signal: None,
+                            },
+                        );
+                    }
                 }
-                Err(message) => {
-                    win::emit(
-                        &mut out,
-                        &Frame::Error {
-                            v: PROTOCOL_VERSION,
-                            id: Some(id.clone()),
-                            code: "policy".into(),
-                            message,
-                        },
-                    );
-                    win::emit(
-                        &mut out,
-                        &Frame::Exit {
-                            v: PROTOCOL_VERSION,
-                            id,
-                            code: 126,
-                            signal: None,
-                        },
-                    );
-                }
-            },
+            }
             Frame::Shutdown { .. } => return 0,
             _ => {}
         }
@@ -226,17 +227,28 @@ mod tests {
         if cfg!(windows) {
             return;
         }
-        let text = run("{\"v\":1,\"op\":\"exec\",\"id\":\"c1\",\"argv\":[\"cmd.exe\"],\"cwd\":\"C:\\\\ws\"}\n");
+        let text = run(
+            "{\"v\":1,\"op\":\"exec\",\"id\":\"c1\",\"argv\":[\"cmd.exe\"],\"cwd\":\"C:\\\\ws\"}\n",
+        );
         assert!(text.contains("\"op\":\"error\""), "{text}");
         assert!(text.contains("\"code\":126"), "{text}");
     }
 
     #[test]
     fn parses_required_flags() {
-        let args: Vec<String> = ["--workspace", r"C:\ws", "--scratch", r"C:\s", "--policy", "read-only", "--network", "off"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let args: Vec<String> = [
+            "--workspace",
+            r"C:\ws",
+            "--scratch",
+            r"C:\s",
+            "--policy",
+            "read-only",
+            "--network",
+            "off",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         let (parsed, command) = parse_args(&args).unwrap();
         assert_eq!(parsed.policy, Policy::ReadOnly);
         assert!(command.is_none(), "no `--` means NDJSON mode");
@@ -246,8 +258,16 @@ mod tests {
     #[test]
     fn one_shot_mode_takes_everything_after_double_dash() {
         let args: Vec<String> = [
-            "--workspace", r"C:\ws", "--scratch", r"C:\s", "--policy", "workspace-write",
-            "--", "cmd.exe", "/c", "echo hi",
+            "--workspace",
+            r"C:\ws",
+            "--scratch",
+            r"C:\s",
+            "--policy",
+            "workspace-write",
+            "--",
+            "cmd.exe",
+            "/c",
+            "echo hi",
         ]
         .iter()
         .map(|s| s.to_string())
