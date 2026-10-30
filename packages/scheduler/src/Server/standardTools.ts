@@ -642,9 +642,8 @@ export async function runStandardTool(
   }
 
   if (name === 'web_fetch') {
-    // Registered at the bottom of this module; kept as a no-op marker so the
-    // legacy chain still recognises the name if registration ever fails.
-    return registeredWebFetch(args);
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   return null;
@@ -663,46 +662,68 @@ export async function writeSkill(dir: string, name: string, body: string): Promi
 // chain, so the rewrite can proceed one tool at a time.
 
 /** `web_fetch` — HTTP GET with the sandbox network policy applied. */
-async function registeredWebFetch(args: Record<string, unknown>): Promise<string> {
-  // `network: off` must mean *no egress*, not "no egress from subprocesses":
-  // this tool runs `fetch` in the scheduler process, so without this guard an
-  // agent answers "network off" with a plain HTTP GET.
-  if (sandboxBlocksNetwork()) {
-    return 'ERROR: network access is disabled by the sandbox policy (network: off). '
-         + 'Enable it under /sandbox, or run outside the sandbox.';
-  }
-  const url = args.url;
-  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return 'ERROR: url must be http(s)';
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15_000);
-  try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      redirect: 'follow',
-      headers: {
-        // Many sites answer a bare bot UA with a challenge page; a normal
-        // browser UA plus language negotiation gets the readable HTML.
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      },
-    });
-    const type = res.headers.get('content-type') ?? '';
-    const body = await res.text();
-    const text = type.includes('html') ? stripHtml(body) : body;
-    return clip(`HTTP ${res.status} ${type}\n${text}`);
-  } catch (e) {
-    return `ERROR: ${(e as Error).message}`;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-registerTool({
+/** `web_fetch` — HTTP GET with the sandbox network policy applied. */
+const webFetchTool = defineTool<{ status: number; type: string; text: string }>({
   name: 'web_fetch',
-  plane: 'agent',
-  handler: (args, _exec) => registeredWebFetch(args),
+  description:
+    'Fetch an http(s) URL and return its body as text (HTML is stripped to '
+    + 'readable form). Subject to the sandbox network policy: with `network: off` '
+    + 'the fetch is refused outright.',
+  parameters: {
+    url: { type: 'string', description: 'http(s) URL to fetch.' },
+  },
+  output: {
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        status: { type: 'number' },
+        type: { type: 'string' },
+        text: { type: 'string' },
+      },
+    },
+    render: (_args, value) => [textBlock(`HTTP ${value.status} ${value.type}\n${value.text}`)],
+  },
+  timeoutMs: 20_000,
+  async execute(args) {
+    // `network: off` must mean *no egress*, not "no egress from subprocesses":
+    // this tool runs `fetch` in the scheduler process, so without this guard an
+    // agent answers "network off" with a plain HTTP GET.
+    if (sandboxBlocksNetwork()) {
+      throw new Error(
+        'network access is disabled by the sandbox policy (network: off). '
+        + 'Enable it under /sandbox, or run outside the sandbox.',
+      );
+    }
+    const url = args.url;
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+      throw new Error('url must be http(s)');
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15_000);
+    try {
+      const res = await fetch(url, {
+        signal: ctrl.signal,
+        redirect: 'follow',
+        headers: {
+          // Many sites answer a bare bot UA with a challenge page; a normal
+          // browser UA plus language negotiation gets the readable HTML.
+          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        },
+      });
+      const type = res.headers.get('content-type') ?? '';
+      const body = await res.text();
+      const text = type.includes('html') ? stripHtml(body) : body;
+      return { status: res.status, type, text: clip(text) };
+    } finally {
+      clearTimeout(timer);
+    }
+  },
 });
+
+registerTool(toolSpecFrom(webFetchTool, { plane: 'agent' }));
 
 /** `present` — surface a title/body block to the UI. */
 const presentTool = defineTool<{ title: string; body: string }>({
