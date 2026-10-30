@@ -413,8 +413,13 @@ const webFetchTool = defineTool<{ status: number; type: string; text: string }>(
   // DSH's `tool-web/fetch` presents a result card; the status code is what a
   // reader wants from one line.
   presentResult: (_args, result) => {
-    const m = /^HTTP (\d+)/.exec(String(result ?? ''));
-    return { card: 'generic' as const, title: m ? `HTTP ${m[1]}` : 'fetched' };
+    // `web_fetch` already returns `{ status, type, text }`; read the field
+    // instead of re-parsing the rendered line.
+    const v = result as { status?: number };
+    return {
+      card: 'generic' as const,
+      title: v?.status !== undefined ? `HTTP ${v.status}` : 'fetched',
+    };
   },
   timeoutMs: 20_000,
   async execute(args) {
