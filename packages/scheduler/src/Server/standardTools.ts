@@ -1303,6 +1303,12 @@ const runCodeTool = defineTool<string>({
 registerTool(toolSpecFrom(runCodeTool, { plane: 'agent', presets: ['ptc'] }));
 
 /** `glob` — list files under a directory that match a glob pattern. */
+/** Collapse whitespace and clip, for one-line card titles. */
+const oneLine = (value: unknown, max = 48): string => {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+};
+
 const globTool = defineTool<string>({
   name: 'glob',
   description:
@@ -1347,6 +1353,7 @@ const grepTool = defineTool<string>({
     glob: { type: 'string', description: 'Only search files matching this glob.' },
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  presentCall: args => ({ card: 'generic', title: `grep ${oneLine(args.pattern)}`, rawInput: args.pattern }),
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     if (typeof args.pattern !== 'string' || !args.pattern) throw new Error('pattern is required');
@@ -1398,6 +1405,7 @@ const readTool = defineTool<string>({
     limit: { type: 'number', description: 'How many lines to return.' },
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  presentCall: args => ({ card: 'generic', title: `read ${oneLine(args.path)}`, rawInput: args.path }),
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     const base = host.sessionCwd ?? host.workspace;
@@ -1492,6 +1500,7 @@ const editTool = defineTool<string>({
     replace_all: { type: 'boolean', description: 'Replace every occurrence.' },
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  presentCall: args => ({ card: 'diff', title: `edit ${oneLine(args.path)}`, rawInput: args.path }),
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     const base = host.sessionCwd ?? host.workspace;
@@ -1539,6 +1548,7 @@ const bashTool = defineTool<string>({
     background: { type: 'boolean', description: 'Run as a background job.' },
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  presentCall: args => ({ card: 'terminal', title: oneLine(args.command), rawInput: args.command }),
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     const cmd = typeof args.command === 'string' ? args.command : '';
