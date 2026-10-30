@@ -1623,8 +1623,36 @@ const editTool = defineTool<string>({
 
 registerTool(toolSpecFrom(editTool, { plane: 'agent' }));
 
+/**
+ * What `bash` produces — the structured shape DSH's tool-bash returns.
+ *
+ * The model still sees the same text (`renderBash` reproduces the old string
+ * exactly); what changes is that `presentResult` and `presentationMeta` can read
+ * fields instead of re-parsing that text.
+ */
+export interface BashResult {
+  /** Set when the call started a background job instead of running inline. */
+  jobId?: string;
+  /** Exit code of the one-shot run; absent for background jobs. */
+  code?: number;
+  stdout?: string;
+  stderr?: string;
+  /** Where the command ran — DSH exposes this via `presentationMeta`. */
+  cwd: string;
+  /** Extra explanation (timeout, sandbox note); absent when there is nothing. */
+  note?: string;
+}
+
+/** Reproduce the pre-refactor text byte for byte. */
+const renderBash = (v: BashResult): string => {
+  if (v.jobId !== undefined) return `OK: started ${v.jobId} (use job_output to read it)`;
+  const body = `exit ${v.code ?? -1}\n${v.stdout ?? ''}`
+    + `${v.stderr ? `\n[stderr]\n${v.stderr}` : ''}`;
+  return limitOutput(v.note ? `${body}\n${v.note}` : body);
+};
+
 /** `bash` — run one shell command (optionally as a background job). */
-const bashTool = defineTool<string>({
+const bashTool = defineTool<BashResult>({
   name: 'bash',
   description:
     'Run one shell command in the working directory. Set `background: true` to start it '
@@ -1633,25 +1661,49 @@ const bashTool = defineTool<string>({
     command: { type: 'string', description: 'The command line.' },
     background: { type: 'boolean', description: 'Run as a background job.' },
   },
-  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  output: {
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        jobId: { type: 'string' },
+        code: { type: 'number' },
+        stdout: { type: 'string' },
+        stderr: { type: 'string' },
+        cwd: { type: 'string' },
+        note: { type: 'string' },
+      },
+    },
+    render: (_args, value) => [textBlock(renderBash(value))],
+    // DSH's tool-bash exposes the working directory this way.
+    presentationMeta: (_args, value) => ({ cwd: value.cwd }),
+  },
   presentCall: args => ({ card: 'terminal', title: oneLine(args.command), rawInput: args.command }),
-  // The closing card says how it ended. `presentResult` gets the rendered text
-  // here, so the exit code is read back out of it.
   presentResult: (_args, result) => {
-    const m = /^exit (\d+)/.exec(String(result ?? ''));
-    return m ? { card: 'terminal' as const, title: `exit ${m[1]}` } : undefined;
+    // The canonical value, not the rendered text: no regex needed any more.
+    const v = result as BashResult;
+    if (v?.jobId !== undefined) return { card: 'terminal' as const, title: `job ${v.jobId}` };
+    return v?.code !== undefined
+      ? { card: 'terminal' as const, title: `exit ${v.code}` }
+      : undefined;
   },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     const cmd = typeof args.command === 'string' ? args.command : '';
     if (!cmd.trim()) throw new Error('missing command');
+    const cwd = host.sessionCwd ?? host.workspace;
     if (args.background === true) {
       const id = startJob(host, cmd);
-      return `OK: started ${id} (use job_output to read it)`;
+      return { jobId: id, cwd };
     }
-    const r = await runShell(cmd, { cwd: host.sessionCwd ?? host.workspace });
-    const body = `exit ${r.code}\n${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ''}`;
-    return limitOutput(r.note ? `${body}\n${r.note}` : body);
+    const r = await runShell(cmd, { cwd });
+    return {
+      code: r.code,
+      stdout: r.stdout,
+      stderr: r.stderr,
+      cwd,
+      ...(r.note ? { note: r.note } : {}),
+    };
   },
 });
 
