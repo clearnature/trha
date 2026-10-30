@@ -82,3 +82,11 @@ scheduler `vitest` 相关文件 → 60 passed。
   GHC 编译逼死；默认 0（ADR-008）。要在沙箱里编译大项目，先把它设 0。
 - **嵌套宿主上 `sandbox status` 报 `Partial`** 是预期的（probe 跑不了 `--unshare-all`），
   不代表后端坏；看 notes 里的原因。
+- **systemd-run 的可用性在 runner 启动时探测一次**：pids 限制首选
+  `systemd-run --user --scope`，它要连 user manager 的 D-Bus。scheduler 从
+  cron/裸 tmux/ssh 启动时没有 `XDG_RUNTIME_DIR`，探测会失败（现象：
+  `Failed to connect to user scope bus`）。失败后该 runner 的整个生命周期都
+  降级为「spawn 后写 `cgroup.procs`」——命令照常执行，不再因此失败，代价是
+  pids 上限存在毫秒级竞态（fork 可能在入组之前发生）。
+  要覆盖「运行中 D-Bus 抖动」，需要每次 exec 重探，但 `systemd-run --scope`
+  本身有数百毫秒开销，不划算；容器/无 systemd 环境本就走这条降级路径。
