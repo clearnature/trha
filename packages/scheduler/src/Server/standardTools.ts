@@ -620,11 +620,8 @@ export async function runStandardTool(
     return `OK: deleted ${id}`;
   }
 
-  if (name === 'job_list') return jobListHandler(host);
 
-  if (name === 'job_output') return jobOutputHandler(args, host);
 
-  if (name === 'job_kill') return jobKillHandler(args, host);
 
   if (name === 'skill') {
     const wanted = typeof args.name === 'string' ? args.name.trim() : '';
@@ -754,43 +751,56 @@ const presentTool = defineTool<{ title: string; body: string }>({
 registerTool(toolSpecFrom(presentTool, { plane: 'agent' }));
 
 /** `job_list` — background jobs owned by this host. */
-async function jobListHandler(host: StandardToolHost): Promise<string> {
-  const list = [...host.jobs.values()];
-  if (list.length === 0) return '(no jobs)';
-  return list.map(j =>
-    `${j.id}\t${j.status}${j.exitCode !== undefined ? ` (${j.exitCode})` : ''}\t${j.command.slice(0, 80)}`,
-  ).join('\n');
-}
+const jobListTool = defineTool<string>({
+  name: 'job_list',
+  description: 'List this session\'s background jobs: id, status and command.',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as StandardToolHost;
+    const list = [...host.jobs.values()];
+    if (list.length === 0) return '(no jobs)';
+    return list.map(j =>
+      `${j.id}\t${j.status}${j.exitCode !== undefined ? ` (${j.exitCode})` : ''}\t${j.command.slice(0, 80)}`,
+    ).join('\n');
+  },
+});
 
 /** `job_output` — collected stdout/stderr of one background job. */
-async function jobOutputHandler(
-  args: Record<string, unknown>,
-  host: StandardToolHost,
-): Promise<string> {
-  const id = typeof args.id === 'string' ? args.id : '';
-  const job = host.jobs.get(id);
-  if (!job) return `ERROR: no job ${id}`;
-  const out = job.output.join('');
-  return `status: ${job.status}${job.exitCode !== undefined ? ` exit=${job.exitCode}` : ''}\n`
-    + clip(out || '(no output yet)');
-}
+const jobOutputTool = defineTool<string>({
+  name: 'job_output',
+  description: 'Read the collected output of one background job.',
+  parameters: { id: { type: 'string', description: 'Job id returned by job_list.' } },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const id = typeof args.id === 'string' ? args.id : '';
+    const job = host.jobs.get(id);
+    if (!job) throw new Error(`no job ${id}`);
+    const out = job.output.join('');
+    return `status: ${job.status}${job.exitCode !== undefined ? ` exit=${job.exitCode}` : ''}\n`
+      + clip(out || '(no output yet)');
+  },
+});
 
 /** `job_kill` — SIGTERM one background job. */
-async function jobKillHandler(
-  args: Record<string, unknown>,
-  host: StandardToolHost,
-): Promise<string> {
-  const id = typeof args.id === 'string' ? args.id : '';
-  const job = host.jobs.get(id);
-  if (!job) return `ERROR: no job ${id}`;
-  if (job.status === 'running') {
+const jobKillTool = defineTool<string>({
+  name: 'job_kill',
+  description: 'Stop one background job with SIGTERM.',
+  parameters: { id: { type: 'string', description: 'Job id returned by job_list.' } },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const id = typeof args.id === 'string' ? args.id : '';
+    const job = host.jobs.get(id);
+    if (!job) throw new Error(`no job ${id}`);
+    if (job.status !== 'running') return `OK: ${id} already exited`;
     job.child?.kill('SIGTERM');
     job.status = 'exited';
     return `OK: killed ${id}`;
-  }
-  return `OK: ${id} already exited`;
-}
+  },
+});
 
-registerTool({ name: 'job_list', plane: 'host', handler: (_a, exec) => jobListHandler(exec.host as StandardToolHost) });
-registerTool({ name: 'job_output', plane: 'host', handler: (a, exec) => jobOutputHandler(a, exec.host as StandardToolHost) });
-registerTool({ name: 'job_kill', plane: 'host', handler: (a, exec) => jobKillHandler(a, exec.host as StandardToolHost) });
+registerTool(toolSpecFrom(jobListTool, { plane: 'host' }));
+registerTool(toolSpecFrom(jobOutputTool, { plane: 'host' }));
+registerTool(toolSpecFrom(jobKillTool, { plane: 'host' }));
