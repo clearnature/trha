@@ -1239,7 +1239,21 @@ const subagentTool = defineTool<string>({
 });
 
 /** `workflow` — run a list of {name, task} steps through fresh subagents. */
-const workflowTool = defineTool<string>({
+/**
+ * What `workflow` produces — the step outcomes plus their serialized form, so
+ * the result card reads a count instead of re-parsing the JSON.
+ */
+export interface WorkflowResult {
+  /** How many steps ran (one entry per requested step, failed ones included). */
+  steps: number;
+  /** The serialized step outcomes. */
+  text: string;
+}
+
+/** Reproduce the pre-refactor text byte for byte. */
+const renderWorkflow = (v: WorkflowResult): string => v.text;
+
+const workflowTool = defineTool<WorkflowResult>({
   name: 'workflow',
   description: 'Run named steps in order, each executed by a fresh subagent; returns JSON.',
   parameters: {
@@ -1259,15 +1273,21 @@ const workflowTool = defineTool<string>({
   // The tool returns a JSON array of step outcomes; the distilled fact is how
   // many steps ran.
   presentResult: (_args, result) => {
-    const text = String(result ?? '');
-    let steps = 0;
-    try {
-      const parsed = JSON.parse(text) as unknown;
-      if (Array.isArray(parsed)) steps = parsed.length;
-    } catch { /* not JSON: fall through to the generic label */ }
-    return { card: 'generic' as const, title: steps ? `${steps} steps` : 'workflow done' };
+    // The canonical value: no JSON re-parse, no failed parse on a truncated clip.
+    const v = result as WorkflowResult;
+    return {
+      card: 'generic' as const,
+      title: v?.steps ? `${v.steps} steps` : 'workflow done',
+    };
   },
-  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  output: {
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { steps: { type: 'number' }, text: { type: 'string' } },
+    },
+    render: (_args, value) => [textBlock(renderWorkflow(value))],
+  },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     if (!host.agents) throw new Error('workflow is not available in this host');
@@ -1285,7 +1305,7 @@ const workflowTool = defineTool<string>({
         out.push({ name: String(o.name ?? ''), error: String(e) });
       }
     }
-    return clip(JSON.stringify(out, null, 2));
+    return { steps: out.length, text: clip(JSON.stringify(out, null, 2)) };
   },
 });
 
