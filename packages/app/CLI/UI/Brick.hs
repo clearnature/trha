@@ -158,6 +158,7 @@ initialState bridge chan cfg = AppState
   , appTz        = Nothing
   , appPlan      = Nothing
   , appFolds     = Map.empty
+  , appRunningTools = Map.empty
   , appSelStart  = Nothing
   , appSelEnd    = Nothing
   , appCardFocus = Nothing
@@ -2753,8 +2754,30 @@ handleAppEvent (EvTool result) = do
               _                 -> False) $
         modify $ \st -> st { appAskTool = Just (teName ev, teArgs ev) }
       case teStatus ev of
-        ToolRunRunning -> return ()
-        _              -> appendMsg (toolCardMsg ev t)
+        ToolRunRunning -> do
+          -- A long tool call used to be invisible until it finished: the card
+          -- only existed once the closing event arrived. Open the card now and
+          -- remember which message it is, so `end` can rewrite it.
+          appendMsg (toolCardMsg ev t)
+          st <- get
+          -- `appendMsg` appends, so the message just added is the last one and
+          -- its id is (length - 1); `listToMaybe` would hand back the oldest.
+          let mid = length (appMessages st) - 1
+          when (not (T.null (teCallId ev))) $
+            modify $ \s -> s { appRunningTools =
+              Map.insert (teCallId ev) mid (appRunningTools s) }
+        _ -> do
+          st <- get
+          let running = Map.lookup (teCallId ev) (appRunningTools st)
+          case running of
+            Just mid -> do
+              -- Rewrite the opening card in place: one call, one card.
+              modify $ \s -> s
+                { appMessages = map (\m -> if msgId m == mid then toolCardMsg ev t else m)
+                                  (appMessages s)
+                , appRunningTools = Map.delete (teCallId ev) (appRunningTools s)
+                }
+            Nothing -> appendMsg (toolCardMsg ev t)
     Left err -> do
       appendMsg (mkMsg "error" (tr lang "SSE: " <> T.pack (show err)) t)
       modify $ \st -> st { appStatus = tr (appLang st) "Error" }
@@ -3469,9 +3492,7 @@ handleChatWith display sendText = do
     toolSink chan sid ev = case ev of
       Right toolEv -> do
         recordToolEvent sid toolEv
-        case teStatus toolEv of
-          ToolRunRunning -> return ()
-          _              -> writeBChan chan (EvTool (Right toolEv))
+        writeBChan chan (EvTool (Right toolEv))
       Left err -> writeBChan chan (EvTool (Left err))
 
 -- | Numbered preview of the stash (one line per draft).

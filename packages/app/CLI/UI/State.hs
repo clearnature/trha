@@ -156,6 +156,10 @@ data AppState = AppState
   , appTz         :: Maybe TimeZone     -- ^ local zone for the status-bar clock
   , appPlan       :: Maybe PlanView     -- ^ live multi-step plan (kernel-owned)
   , appFolds      :: Map.Map Int ToolFold -- ^ tool-card fold states, keyed by msgId
+  -- | Running tool cards by call id, so the closing event can update the card
+  -- the opening event created instead of appending a second one. Empty call id
+  -- (older scheduler) never matches, which keeps the old append behaviour.
+  , appRunningTools :: Map.Map Text Int
   , appSelStart   :: Maybe Int            -- ^ drag-selection anchor (message id)
   , appSelEnd     :: Maybe Int            -- ^ drag-selection cursor (message id)
   , appCardFocus  :: Maybe Int          -- ^ focused tool card (msgId); Nothing = none
