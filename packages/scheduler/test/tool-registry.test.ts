@@ -80,3 +80,30 @@ describe('tool origin (builtin vs external)', () => {
     expect(toolNamesForPreset('standard').has('proof_dag')).toBe(false);
   });
 });
+
+describe('preset filtering (end to end)', () => {
+  it('minimal exposes only the core file/shell tools', async () => {
+    // Importing the declarations is what registers the plane/preset metadata.
+    await import('../src/Server/toolDeclarations.js');
+    const names = toolNamesForPreset('minimal');
+    for (const n of ['bash', 'pwsh', 'read', 'write', 'edit', 'grep', 'glob', 'ask_user_question']) {
+      expect(names.has(n)).toBe(true);
+    }
+    for (const n of ['web_fetch', 'web_search', 'run_code', 'todo_write', 'subagent']) {
+      expect(names.has(n)).toBe(false);
+    }
+  });
+
+  it('ptc swaps plan/todo for run_code', async () => {
+    await import('../src/Server/toolDeclarations.js');
+    const names = toolNamesForPreset('ptc');
+    expect(names.has('run_code')).toBe(true);
+    expect(names.has('todo_write')).toBe(false);
+    expect(names.has('exit_plan_mode')).toBe(false);
+  });
+
+  it('cordis gets no tools of its own', async () => {
+    await import('../src/Server/toolDeclarations.js');
+    expect(toolNamesForPreset('cordis').size).toBe(0);
+  });
+});
