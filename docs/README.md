@@ -1,6 +1,6 @@
 # docs/ 导览
 
-> 本目录共 **56 份文档**（2026-10-29 追加；计数规则 = `reference/` 下按**条目**计，其余按 `.md` 文件计），按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
+> 本目录共 **57 份文档**（2026-10-30 追加；计数规则 = `reference/` 下按**条目**计，其余按 `.md` 文件计），按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
 >
 > **结构权威**是 `../QWEN.md`（§Architecture Layers / §Development Conventions / §Documentation）与 `architecture/architecture.md`。本文件只是**浏览用导览**，如有冲突，一律以 `QWEN.md` 为准。
 
