@@ -13,6 +13,7 @@
 //     listeners with release handles (unwound on unregister, like `on`).
 
 import { ServiceRegistry } from './Registry.js';
+import { registerTool as registerExternalTool, unregisterTool } from '../Server/toolRegistry.js';
 
 /** Release handle returned by ctx.* subscriptions. */
 export type Release = () => void;
@@ -46,6 +47,20 @@ export interface PluginContext {
   serial(event: string, handler: SerialHandler): Release;
   /** Resolve a service declared in `inject` (throws when missing). */
   service(name: string): unknown;
+  /**
+   * Register a model-facing tool.
+   *
+   * This is what separates an **external** plugin from a builtin: builtins are
+   * fixed at import time and ship with the harness, while a plugin registered
+   * here appears at runtime, disappears on `deactivate()`, and is recorded with
+   * `origin: 'external'` so diagnostics can tell them apart.
+   */
+  registerTool(spec: {
+    name: string;
+    plane: 'host' | 'agent';
+    presets?: string[];
+    handler: (args: Record<string, unknown>, host: unknown) => Promise<string>;
+  }): Release;
 }
 
 /** Minimal event bus shape used by the plugin manager. */
@@ -168,6 +183,15 @@ export class PluginManager {
         return off;
       },
       service: (name) => this.services.require(name),
+      registerTool: (spec) => {
+        // External tools are tagged so diagnostics can separate them from the
+        // builtins the harness ships; `deactivate()` must undo this, so the
+        // release handle joins the same list `ctx.on` appends to.
+        registerExternalTool({ ...spec, origin: 'external' });
+        const release: Release = () => unregisterTool(spec.name);
+        active.push(release);
+        return release;
+      },
     };
     if (plugin.activate) {
       await plugin.activate(ctx);

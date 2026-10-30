@@ -18,6 +18,19 @@
 
 export type ToolPlane = 'host' | 'agent';
 
+/**
+ * Where a tool comes from. This is orthogonal to `plane`:
+ *
+ * |            | builtin (ships with the harness) | external (loaded at runtime) |
+ * |------------|----------------------------------|------------------------------|
+ * | host-plane | subagent registry, goals        | a preset's own singleton      |
+ * | agent-plane| bash, read, web_search          | `~/.trha/plugins/*.mjs`       |
+ *
+ * The two differ in management, not scope: builtins are fixed at import time,
+ * externals are installed/removed at runtime and hot-reloaded by the watcher.
+ */
+export type ToolOrigin = 'builtin' | 'external';
+
 /** Host objects differ per call site; handlers narrow it themselves. */
 export type ToolHandler = (args: Record<string, unknown>, host: unknown) => Promise<string>;
 
@@ -28,6 +41,8 @@ export interface ToolSpec {
    * a model-facing row a preset chooses to mount.
    */
   plane: ToolPlane;
+  /** Defaults to `builtin`; external plugins register with `external`. */
+  origin?: ToolOrigin;
   /** Preset ids that expose this tool; omitted = every preset. */
   presets?: string[];
   /**
@@ -49,11 +64,12 @@ export function registerTool(spec: ToolSpec): void {
   if (existing) {
     if (existing.handler) throw new Error(`tool "${spec.name}" is already registered`);
     existing.plane = spec.plane;
+    if (spec.origin !== undefined) existing.origin = spec.origin;
     if (spec.presets !== undefined) existing.presets = spec.presets;
     if (spec.handler) existing.handler = spec.handler;
     return;
   }
-  registry.set(spec.name, spec);
+  registry.set(spec.name, { origin: 'builtin', ...spec });
 }
 
 export function resolveTool(name: string): ToolSpec | undefined {
@@ -68,16 +84,12 @@ export function declareTool(spec: Omit<ToolSpec, 'handler'>): void {
   const existing = registry.get(spec.name);
   if (existing) {
     existing.plane = spec.plane;
+    if (spec.origin !== undefined) existing.origin = spec.origin;
     // `exactOptionalPropertyTypes` forbids assigning an explicit `undefined`.
     if (spec.presets !== undefined) existing.presets = spec.presets;
     return;
   }
-  registry.set(
-    spec.name,
-    spec.presets === undefined
-      ? { name: spec.name, plane: spec.plane }
-      : { name: spec.name, plane: spec.plane, presets: spec.presets },
-  );
+  registry.set(spec.name, { origin: 'builtin', ...spec });
 }
 
 /** Every registered tool, optionally narrowed to one preset. */
@@ -98,4 +110,12 @@ export function toolNamesForPreset(preset: string | undefined): Set<string> {
 /** Test seam: clear the registry (vitest resets it between cases). */
 export function resetToolRegistry(): void {
   registry.clear();
+}
+
+/**
+ * Remove one tool. External plugins need this: `deactivate()` must undo what
+ * `activate()` registered, the same way `ctx.on` returns a release handle.
+ */
+export function unregisterTool(name: string): void {
+  registry.delete(name);
 }

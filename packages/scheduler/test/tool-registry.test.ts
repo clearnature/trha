@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  declareTool,
   listTools,
   registerTool,
   resetToolRegistry,
   resolveTool,
   toolNamesForPreset,
+  unregisterTool,
 } from '../src/Server/toolRegistry.js';
 
 const ok = async (): Promise<string> => 'ok';
@@ -50,5 +52,31 @@ describe('tool registry', () => {
     registerTool({ name: 'run_code', plane: 'agent', presets: ['ptc'], handler: ok });
     expect(listTools('minimal').map(t => t.name)).toEqual(['bash']);
     expect(listTools('ptc').map(t => t.name).sort()).toEqual(['bash', 'run_code']);
+  });
+});
+
+describe('tool origin (builtin vs external)', () => {
+  beforeEach(() => resetToolRegistry());
+
+  it('defaults to builtin so the harness-shipped tools are distinguishable', () => {
+    declareTool({ name: 'bash', plane: 'agent', presets: ['standard'] });
+    expect(resolveTool('bash')?.origin).toBe('builtin');
+  });
+
+  it('records an external plugin tool as external', () => {
+    registerTool({ name: 'proof_dag', plane: 'agent', origin: 'external', handler: ok });
+    expect(resolveTool('proof_dag')?.origin).toBe('external');
+  });
+
+  it('unregisterTool removes what a plugin registered on activate', () => {
+    registerTool({ name: 'proof_dag', plane: 'agent', origin: 'external', handler: ok });
+    unregisterTool('proof_dag');
+    expect(resolveTool('proof_dag')).toBeUndefined();
+  });
+
+  it('an external tool can be preset-scoped like a builtin', () => {
+    registerTool({ name: 'proof_dag', plane: 'agent', origin: 'external', presets: ['math-proof'], handler: ok });
+    expect(toolNamesForPreset('math-proof').has('proof_dag')).toBe(true);
+    expect(toolNamesForPreset('standard').has('proof_dag')).toBe(false);
   });
 });
