@@ -401,6 +401,12 @@ const webFetchTool = defineTool<{ status: number; type: string; text: string }>(
     render: (_args, value) => [textBlock(`HTTP ${value.status} ${value.type}\n${value.text}`)],
   },
   presentCall: args => ({ card: 'generic', title: `fetch ${oneLine(args.url)}`, rawInput: args.url }),
+  // DSH's `tool-web/fetch` presents a result card; the status code is what a
+  // reader wants from one line.
+  presentResult: (_args, result) => {
+    const m = /^HTTP (\d+)/.exec(String(result ?? ''));
+    return { card: 'generic' as const, title: m ? `HTTP ${m[1]}` : 'fetched' };
+  },
   timeoutMs: 20_000,
   async execute(args) {
     // `network: off` must mean *no egress*, not "no egress from subprocesses":
@@ -1383,6 +1389,14 @@ const grepTool = defineTool<string>({
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   presentCall: args => ({ card: 'generic', title: `grep ${oneLine(args.pattern)}`, rawInput: args.pattern }),
+  // DSH's `tool-fs-search` presents a result card; the distilled fact is the
+  // number of hits.
+  presentResult: (_args, result) => {
+    const text = String(result ?? '');
+    if (text === '(no matches)') return { card: 'generic' as const, title: 'no matches' };
+    const hits = text.split('\n').filter(l => l.trim() !== '').length;
+    return { card: 'generic' as const, title: `${hits} hit${hits === 1 ? '' : 's'}` };
+  },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     if (typeof args.pattern !== 'string' || !args.pattern) throw new Error('pattern is required');
@@ -1499,6 +1513,12 @@ const writeTool = defineTool<string>({
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   presentCall: args => ({ card: 'diff', title: `write ${oneLine(args.path)}`, rawInput: args.path }),
+  // DSH's `tool-fs/write` presents its result too; here the useful summary is
+  // how much landed on disk.
+  presentResult: (args, result) => {
+    const m = /\((\d+) chars\)/.exec(String(result ?? ''));
+    return { card: 'diff' as const, title: `wrote ${oneLine(args.path)}${m ? ` · ${m[1]}` : ''}` };
+  },
   execute: (args, exec) => writeFileExecute(args, exec, 'write'),
 });
 

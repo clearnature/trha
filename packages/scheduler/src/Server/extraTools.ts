@@ -1088,6 +1088,12 @@ const webSearchTool = defineTool<string>({
     query: { type: 'string', description: 'Search terms.' },
   },
   presentCall: args => ({ card: 'generic', title: `search ${oneLine(args.query)}`, rawInput: args.query }),
+  // DSH's `tool-web/search` presents a result card; the distilled fact is how
+  // many rows came back.
+  presentResult: (_args, result) => {
+    const blocks = String(result ?? '').split('\n\n').filter(b => b.trim() !== '').length;
+    return { card: 'generic' as const, title: `${blocks} result${blocks === 1 ? '' : 's'}` };
+  },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   timeoutMs: 60_000,
   async execute(args) {
