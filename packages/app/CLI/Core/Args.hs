@@ -25,6 +25,7 @@ data GlobalOpts = GlobalOpts
   , optModel :: Maybe Text
   , optTheme :: Maybe Text
   , optLang  :: Maybe Text
+  , optToken :: Maybe Text
   } deriving (Show)
 
 -- | Subcommand
@@ -69,6 +70,11 @@ globalOptsParser = GlobalOpts
         ( long "lang"
         <> metavar "LANG"
         <> help "Interface language: zh | en (default: zh)"
+        ))
+  <*> optional (strOption
+        ( long "token"
+        <> metavar "TOKEN"
+        <> help "Scheduler auth token (default: $TRHA_TOKEN, else dev-token). Needed for --host beyond loopback"
         ))
 
 -- | TUI subcommand

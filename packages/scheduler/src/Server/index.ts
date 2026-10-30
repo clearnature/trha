@@ -558,7 +558,21 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
   }
 
-  app.use(cors());
+  // CORS: this listener's own origins only.  A wildcard `cors()` makes every
+  // page the user happens to visit a potential caller of the API — with the
+  // Bearer token being the only thing standing in the way.
+  app.use(cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);   // non-browser callers (CLI/curl)
+      const port = config.port;
+      const allowed = [
+        `https://localhost:${port}`, `http://localhost:${port}`,
+        `https://127.0.0.1:${port}`, `http://127.0.0.1:${port}`,
+      ];
+      cb(null, allowed.includes(origin));
+    },
+    credentials: true,
+  }));
   app.use(express.json());
 
   // Authentication: Bearer token by default; the /studio pages are served
@@ -3283,6 +3297,16 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 //  * when TRHA_LEASE_STDIN=1, stdin is a lease: the host closing it (normal
 //    exit or crash of the parent) makes the scheduler drain and exit.
 export function startServer(config: ServerConfig = defaultServerConfig) {
+  // A non-loopback listener with the default token is an unauthenticated admin
+  // API on the network. Refusing here is the difference between "exposed on
+  // purpose, with a secret" and "exposed by accident".
+  const host = config.host ?? '127.0.0.1';
+  if (host !== '127.0.0.1' && host !== 'localhost' && config.token === 'dev-token') {
+    throw new Error(
+      'refusing to listen on a non-loopback address with the default token: '
+      + 'set TRHA_TOKEN (or pass --token) to a real secret, or prefer an SSH tunnel'
+    );
+  }
   const { app } = createServer(config);
   const tls = resolveTls();
   return new Promise<void>((resolve) => {
