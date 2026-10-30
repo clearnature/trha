@@ -132,6 +132,12 @@ interface ToolEvent {
    */
   phase: 'start' | 'end';
   name: string;
+  /**
+   * The call's arguments as a parsed object. This is what a typed consumer
+   * (kernel state machine, Desktop card, web inspector) should read.
+   */
+  input?: Record<string, unknown>;
+  /** Legacy `key=value` flattening, kept so older shells keep rendering. */
   args?: string[];
   status: 'running' | 'succeeded' | 'failed';
   error?: string;
@@ -1418,14 +1424,16 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   const STUCK_REPEATS = 3;
 
   const emitToolLifecycle = async (
-    sessionId: string, callId: string, name: string, args: string[],
+    sessionId: string, callId: string, name: string, input: Record<string, unknown>,
     status: 'running' | 'succeeded' | 'failed', startedAt?: number, error?: string,
     output?: string,
   ): Promise<void> => {
+    const args = Object.entries(input)
+      .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`);
     const ev: ToolEvent = {
       callId,
       phase: status === 'running' ? 'start' : 'end',
-      name, args, status,
+      name, input, args, status,
       ...(error !== undefined ? { error } : {}),
       ...(startedAt !== undefined ? { durationMs: Date.now() - startedAt } : {}),
       ...(output !== undefined ? { output } : {}),
@@ -1436,12 +1444,15 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
   };
 
-  const parseToolArgs = (c: ToolCallData): string[] => {
+  /** The call's arguments as an object; `{}` when the model sent bad JSON. */
+  const parseToolInput = (c: ToolCallData): Record<string, unknown> => {
     try {
-      const o = JSON.parse(c.arguments) as Record<string, unknown>;
-      return Object.entries(o).map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`);
+      const o = JSON.parse(c.arguments) as unknown;
+      return o && typeof o === 'object' && !Array.isArray(o)
+        ? (o as Record<string, unknown>)
+        : {};
     } catch {
-      return [c.arguments];
+      return {};
     }
   };
 
@@ -1859,13 +1870,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       }
       for (const call of calls) {
         const started = Date.now();
-        await emitToolLifecycle(session.id, call.id, call.name, parseToolArgs(call), 'running');
+        await emitToolLifecycle(session.id, call.id, call.name, parseToolInput(call), 'running');
         const output = await executeTool(call, session.id).catch(
           (e: unknown) => `ERROR: ${String(e)}`,
         );
         // ask 权限规则：暂停执行并发起确认（批准后重放该工具）
         if (output.startsWith('REQUIRE_APPROVAL:')) {
-          await emitToolLifecycle(session.id, call.id, call.name, parseToolArgs(call), 'failed', started, output);
+          await emitToolLifecycle(session.id, call.id, call.name, parseToolInput(call), 'failed', started, output);
           // Park the call, but keep the history valid: the provider rejects an
           // assistant(tool_calls) message that has no tool reply.  The approval
           // replay replaces this placeholder with the real output.
@@ -1883,7 +1894,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         // message per call id before anything else. So the tool result goes in
         // first, and *then* any marker-derived message (a card, a question).
         const failed = output.startsWith('ERROR');
-        await emitToolLifecycle(session.id, call.id, call.name, parseToolArgs(call),
+        await emitToolLifecycle(session.id, call.id, call.name, parseToolInput(call),
           failed ? 'failed' : 'succeeded', started, failed ? output : undefined,
           failed ? undefined : outputPreview(output));
         session.messages.push({ role: 'tool', tool_call_id: call.id, content: output });
