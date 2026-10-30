@@ -7,7 +7,6 @@ import cors from 'cors';
 import { HaskellBridge } from '../Bridge/Haskell.js';
 import type { BridgeToolSpec, ToolCallData } from '../Bridge/Haskell.js';
 import { canonicalToolName, toolCatalog, toToolSpecs } from './toolCatalog.js';
-import { limitOutput } from './toolGuard.js';
 import { decidePermission, setPermissionRules, compileRules, getPermissionRules } from '../Permission/permissionRules.js';
 import {
   applyPermissionMode, toggleYolo, modeLabel, MODE_CYCLE,
@@ -34,14 +33,13 @@ import { transcribeWav, AsrNotConfigured } from './transcribe.js';
 import { lspStatus } from './lsp.js';
 import { isExtraTool, runExtraTool, type ExtraHost, type Terminal } from './extraTools.js';
 import {
-  isStandardTool, runStandardTool, startJob,
+  isStandardTool, runStandardTool,
   type AgentHooks, type Goal, type PendingQuestion, type Schedule, type TeamTask,
   type Todo, type JobRecord,
 } from './standardTools.js';
 import { startPluginWatcher } from '../Plugins/watcher.js';
 import { resolveWorkspace } from './workspace.js';
-import { execShell } from './shell.js';
-import { defaultSandboxScope, readSandboxConfig, sandboxEnabled, sandboxedSpawn, sandboxStatus, setSandboxConfigRuntime, setSandboxEnabledRuntime, writeSandboxConfig, type SandboxConfigView } from './sandbox.js';
+import { readSandboxConfig, sandboxEnabled, sandboxStatus, setSandboxConfigRuntime, setSandboxEnabledRuntime, writeSandboxConfig, type SandboxConfigView } from './sandbox.js';
 import { rateLimit } from './rateLimit.js';
 import { DEFAULT_AGENT_PRESET, getAgentPreset, listAgentPresets } from './agentPresets.js';
 // Side effect: registers plane + preset metadata for every tool (step 2 of the
@@ -52,8 +50,6 @@ import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
 import { resolveTls } from './tls.js';
 import { resolveKernelToken } from '../Core/KernelToken.js';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
 import path from 'node:path';
 
 export interface ServerConfig {
@@ -1348,64 +1344,6 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // keeps Node's default (`cmd.exe /d /s /c`).
   //
   // Contract unchanged: 120 s timeout, 4 MiB of output, `exit <code>` first.
-  const SHELL_TIMEOUT_MS = 120_000;
-  const SHELL_MAX_BUFFER = 4 * 1024 * 1024;
-  const execAsync = promisify(exec);
-  const runShell = async (
-    cmd: string,
-    opts: { cwd: string },
-  ): Promise<{ code: number; stdout: string; stderr: string; note: string }> => {
-    const shell = execShell();
-    // Compatibility default (TRHA_SANDBOX=off): the unconfined path below is
-    // unchanged. When the seam is enabled, execution goes through the runner
-    // and a failure is returned as a failed tool call, never a fallback.
-    if (sandboxEnabled()) {
-      try {
-        const result = await sandboxedSpawn(defaultSandboxScope(opts.cwd), {
-          argv: [shell ?? 'bash', '-c', cmd],
-          cwd: opts.cwd,
-          timeoutMs: SHELL_TIMEOUT_MS,
-        });
-        return {
-          code: result.code ?? 1,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          note: result.ok ? '' : (result.stderr ? '' : 'sandbox denied the command'),
-        };
-      } catch (e) {
-        return {
-          code: 1,
-          stdout: '',
-          stderr: (e as Error).message,
-          note: 'sandbox unavailable',
-        };
-      }
-    }
-    try {
-      const { stdout, stderr } = await execAsync(cmd, {
-        cwd: opts.cwd,
-        timeout: SHELL_TIMEOUT_MS,
-        maxBuffer: SHELL_MAX_BUFFER,
-        ...(shell ? { shell } : {}),
-      });
-      return { code: 0, stdout, stderr, note: '' };
-    } catch (e) {
-      const err = e as {
-        code?: number | string; stdout?: string; stderr?: string;
-        message: string; killed?: boolean;
-      };
-      const code = typeof err.code === 'number' ? err.code : (err.killed ? 124 : 1);
-      const stdout = err.stdout ?? '';
-      const stderr = err.stderr ?? '';
-      // A kill is a timeout (exec's own message would just repeat the command);
-      // otherwise exec's "Command failed: …" only adds noise once the command
-      // produced output, so keep it for the empty case (ENOENT / bad cwd).
-      const note = err.killed
-        ? `timed out after ${SHELL_TIMEOUT_MS / 1000} s`
-        : (stdout || stderr ? '' : err.message);
-      return { code, stdout, stderr, note };
-    }
-  };
   // Background jobs cannot outlive this process, so they are process-local on
   // purpose (the tool tells the model exactly that).
   const jobsBySession = new Map<string, Map<string, JobRecord>>();
@@ -1560,19 +1498,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
 
     if (name === 'bash') {
-      const cmd = typeof argsObj.command === 'string' ? argsObj.command : '';
-      if (!cmd.trim()) return 'ERROR: missing command';
-      if (argsObj.background === true) {
-        if (!sessionId) return 'ERROR: background jobs need a session';
-        const id = startJob(
-          { workspace: cwd, state: {}, jobs: jobsFor(sessionId), sessionId },
-          cmd,
-        );
-        return `OK: started ${id} (use job_output to read it)`;
-      }
-      const r = await runShell(cmd, { cwd });
-      const body = `exit ${r.code}\n${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ''}`;
-      return limitOutput(r.note ? `${body}\n${r.note}` : body);
+      // Migrated to the registry (full DSH contract); the core-chain pre-check
+      // above resolves it before this line is ever reached.
     }
     if (name === 'read') {
       // Migrated to the registry (full DSH contract); the core-chain pre-check

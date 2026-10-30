@@ -24,6 +24,7 @@ import { registerTool, renderToolValue, resolveTool } from './toolRegistry.js';
 import { defineTool, textBlock, toolSpecFrom } from './toolSchema.js';
 import { editDiff, globToRegExp, resolveReadPath, walkFiles, workspaceRelative } from './fsWalk.js';
 import { confineWritePath, limitOutput } from './toolGuard.js';
+import { runShell } from './shellRun.js';
 import { snapshotFile } from './fileHistory.js';
 import { lspQuery, type LspOperation } from './lsp.js';
 import { browserClose, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
@@ -1526,3 +1527,30 @@ const editTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(editTool, { plane: 'agent' }));
+
+/** `bash` — run one shell command (optionally as a background job). */
+const bashTool = defineTool<string>({
+  name: 'bash',
+  description:
+    'Run one shell command in the working directory. Set `background: true` to start it '
+    + 'as a job and read it later with job_output.',
+  parameters: {
+    command: { type: 'string', description: 'The command line.' },
+    background: { type: 'boolean', description: 'Run as a background job.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const cmd = typeof args.command === 'string' ? args.command : '';
+    if (!cmd.trim()) throw new Error('missing command');
+    if (args.background === true) {
+      const id = startJob(host, cmd);
+      return `OK: started ${id} (use job_output to read it)`;
+    }
+    const r = await runShell(cmd, { cwd: host.sessionCwd ?? host.workspace });
+    const body = `exit ${r.code}\n${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ''}`;
+    return limitOutput(r.note ? `${body}\n${r.note}` : body);
+  },
+});
+
+registerTool(toolSpecFrom(bashTool, { plane: 'agent' }));
