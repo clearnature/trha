@@ -289,10 +289,8 @@ export async function runExtraTool(
     return `teammate ${r.id} finished:\n${clip(r.reply)}`;
   }
   if (name === 'team_task_get') {
-    if (!host.agents) return 'ERROR: team tasks are not available in this host';
-    const id = typeof args.id === 'string' ? args.id : '';
-    const t = host.agents.teamTasks().find(x => x.id === id);
-    return t ? JSON.stringify(t) : `ERROR: no team task ${id}`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   // ── sessions ─────────────────────────────────────────────────────────
@@ -653,3 +651,21 @@ const workingDirectoryTool = defineTool<{ cwd: string }>({
 });
 
 registerTool(toolSpecFrom(workingDirectoryTool, { plane: 'agent' }));
+
+/** `team_task_get` — read one shared team task. */
+const teamTaskGetTool = defineTool<string>({
+  name: 'team_task_get',
+  description: 'Read one shared team task by id.',
+  parameters: { id: { type: 'string', description: 'Task id from team_task_list.' } },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    if (!host.agents) throw new Error('team tasks are not available in this host');
+    const id = typeof args.id === 'string' ? args.id : '';
+    const t = host.agents.teamTasks().find(x => x.id === id);
+    if (!t) throw new Error(`no team task ${id}`);
+    return JSON.stringify(t);
+  },
+});
+
+registerTool(toolSpecFrom(teamTaskGetTool, { plane: 'host' }));

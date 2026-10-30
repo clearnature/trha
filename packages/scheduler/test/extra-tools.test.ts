@@ -142,7 +142,9 @@ describe('session queries', () => {
   it('reads one team task', async () => {
     const h = makeHost({ agents });
     expect(await runExtraTool('team_task_get', { id: 't1' }, h)).toContain('"subject":"one"');
-    expect(await runExtraTool('team_task_get', { id: 't9' }, h)).toMatch(/no team task/);
+    // Migrated tools throw instead of returning `ERROR: …`.
+    await expect(runExtraTool('team_task_get', { id: 't9' }, h))
+      .rejects.toThrow(/no team task/);
   });
 
   it('searches transcripts and traces one', async () => {
@@ -413,7 +415,8 @@ describe('closing the remaining branches', () => {
 
   it('team tools explain a host without agent hooks', async () => {
     const bare = makeHost();
-    expect(await runExtraTool('team_task_get', { id: 't1' }, bare)).toMatch(/not available|no team task/);
+    await expect(runExtraTool('team_task_get', { id: 't1' }, bare))
+      .rejects.toThrow(/not available/);
     expect(await runExtraTool('spawn_teammate', { task: 'x' }, bare)).toMatch(/not available/);
     expect(await runExtraTool('wait_agent', { id: 'x' }, bare)).toMatch(/no agent/);
   });
