@@ -297,7 +297,7 @@ anthropicRequestBody model msgs specs streaming mthinking =
          ++ [ "thinking" .= object [ "type" .= t ] | Just t <- [mthinking] ]
          ++ [ "thinking" .= object [ "type" .= ("disabled" :: Text) ]
             | needsThinkingDisabled, isNothing mthinking ]
-         ++ [ "tools"  .= map anthropicTool specs | not (null specs) ]
+         ++ [ "tools"  .= anthropicTools specs | not (null specs) ]
   where
     needsThinkingDisabled = any legacyToolTurn msgs
     legacyToolTurn m = case m of
@@ -644,6 +644,23 @@ toAnthropicMessages msgs = (T.intercalate "\n\n" systems, go msgs)
     thinkingBlock _ = []
 
 -- | A tool as Anthropic declares it.
+-- | Anthropic's tools array, with the provider's own constraint applied.
+--
+-- DeepSeek's anthropic-compatible endpoint rejects a request where *every* tool
+-- carries @defer_loading: true@:
+--
+-- > tools: at least one tool must have defer_loading=false.
+-- > All tools cannot be deferred.
+--
+-- When that happens we undefer the first tool instead of sending a request we
+-- already know is invalid; the loss is one eager declaration, not a failed turn.
+anthropicTools :: [ToolSpec] -> [Value]
+anthropicTools [] = []
+anthropicTools specs@(first : rest)
+  | all tsDeferLoading specs =
+      anthropicTool first { tsDeferLoading = False } : map anthropicTool rest
+  | otherwise = map anthropicTool specs
+
 anthropicTool :: ToolSpec -> Value
 anthropicTool s = object $
   [ "name"         .= tsName s
