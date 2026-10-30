@@ -316,6 +316,13 @@ responsesRequestBody model msgs specs streaming mprev =
        ++ [ "tools" .= map responsesTool specs | not (null specs) ]
 
 -- | Anthropic's streaming caller: SSE with named events.
+-- | DeepSeek's beta gate for mid-conversation tool changes. DSH names the same
+-- value in @llm-deepseek/src/messages-api.ts@ (@MESSAGES_TOOL_CHANGES_BETA@) and
+-- only sends the header when a tool actually asks for deferred loading, which is
+-- what this guards.
+toolChangesBeta :: BS.ByteString
+toolChangesBeta = "mid-conversation-tool-changes-2026-07-01"
+
 anthropicStream :: Text -> Text -> Text -> [Header] -> Maybe Text -> IO StreamCall
 anthropicStream baseUrl apiKey model extraHs mthinking = do
   let url = T.unpack (rootOf baseUrl) ++ "/v1/messages"
@@ -327,7 +334,10 @@ anthropicStream baseUrl apiKey model extraHs mthinking = do
     pending <- newIORef (Nothing :: Maybe (Int, Text, Text, Text))
     thinkingRef <- newIORef T.empty
     sigRef <- newIORef (Nothing :: Maybe Text)
-    result <- LStream.streamPostSse url headers (anthropicRequestBody model msgs specs True mthinking) $ \v -> do
+    -- The beta header is only meaningful when something is actually deferred;
+    -- sending it unconditionally would opt every request into a beta surface.
+    let hdrs = headers ++ [("anthropic-beta", toolChangesBeta) | any tsDeferLoading specs]
+    result <- LStream.streamPostSse url hdrs (anthropicRequestBody model msgs specs True mthinking) $ \v -> do
       case anthropicEvent v of
         Just (Left txt) -> onEvent (ChunkDelta txt)
         Just (Right u)  -> onEvent (ChunkDone u)
