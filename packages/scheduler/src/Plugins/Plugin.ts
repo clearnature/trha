@@ -211,6 +211,14 @@ export class PluginManager {
         return release;
       },
     };
+    // DSH exposes injected services as **properties** (`ctx.workingDirectory`),
+    // not only through `ctx.service('…')`. Mount them before activation so a
+    // `dsh-tool-*` shaped plugin runs unchanged.
+    const ctxWithServices = ctx as PluginContext & Record<string, unknown>;
+    for (const dep of plugin.inject ?? []) {
+      ctxWithServices[dep] = this.services.require(dep);
+    }
+
     // DSH's `apply(ctx)` is the same lifecycle step as `activate`; accept either
     // form so a `dsh-tool-*` shaped module loads unchanged.
     const activate = plugin.activate ?? plugin.apply;
