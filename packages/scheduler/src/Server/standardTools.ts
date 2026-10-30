@@ -426,9 +426,8 @@ export async function runStandardTool(
   }
 
   if (name === 'exit_plan_mode') {
-    // Reuses the approval gate instead of inventing a second plan mechanism.
-    const plan = typeof args.plan === 'string' ? args.plan : '';
-    return `WAITING_FOR_APPROVAL: ${plan || 'exit plan mode'}`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
 
@@ -875,3 +874,21 @@ const readImageTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(readImageTool, { plane: 'agent' }));
+
+/** `exit_plan_mode` — hand a plan to the approval gate. */
+const exitPlanModeTool = defineTool<string>({
+  name: 'exit_plan_mode',
+  description:
+    'Submit the current plan for approval. This reuses the approval gate rather '
+    + 'than a second plan mechanism, and answers WAITING_FOR_APPROVAL.',
+  parameters: {
+    plan: { type: 'string', description: 'The plan markdown, starting with a # title.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args) {
+    const plan = typeof args.plan === 'string' ? args.plan : '';
+    return `WAITING_FOR_APPROVAL: ${plan || 'exit plan mode'}`;
+  },
+});
+
+registerTool(toolSpecFrom(exitPlanModeTool, { plane: 'agent' }));
