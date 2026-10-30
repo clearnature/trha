@@ -1238,6 +1238,17 @@ const workflowTool = defineTool<string>({
     },
   },
   presentCall: args => ({ card: 'generic', title: `workflow ${oneLine(args.name ?? args.steps)}` }),
+  // The tool returns a JSON array of step outcomes; the distilled fact is how
+  // many steps ran.
+  presentResult: (_args, result) => {
+    const text = String(result ?? '');
+    let steps = 0;
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (Array.isArray(parsed)) steps = parsed.length;
+    } catch { /* not JSON: fall through to the generic label */ }
+    return { card: 'generic' as const, title: steps ? `${steps} steps` : 'workflow done' };
+  },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
