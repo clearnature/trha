@@ -1494,11 +1494,27 @@ const readTool = defineTool<string>({
 registerTool(toolSpecFrom(readTool, { plane: 'agent' }));
 
 /** Shared execute body for `write` and `append_file`. */
+/**
+ * What `write` / `append_file` produce — DSH's `tool-fs/write` shape, which
+ * carries the path and byte count instead of a pre-formatted string.
+ */
+export interface WriteResult {
+  /** Absolute path written. */
+  path: string;
+  /** Characters written (UTF-16 units, same number the old string reported). */
+  bytes: number;
+  mode: 'write' | 'append';
+}
+
+/** Reproduce the pre-refactor text byte for byte. */
+const renderWrite = (v: WriteResult): string =>
+  `OK: ${v.mode === 'write' ? 'write' : 'append_file'} -> ${v.path} (${v.bytes} chars)`;
+
 async function writeFileExecute(
   args: Record<string, unknown>,
   exec: { host: unknown },
   mode: 'write' | 'append',
-): Promise<string> {
+): Promise<WriteResult> {
   const host = exec.host as StandardToolHost;
   const base = host.sessionCwd ?? host.workspace;
   if (typeof args.path !== 'string') throw new Error('path must be a string');
@@ -1524,11 +1540,11 @@ async function writeFileExecute(
     await snapshotFile(target);
     await appendFile(target, content, 'utf8');
   }
-  return `OK: ${mode === 'write' ? 'write' : 'append_file'} -> ${target} (${content.length} chars)`;
+  return { path: target, bytes: content.length, mode };
 }
 
 /** `write` — create or replace a file inside the workspace. */
-const writeTool = defineTool<string>({
+const writeTool = defineTool<WriteResult>({
   name: 'write',
   description:
     'Create or replace a file inside the workspace. Relative paths resolve against '
@@ -1537,19 +1553,32 @@ const writeTool = defineTool<string>({
     path: { type: 'string', description: 'File path.' },
     content: { type: 'string', description: 'Full file contents.' },
   },
-  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  output: {
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        path: { type: 'string' },
+        bytes: { type: 'number' },
+        mode: { type: 'string' },
+      },
+    },
+    render: (_args, value) => [textBlock(renderWrite(value))],
+    // DSH's tool-fs/write exposes the written path the same way.
+    presentationMeta: (_args, value) => ({ path: value.path }),
+  },
   presentCall: args => ({ card: 'diff', title: `write ${oneLine(args.path)}`, rawInput: args.path }),
   // DSH's `tool-fs/write` presents its result too; here the useful summary is
   // how much landed on disk.
   presentResult: (args, result) => {
-    const m = /\((\d+) chars\)/.exec(String(result ?? ''));
-    return { card: 'diff' as const, title: `wrote ${oneLine(args.path)}${m ? ` · ${m[1]}` : ''}` };
+    const v = result as WriteResult;
+    return { card: 'diff' as const, title: `wrote ${oneLine(args.path)}${v?.bytes ? ` · ${v.bytes}` : ''}` };
   },
   execute: (args, exec) => writeFileExecute(args, exec, 'write'),
 });
 
 /** `append_file` — append to a file inside the workspace. */
-const appendFileTool = defineTool<string>({
+const appendFileTool = defineTool<WriteResult>({
   name: 'append_file',
   description: 'Append text to a file inside the workspace.',
   parameters: {
@@ -1557,7 +1586,20 @@ const appendFileTool = defineTool<string>({
     content: { type: 'string', description: 'Text to append.' },
   },
   presentCall: args => ({ card: 'diff', title: `append ${oneLine(args.path)}`, rawInput: args.path }),
-  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  output: {
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        path: { type: 'string' },
+        bytes: { type: 'number' },
+        mode: { type: 'string' },
+      },
+    },
+    render: (_args, value) => [textBlock(renderWrite(value))],
+    // DSH's tool-fs/write exposes the written path the same way.
+    presentationMeta: (_args, value) => ({ path: value.path }),
+  },
   execute: (args, exec) => writeFileExecute(args, exec, 'append'),
 });
 
