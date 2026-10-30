@@ -408,58 +408,22 @@ export async function runExtraTool(
 
   // ── stagehand aliases (same CDP browser as browser_*) ────────────────
   if (name === 'stagehand_navigate') {
-    const url = typeof args.url === 'string' ? args.url : '';
-    if (!url) return 'ERROR: url is required';
-    try {
-      const page = await browserNavigate(host.sessionId, url);
-      return clip(`title: ${page.title}\nurl: ${page.url}\n\n${page.text}`);
-    } catch (e) { return `ERROR: ${(e as Error).message}`; }
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
   if (name === 'stagehand_extract') {
-    try { return clip(await browserExtract(host.sessionId, typeof args.selector === 'string' ? args.selector : undefined)); }
-    catch (e) { return `ERROR: ${(e as Error).message}`; }
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
   if (name === 'stagehand_screenshot') {
-    try { return `OK: screenshot -> ${await browserScreenshot(host.sessionId, host.workspace, typeof args.path === 'string' ? args.path : undefined)}`; }
-    catch (e) { return `ERROR: ${(e as Error).message}`; }
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
   if (name === 'stagehand_tabs') {
-    try {
-      // Ask the page, don't navigate: 'about:blank' is not http(s) and would be
-      // rejected by the navigate guard.
-      const href = await browserEvaluate(host.sessionId, 'location.href');
-      const title = await browserEvaluate(host.sessionId, 'document.title');
-      return `single-tab mode; current url: ${href}\ntitle: ${title}`;
-    } catch (e) { return `ERROR: ${(e as Error).message}`; }
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
   if (name === 'stagehand_observe') {
-    // No planner: report the interactive elements, which is what an observe
-    // step needs to hand back to a model.
-    try {
-      const text = await browserExtract(host.sessionId, 'a,button,input,select,textarea');
-      return clip(text || '(no interactive elements)');
-    } catch (e) { return `ERROR: ${(e as Error).message}`; }
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
   if (name === 'stagehand_act') {
-    const action = typeof args.action === 'string' ? args.action : '';
-    const selector = typeof args.selector === 'string' ? args.selector : '';
-    const value = typeof args.value === 'string' ? args.value : '';
-    if (!action || !selector) return 'ERROR: action and selector are required';
-    try {
-      // Drive the page through the same browser session via a tiny JS shim.
-      if (typeof args.url === 'string') await browserNavigate(host.sessionId, args.url);
-      const js = action === 'click'
-        ? `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return 'not found'; el.click(); return 'clicked'; })()`
-        : action === 'type'
-          // A form control takes `value`, anything else takes textContent; both
-          // get an input event so frameworks notice either way.
-          ? `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return 'not found';`
-            + ` if ('value' in el) { el.value = ${JSON.stringify(value)}; } else { el.textContent = ${JSON.stringify(value)}; }`
-            + ` el.dispatchEvent(new Event('input', { bubbles: true })); return 'typed'; })()`
-          : null;
-      if (!js) return `ERROR: unsupported action "${action}" (click|type)`;
-      return await browserEvaluate(host.sessionId, js);
-    } catch (e) { return `ERROR: ${(e as Error).message}`; }
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
 
   // ── ralph loop ───────────────────────────────────────────────────────
@@ -863,3 +827,121 @@ const ralphTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(ralphTool, { plane: 'agent' }));
+
+/** `stagehand_navigate` — navigate the page (alias of `browser_navigate`). */
+const stagehandNavigateTool = defineTool<string>({
+  name: 'stagehand_navigate',
+  description: 'Navigate the session\'s browser to a URL (stagehand alias).',
+  parameters: { url: { type: 'string', description: 'Absolute http(s) URL.' } },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const url = typeof args.url === 'string' ? args.url : '';
+    if (!url) throw new Error('url is required');
+    const page = await browserNavigate(host.sessionId, url);
+    return clip(`title: ${page.title}\nurl: ${page.url}\n\n${page.text}`);
+  },
+});
+
+/** `stagehand_extract` — text of the current page (alias of `browser_extract`). */
+const stagehandExtractTool = defineTool<string>({
+  name: 'stagehand_extract',
+  description: 'Extract text from the current page (stagehand alias).',
+  parameters: { selector: { type: 'string', description: 'CSS selector to narrow to.' } },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    return clip(await browserExtract(
+      host.sessionId,
+      typeof args.selector === 'string' ? args.selector : undefined,
+    ));
+  },
+});
+
+/** `stagehand_screenshot` — capture the page (alias of `browser_screenshot`). */
+const stagehandScreenshotTool = defineTool<string>({
+  name: 'stagehand_screenshot',
+  description: 'Screenshot the current page (stagehand alias).',
+  parameters: { path: { type: 'string', description: 'Target file.' } },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const file = await browserScreenshot(
+      host.sessionId,
+      host.workspace,
+      typeof args.path === 'string' ? args.path : undefined,
+    );
+    return `OK: screenshot -> ${file}`;
+  },
+});
+
+/** `stagehand_tabs` — current page identity (single-tab mode). */
+const stagehandTabsTool = defineTool<string>({
+  name: 'stagehand_tabs',
+  description: 'Report the current page URL and title (single-tab mode).',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as ExtraHost;
+    // Ask the page, don't navigate: 'about:blank' is not http(s) and would be
+    // rejected by the navigate guard.
+    const href = await browserEvaluate(host.sessionId, 'location.href');
+    const title = await browserEvaluate(host.sessionId, 'document.title');
+    return `single-tab mode; current url: ${href}\ntitle: ${title}`;
+  },
+});
+
+/** `stagehand_observe` — the interactive elements on the page. */
+const stagehandObserveTool = defineTool<string>({
+  name: 'stagehand_observe',
+  description: 'List the page\'s interactive elements (links, buttons, inputs).',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as ExtraHost;
+    // No planner: report the interactive elements, which is what an observe
+    // step needs to hand back to a model.
+    const text = await browserExtract(host.sessionId, 'a,button,input,select,textarea');
+    return clip(text || '(no interactive elements)');
+  },
+});
+
+/** `stagehand_act` — click or type through a small JS shim. */
+const stagehandActTool = defineTool<string>({
+  name: 'stagehand_act',
+  description: 'Act on the page: click a selector, or type a value into it.',
+  parameters: {
+    action: { type: 'string', enum: ['click', 'type'] },
+    selector: { type: 'string', description: 'CSS selector to act on.' },
+    value: { type: 'string', description: 'Text to type (for action=type).' },
+    url: { type: 'string', description: 'Navigate first, when given.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const action = typeof args.action === 'string' ? args.action : '';
+    const selector = typeof args.selector === 'string' ? args.selector : '';
+    const value = typeof args.value === 'string' ? args.value : '';
+    if (!action || !selector) throw new Error('action and selector are required');
+    // Drive the page through the same browser session via a tiny JS shim.
+    if (typeof args.url === 'string') await browserNavigate(host.sessionId, args.url);
+    const js = action === 'click'
+      ? `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return 'not found'; el.click(); return 'clicked'; })()`
+      : action === 'type'
+        // A form control takes `value`, anything else takes textContent; both
+        // get an input event so frameworks notice either way.
+        ? `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return 'not found';`
+          + ` if ('value' in el) { el.value = ${JSON.stringify(value)}; } else { el.textContent = ${JSON.stringify(value)}; }`
+          + ` el.dispatchEvent(new Event('input', { bubbles: true })); return 'typed'; })()`
+        : null;
+    if (!js) throw new Error(`unsupported action "${action}" (click|type)`);
+    return await browserEvaluate(host.sessionId, js);
+  },
+});
+
+registerTool(toolSpecFrom(stagehandNavigateTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(stagehandExtractTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(stagehandScreenshotTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(stagehandTabsTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(stagehandObserveTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(stagehandActTool, { plane: 'agent' }));

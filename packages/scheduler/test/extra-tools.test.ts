@@ -352,8 +352,9 @@ describe('remaining branches', () => {
   });
 
   it('rejects an unknown stagehand action', async () => {
-    const out = await runExtraTool('stagehand_act', { action: 'hover', selector: '#x' }, host);
-    expect(out).toMatch(/unsupported action/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('stagehand_act', { action: 'hover', selector: '#x' }, host))
+      .rejects.toThrow(/unsupported action/);
   });
 });
 
