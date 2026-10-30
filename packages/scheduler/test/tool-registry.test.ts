@@ -82,14 +82,23 @@ describe('tool origin (builtin vs external)', () => {
 });
 
 describe('preset filtering (end to end)', () => {
-  it('minimal exposes only the core file/shell tools', async () => {
+  it('minimal exposes the fs tools plus a persistent shell (upstream shape)', async () => {
     // Importing the declarations is what registers the plane/preset metadata.
     await import('../src/Server/toolDeclarations.js');
     const names = toolNamesForPreset('minimal');
-    for (const n of ['bash', 'pwsh', 'read', 'write', 'edit', 'grep', 'glob', 'ask_user_question']) {
+    // DSH's `minimal` = `tool-fs` + `persistent-shell`: no one-shot `bash`, no
+    // web, no search, no ask-user.
+    for (const n of [
+      'read', 'write', 'edit',
+      'terminal_open', 'terminal_read', 'terminal_send',
+      'terminal_signal', 'terminal_close', 'terminal_list',
+    ]) {
       expect(names.has(n)).toBe(true);
     }
-    for (const n of ['web_fetch', 'web_search', 'run_code', 'todo_write', 'subagent']) {
+    for (const n of [
+      'bash', 'pwsh', 'grep', 'glob', 'ask_user_question',
+      'web_fetch', 'web_search', 'run_code', 'todo_write', 'subagent',
+    ]) {
       expect(names.has(n)).toBe(false);
     }
   });

@@ -16,8 +16,13 @@ import { declareTool, type ToolPlane } from './toolRegistry.js';
 
 type Preset = string;
 
-/** Presets that get the "always available" file/shell core. */
-const CORE: Preset[] = ['standard', 'ptc', 'minimal'];
+/** `standard` / `ptc`: the one-shot file + shell core. */
+const CORE: Preset[] = ['standard', 'ptc'];
+/**
+ * DSH's `minimal` mounts only `tool-fs` + `persistent-shell`: file tools and a
+ * long-lived shell, no one-shot `bash`, no web, no search, no ask-user.
+ */
+const MINIMAL: Preset[] = ['minimal'];
 /** Presets that get the full agent toolset. */
 const FULL: Preset[] = ['standard', 'ptc'];
 /** Only the standard preset (ptc replaces these with `run_code`). */
@@ -35,9 +40,9 @@ const rows: Row[] = [
   // ── agent-plane: file / shell core (every preset except cordis) ──────
   { name: 'bash', plane: 'agent', presets: CORE },
   { name: 'pwsh', plane: 'agent', presets: CORE },
-  { name: 'read', plane: 'agent', presets: CORE },
-  { name: 'write', plane: 'agent', presets: CORE },
-  { name: 'edit', plane: 'agent', presets: CORE },
+  { name: 'read', plane: 'agent', presets: [...CORE, ...MINIMAL] },
+  { name: 'write', plane: 'agent', presets: [...CORE, ...MINIMAL] },
+  { name: 'edit', plane: 'agent', presets: [...CORE, ...MINIMAL] },
   { name: 'grep', plane: 'agent', presets: CORE },
   { name: 'glob', plane: 'agent', presets: CORE },
   { name: 'ask_user_question', plane: 'agent', presets: CORE },
@@ -66,12 +71,12 @@ const rows: Row[] = [
   { name: 'run_code', plane: 'agent', presets: PTC },
 
   // ── agent-plane: terminals ──────────────────────────────────────────
-  { name: 'terminal_open', plane: 'agent', presets: FULL },
-  { name: 'terminal_read', plane: 'agent', presets: FULL },
-  { name: 'terminal_send', plane: 'agent', presets: FULL },
-  { name: 'terminal_signal', plane: 'agent', presets: FULL },
-  { name: 'terminal_close', plane: 'agent', presets: FULL },
-  { name: 'terminal_list', plane: 'agent', presets: FULL },
+  { name: 'terminal_open', plane: 'agent', presets: [...FULL, ...MINIMAL] },
+  { name: 'terminal_read', plane: 'agent', presets: [...FULL, ...MINIMAL] },
+  { name: 'terminal_send', plane: 'agent', presets: [...FULL, ...MINIMAL] },
+  { name: 'terminal_signal', plane: 'agent', presets: [...FULL, ...MINIMAL] },
+  { name: 'terminal_close', plane: 'agent', presets: [...FULL, ...MINIMAL] },
+  { name: 'terminal_list', plane: 'agent', presets: [...FULL, ...MINIMAL] },
 
   // ── agent-plane: browser / stagehand ────────────────────────────────
   { name: 'browser_navigate', plane: 'agent', presets: FULL },
