@@ -34,6 +34,8 @@ wr root scratch extra net limits = WritableRoot
   , wrReadOnly = map absP extra
   , wrNetwork = net
   , wrLimits = limits
+  , wrDenyReadDirs = Nothing
+  , wrDenyReadFiles = Nothing
   }
 
 scopeFor :: Policy -> Scope
@@ -130,6 +132,43 @@ sandboxSpec = describe "Infrastructure.Sandbox" $ do
         (WorkspaceWrite (wr "/ws" "/ws/scratch" ["/usr"] NetworkOff defaultResourceLimits))
         (ReadOnly (ro ["/ws", "/usr"] NetworkOff))
         `shouldSatisfy` isJust
+
+    -- §5.7.5 read.deny inheritance: the *masking set* is part of the policy,
+    -- so a child that leaves it unset keeps the parent's override instead of
+    -- silently restoring the shipped defaults (fail-open via narrowing).
+    it "keeps the parent's deny-read override when the child leaves it unset" $ do
+      let parent = WorkspaceWrite (wr "/ws" "/ws/scratch" [] NetworkOff defaultResourceLimits)
+            { wrDenyReadDirs = Just [".ssh"] }
+          child = WorkspaceWrite (wr "/ws/sub" "/ws/sub/scratch" [] NetworkOff defaultResourceLimits)
+      case narrow parent child of
+        Nothing -> expectationFailure "narrowing should succeed"
+        Just (WorkspaceWrite c) -> wrDenyReadDirs c `shouldBe` Just [".ssh"]
+        Just other -> expectationFailure ("expected workspace-write, got " ++ show other)
+
+    it "lets the child add its own narrower deny-read override" $ do
+      let parent = WorkspaceWrite (wr "/ws" "/ws/scratch" [] NetworkOff defaultResourceLimits)
+            { wrDenyReadDirs = Just [".ssh", ".aws"] }
+          child = WorkspaceWrite (wr "/ws/sub" "/ws/sub/scratch" [] NetworkOff defaultResourceLimits)
+            { wrDenyReadDirs = Just [".ssh"] }
+      case narrow parent child of
+        Nothing -> expectationFailure "narrowing should succeed"
+        Just (WorkspaceWrite c) -> do
+          wrDenyReadDirs c `shouldBe` Just [".ssh"]
+          effectiveDenyDirs c `shouldBe` [".ssh"]
+        Just other -> expectationFailure ("expected workspace-write, got " ++ show other)
+
+    -- Widening the *masking set* back to the shipped defaults is a fail-open:
+    -- a child that drops an entry the parent masked must be rejected outright.
+    it "rejects a child that unmasks a directory the parent masks" $ do
+      let parent = WorkspaceWrite (wr "/ws" "/ws/scratch" [] NetworkOff defaultResourceLimits)
+            { wrDenyReadDirs = Just [".ssh"] }
+          widening = WorkspaceWrite (wr "/ws/sub" "/ws/sub/scratch" [] NetworkOff defaultResourceLimits)
+            { wrDenyReadDirs = Just [".ssh", ".aws"] }
+      narrow parent widening `shouldBe` Nothing
+
+    it "falls back to the shipped defaults when nothing overrides" $
+      effectiveDenyDirs (wr "/ws" "/ws/scratch" [] NetworkOff defaultResourceLimits)
+        `shouldBe` defaultDenyReads
 
     it "property: a narrowed writable root stays under its parent" $
       property $ \(NonEmpty parts) ->

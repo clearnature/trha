@@ -46,6 +46,34 @@ configSpec = describe "sandbox config (T1.8 wiring)" $ do
       Right cfg' -> scEnabled cfg' `shouldBe` False
     cleanup path
 
+  -- §5.7.5 read.deny wiring (2026-10-30): an explicit list replaces the
+  -- shipped masks; a written-back Nothing must survive as `null`, not fail
+  -- the strict parser.
+  it "round-trips an explicit denyReadDirs override and keeps null as defaults" $ do
+    path <- tempFile "denyreads"
+    let base = scDefaults defaultSandboxConfig
+        overridden = defaultSandboxConfig
+          { scDefaults = base { dcDenyReadDirs = Just [".ssh", ".config/gh"] } }
+    saveSandboxConfig path overridden
+    loadedO <- loadSandboxConfig path
+    case loadedO of
+      Left e -> expectationFailure (show e)
+      Right cfg' -> dcDenyReadDirs (scDefaults cfg') `shouldBe` Just [".ssh", ".config/gh"]
+    -- An empty explicit list is *not* the same as absent: it un-masks.
+    saveSandboxConfig path (defaultSandboxConfig
+      { scDefaults = base { dcDenyReadDirs = Just [] } })
+    loadedE <- loadSandboxConfig path
+    case loadedE of
+      Left e -> expectationFailure (show e)
+      Right cfg' -> dcDenyReadDirs (scDefaults cfg') `shouldBe` Just []
+    -- Absent/null round-trips back to Nothing (= shipped defaults in force).
+    saveSandboxConfig path defaultSandboxConfig
+    loadedN <- loadSandboxConfig path
+    case loadedN of
+      Left e -> expectationFailure (T.unpack ("null must parse as absent: " <> e))
+      Right cfg' -> dcDenyReadDirs (scDefaults cfg') `shouldBe` Nothing
+    cleanup path
+
 tempFile :: String -> IO FilePath
 tempFile tag = do
   tmp <- getTemporaryDirectory

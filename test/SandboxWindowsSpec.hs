@@ -93,6 +93,8 @@ writeScope = scopeRoot (ScopeId "w")
     , wrReadOnly = []
     , wrNetwork = NetworkOff
     , wrLimits = defaultResourceLimits
+    , wrDenyReadDirs = Nothing
+  , wrDenyReadFiles = Nothing
     })
   (ExclusivePath (AbsolutePath "C:\\scratch"))
 
@@ -110,6 +112,8 @@ proxyPolicy = WorkspaceWrite WritableRoot
   , wrReadOnly = []
   , wrNetwork = NetworkProxy "http://127.0.0.1:10808"
   , wrLimits = defaultResourceLimits
+  , wrDenyReadDirs = Nothing
+  , wrDenyReadFiles = Nothing
   }
 
 contains :: Text -> [Text] -> Bool

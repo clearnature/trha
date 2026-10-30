@@ -103,6 +103,8 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
                   , wrReadOnly = []
                   , wrNetwork = NetworkOff
                   , wrLimits = defaultResourceLimits { rlMemoryMiB = 256 }
+                  , wrDenyReadDirs = Nothing
+          , wrDenyReadFiles = Nothing
                   } }
             request = LaunchRequest
               { lrArgv = ["bash", "-c", "ulimit -v"]
@@ -244,6 +246,8 @@ probeScope ws = scopeRoot (ScopeId "probe") policy (ExclusivePath (AbsolutePath 
       , wrReadOnly = []
       , wrNetwork = NetworkOff
       , wrLimits = defaultResourceLimits
+      , wrDenyReadDirs = Nothing
+  , wrDenyReadFiles = Nothing
       }
 
 isPartialEnforcement :: Enforcement -> Bool

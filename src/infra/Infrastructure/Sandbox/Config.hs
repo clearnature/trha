@@ -53,6 +53,12 @@ data DefaultsConfig = DefaultsConfig
   , dcReadonlyRoots :: [FilePath]
   , dcEnvAllow      :: [Text]
   , dcScratch       :: FilePath
+  , dcDenyReadDirs  :: Maybe [Text]
+    -- ^ §5.7.5 `read.deny`: home-relative credential directories to mask
+    -- (empty tmpfs). 'Nothing' keeps the shipped 'defaultDenyReads'; an
+    -- explicit list — including an empty one — replaces it.
+  , dcDenyReadFiles :: Maybe [Text]
+    -- ^ Credential files masked by binding @/dev/null@ over them.
   } deriving (Eq, Show)
 
 data ScopeConfig = ScopeConfig
@@ -79,6 +85,8 @@ defaultSandboxConfig = SandboxConfig
       , dcReadonlyRoots = ["~/.cabal", "~/.ghcup", "/usr", "/nix/store"]
       , dcEnvAllow = ["PATH", "HOME", "LANG", "TERM"]
       , dcScratch = "~/.trha/sandbox-scratch"
+      , dcDenyReadDirs = Nothing
+      , dcDenyReadFiles = Nothing
       }
   , scScopes = [("subagent", ScopeConfig "read-only" "process")]
   }
@@ -114,6 +122,8 @@ defaultsJson d = object
       ]
   , "readonlyRoots" .= dcReadonlyRoots d
   , "envAllow" .= dcEnvAllow d
+  , "denyReadDirs" .= dcDenyReadDirs d
+  , "denyReadFiles" .= dcDenyReadFiles d
   ]
 
 networkSpecText :: NetworkSpec -> Text
@@ -164,6 +174,8 @@ parseDefaults (Object o) = do
   roots <- optionalStringList o "readonlyRoots" (dcReadonlyRoots base)
   envAllow <- optionalTextList o "envAllow" (dcEnvAllow base)
   scratch <- optionalText o "scratch" (T.pack (dcScratch base))
+  denyDirs <- optionalNullableList o "denyReadDirs"
+  denyFiles <- optionalNullableList o "denyReadFiles"
   pure DefaultsConfig
     { dcPolicy = policy
     , dcIsolation = isolation
@@ -172,8 +184,24 @@ parseDefaults (Object o) = do
     , dcReadonlyRoots = roots
     , dcEnvAllow = envAllow
     , dcScratch = T.unpack scratch
+    , dcDenyReadDirs = denyDirs
+    , dcDenyReadFiles = denyFiles
     }
 parseDefaults _ = Left "defaults must be an object"
+
+-- | An absent key is 'Nothing' (keep shipped defaults); an explicit list —
+-- even @[]@ — is @Just@, so a config can genuinely un-mask paths it needs.
+-- @null@ is the YAML encoding of an absent 'Maybe' list written back by
+-- 'saveSandboxConfig'; it round-trips to 'Nothing'.
+optionalNullableList :: KM.KeyMap Value -> Text -> Either Text (Maybe [Text])
+optionalNullableList o key = case KM.lookup (Key.fromText key) o of
+  Nothing -> Right Nothing
+  Just Null -> Right Nothing
+  Just (Array items) -> Just <$> mapM parseOne (foldr (:) [] items)
+  Just _ -> Left (key <> " must be an array of strings")
+  where
+    parseOne (String s) = Right s
+    parseOne _ = Left (key <> " must contain only strings")
 
 parseLimits :: Value -> Either Text ResourceLimits
 parseLimits (Object o) = do

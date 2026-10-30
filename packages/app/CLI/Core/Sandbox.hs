@@ -59,6 +59,11 @@ data SandboxConfigPatch = SandboxConfigPatch
   , cfgPids    :: Maybe Int
   , cfgMemory  :: Maybe Int
   , cfgWall    :: Maybe Int
+  , cfgDenyDirs  :: Maybe [Text]
+    -- ^ `--deny-dirs a,b`: replaces the masked credential directories.
+    -- `--deny-dirs ""` is an explicit empty list (un-masks everything) —
+    -- distinct from not passing the flag at all, which keeps the current value.
+  , cfgDenyFiles :: Maybe [Text]
   } deriving (Eq, Show)
 
 sandboxActionParser :: Parser SandboxAction
@@ -119,11 +124,18 @@ sandboxActionParser = subparser
             <*> optional (option auto (long "memory-mib" <> metavar "MiB"
                   <> help "RLIMIT_AS in MiB (0 = no limit; keep 0 for builds)"))
             <*> optional (option auto (long "wall-ms" <> metavar "MS"
-                  <> help "default wall timeout per exec")))
+                  <> help "default wall timeout per exec"))
+            <*> optional (option (eitherReader commaList) (long "deny-dirs" <> metavar "A,B"
+                  <> help "home-relative dirs to mask inside the sandbox (empty = no override list)"))
+            <*> optional (option (eitherReader commaList) (long "deny-files" <> metavar "A,B"
+                  <> help "home-relative files masked with /dev/null")))
       <*> switch (long "json" <> help "Machine-readable output")
     onOff "on" = Right True
     onOff "off" = Right False
     onOff other = Left ("expected on|off, got " ++ other)
+    -- "" is a valid explicit empty list; a plain split would yield [""], so
+    -- drop blank entries.
+    commaList raw = Right (filter (not . T.null) (map T.strip (T.splitOn "," (T.pack raw))))
     runnerParser = SandboxRunner
       <$> strOption (long "workspace" <> metavar "DIR" <> help "Workspace root")
       <*> strOption (long "scratch" <> metavar "DIR" <> help "Exclusive scratch directory")
@@ -238,6 +250,8 @@ runSandboxCommand action = do
               && isNothing (cfgPids patch)
               && isNothing (cfgMemory patch)
               && isNothing (cfgWall patch)
+              && isNothing (cfgDenyDirs patch)
+              && isNothing (cfgDenyFiles patch)
           cfg' = if noop then cfg else applyConfigPatch cfg patch
       when (not noop) (saveSandboxConfig path cfg')
       if asJson then emitConfigJson cfg' else printConfig cfg'
@@ -288,6 +302,8 @@ applyConfigPatch cfg' patch = cfg'
       , dcNetwork = maybe (dcNetwork base) parseNetworkSpec (cfgNetwork patch)
       , dcScratch = maybe (dcScratch base) id (cfgScratch patch)
       , dcLimits = limits
+      , dcDenyReadDirs = maybe (dcDenyReadDirs base) (Just . map T.strip . filter (not . T.null)) (cfgDenyDirs patch)
+      , dcDenyReadFiles = maybe (dcDenyReadFiles base) (Just . map T.strip . filter (not . T.null)) (cfgDenyFiles patch)
       }
   }
   where
@@ -325,6 +341,9 @@ emitConfigJson cfg' = do
         , "memoryMiB" .= rlMemoryMiB (dcLimits d)
         , "wallMs" .= rlWallMs (dcLimits d)
         ]
+      -- §5.7.5 read.deny: null = shipped defaults, list = explicit override.
+    , "denyReadDirs" .= dcDenyReadDirs d
+    , "denyReadFiles" .= dcDenyReadFiles d
     ]))
   TIO.putStrLn ""
 
@@ -338,6 +357,11 @@ printConfig cfg' = do
   TIO.putStrLn ("limits:   pids=" <> T.pack (show (rlPids (dcLimits d)))
     <> " memoryMiB=" <> T.pack (show (rlMemoryMiB (dcLimits d)))
     <> " wallMs=" <> T.pack (show (rlWallMs (dcLimits d))))
+  TIO.putStrLn ("deny:     dirs=" <> denyText (dcDenyReadDirs d)
+    <> " files=" <> denyText (dcDenyReadFiles d))
+  where
+    denyText Nothing = "<defaults>"
+    denyText (Just xs) = T.intercalate "," xs
 
 printProbe :: ProbeResult -> IO ()
 printProbe result = TIO.putStrLn $ T.intercalate "\t"
@@ -414,6 +438,11 @@ mkRunnerScope cfg home ws scratch policyName networkSpec =
         , wrReadOnly = ro
         , wrNetwork = net
         , wrLimits = dcLimits d
+          -- §5.7.5 read.deny: the config's list, if set, replaces the shipped
+          -- defaults at the *policy* level — narrow() keeps a parent override,
+          -- so subagent scopes inherit it too.
+        , wrDenyReadDirs = dcDenyReadDirs d
+        , wrDenyReadFiles = dcDenyReadFiles d
         }
 
 -- | @~@ in the config expands against the (host) home of the runner.

@@ -38,7 +38,7 @@ import Infrastructure.Sandbox.Error
 import Infrastructure.Sandbox.Plan
 import Infrastructure.Sandbox.Policy
   ( AbsolutePath(..), Enforcement(..), Policy(..), ResourceLimits(..), WritableRoot(..)
-  , defaultDenyFiles, defaultDenyReads )
+  , defaultDenyFiles, defaultDenyReads, effectiveDenyDirs, effectiveDenyFilesFor )
 import Infrastructure.Sandbox.Protocol
 import Infrastructure.Sandbox.Scope
 import System.Directory (doesDirectoryExist, doesFileExist)
@@ -110,7 +110,7 @@ runRunner cfg backend caps scope = do
       case frame of
         Right Shutdown -> shutdownAll sessions
         Right (Exec cid argv cwd env mstdin mtimeout) -> do
-          (denyDirs, denyFiles) <- existingDenyReads (rcBaseEnv cfg)
+          denyReads <- existingDenyReads (rcBaseEnv cfg) (scPolicy scope)
           let request = LaunchRequest
                 { lrArgv = argv
                 , lrCwd = AbsolutePath (T.unpack cwd)
@@ -118,8 +118,8 @@ runRunner cfg backend caps scope = do
                 , lrEnv = Map.toList (Map.fromList (rcBaseEnv cfg <> env))
                 , lrStdin = StdinClosed
                 , lrTimeoutMs = mtimeout <|> policyWallMs (scPolicy scope)
-                , lrDenyReads = denyDirs
-                , lrDenyFiles = denyFiles
+                , lrDenyReads = fst denyReads
+                , lrDenyFiles = snd denyReads
                 }
           case planWith backend caps scope request of
             Left err -> writeFrame out (Error (Just cid) "policy" (renderError err))
@@ -156,14 +156,22 @@ addRuntimeDir env
 -- | Credential paths that exist in the host home, split into directories
 -- (masked with an empty tmpfs) and files (masked by binding @/dev/null@).
 -- bwrap refuses a mount over a missing path, so both lists are filtered.
-existingDenyReads :: [(Text, Text)] -> IO ([AbsolutePath], [AbsolutePath])
-existingDenyReads env = case [ v | (k, v) <- env, T.toUpper k == "HOME", not (T.null v) ] of
+--
+-- The list comes from the **scope's policy** (§5.7.5 `read.deny`, 接线 2026-10-30):
+-- a 'WorkspaceWrite' carrying 'wrDenyReadDirs'/'wrDenyReadFiles' overrides the
+-- shipped defaults; 'Nothing' keeps them. 'ReadOnly' policies have no override
+-- field yet, so they fall back to the defaults.
+existingDenyReads :: [(Text, Text)] -> Policy -> IO ([AbsolutePath], [AbsolutePath])
+existingDenyReads env policy = case [ v | (k, v) <- env, T.toUpper k == "HOME", not (T.null v) ] of
   (homeT : _) -> do
     let home = T.unpack homeT
-    dirs <- filterM (doesDirectoryExist . (home </>)) defaultDenyReads
-    files <- filterM (doesFileExist . (home </>)) defaultDenyFiles
-    pure ( map (AbsolutePath . (home </>)) dirs
-         , map (AbsolutePath . (home </>)) files )
+        (dirs, files) = case policy of
+          WorkspaceWrite wr -> (effectiveDenyDirs wr, effectiveDenyFilesFor wr)
+          _ -> (defaultDenyReads, defaultDenyFiles)
+    foundDirs <- filterM (doesDirectoryExist . (home </>)) dirs
+    foundFiles <- filterM (doesFileExist . (home </>)) files
+    pure ( map (AbsolutePath . (home </>)) foundDirs
+         , map (AbsolutePath . (home </>)) foundFiles )
   [] -> pure ([], [])
 
 -- | The config's wall limit applies when the @exec@ frame carries none, so a

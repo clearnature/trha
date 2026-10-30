@@ -87,6 +87,8 @@ batchRootScope parent batch =
       , wrReadOnly = [ebBaseline b]
       , wrNetwork = NetworkOff
       , wrLimits = ebLimits b
+      , wrDenyReadDirs = Nothing
+      , wrDenyReadFiles = Nothing
       }
 
 -- | One scope per @(variant, seed)@. The writable root is the variant
@@ -103,6 +105,8 @@ variantScope parent batch variant seed = do
         , wrReadOnly = [ebBaseline batch]
         , wrNetwork = vNetwork variant
         , wrLimits = ebLimits batch
+        , wrDenyReadDirs = Nothing
+        , wrDenyReadFiles = Nothing
         }
   scopeChild root
     (ScopeId (unBatchId (ebId batch) <> "/" <> unVariantId (vId variant) <> "/" <> T.pack (show (unSeed seed))))

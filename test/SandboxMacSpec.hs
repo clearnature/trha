@@ -47,4 +47,6 @@ probeScope ws = scopeRoot (ScopeId "mac") policy (ExclusivePath (AbsolutePath ws
       , wrReadOnly = []
       , wrNetwork = NetworkOff
       , wrLimits = defaultResourceLimits
+      , wrDenyReadDirs = Nothing
+  , wrDenyReadFiles = Nothing
       }

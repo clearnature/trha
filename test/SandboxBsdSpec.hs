@@ -102,6 +102,8 @@ writePolicy = WorkspaceWrite WritableRoot
   , wrReadOnly = []
   , wrNetwork = NetworkOff
   , wrLimits = defaultResourceLimits
+  , wrDenyReadDirs = Nothing
+  , wrDenyReadFiles = Nothing
   }
 
 readOnlyPolicy :: Policy

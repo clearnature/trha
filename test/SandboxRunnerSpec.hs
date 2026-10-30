@@ -107,6 +107,8 @@ withRunner caps action = do
           , wrReadOnly = []
           , wrNetwork = NetworkOff
           , wrLimits = defaultResourceLimits
+          , wrDenyReadDirs = Nothing
+          , wrDenyReadFiles = Nothing
           })
         (ExclusivePath (AbsolutePath ws))
   _ <- forkIO $

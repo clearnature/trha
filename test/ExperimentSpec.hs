@@ -71,6 +71,8 @@ parent = scopeRoot (ScopeId "session-1") (WorkspaceWrite WritableRoot
   , wrReadOnly = []
   , wrNetwork = NetworkOff
   , wrLimits = defaultResourceLimits
+  , wrDenyReadDirs = Nothing
+  , wrDenyReadFiles = Nothing
   }) (ExclusivePath (AbsolutePath "/ws/.work"))
 
 batch :: ExperimentBatch
