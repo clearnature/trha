@@ -1989,7 +1989,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           failed ? undefined : outputPreview(output),
           failed ? undefined : valueSink.value,
           failed ? undefined : valueSink.meta);
-        session.messages.push({ role: 'tool', tool_call_id: call.id, content: output });
+        // The tool message carries the replayable card metadata next to the
+        // content the model sees, so a resume can redraw the card without
+        // re-running the tool. `SessionMessage` allows extra keys on purpose.
+        session.messages.push({
+          role: 'tool', tool_call_id: call.id, content: output,
+          ...(valueSink.meta === undefined ? {} : { meta: valueSink.meta }),
+        });
         // `UNCHANGED:` means the tool declined to modify state; writing the
         // session anyway would churn the file (and its mtime) for nothing.
         if (!output.startsWith('UNCHANGED:')) await persistSession(session);
