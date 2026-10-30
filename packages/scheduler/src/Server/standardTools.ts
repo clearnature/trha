@@ -228,11 +228,18 @@ export async function runStandardTool(
   name: string,
   args: Record<string, unknown>,
   host: StandardToolHost,
+  // Optional sink for the canonical value; the turn loop uses it to feed
+  // `presentResult`. Callers that only want text can omit it.
+  out?: { value?: unknown },
 ): Promise<string | null> {
   // Registered tools take precedence over the legacy chain, so migration is
   // one tool at a time: anything not yet registered still runs below.
   const registered = resolveTool(name);
-  if (registered?.handler) return renderToolValue(registered, args, host);
+  if (registered?.handler) {
+    const rendered = await renderToolValue(registered, args, host);
+    if (out) out.value = rendered.value;
+    return rendered.text;
+  }
 
 
   if (name === 'list_mcp_resources') {

@@ -50,11 +50,22 @@ export type ToolHandler = (
  * the promise but cannot hard-kill the work, which is stated on purpose rather
  * than pretending the call was cancelled.
  */
+export interface RenderedTool {
+  /** What the model sees. */
+  text: string;
+  /**
+   * The canonical value `execute` returned. DSH hands this to `presentResult`
+   * so a tool can summarise its own result instead of the shell re-parsing the
+   * rendered text.
+   */
+  value: unknown;
+}
+
 export async function renderToolValue(
   spec: ToolSpec,
   args: Record<string, unknown>,
   host: unknown,
-): Promise<string> {
+): Promise<RenderedTool> {
   const value = await withTimeout(
     spec.handler!(args, { host }),
     spec.timeoutMs,
@@ -67,7 +78,7 @@ export async function renderToolValue(
   // `undefined` keeps the rendered blocks, so a tool that does not set the hook
   // behaves exactly as before.
   const finalized = spec.finalizeContent?.({ args, host }, { value, content: blocks });
-  return (finalized ?? blocks).map((b: ContentBlock) => b.text).join('\n');
+  return { text: (finalized ?? blocks).map((b: ContentBlock) => b.text).join('\n'), value };
 }
 
 async function withTimeout<T>(work: Promise<T>, ms: number | undefined, name: string): Promise<T> {

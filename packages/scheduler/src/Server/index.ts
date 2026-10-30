@@ -1450,6 +1450,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     sessionId: string, callId: string, name: string, input: Record<string, unknown>,
     status: 'running' | 'succeeded' | 'failed', startedAt?: number, error?: string,
     output?: string,
+    // The canonical value behind `output`, when it survived the trip here.
+    value?: unknown,
   ): Promise<void> => {
     const args = Object.entries(input)
       .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`);
@@ -1464,7 +1466,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     const spec = resolveTool(name);
     const view = status === 'running'
       ? spec?.presentCall?.(input)
-      : spec?.presentResult?.(input, output);
+      // `value` is what `execute` returned; `output` is only its rendering.
+      // Tools that switched to a structured return read their own fields here.
+      : spec?.presentResult?.(input, value ?? output);
     // A tool that cannot produce a meaningful label must fall back to the
     // generic row: `oneLine('')` yields '', so `title: `present ${...}`` could
     // render as `present ` — worse than the plain tool name.
@@ -1542,7 +1546,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     && !/[;>]|&&|\brm\b|\bsudo\b|\bmv\b|\bcp\b|\bchmod\b|\bkill\b|\btee\b|\bdd\b/.test(cmd)
     && /^(ls|cat|head|tail|wc|pwd|date|whoami|uname|which|echo|printf|curl|wget|rg|grep|find|file|stat|du|df|env|printenv|git\s+(status|log|diff|show|branch|remote|rev-parse))\b/i.test(cmd);
 
-  const executeTool = async (c: ToolCallData, sessionId?: string): Promise<string> => {
+  const executeTool = async (
+    c: ToolCallData,
+    sessionId?: string,
+    // Sink for the canonical value `renderToolValue` returns; the turn loop
+    // forwards it to `presentResult`.
+    valueSink?: { value?: unknown },
+  ): Promise<string> => {
     let argsObj: Record<string, unknown> = {};
     try {
       argsObj = JSON.parse(c.arguments) as Record<string, unknown>;
@@ -1579,7 +1589,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       if (registeredCore?.handler) {
         const session = sessionId ? sessions.get(sessionId) : undefined;
         if (!session) return `ERROR: ${name} needs a live session`;
-        const out = await renderToolValue(registeredCore, argsObj, {
+        const rendered = await renderToolValue(registeredCore, argsObj, {
           workspace: WORKSPACE,
           state: session,
           jobs: jobsFor(sessionId!),
@@ -1587,9 +1597,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           sessionCwd: cwd,
           writeRoots: extraWriteRoots,
           agents: agentHooksFor(session),
-        }).catch((e: unknown) => `ERROR: ${String(e)}`);
-        if (!out.startsWith('UNCHANGED:')) await persistSession(session);
-        return out;
+        }).catch((e: unknown) => ({ text: `ERROR: ${String(e)}`, value: undefined }));
+        if (rendered.value !== undefined && valueSink) valueSink.value = rendered.value;
+        if (!rendered.text.startsWith('UNCHANGED:')) await persistSession(session);
+        return rendered.text;
       }
     }
 
@@ -1630,7 +1641,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         sessionCwd: cwd,
         writeRoots: extraWriteRoots,
         agents: agentHooksFor(session),
-      }).catch((e: unknown) => `ERROR: ${String(e)}`);
+      }, valueSink).catch((e: unknown) => `ERROR: ${String(e)}`);
       if (out !== null) {
         // todos/goal/schedules belong to the session: persist them with it,
         // and wait — a crash right after the tool must not lose the update.
@@ -1677,7 +1688,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         spawnFresh: (task, label) => spawnAgent(session, task, label),
         extraWriteRoots: () => extraWriteRoots,
       };
-      const out = await runExtraTool(name, argsObj, host).catch((e: unknown) => `ERROR: ${String(e)}`);
+      const out = await runExtraTool(name, argsObj, host, valueSink).catch((e: unknown) => `ERROR: ${String(e)}`);
       if (out !== null) {
         await persistSession(session);
         return out;
@@ -1911,7 +1922,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       for (const call of calls) {
         const started = Date.now();
         await emitToolLifecycle(session.id, call.id, call.name, parseToolInput(call), 'running');
-        const output = await executeTool(call, session.id).catch(
+        // The canonical value behind `output`; `presentResult` prefers it over
+        // the rendered text so a tool can summarise its own result.
+        const valueSink: { value?: unknown } = {};
+        const output = await executeTool(call, session.id, valueSink).catch(
           (e: unknown) => `ERROR: ${String(e)}`,
         );
         // ask 权限规则：暂停执行并发起确认（批准后重放该工具）
@@ -1936,7 +1950,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         const failed = output.startsWith('ERROR');
         await emitToolLifecycle(session.id, call.id, call.name, parseToolInput(call),
           failed ? 'failed' : 'succeeded', started, failed ? output : undefined,
-          failed ? undefined : outputPreview(output));
+          failed ? undefined : outputPreview(output),
+          failed ? undefined : valueSink.value);
         session.messages.push({ role: 'tool', tool_call_id: call.id, content: output });
         // `UNCHANGED:` means the tool declined to modify state; writing the
         // session anyway would churn the file (and its mtime) for nothing.

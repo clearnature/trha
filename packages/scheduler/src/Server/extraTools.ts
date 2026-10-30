@@ -102,11 +102,18 @@ export async function runExtraTool(
   name: string,
   args: Record<string, unknown>,
   host: ExtraHost,
+  // Optional sink for the canonical value; the turn loop uses it to feed
+  // `presentResult`. Callers that only want text can omit it.
+  out?: { value?: unknown },
 ): Promise<string | null> {
   // Same precedence rule as `runStandardTool`: registered plugins first, the
   // legacy chain as the fallback for anything not migrated yet.
   const registered = resolveTool(name);
-  if (registered?.handler) return renderToolValue(registered, args, host);
+  if (registered?.handler) {
+    const rendered = await renderToolValue(registered, args, host);
+    if (out) out.value = rendered.value;
+    return rendered.text;
+  }
 
   // ── working directory ────────────────────────────────────────────────
   // Migrated to the registry (full DSH contract), so the chain no longer
