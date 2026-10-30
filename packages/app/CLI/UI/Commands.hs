@@ -24,7 +24,7 @@ import Core.TurnStats (Prices(..), pricesForModel, turnSummary)
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import Core.Memory (allMemories, rememberText)
 import Core.ProjectStore (ProjectSession(..), projectSessions)
-import Core.Transcript (listLocalSessions, loadTranscript, recordChunk, recordModelRequest, recordSession, recordToolEvent, recordUser)
+import Core.Transcript (listLocalSessions, listLocalSessionsIn, loadTranscript, recordChunk, recordModelRequest, recordSession, recordToolEvent, recordUser)
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, catch, try)
 import qualified Data.Map as Map
@@ -940,8 +940,10 @@ executeCommand lang bridge sessionRef _ Deny = do
 -- | List local sessions (from ~/.trha transcript index).  Sessions of the
 -- current project come first, using the @~/.trha/projects/<slug>@ index.
 executeCommand lang _ _ _ ResumeList = do
-  sessions <- listLocalSessions
   cwd <- getCurrentDirectory
+  -- Only this project's transcripts: another project's conversation resumed
+  -- here would pull in its workspace and its files.
+  sessions <- listLocalSessionsIn cwd
   mine <- projectSessions cwd
   let mineIds = map psId mine
       (local, others) = partition (\s -> T.pack (ssId s) `elem` mineIds) sessions

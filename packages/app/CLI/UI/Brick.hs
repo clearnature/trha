@@ -39,7 +39,7 @@ import qualified Data.Text.Encoding as TE
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import Core.PlanStore (savePlanSnapshot)
 import Core.ProjectStore (ensureProject, recordProjectSession)
-import Core.Transcript (listLocalSessions, loadTranscript, recordChunk, recordSession, recordToolEvent, recordUser)
+import Core.Transcript (listLocalSessions, listLocalSessionsIn, loadTranscript, recordChunk, recordSession, recordToolEvent, recordUser)
 import UI.Commands (executeCommand, runSettingsCommand)
 import UI.Commands.Registry
     ( Command(..), parseCommandWith, pickerItems, pickerItemsGrouped
@@ -304,8 +304,8 @@ runTUI bridge cfg = do
     dirs <- skillDirs ws
     skills <- scanSkills dirs
     writeBChan chan (EvSkills skills)
-    -- Home route: the local transcripts the user can resume.
-    recent <- listLocalSessions
+    -- Home route: the local transcripts of *this project* only.
+    recent <- listLocalSessionsIn ws
     writeBChan chan (EvRecent recent)
     -- Sidebar: cwd, a few files, and which instruction files exist.
     instrs <- filterM (doesFileExist . (ws </>)) ["AGENTS.md", "REASONIX.md", "QWEN.md", "CLAUDE.md"]
@@ -712,7 +712,8 @@ resumeSession :: Text -> EventM ResourceName AppState ()
 resumeSession selText = do
   lang <- gets appLang
   t <- liftIO now
-  local <- liftIO listLocalSessions
+  cwd <- liftIO getCurrentDirectory
+  local <- liftIO (listLocalSessionsIn cwd)
   case pickLocalSession (T.unpack selText) local of
     Nothing -> do
       let recent = take 5 local
@@ -2654,7 +2655,8 @@ handleAppEvent (EvSessions result) = do
   case result of
     Right [] -> appendMsg (mkMsg "system" (tr lang "No sessions.") t)
     Right sids -> do
-      local <- liftIO listLocalSessions
+      cwd <- liftIO getCurrentDirectory
+      local <- liftIO (listLocalSessionsIn cwd)
       modify $ \s -> s { appDialogs = stackPush (DialogSessions local 0) (appDialogs s) }
       -- legacy ids row kept for parity with the REPL
       appendMsg (mkMsg "system" ((tr lang "Sessions:" <> "\n")
@@ -2970,7 +2972,8 @@ handleSlash input = do
             appendMsg (mkMsg "system" ("effort: " <> lvl) t)
           else appendMsg (mkMsg "error" ("Unknown effort: " <> lvl <> "  " <> shown) t)
     "/home" -> do
-      local <- liftIO listLocalSessions
+      cwd <- liftIO getCurrentDirectory
+      local <- liftIO (listLocalSessionsIn cwd)
       modify $ \s -> s { appRoute = RouteHome, appRecent = local
                        , appStatus = tr (appLang s) "Home" }
     _ | cmd == "/fav" || "/fav " `T.isPrefixOf` cmd -> do
@@ -3057,9 +3060,10 @@ handleSlash input = do
           forM_ msg $ \m -> appendMsg (mkMsg "system" m t)
           scrollBottom
     "/sessions" -> do
-      local <- liftIO listLocalSessions
+      cwd <- liftIO getCurrentDirectory
+      local <- liftIO (listLocalSessionsIn cwd)
       if null local
-        then appendMsg (mkMsg "system" (tr lang "No local sessions found. Run a conversation first.") t)
+        then appendMsg (mkMsg "system" (tr lang "No local sessions in this directory yet. Run a conversation first.") t)
         else modify $ \s -> s { appDialogs = stackPush (DialogSessions local 0) (appDialogs s) }
     "/models" -> do
       st2 <- get
@@ -3196,9 +3200,10 @@ handleSlash input = do
                         | p <- ps ]) t)
         Left err -> appendMsg (mkMsg "error" (T.pack (show err)) t)
     "/resume" -> do
-      local <- liftIO listLocalSessions
+      cwd <- liftIO getCurrentDirectory
+      local <- liftIO (listLocalSessionsIn cwd)
       if null local
-        then appendMsg (mkMsg "system" (tr lang "No local sessions found. Run a conversation first.") t)
+        then appendMsg (mkMsg "system" (tr lang "No local sessions in this directory yet. Run a conversation first.") t)
         else do
           appendMsg (mkMsg "system" ("Local sessions:\n" <> T.unlines (localSessionLines (appLang st) local)) t)
           appendMsg (mkMsg "system" (tr lang "Resume with /resume <number-or-id>.") t)

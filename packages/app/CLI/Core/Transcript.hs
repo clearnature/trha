@@ -36,6 +36,7 @@ module Core.Transcript
     -- * Reading
   , loadTranscript
   , listLocalSessions
+  , listLocalSessionsIn
   , transcriptFile
   ) where
 
@@ -60,6 +61,7 @@ import System.Directory
     ( createDirectoryIfMissing
     , doesDirectoryExist
     , doesFileExist
+    , getCurrentDirectory
     , listDirectory
     )
 import System.FilePath ((</>))
@@ -88,9 +90,13 @@ transcriptPathOnly sid = do
   return $ dir </> sanitizeSessionId sid </> "transcript.jsonl"
 
 -- | Record that a session was created (with the model in use).
+-- | Record the session header.  The working directory is stored with it: a
+-- transcript is only meaningful in the project it was produced in, and
+-- `/resume` must not offer another project's conversations.
 recordSession :: SessionId -> Text -> IO ()
-recordSession sid model =
-  appendEnvelope sid "session" [ "model" .= model ]
+recordSession sid model = do
+  cwd <- getCurrentDirectory
+  appendEnvelope sid "session" [ "model" .= model, "cwd" .= cwd ]
 
 -- | Record a user message.
 recordUser :: SessionId -> Text -> IO ()
@@ -180,6 +186,20 @@ listLocalSessions = do
           if null events
             then return Nothing
             else return $ Just (sessionSummaryOf name events)
+
+-- | Local sessions started in @dir@ only.
+--
+-- A transcript belongs to the project it was produced in: offering another
+-- project's conversations in @/resume@ is how you end up resuming the wrong
+-- context — and, since a session carries its own workspace, the wrong files.
+--
+-- Transcripts written before the @cwd@ field existed have 'Nothing' and are
+-- therefore not offered here; their ids still resume if typed explicitly.
+listLocalSessionsIn :: FilePath -> IO [SessionSummary]
+listLocalSessionsIn dir = do
+  allSessions <- listLocalSessions
+  let here = T.pack dir
+  pure [ s | s <- allSessions, ssCwd s == Just here ]
 
 --------------------------------------------------------------------------------
 -- Internal
