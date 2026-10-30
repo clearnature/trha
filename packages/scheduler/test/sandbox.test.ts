@@ -1,7 +1,8 @@
 // P0/P1 judgement tests for the scheduler-side sandbox seam.
 // docs/plans/sandbox-architecture.md §6.1/§6.2: no unconfined fallback.
 
-import { chmodSync, existsSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
   SandboxUnavailableError,
   defaultSandboxScope,
+  policyCanonicalText,
   readSandboxConfig,
   sandboxEnabled,
   sandboxStatus,
@@ -180,12 +182,26 @@ describe('runExperiment (on, mock runner)', () => {
         concurrency: 2,
       }, {
         makeRequest: task => ({ argv: ['echo', 'x'], cwd: task.work }),
+        cacheState: 'cold',
+        userId: 'probe-user',
+        toolchain: { ghc: '9.14.1' },
       });
       expect(outcome.results).toHaveLength(4);
       expect(outcome.results.every(r => r.ok)).toBe(true);
       expect(outcome.results.map(r => `${r.variant}/${r.seed}`).sort())
         .toEqual(['a/1', 'a/2', 'b/1', 'b/2']);
       expect(existsSync(path.join(root, 'repro.json'))).toBe(true);
+      // T2.8: the repro file carries the full canonical field set.
+      const repro = JSON.parse(readFileSync(path.join(root, 'repro.json'), 'utf8'));
+      expect(repro.batch).toBe('b1');
+      expect(repro.cacheState).toBe('cold');
+      expect(repro.userId).toBe('probe-user');
+      expect(repro.toolchain).toEqual({ ghc: '9.14.1' });
+      expect(repro.policyHash).toMatch(/^[0-9a-f]{32}$/);
+      // (The exact digest is pinned in the cross-language differential test
+      // below — this fixture uses a temp root, so its hash differs by design.)
+      expect(repro.results).toHaveLength(4);
+      expect(repro.results.every((r: { ok: boolean }) => r.ok)).toBe(true);
       // T2.2: work/ is reclaimed, out/ is kept.
       expect(existsSync(path.join(root, 'a', '1', 'out'))).toBe(true);
       expect(existsSync(path.join(root, 'a', '1', 'work'))).toBe(false);
@@ -196,6 +212,25 @@ describe('runExperiment (on, mock runner)', () => {
       else process.env.TRHA_SANDBOX_RUNNER = previousRunner;
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+// Cross-language differential with test/ExperimentSpec.hs: both suites pin
+// the exact canonical text and its sha512 digest for the same fixture
+// (root /ws/experiments/b1, baseline …/baseline). Either side's renderer
+// drifting turns one of the two red.
+describe('policyCanonicalText (cross-language differential)', () => {
+  it('agrees byte for byte with the Haskell canonicalPolicyText', () => {
+    expect(policyCanonicalText('/ws/experiments/b1', '/ws/experiments/b1/baseline')).toBe(
+      'workspace-write|"/ws/experiments/b1"'
+        + '|"/ws/experiments/b1/.batch-work"'
+        + '|["/ws/experiments/b1/baseline"]'
+        + '|off|0,0,600000|-|-',
+    );
+    expect(createHash('sha512')
+      .update(policyCanonicalText('/ws/experiments/b1', '/ws/experiments/b1/baseline'))
+      .digest('hex')
+      .slice(0, 32)).toBe('e8b065d988e2ae560939865205581095');
   });
 });
 

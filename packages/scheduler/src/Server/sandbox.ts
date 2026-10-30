@@ -6,6 +6,7 @@
 // NDJSON v1. A runner failure is a failed tool call — never a silent fallback.
 
 import { spawn, execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -698,6 +699,12 @@ export interface ExperimentRunOptions {
   onStart?: (task: ExperimentTask) => void | Promise<void>;
   /** Remove `work/` after every attempt (default true); `out/` is kept. */
   cleanupWork?: boolean;
+  /** KVCache makes cold/warm runs an order of magnitude apart (T2.8): record it. */
+  cacheState?: 'cold' | 'warm';
+  /** A shared user id lets one variant warm another's cache: record it. */
+  userId?: string;
+  /** Toolchain entries (interpreter/compiler paths and versions) to record. */
+  toolchain?: Record<string, string>;
 }
 
 export interface ExperimentOutcome {
@@ -786,18 +793,66 @@ export async function runExperiment(
     Array.from({ length: Math.max(1, batch.concurrency) }, () => worker()),
   );
 
+  // T2.8 field set, kept in sync with Haskell `reproFileJson` (Experiment.hs):
+  // batch/cacheState/userId/baseline/root/policyHash/toolchain/variants/
+  // seeds/concurrency/results. policyHash hashes the *canonical* JSON form of
+  // the effective task policy — same key order as the Haskell Generic encoder
+  // (constructor index + fields in declaration order) so both sides agree.
+  const policyHash = computePolicyHash(batch);
   const reproPath = path.join(batch.root, 'repro.json');
   writeFileSync(reproPath, JSON.stringify({
     batch: batch.id,
+    cacheState: options.cacheState ?? null,
+    userId: options.userId ?? null,
     baseline: batch.baseline,
-    variants: batch.variants.map(v => ({
-      id: v.id,
-      network: v.network ? 'on' : 'off',
-    })),
+    root: batch.root,
+    policyHash,
+    toolchain: options.toolchain ?? {},
+    variants: batch.variants.map(v => ({ id: v.id, network: v.network ? 'on' : 'off' })),
     seeds: batch.seeds,
     concurrency: Math.max(1, batch.concurrency),
-    toolchain: {},
+    results: results.map(r => ({
+      variant: r.variant, seed: r.seed, ok: r.ok, attempt: r.attempt,
+    })),
   }, null, 2));
 
   return { batchId: batch.id, results, reproPath };
+}
+
+/**
+ * SHA-512 (truncated to 32 hex chars) over the canonical policy text,
+ * byte-for-byte mirroring `Infrastructure.Sandbox.Experiment.policyHashJson`:
+ *
+ *   workspace-write|"<root>"|"<scratch>"|[<ro>...]|off|pids,mem,wall|-|-
+ *
+ * The canonical form is deliberately NOT a JSON dump: aeson's Generic
+ * encoding sorts record fields alphabetically and would make the hash depend
+ * on field *names*. An explicit pipe-separated rendering is stable in both
+ * languages; both sides pin the exact string and its digest in their tests,
+ * so drift turns one suite red. `batchScopes` always renders workspace-write
+ * with NetworkOff and the shipped limits/deny (no override infra yet), which
+ * is also what the Haskell batchRootScope/variantScope build.
+ */
+const SHIPPED_LIMITS = '0,0,600000';
+
+export function policyCanonicalText(root: string, baseline: string): string {
+  const q = (p: string): string => JSON.stringify(p);
+  const list = (xs: string[]): string => `[${xs.map(q).join(',')}]`;
+  return [
+    'workspace-write',
+    q(root),
+    q(path.join(root, '.batch-work')),
+    list([baseline]),
+    'off',
+    SHIPPED_LIMITS,
+    '-',   // wrDenyReadDirs unset → shipped defaults
+    '-',   // wrDenyReadFiles unset → shipped defaults
+  ].join('|');
+}
+
+export function computePolicyHash(batch: ExperimentBatch): string {
+  return createHash('sha512')
+    .update(policyCanonicalText(batch.root, batch.baseline))
+    .digest('hex')
+    .slice(0, 32);
 }

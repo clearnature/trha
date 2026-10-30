@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Sandbox policy: the platform-independent core of the sandbox seam.
@@ -41,8 +42,9 @@ module Infrastructure.Sandbox.Policy
   , narrow
   ) where
 
-import Control.Applicative ((<|>))
+import Data.Aeson (ToJSON(..))
 import Data.List (isPrefixOf)
+import GHC.Generics (Generic)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -52,24 +54,24 @@ import System.FilePath ((</>), addTrailingPathSeparator, normalise)
 -- | An absolute path in the execution world. Callers are responsible for
 -- canonicalisation before constructing one; platform backends re-check it.
 newtype AbsolutePath = AbsolutePath { unAbsolutePath :: FilePath }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Generic, Show)
 
 -- | A directory only this scope may write to.
 newtype ExclusivePath = ExclusivePath { unExclusivePath :: AbsolutePath }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Generic, Show)
 
 -- | Egress policy. Defaults to 'NetworkOff' in the shipped configuration.
 data NetworkPolicy
   = NetworkOff
   | NetworkAllow [Text]
   | NetworkProxy Text
-  deriving (Eq, Show)
+  deriving (Eq, Generic, Show)
 
 data ResourceLimits = ResourceLimits
   { rlPids      :: Int
   , rlMemoryMiB :: Int
   , rlWallMs    :: Int
-  } deriving (Eq, Show)
+  } deriving (Eq, Generic, Show)
 
 -- | Shipped defaults.  @0@ means "no limit".
 --
@@ -120,7 +122,7 @@ data ReadOnlyPolicy = ReadOnlyPolicy
   { roReadableRoots :: [AbsolutePath]
   , roNetwork       :: NetworkPolicy
   , roEnvAllow      :: [Text]
-  } deriving (Eq, Show)
+  } deriving (Eq, Generic, Show)
 
 emptyReadOnlyPolicy :: ReadOnlyPolicy
 emptyReadOnlyPolicy = ReadOnlyPolicy
@@ -142,7 +144,7 @@ data WritableRoot = WritableRoot
     -- a child may not restore something the parent masked.
   , wrDenyReadFiles :: Maybe [Text]
     -- ^ Same, for credential *files* (bound over with @/dev/null@).
-  } deriving (Eq, Show)
+  } deriving (Eq, Generic, Show)
 
 -- | WritableRoot without a credential-list override (both fields 'Nothing' =
 -- shipped defaults). Every existing construction site stays valid through
@@ -173,7 +175,19 @@ data Policy
   = ReadOnly ReadOnlyPolicy
   | WorkspaceWrite WritableRoot
   | DangerFullAccess
-  deriving (Eq, Show)
+  deriving (Eq, Generic, Show)
+
+instance ToJSON AbsolutePath where
+  toJSON (AbsolutePath p) = toJSON p
+
+instance ToJSON ExclusivePath where
+  toJSON (ExclusivePath p) = toJSON p
+
+instance ToJSON NetworkPolicy
+instance ToJSON ResourceLimits
+instance ToJSON ReadOnlyPolicy
+instance ToJSON WritableRoot
+instance ToJSON Policy
 
 -- | Platform-independent capability vocabulary (§5.7.2).
 data Capability

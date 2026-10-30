@@ -162,6 +162,8 @@ library trha-infra
   hs-source-dirs:   src/infra
   build-depends:    base ^>=4.22
                   , trha:trha-core
+                  , cryptonite
+                  , memory
                   , text
                   , aeson
                   , directory
