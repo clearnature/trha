@@ -33,7 +33,9 @@ import Core.Export (exportMarkdown, exportJson, defaultExportName)
 import Core.TurnStats (Prices(..), turnSummary, estimateCost, hasPrices, isOffPeak, pricesForModel)
 import UI.Event
 import Core.SSE (SseNotice(..))
-import Data.Aeson (Value, object, (.=), decode, encode)
+import Data.Aeson (Value(..), object, (.=), decode, encode)
+import qualified Data.Aeson.Key as AK
+import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text.Encoding as TE
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
@@ -809,7 +811,7 @@ blocksToMessages blocks =
   where
     toMsg b = case rbTool b of
       Just (name, args) ->
-        toolMsg "tool" (ToolCard name args Nothing Nothing [] "") (maybe "" id (rbTime b))
+        toolMsg "tool" (ToolCard name args Nothing Nothing [] "" Nothing) (maybe "" id (rbTime b))
       Nothing           -> mkMsg (rbRole b) (rbContent b) (maybe "" id (rbTime b))
 
 drawMessages :: AppState -> Widget ResourceName
@@ -2443,7 +2445,7 @@ flushPendingAt musage t1 = do
           withMeta m
             | not (T.null meta) = m { msgMeta = Just meta }
             | otherwise = m
-          toolMsgs = [ toolMsg "tool" (ToolCard (tiName inv) (tiArgs inv) Nothing Nothing [] "") (pmStart pm)
+          toolMsgs = [ toolMsg "tool" (ToolCard (tiName inv) (tiArgs inv) Nothing Nothing [] "" Nothing) (pmStart pm)
                      | inv <- reverse (pmTools pm) ]
           thinkText = flushThinking pm
           thinkSecs = case appTurnStart st of
@@ -2832,6 +2834,7 @@ toolCardMsg ev t = toolMsg "tool" card t
                     (Just (toCardStatus (teStatus ev))) (teDurationMs ev)
                     (maybe [] T.lines (teOutput ev))
                     (maybe "generic" tvCard (teView ev))
+                    (fmap renderMeta (teMeta ev))
 
 -- | Approve the pending step, run it as an ordinary agent turn, then report the
 -- result.
@@ -2866,6 +2869,17 @@ statusTagOf ToolRunSucceeded = "✓"
 statusTagOf (ToolRunFailed _) = "✗"
 
 -- | Render a tool card with its status footer (message text).
+-- | One readable line for DSH's @presentationMeta@: the first few keys with
+-- long values clipped, so the expanded card can show *why* the tool produced
+-- what it did (`cwd`, `path`, `diffs`) without dumping JSON.
+renderMeta :: Value -> Text
+renderMeta (Object o) =
+  T.intercalate " · "
+    [ AK.toText k <> "=" <> clip (T.pack (show v))
+    | (k, v) <- take 3 (KM.toList o) ]
+  where clip t = if T.length t > 24 then T.take 23 t <> "…" else t
+renderMeta v = T.take 40 (T.pack (show v))
+
 renderToolEvent :: ToolEvent -> Text
 renderToolEvent ev =
   T.unlines (toolCardWithStatus (cardLabel ev) (teArgs ev)
