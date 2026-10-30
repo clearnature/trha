@@ -39,7 +39,7 @@ import {
 } from './standardTools.js';
 import { startPluginWatcher } from '../Plugins/watcher.js';
 import { resolveWorkspace } from './workspace.js';
-import { readSandboxConfig, sandboxEnabled, sandboxStatus, setSandboxConfigRuntime, setSandboxEnabledRuntime, writeSandboxConfig, type SandboxConfigView } from './sandbox.js';
+import { runExperiment, readSandboxConfig, sandboxEnabled, sandboxStatus, setSandboxConfigRuntime, setSandboxEnabledRuntime, writeSandboxConfig, type SandboxConfigView } from './sandbox.js';
 import { rateLimit } from './rateLimit.js';
 import { DEFAULT_AGENT_PRESET, getAgentPreset, listAgentPresets } from './agentPresets.js';
 // Side effect: registers plane + preset metadata for every tool (step 2 of the
@@ -1068,6 +1068,54 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     const roots = Array.isArray(req.body?.roots) ? req.body.roots.filter((x: unknown) => typeof x === 'string') : [];
     extraWriteRoots = roots;
     res.json({ roots: extraWriteRoots });
+  });
+
+  // ── 实验批入口（T2.7/T2.8 唯一 HTTP 执行路径）────────
+  // POST /api/sandbox/experiment: run the variants × seeds matrix.
+  // body: { id, root, baseline, variants: [{id, network?}], seeds, concurrency,
+  //         command?: string[], retries?, cacheState?, userId?, toolchain? }
+  // The request is *bounded*: command is a fixed argv (no shell string),
+  // concurrency is capped, and every task runs sandboxed — the endpoint is
+  // just the scheduling seam, not an escape hatch.
+  app.post('/api/sandbox/experiment', async (req, res) => {
+    try {
+      const b = req.body ?? {};
+      if (typeof b.id !== 'string' || !b.id.trim()) return res.status(400).json({ error: 'id required' });
+      if (typeof b.root !== 'string' || typeof b.baseline !== 'string')
+        return res.status(400).json({ error: 'root and baseline required' });
+      if (!Array.isArray(b.variants) || !b.variants.length || !b.variants.every((v: unknown) => typeof v === 'object' && v !== null && typeof (v as { id?: unknown }).id === 'string'))
+        return res.status(400).json({ error: 'variants: non-empty [{id}] required' });
+      if (!Array.isArray(b.seeds) || !b.seeds.length || !b.seeds.every((s: unknown) => Number.isInteger(s)))
+        return res.status(400).json({ error: 'seeds: non-empty integer array required' });
+      if (!Array.isArray(b.command) || !b.command.length || !b.command.every((c: unknown) => typeof c === 'string'))
+        return res.status(400).json({ error: 'command: non-empty string array required' });
+      const concurrency = b.concurrency === undefined ? 1 : Number(b.concurrency);
+      if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16)
+        return res.status(400).json({ error: 'concurrency must be an integer in [1,16]' });
+      const retries = b.retries === undefined ? 0 : Number(b.retries);
+      if (!Number.isInteger(retries) || retries < 0 || retries > 4)
+        return res.status(400).json({ error: 'retries must be an integer in [0,4]' });
+      const batch = {
+        id: b.id,
+        root: b.root as string,
+        baseline: b.baseline as string,
+        variants: (b.variants as { id: string }[]),
+        seeds: (b.seeds as number[]),
+        concurrency,
+      };
+      const outcome = await runExperiment(batch, {
+        makeRequest: task => ({ argv: b.command as string[], cwd: task.work }),
+        retries,
+        ...(typeof b.toolchain === 'object' && b.toolchain !== null
+          ? { toolchain: Object.fromEntries(Object.entries(b.toolchain).filter(([, v]) => typeof v === 'string')) as Record<string, string> }
+          : {}),
+        ...(typeof b.cacheState === 'string' ? { cacheState: b.cacheState as 'cold' | 'warm' } : {}),
+        ...(typeof b.userId === 'string' ? { userId: b.userId } : {}),
+      });
+      res.json(outcome);
+    } catch (e) {
+      res.status(503).json({ error: (e as Error).message });
+    }
   });
 
   // ── Agent presets ─────────────────────────────────────────────────────

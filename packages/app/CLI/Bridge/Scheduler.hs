@@ -58,6 +58,7 @@ module Bridge.Scheduler
   , setInUseProvider
   , setSandboxConfig
   , fetchSandboxConfig
+  , submitExperiment
   , setSessionCwd
   , startLoop
   , fetchLoops
@@ -487,6 +488,15 @@ setSandboxConfig bridge enabled policy network scratch = do
   pure $ case r of
     Left e  -> Left e
     Right _ -> Right ()
+
+-- | Submit an experiment batch (T2.7): the scheduler runs the variants ×
+-- seeds matrix and returns {batchId, results, reproPath}. The CLI has no
+-- sandbox executor of its own — the batching, retries and audit tags live
+-- behind /api/sandbox/experiment by design (ADR-002: execution belongs to
+-- the scheduling layer).
+submitExperiment :: SchedulerBridge -> Value -> IO (Either CLIError Value)
+submitExperiment bridge payload =
+  httpPost (bridgeHTTP bridge) "/api/sandbox/experiment" payload
 
 -- | Point the session at a different workspace.
 --

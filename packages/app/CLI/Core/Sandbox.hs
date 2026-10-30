@@ -17,7 +17,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BL
 import Control.Monad (when)
 import Config.Settings (resolveConfig)
-import Core.HTTP (createHTTPClient, httpGet)
+import Core.HTTP (createHTTPClient, httpGet, httpPost)
 import Core.Types (CLIConfig(..), CLIError, defaultCLIConfig)
 import Data.Maybe (fromMaybe, isNothing)
 import qualified Data.Set as Set
@@ -35,7 +35,7 @@ import System.Directory
   ( createDirectoryIfMissing, doesFileExist, getCurrentDirectory, getHomeDirectory )
 import System.Exit (exitFailure)
 import System.Environment (getEnvironment)
-import System.FilePath ((</>))
+import System.FilePath ((</>), (<.>))
 import System.Info (os)
 import System.IO (stderr, stdin, stdout)
 
@@ -49,7 +49,21 @@ data SandboxAction
   | SandboxRunner FilePath FilePath Text (Maybe String) Text
   | SandboxConfigAction SandboxConfigPatch Bool
   | SandboxScopes
+  | SandboxExperiment ExperimentArgs Bool  -- ^ Batch run; True = JSON output
   deriving (Eq, Show)
+
+-- | Parsed options for @trha sandbox experiment@ (T2.7's client face).
+data ExperimentArgs = ExperimentArgs
+  { eaId          :: String
+  , eaRoot        :: FilePath
+  , eaBaseline    :: FilePath
+  , eaVariants    :: [String]        -- ^ repeated --variant
+  , eaSeeds       :: [Int]          -- ^ repeated --seed
+  , eaCommand     :: [String]       -- ^ -- separated argv (no shell string)
+  , eaConcurrency :: Int            -- ^ 1..16, scheduler clamps again
+  , eaRetries     :: Int            -- ^ 0..4
+  , eaOutput      :: Maybe FilePath -- ^ default ~/.trha/experiments/<id>.json
+  } deriving (Eq, Show)
 
 data SandboxConfigPatch = SandboxConfigPatch
   { cfgEnabled :: Maybe Bool
@@ -92,6 +106,9 @@ sandboxActionParser = subparser
  <> command "scopes"
       (info (pure SandboxScopes <**> helper)
         (progDesc "List execution scopes (the agent/session tree)"))
+ <> command "experiment"
+      (info (experimentParser <**> helper)
+        (progDesc "Submit an experiment batch to the scheduler"))
   ) <**> helper
   where
     probeParser = SandboxProbe <$> optional (strOption
@@ -136,6 +153,23 @@ sandboxActionParser = subparser
     -- "" is a valid explicit empty list; a plain split would yield [""], so
     -- drop blank entries.
     commaList raw = Right (filter (not . T.null) (map T.strip (T.splitOn "," (T.pack raw))))
+    experimentParser = SandboxExperiment
+      <$> (ExperimentArgs
+            <$> strOption (long "id" <> metavar "ID")
+            <*> strOption (long "root" <> metavar "DIR")
+            <*> strOption (long "baseline" <> metavar "DIR")
+            <*> many (strOption (long "variant" <> metavar "ID"))
+            <*> many (option auto (long "seed" <> metavar "N"))
+            <*> some (strArgument (metavar "ARGV..."))
+            <*> option auto
+                  (long "concurrency" <> metavar "N" <> value 1
+                    <> help "parallel tasks 1..16")
+            <*> option auto
+                  (long "retries" <> metavar "N" <> value 0
+                    <> help "fresh-dir retries per failed task 0..4")
+            <*> optional (strOption (long "output" <> metavar "FILE"
+                    <> help "copy the outcome JSON here (default ~/.trha/experiments/<id>.json)")))
+      <*> switch (long "json" <> help "Machine-readable output only")
     runnerParser = SandboxRunner
       <$> strOption (long "workspace" <> metavar "DIR" <> help "Workspace root")
       <*> strOption (long "scratch" <> metavar "DIR" <> help "Exclusive scratch directory")
@@ -242,6 +276,37 @@ runSandboxCommand action = do
           if null rows
             then TIO.putStrLn "no scopes"
             else mapM_ printScopeRow rows
+    SandboxExperiment args asJson -> do
+      let payload = object
+            [ "id" .= T.pack (eaId args)
+            , "root" .= T.pack (eaRoot args)
+            , "baseline" .= T.pack (eaBaseline args)
+            , "variants" .= [ object ["id" .= T.pack v] | v <- eaVariants args ]
+            , "seeds" .= eaSeeds args
+            , "concurrency" .= eaConcurrency args
+            , "retries" .= eaRetries args
+            , "command" .= map T.pack (eaCommand args)
+            ]
+      cliCfg <- resolveConfig defaultCLIConfig
+      client <- createHTTPClient (configScheme cliCfg) (configHost cliCfg)
+                  (configPort cliCfg) (configToken cliCfg) 3600000 (configProxy cliCfg)
+      r <- httpPost client "/api/sandbox/experiment" payload :: IO (Either CLIError Aeson.Value)
+      case r of
+        Left e -> failWith (show e)
+        Right v -> do
+          let pretty = BL.putStr (Aeson.encode v) >> TIO.putStrLn ""
+          -- The outcome JSON is the deliverable: keep a copy where the user
+          -- looks, in addition to what the scheduler wrote as repro.json.
+          dest <- case eaOutput args of
+            Just p -> pure p
+            Nothing -> pure (home </> ".trha" </> "experiments" </> eaId args <.> "json")
+          BL.writeFile dest (Aeson.encode v)
+          if asJson
+            then pretty
+            else do
+              TIO.putStrLn ("submitted:   " <> T.pack (eaId args))
+              TIO.putStrLn ("outcome:     " <> T.pack dest)
+              pretty
     SandboxConfigAction patch asJson -> do
       let noop = isNothing (cfgEnabled patch)
               && isNothing (cfgPolicy patch)
