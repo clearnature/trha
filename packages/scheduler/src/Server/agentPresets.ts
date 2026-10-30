@@ -31,10 +31,11 @@ export interface AgentPreset {
 }
 
 /** Tool sets are ordered as in `standard`; presets add or drop from there. */
+/** Names must match `toolCatalog`; `agent-presets.test.ts` enforces that. */
 const STANDARD_TOOLS = [
   'bash', 'read', 'write', 'grep', 'glob', 'edit', 'web_search',
-  'subagent', 'subagent_fork', 'workflow', 'todo', 'plan', 'ask_user',
-  'skill', 'checkpoint', 'memory',
+  'subagent', 'workflow', 'todo_write', 'exit_plan_mode', 'ask_user_question',
+  'skill',
 ];
 
 export const AGENT_PRESETS: Record<string, AgentPreset> = {
@@ -64,7 +65,7 @@ export const AGENT_PRESETS: Record<string, AgentPreset> = {
     // run_code replaces plan/todo/workflow: the model writes a program instead
     // of orchestrating many tool calls.
     tools: ['bash', 'read', 'write', 'grep', 'glob', 'edit', 'web_search',
-      'subagent', 'subagent_fork', 'run_code', 'ask_user', 'skill', 'checkpoint', 'memory'],
+      'subagent', 'run_code', 'ask_user_question', 'skill'],
     persona: {
       enabled: true,
       prefix: 'You are a coding agent powered by the {{model}} model.',
@@ -86,7 +87,7 @@ export const AGENT_PRESETS: Record<string, AgentPreset> = {
     description: 'Lightweight',
     // No subagents, no web, no compaction: the smallest environment in which a
     // mechanism can be observed in isolation (the base `dsh-sol-pi` copies this).
-    tools: ['bash', 'read', 'write', 'grep', 'glob', 'edit', 'ask_user'],
+    tools: ['bash', 'read', 'write', 'grep', 'glob', 'edit', 'ask_user_question'],
     persona: {
       enabled: true,
       prefix: 'You are a helpful software engineer assistant.',

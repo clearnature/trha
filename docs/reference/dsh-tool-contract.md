@@ -179,10 +179,23 @@ Schema of 'type: "object"', got 'type: null'` —— 那是探针的 `input_sche
 
 ## 五、下一步
 
-**唯一的悬空项**是 `presentationMeta` 的消费点。接入它需要：
+**没有悬空字段了。** `presentationMeta` 的消费点在 `4ced0b0` 接完（事件 → tool message
+→ CLI `ToolEvent.teMeta` → 展开卡片显示 `meta:` 行），`deferLoading` 也在 2026-10-30
+完成了端到端验证（见 §四）。
 
-1. 会话格式加 `tool-presentation` 记录（`persistSession` 时写）
-2. 恢复时重建 `ToolCard`
+剩下的都是「等上游机制」，不是缺口：
 
-在此之前，四个工具的 `presentationMeta` 会继续写进事件但没有读者——这是**已知且记录
-在案**的状态，不是遗漏。
+- **卡片重建更丰富**：`presentationMeta` 现在只渲染一行摘要。要把它变成高亮 diff（`edit`
+  的 `diffs`）或路径面包屑（`bash` 的 `cwd`），需要会话重放的 UI 设计。
+- **`deferLoading` 更广**：目前六个 `stagehand_*` 启用。要扩大范围，注意**不能全标**
+  （上游要求至少一个 eager），`anthropicTools` 会兜底但会静默少一个延迟声明。
+
+## 六、预设的工具名单
+
+`AGENT_PRESETS` 的 `tools` 是 `/api/agent/presets` 对外返回的契约，必须与 `toolCatalog`
+一致。它曾经落后一轮改名（`todo`/`plan`/`ask_user`）并含三个从未实现的工具
+（`subagent_fork`/`checkpoint`/`memory`）—— 功能没坏（实际挂载走 `toolNamesForPreset`）
+但契约是错的。
+
+`agent-presets.test.ts` 现在有一条守卫：遍历四个预设的每个工具名，断言它存在于
+`toolCatalog`。改名或删工具时这条会先红。

@@ -5,6 +5,7 @@ import {
   getAgentPreset,
   listAgentPresets,
 } from '../src/Server/agentPresets.js';
+import { toolCatalog } from '../src/Server/toolCatalog.js';
 
 describe('agent presets', () => {
   it('exposes exactly the four presets Desktop ships', () => {
@@ -19,14 +20,14 @@ describe('agent presets', () => {
     expect(p.hasTodo).toBe(true);
     expect(p.hasWebSearch).toBe(true);
     expect(p.tools).toContain('subagent');
-    expect(p.tools).toContain('plan');
+    expect(p.tools).toContain('exit_plan_mode');
   });
 
   it('ptc swaps plan/todo for run_code', () => {
     const p = AGENT_PRESETS.ptc!;
     expect(p.ptc).toEqual({ enabled: true, language: 'typescript' });
     expect(p.tools).toContain('run_code');
-    expect(p.tools).not.toContain('plan');
+    expect(p.tools).not.toContain('exit_plan_mode');
     expect(p.hasPlan).toBe(false);
     expect(p.hasTodo).toBe(false);
   });
@@ -48,5 +49,18 @@ describe('agent presets', () => {
     expect(getAgentPreset('nope')).toBeUndefined();
     expect(getAgentPreset(undefined)).toBeUndefined();
     expect(getAgentPreset('standard')?.name).toBe('standard');
+  });
+
+  it('every preset tool name exists in the catalog', () => {
+    // These lists shipped stale for a while: `todo`/`plan`/`ask_user` had been
+    // renamed, and `subagent_fork`/`checkpoint`/`memory` never existed. Nothing
+    // broke because mounting goes through `toolNamesForPreset`, but
+    // `/api/agent/presets` handed callers names they could not resolve.
+    const catalog = new Set(toolCatalog.map(t => t.name));
+    for (const preset of listAgentPresets()) {
+      for (const name of preset.tools) {
+        expect(catalog.has(name), `${preset.name} → ${name}`).toBe(true);
+      }
+    }
   });
 });
