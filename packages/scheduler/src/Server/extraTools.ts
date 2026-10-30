@@ -158,26 +158,10 @@ export async function runExtraTool(
 
   // ── repo / env ───────────────────────────────────────────────────────
   if (name === 'create_worktree') {
-    const target = typeof args.path === 'string' ? args.path : '';
-    const branch = typeof args.branch === 'string' ? args.branch : `wt-${Date.now().toString(36)}`;
-    if (!target) return 'ERROR: path is required';
-    const r = await sh(host, `git worktree add ${JSON.stringify(path.resolve(host.cwd(), target))} -b ${JSON.stringify(branch)}`);
-    return r.code === 0 ? `OK: worktree at ${target} on ${branch}\n${clip(r.out)}` : `ERROR: ${clip(r.out)}`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this name.
   }
   if (name === 'load_workspace_dependencies') {
-    const dir = host.cwd();
-    const has = async (f: string): Promise<boolean> => {
-      try { await stat(path.join(dir, f)); return true; } catch { return false; }
-    };
-    let cmd = '';
-    if (await has('pnpm-lock.yaml')) cmd = 'pnpm install';
-    else if (await has('package-lock.json') || await has('package.json')) cmd = 'npm install';
-    else if (await has('Cargo.toml')) cmd = 'cargo fetch';
-    else if (await has('stack.yaml')) cmd = 'stack build --only-dependencies';
-    else if (await has('cabal.project')) cmd = 'cabal build --only-dependencies';
-    else return 'ERROR: no recognised dependency manifest in the working directory';
-    const r = await sh(host, cmd);
-    return clip(`$ ${cmd}\nexit ${r.code}\n${r.out}`);
+    // Migrated to the registry (full DSH contract).
   }
   if (name === 'pwsh') {
     const cmd = typeof args.command === 'string' ? args.command : '';
@@ -1106,3 +1090,60 @@ const unifiedEditTool = defineTool<string>({
 
 registerTool(toolSpecFrom(strReplaceEditorTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(unifiedEditTool, { plane: 'agent' }));
+
+/** `create_worktree` — add a git worktree and a new branch. */
+const createWorktreeTool = defineTool<string>({
+  name: 'create_worktree',
+  description: 'Create a git worktree at a path, on a new branch.',
+  parameters: {
+    path: { type: 'string', description: 'Worktree path, relative to the cwd.' },
+    branch: { type: 'string', description: 'Branch name (default wt-<timestamp>).' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const target = typeof args.path === 'string' ? args.path : '';
+    const branch = typeof args.branch === 'string'
+      ? args.branch
+      : `wt-${Date.now().toString(36)}`;
+    if (!target) throw new Error('path is required');
+    const r = await sh(
+      host,
+      `git worktree add ${JSON.stringify(path.resolve(host.cwd(), target))} -b ${JSON.stringify(branch)}`,
+    );
+    if (r.code !== 0) throw new Error(clip(r.out));
+    return `OK: worktree at ${target} on ${branch}\n${clip(r.out)}`;
+  },
+});
+
+/** `load_workspace_dependencies` — install the cwd's dependency manifest. */
+const loadWorkspaceDependenciesTool = defineTool<string>({
+  name: 'load_workspace_dependencies',
+  description: 'Install the working directory\'s dependencies by detecting its manifest.',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as ExtraHost;
+    const dir = host.cwd();
+    const has = async (f: string): Promise<boolean> => {
+      try {
+        await stat(path.join(dir, f));
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    let cmd = '';
+    if (await has('pnpm-lock.yaml')) cmd = 'pnpm install';
+    else if (await has('package-lock.json') || await has('package.json')) cmd = 'npm install';
+    else if (await has('Cargo.toml')) cmd = 'cargo fetch';
+    else if (await has('stack.yaml')) cmd = 'stack build --only-dependencies';
+    else if (await has('cabal.project')) cmd = 'cabal build --only-dependencies';
+    else throw new Error('no recognised dependency manifest in the working directory');
+    const r = await sh(host, cmd);
+    return clip(`$ ${cmd}\nexit ${r.code}\n${r.out}`);
+  },
+});
+
+registerTool(toolSpecFrom(createWorktreeTool, { plane: 'agent' }));
+registerTool(toolSpecFrom(loadWorkspaceDependenciesTool, { plane: 'agent' }));
