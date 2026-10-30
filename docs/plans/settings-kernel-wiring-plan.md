@@ -29,7 +29,7 @@
 ### P2 优先（需外部协议集成，成本高）
 | 预留项 | 需要的内核服务端能力 | 方案 | 复杂度 |
 |---|---|---|---|
-| bots（机器人） | 消息平台协议适配（QQ/飞书/Lark/微信/钉钉） | scheduler BotConnector：Webhook 接收 → 转 step → 回发；每平台一个 adapter | 高 |
+| bots（机器人） | 消息平台协议适配（QQ/飞书/Lark/微信/钉钉） | scheduler BotConnector：**长连接**接收（不用 webhook——那需要公网入站端口）→ 转 step → 回发；allowlist/pairing/审批见 **`remote-access-bot-plan.md`** | 高 |
 | mcp（MCP 与工具） | MCP 客户端（stdio/HTTP）| scheduler McpClient：stdio/HTTP 子进程连接 server → 工具并入 executeTool | 高 |
 | remote（远程 SSH） | SSH 客户端会话 | scheduler SSHClient（ssh2 或内核）：连接 → 文件浏览/终端/端口转发 | 高 |
 
