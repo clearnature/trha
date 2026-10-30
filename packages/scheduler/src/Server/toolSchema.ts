@@ -65,6 +65,198 @@ export interface ToolCallView {
   rawInput?: unknown;
 }
 
+// ─── DSH presentation types ────────────────────────────────────────────────
+// Copied verbatim from `deepseek-harness/packages/core/tools/src/presentation.ts`.
+// These are the types `presentResult` returns; keeping them byte-identical to
+// upstream is the point — a UI bridge can then be ported without re-deciding
+// field names or optionality.
+
+/** One line of a read view: its 1-based file line number and text. */
+export interface ReadFileLine {
+  number: number;
+  text: string;
+}
+
+/** One file-level change: prior content (null when new) and the result. */
+export interface FileDiff {
+  path: string;
+  /** Prior content, or `null` for a new file / an overwrite (no prior content available at call time). */
+  oldText: string | null;
+  /** Content after the change. */
+  newText: string;
+}
+
+/** One matched line inside a `SearchFileMatches` group. */
+export interface SearchLineMatch {
+  /** 1-based line number of the match within its file. */
+  lineNumber: number;
+  /** The matched line text, as the tool surfaced it (the per-line preview budget already applied). */
+  line: string;
+}
+
+/** One file's grouped content matches, in first-seen file order. */
+export interface SearchFileMatches {
+  /** The file the matches belong to (the model-facing display path). */
+  path: string;
+  /** The file's matched lines, in output order. */
+  matches: SearchLineMatch[];
+}
+
+/** One citeable source in a completed `WebSearchResultView`. */
+export interface WebSource {
+  /** The source URL. */
+  url: string;
+  /** The source title, when the provider returned one. */
+  title?: string;
+  /** A short excerpt or summary, when the provider returned one. */
+  snippet?: string;
+  /** Publication/crawl timestamp as a provider-supplied ISO-8601 string, when present. */
+  publishedAt?: string;
+}
+
+/** The default completed card: an optional replacement title and reformatted content. */
+export interface GenericResultView {
+  card: 'generic';
+  /** Replacement title for the completed call. Omit to keep the pending-state title. */
+  title?: string;
+  /** UI-facing result content, reformatted from the model-facing result. */
+  content?: ContentBlock[];
+}
+
+/** A completed shell command: captured output plus its exit status. */
+export interface TerminalResultView {
+  card: 'terminal';
+  /** Replacement title for the completed call. Omit to keep the pending-state title. */
+  title?: string;
+  /** Captured command output (stdout+stderr as the tool chooses to combine them). */
+  output?: string;
+  /** Process exit code, when the run ended by exiting (not a signal). */
+  exitCode?: number;
+  /** Signal name, when the run was killed by one. */
+  signal?: string;
+}
+
+/** A completed file change. */
+export interface DiffResultView {
+  card: 'diff';
+  /** Replacement title for the completed call. Omit to keep the pending-state title. */
+  title?: string;
+  /** The change to show, in file order. */
+  diffs: FileDiff[];
+}
+
+/** A completed content search, grouped by file. */
+export interface SearchMatchesResultView {
+  card: 'search';
+  shape: 'matches';
+  /** Replacement title for the completed call. Omit to keep the pending-state title. */
+  title?: string;
+  /** Matched lines grouped by file, in first-seen file order. */
+  files: SearchFileMatches[];
+  /** Whether the tool capped the inline result. */
+  truncated: boolean;
+  /** Total matches the search found before capping. */
+  total: number;
+}
+
+/** A completed path search, as a flat path list. */
+export interface SearchPathsResultView {
+  card: 'search';
+  shape: 'paths';
+  /** Replacement title for the completed call. Omit to keep the pending-state title. */
+  title?: string;
+  /** The discovered paths, in the tool's result order. */
+  paths: string[];
+  /** Whether the tool capped the inline result. */
+  truncated: boolean;
+  /** Total paths the search found before capping. */
+  total: number;
+}
+
+/** A completed search rendered as a search card. */
+export type SearchResultView = SearchMatchesResultView | SearchPathsResultView;
+
+/** A completed file read rendered as a line-numbered code view. */
+export interface ReadResultView {
+  card: 'read';
+  /** Replacement title for the completed call. Omit to keep the pending-state title. */
+  title?: string;
+  /** The read file's path (the model-facing path; the bridge relativizes it). */
+  path: string;
+  /** The 1-based first line the window requested. */
+  offset: number;
+  /** The returned window's lines, in file order, each keeping its file line number. */
+  lines: ReadFileLine[];
+  /** Exact total line count in the file. */
+  totalLines: number;
+  /** A syntax-highlighting language hint derived from the file extension. */
+  lang?: string;
+  /** The model-facing result content with its envelope stripped. */
+  content?: ContentBlock[];
+}
+
+/** The completed state of a `web_search` call. */
+export interface WebSearchResultView {
+  card: 'web';
+  kind: 'search';
+  /** Replacement title for the completed call. Omit to keep the pending-state title. */
+  title?: string;
+  /** The faithful, structured sources. */
+  sources: WebSource[];
+  /** The provider-generated answer text, when any. */
+  answer?: string;
+  /** True when the web service cut the source list to honor the result cap. */
+  truncated: boolean;
+}
+
+/** The completed state of a `web_fetch` call. */
+export interface WebFetchResultView {
+  card: 'web';
+  kind: 'fetch';
+  /** Replacement title for the completed call. Omit to keep the pending-state title. */
+  title?: string;
+  /** The final URL after allowed redirects. */
+  url: string;
+  /** HTTP status code of the fetched response. */
+  statusCode: number;
+  /** True when the provider capped the decoded body or a cap trimmed the text. */
+  truncated: boolean;
+}
+
+/** How a tool wants the COMPLETED call shown — the *result* state, after `execute` returns. */
+export type ToolResultView =
+  | GenericResultView
+  | TerminalResultView
+  | DiffResultView
+  | SearchResultView
+  | ReadResultView
+  | WebSearchResultView
+  | WebFetchResultView;
+
+/**
+ * What a tool's execution produced, as the core sees it (DSH's `ToolResult`).
+ *
+ * NOTE: DSH passes this to `presentResult`; trha still passes the bare canonical
+ * value. Closing that gap means porting each `presentResult` body from
+ * `deepseek-harness` verbatim (`presentBashResult`, `presentGrepResult`,
+ * `presentSearchResult`, `presentFetchResult`, `presentWorkflowResult`), so it is
+ * tracked as its own task rather than half-done.
+ *
+ * Copied from `deepseek-harness/packages/core/tools/src/index.ts`:
+ * `content` is model-facing, `isError` says whether the call failed, and `meta`
+ * is the tool-private presentation payload projected by
+ * `output.presentationMeta`, persisted on the tool result so replay can narrow
+ * it independently. `meta` is absent when the tool declared no projector.
+ */
+export interface ToolResult {
+  /** The final model-facing content (or the rendered error text on failure). */
+  content: ContentBlock[];
+  /** Whether the call failed. */
+  isError: boolean;
+  /** The tool-private presentation payload; absent when nothing was projected. */
+  meta?: unknown;
+}
+
 export interface ToolDefinition<T = unknown> {
   name: string;
   /** Sent to the model. */
