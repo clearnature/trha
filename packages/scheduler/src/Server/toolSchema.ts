@@ -91,7 +91,39 @@ export interface ToolDefinition<T = unknown> {
    * `undefined` keeps the opening card's label.
    */
   presentResult?: (args: Record<string, unknown>, result: unknown) => ToolCallView | undefined;
+  /**
+   * Last-mile content transform, applied after `output.render` (DSH's
+   * `projectContent` + `finalizeContent`, merged because trha has no
+   * result-policy layer). Returning `undefined` keeps the rendered blocks.
+   */
+  finalizeContent?: (
+    exec: { args: Record<string, unknown>; host: unknown },
+    result: { value: T; content: ContentBlock[] },
+  ) => ContentBlock[] | undefined;
 }
+
+/**
+ * Every field of `ToolDefinition`, enumerated once.
+ *
+ * Adding a field to the interface without adding it here is a **type error** —
+ * that is the whole point. Twice before, a field was declared and the
+ * hand-written copy in `toolSpecFrom` silently dropped it, so 74 tools carried
+ * a setting that never took effect. `Record<keyof T, true>` turns "remember to
+ * copy it" into "the compiler tells you".
+ */
+export const DEFINITION_FIELDS: Record<keyof ToolDefinition, true> = {
+  name: true,
+  description: true,
+  parameters: true,
+  output: true,
+  execute: true,
+  timeoutMs: true,
+  deferLoading: true,
+  isConcurrencySafe: true,
+  presentCall: true,
+  presentResult: true,
+  finalizeContent: true,
+};
 
 /**
  * Validate and return a tool definition.
@@ -180,6 +212,18 @@ export function toolSpecFrom<T>(
       ? {}
       : { presentResult: (args: Record<string, unknown>, result: unknown) =>
           def.presentResult!(args, result) }),
+    ...(def.finalizeContent === undefined
+      ? {}
+      : {
+          finalizeContent: (
+            exec: { args: Record<string, unknown>; host: unknown },
+            result: { value: unknown; content: ContentBlock[] },
+          ) =>
+            def.finalizeContent!(exec, {
+              value: result.value as T,
+              content: result.content,
+            }),
+        }),
     handler: (args, exec) => def.execute(args, exec),
   };
 }
