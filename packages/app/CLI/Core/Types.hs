@@ -309,6 +309,7 @@ data ToolEvent = ToolEvent
   , teDurationMs :: Maybe Int
   , teOutput     :: Maybe Text -- ^ tail output preview (kernel, succeeded only)
   , teView       :: Maybe ToolCallView -- ^ tool-supplied card intent
+  , teMeta       :: Maybe Value -- ^ DSH's @presentationMeta@: replayable card data
   } deriving (Show, Eq)
 
 instance FromJSON ToolRunStatus where
@@ -339,7 +340,8 @@ instance FromJSON ToolEvent where
       _           -> fail "unknown tool status"
     out  <- o .:? "output"
     view <- o .:? "view"
-    pure $ ToolEvent callId phase name args status dur out view
+    meta <- o .:? "meta"
+    pure $ ToolEvent callId phase name args status dur out view meta
 
 -- | Status of one team task (the agent's TODO list).
 data TodoStatus = TodoPending | TodoInProgress | TodoDone
@@ -469,7 +471,7 @@ modelForProvider p current
   | otherwise                  = current
 
 instance ToJSON ToolEvent where
-  toJSON (ToolEvent cid phase name args st dur out view) =
+  toJSON (ToolEvent cid phase name args st dur out view meta) =
     object $
       [ "callId" .= cid
       , "name" .= name
@@ -481,6 +483,7 @@ instance ToJSON ToolEvent where
       ++ [ "error" .= err | ToolRunFailed err <- [st], err /= "" ]
       ++ [ "output" .= o | Just o <- [out] ]
       ++ [ "view" .= v | Just v <- [view] ]
+      ++ [ "meta" .= m | Just m <- [meta] ]
     where
       statusTag ToolRunRunning   = ("running" :: Text)
       statusTag ToolRunSucceeded = "succeeded"
