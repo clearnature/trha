@@ -26,6 +26,7 @@ data GlobalOpts = GlobalOpts
   , optTheme :: Maybe Text
   , optLang  :: Maybe Text
   , optToken :: Maybe Text
+  , optAgentPreset :: Maybe Text
   } deriving (Show)
 
 -- | Subcommand
@@ -75,6 +76,11 @@ globalOptsParser = GlobalOpts
         ( long "token"
         <> metavar "TOKEN"
         <> help "Scheduler auth token (default: $TRHA_TOKEN, else dev-token). Needed for --host beyond loopback"
+        ))
+  <*> optional (strOption
+        ( long "agent-preset"
+        <> metavar "PRESET"
+        <> help "Agent preset: standard | ptc | minimal | cordis (default: standard)"
         ))
 
 -- | TUI subcommand

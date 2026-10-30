@@ -108,7 +108,7 @@ collectStatusInfo cfg mSid model = do
     , StatusRow "Base URL" (baseUrlLine cfg)
     , StatusRow "Model" model
     , StatusRow "Session ID" (maybe "—" T.pack mSid)
-    , StatusRow "SandBox" sandbox
+    , StatusRow "SandBox" (sandbox <> "   Agent模式：" <> configAgentPreset cfg)
     , StatusRow "Memory" (fromMaybe "—" mem)
     ]
 

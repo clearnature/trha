@@ -471,6 +471,7 @@ data CLIConfig = CLIConfig
   , configVerbose    :: Bool
   , configTheme      :: Text
   , configLang       :: Text -- ^ BCP 47 tag: "zh-Hans" (default), "zh-Hant", "en", …
+  , configAgentPreset :: Text -- ^ agent preset: standard|ptc|minimal|cordis (default: standard)
   , configEffort     :: Text -- ^ reasoning effort: auto|minimal|low|medium|high
   , configMetrics    :: Text -- ^ status-line metric keys (comma separated)
   , configMarkdown   :: Bool -- ^ render assistant replies as markdown
@@ -506,6 +507,7 @@ instance FromJSON CLIConfig where
     <*> v .: "configVerbose"
     <*> v .:? "configTheme" .!= "tokyo-night"
     <*> v .:? "configLang" .!= "zh-Hans"
+    <*> v .:? "configAgentPreset" .!= "standard"
     <*> v .:? "configEffort" .!= "auto"
     <*> v .:? "configMetrics" .!= "model,mode,cache,ctx,compact,session"
     <*> v .:? "configMarkdown" .!= True
@@ -537,6 +539,7 @@ defaultCLIConfig = CLIConfig
   , configVerbose   = False
   , configTheme     = "tokyo-night"
   , configLang      = "zh-Hans"
+  , configAgentPreset = "standard"
   , configEffort    = "auto"
   , configMetrics   = "model,mode,cache,ctx,compact,session"
   , configMarkdown  = True

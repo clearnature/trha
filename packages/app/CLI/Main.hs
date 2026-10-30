@@ -53,6 +53,7 @@ buildConfig opts = do
     , configModel = fromMaybe (configModel baseConfig) (optModel opts)
     , configTheme = fromMaybe (configTheme baseConfig) (optTheme opts)
     , configLang = fromMaybe (configLang baseConfig) (optLang opts)
+    , configAgentPreset = fromMaybe (configAgentPreset baseConfig) (optAgentPreset opts)
     , configToken = fromMaybe (configToken baseConfig) (optToken opts)
     }
 
