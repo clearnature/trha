@@ -13,6 +13,7 @@ import { confineWritePath } from './toolGuard.js';
 import { browserEvaluate, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 import { hardenedEnv, interactiveShell, powerShellCandidates, resolveShell } from './shell.js';
 import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedInteractive, sandboxedSpawn, type SandboxSession } from './sandbox.js';
+import { resolveTool } from './toolRegistry.js';
 import type { StandardToolHost, TeamTask } from './standardTools.js';
 
 export interface Terminal {
@@ -98,6 +99,11 @@ export async function runExtraTool(
   args: Record<string, unknown>,
   host: ExtraHost,
 ): Promise<string | null> {
+  // Same precedence rule as `runStandardTool`: registered plugins first, the
+  // legacy chain as the fallback for anything not migrated yet.
+  const registered = resolveTool(name);
+  if (registered) return registered.handler(args, host);
+
   // ── working directory ────────────────────────────────────────────────
   if (name === 'working_directory') {
     if (typeof args.path === 'string' && args.path.trim()) {

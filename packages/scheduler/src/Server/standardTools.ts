@@ -20,6 +20,7 @@ import { discoverSkills, readSkill, skillDirs } from './skills.js';
 import { listMcpResources, listMcpResourceTemplates, readMcpResource } from './mcp.js';
 import { hardenedEnv, resolveShell, shellRunner } from './shell.js';
 import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedSpawn } from './sandbox.js';
+import { registerTool, resolveTool } from './toolRegistry.js';
 import { lspQuery, type LspOperation } from './lsp.js';
 import { browserClose, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 
@@ -215,6 +216,11 @@ export async function runStandardTool(
   args: Record<string, unknown>,
   host: StandardToolHost,
 ): Promise<string | null> {
+  // Registered tools take precedence over the legacy chain, so migration is
+  // one tool at a time: anything not yet registered still runs below.
+  const registered = resolveTool(name);
+  if (registered) return registered.handler(args, host);
+
   const now = host.now ?? (() => new Date());
 
   if (name === 'list_mcp_resources') {
@@ -663,38 +669,9 @@ export async function runStandardTool(
   }
 
   if (name === 'web_fetch') {
-    // `network: off` must mean *no egress*, not "no egress from subprocesses":
-    // this tool runs `fetch` in the scheduler process, so without this guard an
-    // agent answers "network off" with a plain HTTP GET.
-    if (sandboxBlocksNetwork()) {
-      return 'ERROR: network access is disabled by the sandbox policy (network: off). '
-           + 'Enable it under /sandbox, or run outside the sandbox.';
-    }
-    const url = args.url;
-    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return 'ERROR: url must be http(s)';
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 15_000);
-    try {
-      const res = await fetch(url, {
-        signal: ctrl.signal,
-        redirect: 'follow',
-        headers: {
-          // Many sites answer a bare bot UA with a challenge page; a normal
-          // browser UA plus language negotiation gets the readable HTML.
-          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        },
-      });
-      const type = res.headers.get('content-type') ?? '';
-      const body = await res.text();
-      const text = type.includes('html') ? stripHtml(body) : body;
-      return clip(`HTTP ${res.status} ${type}\n${text}`);
-    } catch (e) {
-      return `ERROR: ${(e as Error).message}`;
-    } finally {
-      clearTimeout(timer);
-    }
+    // Registered at the bottom of this module; kept as a no-op marker so the
+    // legacy chain still recognises the name if registration ever fails.
+    return registeredWebFetch(args);
   }
 
   return null;
@@ -705,3 +682,51 @@ export async function writeSkill(dir: string, name: string, body: string): Promi
   await mkdir(dir, { recursive: true });
   await writeFile(path.join(dir, `${name}.md`), body, 'utf8');
 }
+
+// ── registered plugins ──────────────────────────────────────────────
+//
+// Step 1 of the tool-plugin migration: these names resolve from `toolRegistry`
+// before the legacy chain runs. Everything not migrated still lives in the
+// chain, so the rewrite can proceed one tool at a time.
+
+/** `web_fetch` — HTTP GET with the sandbox network policy applied. */
+async function registeredWebFetch(args: Record<string, unknown>): Promise<string> {
+  // `network: off` must mean *no egress*, not "no egress from subprocesses":
+  // this tool runs `fetch` in the scheduler process, so without this guard an
+  // agent answers "network off" with a plain HTTP GET.
+  if (sandboxBlocksNetwork()) {
+    return 'ERROR: network access is disabled by the sandbox policy (network: off). '
+         + 'Enable it under /sandbox, or run outside the sandbox.';
+  }
+  const url = args.url;
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return 'ERROR: url must be http(s)';
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15_000);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: {
+        // Many sites answer a bare bot UA with a challenge page; a normal
+        // browser UA plus language negotiation gets the readable HTML.
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      },
+    });
+    const type = res.headers.get('content-type') ?? '';
+    const body = await res.text();
+    const text = type.includes('html') ? stripHtml(body) : body;
+    return clip(`HTTP ${res.status} ${type}\n${text}`);
+  } catch (e) {
+    return `ERROR: ${(e as Error).message}`;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+registerTool({
+  name: 'web_fetch',
+  plane: 'agent',
+  handler: args => registeredWebFetch(args),
+});
