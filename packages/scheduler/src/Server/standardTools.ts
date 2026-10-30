@@ -1401,7 +1401,21 @@ const globTool = defineTool<string>({
 registerTool(toolSpecFrom(globTool, { plane: 'agent' }));
 
 /** `grep` — regex search across file contents. */
-const grepTool = defineTool<string>({
+/**
+ * What `grep` produces — DSH's `tool-fs-search` returns a structured result, so
+ * its result card can read a count instead of re-parsing rows.
+ */
+export interface GrepResult {
+  /** How many hits were returned (the tool caps at 200). */
+  hits: number;
+  /** The formatted `path:line:text` rows, or `(no matches)`. */
+  text: string;
+}
+
+/** Reproduce the pre-refactor text byte for byte. */
+const renderGrep = (v: GrepResult): string => v.text;
+
+const grepTool = defineTool<GrepResult>({
   name: 'grep',
   description:
     'Search file contents with a regular expression (multiline). Skips binaries and '
@@ -1411,15 +1425,23 @@ const grepTool = defineTool<string>({
     path: { type: 'string', description: 'Directory to search (default ".").' },
     glob: { type: 'string', description: 'Only search files matching this glob.' },
   },
-  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  output: {
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { hits: { type: 'number' }, text: { type: 'string' } },
+    },
+    render: (_args, value) => [textBlock(renderGrep(value))],
+  },
   presentCall: args => ({ card: 'generic', title: `grep ${oneLine(args.pattern)}`, rawInput: args.pattern }),
   // DSH's `tool-fs-search` presents a result card; the distilled fact is the
   // number of hits.
   presentResult: (_args, result) => {
-    const text = String(result ?? '');
-    if (text === '(no matches)') return { card: 'generic' as const, title: 'no matches' };
-    const hits = text.split('\n').filter(l => l.trim() !== '').length;
-    return { card: 'generic' as const, title: `${hits} hit${hits === 1 ? '' : 's'}` };
+    // The canonical value: no row counting, and no miscount when a matched line
+    // itself contains a newline.
+    const v = result as GrepResult;
+    if (!v?.hits) return { card: 'generic' as const, title: 'no matches' };
+    return { card: 'generic' as const, title: `${v.hits} hit${v.hits === 1 ? '' : 's'}` };
   },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -1456,7 +1478,10 @@ const grepTool = defineTool<string>({
       }
       if (out.length >= 200) break;
     }
-    return out.length ? out.join('\n') : '(no matches)';
+    return {
+      hits: out.length,
+      text: out.length ? out.join('\n') : '(no matches)',
+    };
   },
 });
 
