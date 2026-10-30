@@ -90,3 +90,11 @@ scheduler `vitest` 相关文件 → 60 passed。
   pids 上限存在毫秒级竞态（fork 可能在入组之前发生）。
   要覆盖「运行中 D-Bus 抖动」，需要每次 exec 重探，但 `systemd-run --scope`
   本身有数百毫秒开销，不划算；容器/无 systemd 环境本就走这条降级路径。
+
+## 6. 相邻进展（非沙箱，但会连带影响）
+
+- **远程访问 / IM bot**：规划见 `remote-access-bot-plan.md`。前置已完成（`a029b79`）：
+  `trha --token`、CORS 白名单、非 loopback + 默认 token 拒绝启动；`/v1`、`/studio`
+  的免鉴权只在 loopback 生效（`ac74758`）。
+- **会话与工作区隔离**：会话级 workspace（`c1b20e9`）、`/workspace` 人类通道
+  （`4f04e6d`）、`cd` 按会话根收敛（`7e3a314`）、沙箱内遮蔽 `~/.trha`（`347a1b6`）。

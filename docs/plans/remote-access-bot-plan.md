@@ -54,11 +54,19 @@
 - **`/workspace` 人类通道**（`4f04e6d`）+ `cd` 按会话根收敛（`7e3a314`）——agent 扩不了自己的沙箱根。
 - **`~/.trha` 在沙箱内被遮蔽**（`347a1b6`）——token 不外泄。
 
-## 5. 还缺的前置（实现 B 组之前必须做）
+## 5. 前置（**已完成，2026-10-30**）
 
-- `trha --token <token>`：远程/隧道连接目前只能靠 `TRHA_TOKEN` 环境变量。
-- **CORS 白名单化**：现在是 `cors()` 全开。
-- 非 loopback 监听时的启动自检：没有 token/证书就拒绝启动，并提示改用 SSH 隧道。
+- **`trha --token <token>`**（`a029b79`）：远程/隧道连接不再只能靠 `TRHA_TOKEN`
+  环境变量。
+- **CORS 白名单化**（`a029b79`）：`cors()` → 只放本监听地址自身的 origin；
+  非浏览器调用（无 Origin）不受影响。
+- **非 loopback 启动自检**（`a029b79`）：监听非 loopback 且 token 仍是默认
+  `dev-token` → 拒绝启动，并提示改用 SSH 隧道。
+- **`/v1/*`、`/studio` 的免鉴权只在 loopback 生效**（`ac74758`）：此前无条件
+  放行，等于公网裸奔的 LLM 接口。
+
+三层防护现在的形状：传输（真 token）→ 鉴权（Bearer，除 `/health` 外全要）→
+浏览器（CORS 只放本机 origin）。
 
 ## 6. 验收判据
 
