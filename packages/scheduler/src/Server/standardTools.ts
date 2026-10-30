@@ -250,28 +250,8 @@ export async function runStandardTool(
   }
 
   if (name === 'lsp') {
-    const file = typeof args.file === 'string' ? args.file : '';
-    const operation = args.operation;
-    if (!file) return 'ERROR: file is required';
-    const allowed: readonly LspOperation[] = [
-      'hover', 'definition', 'references', 'diagnostics', 'symbols',
-      'workspaceSymbol', 'implementation', 'callHierarchy', 'incomingCalls', 'outgoingCalls',
-    ];
-    if (typeof operation !== 'string' || !allowed.includes(operation as LspOperation)) {
-      return `ERROR: operation must be ${allowed.join('|')}`;
-    }
-    try {
-      const out = await lspQuery({
-        file,
-        operation: operation as LspOperation,
-        ...(typeof args.line === 'number' ? { line: args.line } : {}),
-        ...(typeof args.character === 'number' ? { character: args.character } : {}),
-        ...(typeof args.query === 'string' ? { query: args.query } : {}),
-      });
-      return clip(out);
-    } catch (e) {
-      return `ERROR: ${(e as Error).message}`;
-    }
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   if (name === 'subagent') {
@@ -1201,3 +1181,48 @@ const interruptAgentTool = defineTool<string>({
 registerTool(toolSpecFrom(listAgentsTool, { plane: 'host' }));
 registerTool(toolSpecFrom(sendMessageTool, { plane: 'host' }));
 registerTool(toolSpecFrom(interruptAgentTool, { plane: 'host' }));
+
+/** `lsp` — one LSP query against the workspace. */
+const lspTool = defineTool<string>({
+  name: 'lsp',
+  description:
+    'Ask the language server one question about a file: hover, definition, references, '
+    + 'diagnostics, symbols, workspaceSymbol, implementation, callHierarchy, '
+    + 'incomingCalls or outgoingCalls.',
+  parameters: {
+    file: { type: 'string', description: 'File path.' },
+    operation: {
+      type: 'string',
+      enum: [
+        'hover', 'definition', 'references', 'diagnostics', 'symbols',
+        'workspaceSymbol', 'implementation', 'callHierarchy', 'incomingCalls', 'outgoingCalls',
+      ],
+    },
+    line: { type: 'number', description: 'Zero-based line, for position-based operations.' },
+    character: { type: 'number', description: 'Zero-based character offset.' },
+    query: { type: 'string', description: 'Search text, for workspaceSymbol.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args) {
+    const file = typeof args.file === 'string' ? args.file : '';
+    const operation = args.operation;
+    if (!file) throw new Error('file is required');
+    const allowed: readonly LspOperation[] = [
+      'hover', 'definition', 'references', 'diagnostics', 'symbols',
+      'workspaceSymbol', 'implementation', 'callHierarchy', 'incomingCalls', 'outgoingCalls',
+    ];
+    if (typeof operation !== 'string' || !allowed.includes(operation as LspOperation)) {
+      throw new Error(`operation must be ${allowed.join('|')}`);
+    }
+    const out = await lspQuery({
+      file,
+      operation: operation as LspOperation,
+      ...(typeof args.line === 'number' ? { line: args.line } : {}),
+      ...(typeof args.character === 'number' ? { character: args.character } : {}),
+      ...(typeof args.query === 'string' ? { query: args.query } : {}),
+    });
+    return clip(out);
+  },
+});
+
+registerTool(toolSpecFrom(lspTool, { plane: 'host' }));
