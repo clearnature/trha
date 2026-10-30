@@ -107,6 +107,12 @@ export function defineTool<T>(def: ToolDefinition<T>): ToolDefinition<T> {
 }
 
 /** The single text block most tools render to. */
+/** Collapse whitespace and clip, for one-line card titles. */
+export const oneLine = (value: unknown, max = 48): string => {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+};
+
 export function textBlock(text: string): ContentBlock {
   return { type: 'text', text };
 }

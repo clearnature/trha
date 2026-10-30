@@ -21,7 +21,7 @@ import { listMcpResources, listMcpResourceTemplates, readMcpResource } from './m
 import { hardenedEnv, resolveShell, shellRunner } from './shell.js';
 import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedSpawn } from './sandbox.js';
 import { registerTool, renderToolValue, resolveTool } from './toolRegistry.js';
-import { defineTool, textBlock, toolSpecFrom } from './toolSchema.js';
+import { defineTool, oneLine, textBlock, toolSpecFrom } from './toolSchema.js';
 import { editDiff, globToRegExp, resolveReadPath, walkFiles, workspaceRelative } from './fsWalk.js';
 import { confineWritePath, limitOutput } from './toolGuard.js';
 import { runShell } from './shellRun.js';
@@ -400,6 +400,7 @@ const webFetchTool = defineTool<{ status: number; type: string; text: string }>(
     },
     render: (_args, value) => [textBlock(`HTTP ${value.status} ${value.type}\n${value.text}`)],
   },
+  presentCall: args => ({ card: 'generic', title: `fetch ${oneLine(args.url)}`, rawInput: args.url }),
   timeoutMs: 20_000,
   async execute(args) {
     // `network: off` must mean *no egress*, not "no egress from subprocesses":
@@ -575,6 +576,7 @@ const todoWriteTool = defineTool<string>({
     },
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  presentCall: _args => ({ card: 'generic', title: 'update todo list' }),
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     const raw = args.todos;
@@ -1169,6 +1171,7 @@ const subagentTool = defineTool<string>({
     agent: { type: 'string', description: 'Named agent definition (~/.trha/agents/<name>/).' },
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  presentCall: args => ({ card: 'generic', title: `subagent: ${oneLine(args.task ?? args.prompt)}` }),
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     if (!host.agents) throw new Error('subagents are not available in this host');
@@ -1303,12 +1306,6 @@ const runCodeTool = defineTool<string>({
 registerTool(toolSpecFrom(runCodeTool, { plane: 'agent', presets: ['ptc'] }));
 
 /** `glob` — list files under a directory that match a glob pattern. */
-/** Collapse whitespace and clip, for one-line card titles. */
-const oneLine = (value: unknown, max = 48): string => {
-  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
-  return text.length > max ? `${text.slice(0, max)}…` : text;
-};
-
 const globTool = defineTool<string>({
   name: 'glob',
   description:
@@ -1319,6 +1316,7 @@ const globTool = defineTool<string>({
     path: { type: 'string', description: 'Directory to search (default ".").' },
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  presentCall: args => ({ card: 'generic', title: `glob ${oneLine(args.pattern)}`, rawInput: args.pattern }),
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     if (typeof args.pattern !== 'string' || !args.pattern.trim()) {
@@ -1469,6 +1467,7 @@ const writeTool = defineTool<string>({
     content: { type: 'string', description: 'Full file contents.' },
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  presentCall: args => ({ card: 'diff', title: `write ${oneLine(args.path)}`, rawInput: args.path }),
   execute: (args, exec) => writeFileExecute(args, exec, 'write'),
 });
 

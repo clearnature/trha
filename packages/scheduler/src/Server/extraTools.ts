@@ -14,7 +14,7 @@ import { browserEvaluate, browserExtract, browserNavigate, browserScreenshot } f
 import { hardenedEnv, interactiveShell, powerShellCandidates, resolveShell } from './shell.js';
 import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedInteractive, sandboxedSpawn, type SandboxSession } from './sandbox.js';
 import { registerTool, renderToolValue, resolveTool } from './toolRegistry.js';
-import { defineTool, textBlock, toolSpecFrom } from './toolSchema.js';
+import { defineTool, oneLine, textBlock, toolSpecFrom } from './toolSchema.js';
 import type { StandardToolHost, TeamTask } from './standardTools.js';
 
 export interface Terminal {
@@ -419,6 +419,7 @@ const terminalOpenTool = defineTool<string>({
     + 'driven over the same stdin-frame protocol as one-shot commands.',
   parameters: {},
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  presentCall: _args => ({ card: 'terminal', title: 'open shell' }),
   async execute(_args, exec) {
     const host = exec.host as ExtraHost;
     const id = `term-${host.terminals.size + 1}`;
@@ -842,6 +843,7 @@ const spawnTeammateTool = defineTool<string>({
     name: { type: 'string', description: 'Teammate name (default "teammate").' },
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  presentCall: args => ({ card: 'generic', title: `spawn ${oneLine(args.name ?? args.task)}` }),
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
     if (!host.agents) throw new Error('subagents are not available in this host');
