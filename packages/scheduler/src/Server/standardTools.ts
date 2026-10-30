@@ -19,7 +19,7 @@ import path from 'node:path';
 import { discoverSkills, readSkill, skillDirs } from './skills.js';
 import { listMcpResources, listMcpResourceTemplates, readMcpResource } from './mcp.js';
 import { hardenedEnv, resolveShell, shellRunner } from './shell.js';
-import { defaultSandboxScope, sandboxEnabled, sandboxedSpawn } from './sandbox.js';
+import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedSpawn } from './sandbox.js';
 import { lspQuery, type LspOperation } from './lsp.js';
 import { browserClose, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 
@@ -663,6 +663,13 @@ export async function runStandardTool(
   }
 
   if (name === 'web_fetch') {
+    // `network: off` must mean *no egress*, not "no egress from subprocesses":
+    // this tool runs `fetch` in the scheduler process, so without this guard an
+    // agent answers "network off" with a plain HTTP GET.
+    if (sandboxBlocksNetwork()) {
+      return 'ERROR: network access is disabled by the sandbox policy (network: off). '
+           + 'Enable it under /sandbox, or run outside the sandbox.';
+    }
     const url = args.url;
     if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return 'ERROR: url must be http(s)';
     const ctrl = new AbortController();

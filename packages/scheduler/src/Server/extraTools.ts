@@ -12,7 +12,7 @@ import path from 'node:path';
 import { confineWritePath } from './toolGuard.js';
 import { browserEvaluate, browserExtract, browserNavigate, browserScreenshot } from './browser.js';
 import { hardenedEnv, interactiveShell, powerShellCandidates, resolveShell } from './shell.js';
-import { defaultSandboxScope, sandboxEnabled, sandboxedInteractive, sandboxedSpawn, type SandboxSession } from './sandbox.js';
+import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedInteractive, sandboxedSpawn, type SandboxSession } from './sandbox.js';
 import type { StandardToolHost, TeamTask } from './standardTools.js';
 
 export interface Terminal {
@@ -420,6 +420,12 @@ export async function runExtraTool(
 
   // ── search / models / plugins ────────────────────────────────────────
   if (name === 'web_search') {
+    // Same reason as `web_fetch`: this runs `fetch` in the scheduler process,
+    // so `network: off` (which only unsets the child's netns) would not stop it.
+    if (sandboxBlocksNetwork()) {
+      return 'ERROR: network access is disabled by the sandbox policy (network: off). '
+           + 'Enable it under /sandbox, or run outside the sandbox.';
+    }
     const query = typeof args.query === 'string' ? args.query.trim() : '';
     if (!query) return 'ERROR: query is required';
     const searx = process.env.TRHA_SEARX_URL;
@@ -498,6 +504,10 @@ export async function runExtraTool(
   if (name === 'plugin_market') {
     const source = process.env.TRHA_PLUGIN_MARKET;
     if (!source) return 'ERROR: plugin_market needs TRHA_PLUGIN_MARKET (URL or JSON file)';
+    // A URL source is egress; a local file is not.
+    if (/^https?:/i.test(source) && sandboxBlocksNetwork()) {
+      return 'ERROR: network access is disabled by the sandbox policy (network: off).';
+    }
     try {
       const raw = /^https?:/i.test(source)
         ? await (await fetch(source)).text()

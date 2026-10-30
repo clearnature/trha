@@ -227,6 +227,20 @@ function workspaceFor(scope: SandboxScope, request: SandboxRequest): string {
 }
 
 /** Scope used by the scheduler when only cwd/policy env vars are available. */
+/**
+ * True when the sandbox is **on** and its network policy denies egress.
+ *
+ * The bwrap backend enforces this for child processes (`--unshare-net`), but
+ * built-in tools such as `web_fetch` run `fetch` inside the scheduler process
+ * and would otherwise ignore the policy entirely — an agent could answer
+ * "network: off" with a plain HTTP GET.
+ */
+export function sandboxBlocksNetwork(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!sandboxEnabled(env)) return false;
+  const spec = parseNetworkSpec(cachedConfig?.network ?? env.TRHA_SANDBOX_NETWORK ?? 'off');
+  return spec.kind === 'off';
+}
+
 export function defaultSandboxScope(
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
