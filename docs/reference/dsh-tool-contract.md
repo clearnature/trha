@@ -140,39 +140,32 @@ eager 不带、全 deferred 时第一个被取消、**单个** deferred 也被�
 包含只有一个工具的情形）、beta 头只在有 deferred 时出现。为了让这些能被断言，
 `anthropicHeaders` 从 IO 闭包里抽成了纯函数并导出。
 
-### 未验证的一跳：真实请求
+### 已验证的一跳：真实请求（2026-10-30）
 
-上面的断言止于「报文构造正确」，**不等于上游接受**。原因是 `trha serve` 是 stub 内核
-（`packages/app/CLI/Main.hs` 的 `startStubKernel`：固定 `stubAdapter`，不读 provider
-配置），真实 provider 调用只发生在 TUI/CLI 会话里。
+上一版这里写的是「未验证」。现在验证了。
 
-要覆盖最后一跳，只有两条路：
-
-1. 用真实配置跑一次 TUI 会话，让它调一个 `stagehand_*` 工具；
-2. 在内核临时打日志，打印实际发出的 `tools[].defer_loading` 与 `anthropic-beta` 头。
-
-在此之前，`deferLoading` 的证据链止于「我们发的是对的」，不是「对方收下了」。
-
-提交（按时间）：
+内核在 `TRHA_DEBUG_ANTHROPIC=1` 时打印实际发出的形状（`anthropicStream` 里的临时日志，
+保留为调试开关）：
 
 ```
-a935e32  规范化值管线
-8f4e06d  bash 结构化
-51ec70f  edit 结构化
-d18517c  write / append_file 结构化
-4123490  registerTool 字段丢失修复 + presentation 测试
-6fe760a  isConcurrencySafe（按上游清单）
-ab2b451 / 2b98832  presentResult（按 DSH 实现清单）
-1668aad  terminal_read 的 finalizeContent
-a6af2b2  grep 结构化
-8304c2c  web_search 结构化
-d48ebeb  web_fetch 读规范值
-c71ec86  workflow 结构化
-525dbad  并发分组
-b99c27d / c2e1517 / bdab3d4 / 21ff437  deferLoading 全链路
-8bf1617  stagehand_* 启用延迟加载 + 契约测试
-3bc07b5  ToolDeferSpec（线上形状断言）
+[anthropic] model=deepseek-flash tools=2 \
+  deferred=["deferred_probe"] beta=Just "mid-conversation-tool-changes-2026-07-01"
+("error:",Nothing)
 ```
+
+发一次真实请求（两个工具：一个 `deferLoading: true`、一个 `false`，指向
+`https://api.deepseek.com/anthropic`）：
+
+- `deferred=["deferred_probe"]` —— 只有标记的那个被延迟，eager 的没被误标；
+- `beta=Just "mid-conversation-tool-changes-2026-07-01"` —— beta 头确实加上了；
+- `ctError = Nothing` —— **上游接受了**。
+
+第一次试的时候拿到 `HTTP 400: Invalid schema for function ...: schema must be a JSON
+Schema of 'type: "object"', got 'type: null'` —— 那是探针的 `input_schema` 用了空对象，
+不是 `defer_loading` 的问题。换成 `{"type": "object", "properties": {}}` 后成功。
+
+**这个 400 顺带说明一件事**：`input_schema` 为空对象也会被拒。`toolCatalog` 里的定义都带
+`type: 'object'`，所以没有受影响，但自定义插件要注意。
 
 ## 五、下一步
 

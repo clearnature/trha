@@ -48,6 +48,7 @@ import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Data.CaseInsensitive (mk)
 import Network.HTTP.Types.Header (Header)
 import Network.HTTP.Types.Status (statusCode, statusIsSuccessful)
+import System.IO (hPutStrLn, stderr)
 import System.IO.Unsafe (unsafePerformIO)
 
 import Core.Provider.Types
@@ -55,6 +56,7 @@ import LLM.Adapter.Interface (LLMAdapter(..), StreamCall)
 import qualified LLM.Stream as LStream
 import LLM.Adapter.Types
 import LLM.Providers.DeepSeek (buildDeepSeekChatRequest, parseDeepSeekChatTurn)
+import Control.Monad (when)
 import System.Environment (lookupEnv)
 
 
@@ -350,6 +352,15 @@ anthropicStream baseUrl apiKey model extraHs mthinking = do
     pending <- newIORef (Nothing :: Maybe (Int, Text, Text, Text))
     thinkingRef <- newIORef T.empty
     sigRef <- newIORef (Nothing :: Maybe Text)
+    -- TEMP verification: TRHA_DEBUG_ANTHROPIC=1 prints what actually goes out.
+    dbg <- lookupEnv "TRHA_DEBUG_ANTHROPIC"
+    when (dbg == Just "1") $ do
+      let hdrs = anthropicHeaders apiKey extraHs specs
+          deferred = [tsName x | x <- specs, tsDeferLoading x]
+      hPutStrLn stderr $ "[anthropic] model=" <> T.unpack model
+        <> " tools=" <> show (length specs)
+        <> " deferred=" <> show deferred
+        <> " beta=" <> show (lookup "anthropic-beta" hdrs)
     result <- LStream.streamPostSse url (anthropicHeaders apiKey extraHs specs)
       (anthropicRequestBody model msgs specs True mthinking) $ \v -> do
       case anthropicEvent v of
