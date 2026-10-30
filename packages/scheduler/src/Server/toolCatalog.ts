@@ -15,6 +15,11 @@ export interface ToolDefinition {
     properties: Record<string, unknown>;
     required: string[];
   };
+  /**
+   * Ask the provider to load this definition on demand rather than up front
+   * (Anthropic's `defer_loading`). Absent means "declare it normally".
+   */
+  deferLoading?: boolean;
 }
 
 /** Canonical tool directory, in the order offered to the model. */
@@ -578,6 +583,9 @@ export function toToolSpecs(defs: ToolDefinition[] = toolCatalog): ToolSpec[] {
     name: d.name,
     description: d.description,
     parameters: d.parameters,
+    // Only sent when set: a `false` here would be noise on the wire and the
+    // kernel treats an absent field as "declare it normally".
+    ...(d.deferLoading === true ? { deferLoading: true } : {}),
   }));
 }
 
