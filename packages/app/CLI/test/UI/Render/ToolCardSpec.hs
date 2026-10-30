@@ -59,38 +59,38 @@ spec = do
 
   describe "toolCardCollapsed" $ do
     it "is a single summary line with inline status" $ do
-      toolCardCollapsed (ToolCard "bash" ["ls -la"] (Just ToolSucceeded) (Just 120) ["out"] "" Nothing)
+      toolCardCollapsed (ToolCard "bash" ["ls -la"] (Just ToolSucceeded) (Just 120) ["out"] "")
         `shouldBe` ["[tool] bash ✓ 120ms ls -la"]
 
     it "marks a running card without a terminal event" $ do
-      toolCardCollapsed (ToolCard "bash" [] Nothing Nothing [] "" Nothing)
+      toolCardCollapsed (ToolCard "bash" [] Nothing Nothing [] "")
         `shouldBe` ["[tool] bash (running…)"]
 
     it "truncates over-long summaries" $ do
       let long = T.replicate 100 "x"
-      map T.length (toolCardCollapsed (ToolCard "bash" [long] (Just ToolSucceeded) Nothing [] "" Nothing))
+      map T.length (toolCardCollapsed (ToolCard "bash" [long] (Just ToolSucceeded) Nothing [] ""))
         `shouldSatisfy` all (<= cardWidth)
 
     it "flattens newlines in inline arguments" $ do
-      toolCardCollapsed (ToolCard "bash" ["a\nb"] (Just ToolSucceeded) Nothing [] "" Nothing)
+      toolCardCollapsed (ToolCard "bash" ["a\nb"] (Just ToolSucceeded) Nothing [] "")
         `shouldBe` ["[tool] bash ✓ a b"]
 
   describe "toolCardExpanded" $ do
     it "shows title, arguments, output preview and status" $ do
-      toolCardExpanded (ToolCard "bash" ["ls"] (Just ToolSucceeded) (Just 5) ["a", "b"] "" Nothing)
+      toolCardExpanded (ToolCard "bash" ["ls"] (Just ToolSucceeded) (Just 5) ["a", "b"] "")
         `shouldBe` [ "[tool] bash", "  ls", "  │ a", "  │ b", "  ✓ 5ms" ]
 
     it "omits the status line for unreported cards (replay)" $ do
-      toolCardExpanded (ToolCard "read_file" ["x"] Nothing Nothing [] "" Nothing)
+      toolCardExpanded (ToolCard "read_file" ["x"] Nothing Nothing [] "")
         `shouldBe` [ "[tool] read_file", "  x" ]
 
     it "width-truncates over-long output lines" $ do
       let long = T.replicate 100 "y"
-      let [_, _, line] = toolCardExpanded (ToolCard "bash" [] (Just ToolSucceeded) Nothing [long] "" Nothing)
+      let [_, _, line] = toolCardExpanded (ToolCard "bash" [] (Just ToolSucceeded) Nothing [long] "")
       T.length line `shouldSatisfy` (<= cardWidth)
 
   describe "toolCardView" $ do
     it "dispatches by fold state" $ do
-      let card = ToolCard "bash" [] (Just ToolSucceeded) Nothing [] "" Nothing
+      let card = ToolCard "bash" [] (Just ToolSucceeded) Nothing [] ""
       toolCardView FoldCollapsed card `shouldBe` toolCardCollapsed card
       toolCardView FoldExpanded card `shouldBe` toolCardExpanded card

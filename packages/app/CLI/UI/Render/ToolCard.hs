@@ -45,9 +45,6 @@ data ToolCard = ToolCard
   -- ^ DSH's @card@ kind: @generic@ | @terminal@ | @diff@. Decides the title
   -- prefix, so a shell command reads as a shell command and a patch as a patch.
   , tcCard   :: Text
-  -- ^ DSH's @presentationMeta@, already flattened to one readable line by the
-  -- caller (this module stays free of aeson).
-  , tcMeta   :: Maybe Text
   } deriving (Show, Eq)
 
 -- | Fold state of a card: collapsed shows one summary line, expanded
@@ -127,7 +124,6 @@ toolCardExpanded :: ToolCard -> [Text]
 toolCardExpanded card =
   toolCardLines (T.pack (tcName card)) (tcArgs card)
     <> [ ("  │ " <> truncateTo (cardWidth - 4) l) | l <- tcOutput card ]
-    <> [ "  │ meta: " <> truncateTo (cardWidth - 10) m | Just m <- [tcMeta card] ]
     <> [ toolStatusLine st (tcDur card) | Just st <- [tcStatus card] ]
   where
     truncateTo n t

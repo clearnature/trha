@@ -9,7 +9,7 @@ import UI.Render.ToolCard
 import UI.Render.ToolSummary
 
 card :: Text -> [Text] -> Maybe ToolStatus -> Maybe Int -> [Text] -> ToolCard
-card name args status dur out = ToolCard (T.unpack name) args status dur out "" Nothing
+card name args status dur out = ToolCard (T.unpack name) args status dur out ""
 
 spec :: Spec
 spec = do
