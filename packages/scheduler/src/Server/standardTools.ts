@@ -518,26 +518,8 @@ export async function runStandardTool(
   }
 
   if (name === 'todo_write') {
-    const raw = args.todos;
-    if (!Array.isArray(raw)) return 'ERROR: todos must be an array';
-    const todos: Todo[] = raw.map((t, i) => {
-      const o = t as { id?: unknown; text?: unknown; status?: unknown; content?: unknown };
-      const status = typeof o.status === 'string' ? o.status : 'pending';
-      return {
-        id: typeof o.id === 'string' ? o.id : String(i + 1),
-        text: String(o.text ?? o.content ?? ''),
-        status: (['pending', 'in_progress', 'completed'].includes(status)
-          ? status : 'pending') as Todo['status'],
-      };
-    });
-    // A write that changes nothing is noise: no state change, no persist, and a
-    // result that tells the model not to ask again.
-    if (sameTodos(host.state.todos ?? [], todos)) {
-      return `UNCHANGED: ${todos.length} todos (the list is identical; nothing was written)`;
-    }
-    host.state.todos = todos;
-    const lines = todos.map(t => `- [${t.status === 'completed' ? 'x' : t.status === 'in_progress' ? '~' : ' '}] ${t.text}`);
-    return `OK: ${todos.length} todos\n${lines.join('\n')}`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   if (name === 'create_goal') {
@@ -823,3 +805,53 @@ const skillTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(skillTool, { plane: 'agent' }));
+
+/** `todo_write` — replace the session's todo list. */
+const todoWriteTool = defineTool<string>({
+  name: 'todo_write',
+  description:
+    'Replace the todo list. Every item needs text and a status '
+    + '(pending | in_progress | completed). Writing an identical list is a no-op '
+    + 'and answers UNCHANGED.',
+  parameters: {
+    todos: {
+      type: 'array',
+      description: 'The complete list; it replaces the previous one.',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Stable id; defaults to the 1-based index.' },
+          text: { type: 'string', description: 'What the item is.' },
+          status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
+        },
+      },
+    },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const raw = args.todos;
+    if (!Array.isArray(raw)) throw new Error('todos must be an array');
+    const todos: Todo[] = raw.map((t, i) => {
+      const o = t as { id?: unknown; text?: unknown; status?: unknown; content?: unknown };
+      const status = typeof o.status === 'string' ? o.status : 'pending';
+      return {
+        id: typeof o.id === 'string' ? o.id : String(i + 1),
+        text: String(o.text ?? o.content ?? ''),
+        status: (['pending', 'in_progress', 'completed'].includes(status)
+          ? status : 'pending') as Todo['status'],
+      };
+    });
+    // A write that changes nothing is noise: no state change, no persist, and a
+    // result that tells the model not to ask again.
+    if (sameTodos(host.state.todos ?? [], todos)) {
+      return `UNCHANGED: ${todos.length} todos (the list is identical; nothing was written)`;
+    }
+    host.state.todos = todos;
+    const lines = todos.map(t =>
+      `- [${t.status === 'completed' ? 'x' : t.status === 'in_progress' ? '~' : ' '}] ${t.text}`);
+    return `OK: ${todos.length} todos\n${lines.join('\n')}`;
+  },
+});
+
+registerTool(toolSpecFrom(todoWriteTool, { plane: 'agent' }));
