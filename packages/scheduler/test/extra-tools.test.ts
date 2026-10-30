@@ -158,7 +158,9 @@ describe('session queries', () => {
     expect(hits).not.toContain('\tb\t');
     expect(await runExtraTool('session_search', { query: 'zzz' }, h)).toMatch(/no session/);
     expect(await runExtraTool('session_trace', { sessionId: 'a' }, h)).toContain('#0\tuser');
-    expect(await runExtraTool('session_trace', { sessionId: 'zzz' }, h)).toMatch(/no session/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('session_trace', { sessionId: 'zzz' }, h))
+      .rejects.toThrow(/no session/);
   });
 
   it('reads, searches and traces kernel events', async () => {

@@ -295,48 +295,14 @@ export async function runExtraTool(
 
   // ── sessions ─────────────────────────────────────────────────────────
   if (name === 'session_search') {
-    const query = typeof args.query === 'string' ? args.query.trim() : '';
-    if (!query) return 'ERROR: query is required';
-    const limit = typeof args.limit === 'number' ? args.limit : 20;
-    const sessions = host.allSessions?.() ?? [];
-    const hits: string[] = [];
-    for (const s of sessions) {
-      for (const [i, m] of s.messages.entries()) {
-        if (typeof m.content === 'string' && m.content.includes(query)) {
-          hits.push(`${s.id}\t#${i}\t${m.role}\t${m.content.slice(Math.max(0, m.content.indexOf(query) - 40), m.content.indexOf(query) + 80)}`);
-          break;
-        }
-      }
-      if (hits.length >= limit) break;
-    }
-    return hits.length ? clip(hits.join('\n')) : `(no session contains "${query}")`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
   if (name === 'session_trace') {
-    const target = typeof args.sessionId === 'string' ? args.sessionId : host.sessionId;
-    const s = (host.allSessions?.() ?? []).find(x => x.id === target);
-    if (!s) return `ERROR: no session ${target}`;
-    return clip(s.messages.map((m, i) => `#${i}\t${m.role}\t${(m.content ?? '').slice(0, 120).replace(/\n/g, ' ')}`).join('\n'));
+    // Migrated to the registry (full DSH contract).
   }
   if (name === 'session_event_read' || name === 'session_event_search' || name === 'session_event_trace') {
-    const target = typeof args.sessionId === 'string' ? args.sessionId : host.sessionId;
-    const events = (await host.kernelEvents?.(target)) ?? [];
-    if (events.length === 0) return '(no kernel events; kernel unreachable or session unknown)';
-    if (name === 'session_event_read') {
-      const limit = typeof args.limit === 'number' ? args.limit : 20;
-      return clip(events.slice(-limit).map(e => JSON.stringify(e)).join('\n'));
-    }
-    if (name === 'session_event_search') {
-      const needle = typeof args.query === 'string' ? args.query : '';
-      if (!needle) return 'ERROR: query is required';
-      const hits = events.filter(e => JSON.stringify(e).includes(needle));
-      return hits.length ? clip(hits.map(e => JSON.stringify(e)).join('\n')) : `(no event contains "${needle}")`;
-    }
-    const counts = new Map<string, number>();
-    for (const e of events) {
-      const k = String((e as { kind?: unknown }).kind ?? '?');
-      counts.set(k, (counts.get(k) ?? 0) + 1);
-    }
-    return [...counts.entries()].map(([k, n]) => `${k}: ${n}`).join('\n') + `\ntotal: ${events.length}`;
+    // Migrated to the registry (full DSH contract): three separate tools now.
   }
 
   // ── repo / env ───────────────────────────────────────────────────────
@@ -669,3 +635,121 @@ const teamTaskGetTool = defineTool<string>({
 });
 
 registerTool(toolSpecFrom(teamTaskGetTool, { plane: 'host' }));
+
+/** `session_search` — grep every session transcript for a substring. */
+const sessionSearchTool = defineTool<string>({
+  name: 'session_search',
+  description: 'Search every session transcript for a substring; one hit per session.',
+  parameters: {
+    query: { type: 'string', description: 'Substring to look for.' },
+    limit: { type: 'number', description: 'Maximum sessions to report (default 20).' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const query = typeof args.query === 'string' ? args.query.trim() : '';
+    if (!query) throw new Error('query is required');
+    const limit = typeof args.limit === 'number' ? args.limit : 20;
+    const hits: string[] = [];
+    for (const s of host.allSessions?.() ?? []) {
+      for (const [i, m] of s.messages.entries()) {
+        if (typeof m.content === 'string' && m.content.includes(query)) {
+          const at = m.content.indexOf(query);
+          hits.push(`${s.id}\t#${i}\t${m.role}\t${m.content.slice(Math.max(0, at - 40), at + 80)}`);
+          break;
+        }
+      }
+      if (hits.length >= limit) break;
+    }
+    return hits.length ? clip(hits.join('\n')) : `(no session contains "${query}")`;
+  },
+});
+
+/** `session_trace` — one session's messages, one line each. */
+const sessionTraceTool = defineTool<string>({
+  name: 'session_trace',
+  description: 'Show one session\'s messages one line each (role + truncated text).',
+  parameters: {
+    sessionId: { type: 'string', description: 'Session id; defaults to the current one.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const target = typeof args.sessionId === 'string' ? args.sessionId : host.sessionId;
+    const s = (host.allSessions?.() ?? []).find(x => x.id === target);
+    if (!s) throw new Error(`no session ${target}`);
+    return clip(s.messages.map((m, i) =>
+      `#${i}\t${m.role}\t${(m.content ?? '').slice(0, 120).replace(/\n/g, ' ')}`).join('\n'));
+  },
+});
+
+/** `session_event_read` — the tail of one session's kernel event log. */
+const sessionEventReadTool = defineTool<string>({
+  name: 'session_event_read',
+  description: 'Read the most recent kernel events for one session.',
+  parameters: {
+    sessionId: { type: 'string', description: 'Session id; defaults to the current one.' },
+    limit: { type: 'number', description: 'How many events to return (default 20).' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const target = typeof args.sessionId === 'string' ? args.sessionId : host.sessionId;
+    const events = (await host.kernelEvents?.(target)) ?? [];
+    if (events.length === 0) return '(no kernel events; kernel unreachable or session unknown)';
+    const limit = typeof args.limit === 'number' ? args.limit : 20;
+    return clip(events.slice(-limit).map(e => JSON.stringify(e)).join('\n'));
+  },
+});
+
+/** `session_event_search` — grep one session's kernel event log. */
+const sessionEventSearchTool = defineTool<string>({
+  name: 'session_event_search',
+  description: 'Search the kernel event log of one session for a substring.',
+  parameters: {
+    query: { type: 'string', description: 'Substring to look for.' },
+    sessionId: { type: 'string', description: 'Session id; defaults to the current one.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const target = typeof args.sessionId === 'string' ? args.sessionId : host.sessionId;
+    const events = (await host.kernelEvents?.(target)) ?? [];
+    if (events.length === 0) return '(no kernel events; kernel unreachable or session unknown)';
+    const needle = typeof args.query === 'string' ? args.query : '';
+    if (!needle) throw new Error('query is required');
+    const hits = events.filter(e => JSON.stringify(e).includes(needle));
+    return hits.length
+      ? clip(hits.map(e => JSON.stringify(e)).join('\n'))
+      : `(no event contains "${needle}")`;
+  },
+});
+
+/** `session_event_trace` — count one session's kernel events by kind. */
+const sessionEventTraceTool = defineTool<string>({
+  name: 'session_event_trace',
+  description: 'Summarise one session\'s kernel event log by event kind.',
+  parameters: {
+    sessionId: { type: 'string', description: 'Session id; defaults to the current one.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const target = typeof args.sessionId === 'string' ? args.sessionId : host.sessionId;
+    const events = (await host.kernelEvents?.(target)) ?? [];
+    if (events.length === 0) return '(no kernel events; kernel unreachable or session unknown)';
+    const counts = new Map<string, number>();
+    for (const e of events) {
+      const k = String((e as { kind?: unknown }).kind ?? '?');
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return [...counts.entries()].map(([k, n]) => `${k}: ${n}`).join('\n')
+      + `\ntotal: ${events.length}`;
+  },
+});
+
+registerTool(toolSpecFrom(sessionSearchTool, { plane: 'host' }));
+registerTool(toolSpecFrom(sessionTraceTool, { plane: 'host' }));
+registerTool(toolSpecFrom(sessionEventReadTool, { plane: 'host' }));
+registerTool(toolSpecFrom(sessionEventSearchTool, { plane: 'host' }));
+registerTool(toolSpecFrom(sessionEventTraceTool, { plane: 'host' }));
