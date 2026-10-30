@@ -240,6 +240,7 @@ const workingDirectoryTool = defineTool<{ cwd: string }>({
       description: 'Existing directory to enter. Omit to read the current directory.',
     },
   },
+  presentCall: args => ({ card: 'generic', title: `cd ${oneLine(args.path ?? '.')}` }),
   output: {
     schema: {
       type: 'object',
@@ -280,6 +281,7 @@ const teamTaskGetTool = defineTool<string>({
   name: 'team_task_get',
   description: 'Read one shared team task by id.',
   parameters: { id: { type: 'string', description: 'Task id from team_task_list.' } },
+  presentCall: args => ({ card: 'generic', title: `task ${oneLine(args.id)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -301,6 +303,7 @@ const sessionSearchTool = defineTool<string>({
     query: { type: 'string', description: 'Substring to look for.' },
     limit: { type: 'number', description: 'Maximum sessions to report (default 20).' },
   },
+  presentCall: args => ({ card: 'generic', title: `search sessions: ${oneLine(args.query)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -329,6 +332,7 @@ const sessionTraceTool = defineTool<string>({
   parameters: {
     sessionId: { type: 'string', description: 'Session id; defaults to the current one.' },
   },
+  presentCall: args => ({ card: 'generic', title: `trace ${oneLine(args.sessionId)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -348,6 +352,7 @@ const sessionEventReadTool = defineTool<string>({
     sessionId: { type: 'string', description: 'Session id; defaults to the current one.' },
     limit: { type: 'number', description: 'How many events to return (default 20).' },
   },
+  presentCall: _args => ({ card: 'generic', title: 'read events' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -367,6 +372,7 @@ const sessionEventSearchTool = defineTool<string>({
     query: { type: 'string', description: 'Substring to look for.' },
     sessionId: { type: 'string', description: 'Session id; defaults to the current one.' },
   },
+  presentCall: args => ({ card: 'generic', title: `search events: ${oneLine(args.query)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -389,6 +395,7 @@ const sessionEventTraceTool = defineTool<string>({
   parameters: {
     sessionId: { type: 'string', description: 'Session id; defaults to the current one.' },
   },
+  presentCall: _args => ({ card: 'generic', title: 'trace events' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -479,6 +486,7 @@ const terminalSendTool = defineTool<string>({
     id: { type: 'string', description: 'Terminal id from terminal_open / terminal_list.' },
     input: { type: 'string', description: 'Text to type.' },
   },
+  presentCall: args => ({ card: 'terminal', title: `send: ${oneLine(args.input)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -500,6 +508,7 @@ const terminalReadTool = defineTool<string>({
     id: { type: 'string', description: 'Terminal id.' },
     since: { type: 'number', description: 'Character offset to read from (default 0).' },
   },
+  presentCall: args => ({ card: 'terminal', title: `read ${oneLine(args.id)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -520,6 +529,7 @@ const terminalSignalTool = defineTool<string>({
     id: { type: 'string', description: 'Terminal id.' },
     signal: { type: 'string', description: 'Signal name, e.g. SIGINT or SIGTERM.' },
   },
+  presentCall: args => ({ card: 'terminal', title: `signal ${oneLine(args.signal)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -537,6 +547,7 @@ const terminalCloseTool = defineTool<string>({
   name: 'terminal_close',
   description: 'Close a persistent shell.',
   parameters: { id: { type: 'string', description: 'Terminal id.' } },
+  presentCall: args => ({ card: 'terminal', title: `close ${oneLine(args.id)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -554,6 +565,7 @@ const terminalListTool = defineTool<string>({
   name: 'terminal_list',
   description: 'List the persistent shells and how much output each holds.',
   parameters: {},
+  presentCall: _args => ({ card: 'terminal', title: 'list terminals' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(_args, exec) {
     const host = exec.host as ExtraHost;
@@ -580,6 +592,7 @@ const ralphTool = defineTool<string>({
     objective: { type: 'string', description: 'What to keep pushing on.' },
     rounds: { type: 'number', description: 'Rounds to run, 1–10 (default 3).' },
   },
+  presentCall: args => ({ card: 'generic', title: `ralph: ${oneLine(args.objective)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -611,6 +624,7 @@ const stagehandNavigateTool = defineTool<string>({
   name: 'stagehand_navigate',
   description: 'Navigate the session\'s browser to a URL (stagehand alias).',
   parameters: { url: { type: 'string', description: 'Absolute http(s) URL.' } },
+  presentCall: args => ({ card: 'generic', title: `open ${oneLine(args.url)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -626,6 +640,7 @@ const stagehandExtractTool = defineTool<string>({
   name: 'stagehand_extract',
   description: 'Extract text from the current page (stagehand alias).',
   parameters: { selector: { type: 'string', description: 'CSS selector to narrow to.' } },
+  presentCall: _args => ({ card: 'generic', title: 'extract' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -641,6 +656,7 @@ const stagehandScreenshotTool = defineTool<string>({
   name: 'stagehand_screenshot',
   description: 'Screenshot the current page (stagehand alias).',
   parameters: { path: { type: 'string', description: 'Target file.' } },
+  presentCall: _args => ({ card: 'generic', title: 'screenshot' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -658,6 +674,7 @@ const stagehandTabsTool = defineTool<string>({
   name: 'stagehand_tabs',
   description: 'Report the current page URL and title (single-tab mode).',
   parameters: {},
+  presentCall: _args => ({ card: 'generic', title: 'list tabs' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(_args, exec) {
     const host = exec.host as ExtraHost;
@@ -674,6 +691,7 @@ const stagehandObserveTool = defineTool<string>({
   name: 'stagehand_observe',
   description: 'List the page\'s interactive elements (links, buttons, inputs).',
   parameters: {},
+  presentCall: _args => ({ card: 'generic', title: 'observe page' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(_args, exec) {
     const host = exec.host as ExtraHost;
@@ -694,6 +712,7 @@ const stagehandActTool = defineTool<string>({
     value: { type: 'string', description: 'Text to type (for action=type).' },
     url: { type: 'string', description: 'Navigate first, when given.' },
   },
+  presentCall: args => ({ card: 'generic', title: `act: ${oneLine(args.action)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -729,6 +748,7 @@ const pluginManagerTool = defineTool<string>({
   name: 'plugin_manager',
   description: 'List the loaded plugins: name, state and the events they hook.',
   parameters: {},
+  presentCall: _args => ({ card: 'generic', title: 'plugins' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(_args, exec) {
     const host = exec.host as ExtraHost;
@@ -745,6 +765,7 @@ const cordisInspectListTool = defineTool<string>({
   name: 'cordis_inspect_list',
   description: 'List the loaded plugins (Cordis alias of plugin_manager).',
   parameters: {},
+  presentCall: _args => ({ card: 'generic', title: 'list plugins' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(_args, exec) {
     const host = exec.host as ExtraHost;
@@ -761,6 +782,7 @@ const cordisInspectQueryTool = defineTool<string>({
   name: 'cordis_inspect_query',
   description: 'Show one plugin\'s descriptor as JSON.',
   parameters: { name: { type: 'string', description: 'Plugin name.' } },
+  presentCall: args => ({ card: 'generic', title: `inspect ${oneLine(args.name)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -778,6 +800,7 @@ const pluginMarketTool = defineTool<string>({
   name: 'plugin_market',
   description: 'Read the plugin market configured by TRHA_PLUGIN_MARKET (URL or JSON file).',
   parameters: {},
+  presentCall: _args => ({ card: 'generic', title: 'plugin market' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute() {
     const source = process.env.TRHA_PLUGIN_MARKET;
@@ -817,6 +840,7 @@ const waitAgentTool = defineTool<string>({
       description: 'Maximum wait in ms (default 30000, capped at 120000).',
     },
   },
+  presentCall: args => ({ card: 'generic', title: `wait ${oneLine(args.id)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -869,6 +893,7 @@ const listSubagentModelsTool = defineTool<string>({
   name: 'list_subagent_models',
   description: 'List the models a subagent can be spawned with.',
   parameters: {},
+  presentCall: _args => ({ card: 'generic', title: 'list models' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(_args, exec) {
     const host = exec.host as ExtraHost;
@@ -975,6 +1000,7 @@ const strReplaceEditorTool = defineTool<string>({
     'Edit one file: view it, create it, replace a unique snippet, or insert lines. '
     + 'Writes are confined to the workspace exactly like `write` / `edit`.',
   parameters: EDITOR_PARAMETERS,
+  presentCall: args => ({ card: 'diff', title: `edit ${oneLine(args.path)}`, rawInput: args.path }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   execute: strReplaceEditorExecute,
 });
@@ -984,6 +1010,7 @@ const unifiedEditTool = defineTool<string>({
   name: 'unified_edit',
   description: 'Edit one file (alias of str_replace_editor): view, create, str_replace, insert.',
   parameters: EDITOR_PARAMETERS,
+  presentCall: args => ({ card: 'diff', title: `edit ${oneLine(args.path)}`, rawInput: args.path }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   execute: strReplaceEditorExecute,
 });
@@ -999,6 +1026,7 @@ const createWorktreeTool = defineTool<string>({
     path: { type: 'string', description: 'Worktree path, relative to the cwd.' },
     branch: { type: 'string', description: 'Branch name (default wt-<timestamp>).' },
   },
+  presentCall: args => ({ card: 'generic', title: `worktree ${oneLine(args.branch ?? args.name)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -1021,6 +1049,7 @@ const loadWorkspaceDependenciesTool = defineTool<string>({
   name: 'load_workspace_dependencies',
   description: 'Install the working directory\'s dependencies by detecting its manifest.',
   parameters: {},
+  presentCall: _args => ({ card: 'generic', title: 'load dependencies' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(_args, exec) {
     const host = exec.host as ExtraHost;
@@ -1058,6 +1087,7 @@ const webSearchTool = defineTool<string>({
   parameters: {
     query: { type: 'string', description: 'Search terms.' },
   },
+  presentCall: args => ({ card: 'generic', title: `search ${oneLine(args.query)}`, rawInput: args.query }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   timeoutMs: 60_000,
   async execute(args) {
@@ -1146,6 +1176,7 @@ const pwshTool = defineTool<string>({
   parameters: {
     command: { type: 'string', description: 'The PowerShell command.' },
   },
+  presentCall: args => ({ card: 'terminal', title: oneLine(args.command), rawInput: args.command }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   timeoutMs: 120_000,
   async execute(args, exec) {

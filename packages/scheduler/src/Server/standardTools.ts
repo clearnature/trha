@@ -452,6 +452,7 @@ const presentTool = defineTool<{ title: string; body: string }>({
     title: { type: 'string', description: 'Short heading.' },
     body: { type: 'string', description: 'Body text or markdown.' },
   },
+  presentCall: args => ({ card: 'generic', title: `present ${oneLine(args.title)}` }),
   output: {
     schema: {
       type: 'object',
@@ -475,6 +476,7 @@ const jobListTool = defineTool<string>({
   name: 'job_list',
   description: 'List this session\'s background jobs: id, status and command.',
   parameters: {},
+  presentCall: _args => ({ card: 'generic', title: 'list jobs' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(_args, exec) {
     const host = exec.host as StandardToolHost;
@@ -491,6 +493,7 @@ const jobOutputTool = defineTool<string>({
   name: 'job_output',
   description: 'Read the collected output of one background job.',
   parameters: { id: { type: 'string', description: 'Job id returned by job_list.' } },
+  presentCall: args => ({ card: 'generic', title: `job output ${oneLine(args.id)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -508,6 +511,7 @@ const jobKillTool = defineTool<string>({
   name: 'job_kill',
   description: 'Stop one background job with SIGTERM.',
   parameters: { id: { type: 'string', description: 'Job id returned by job_list.' } },
+  presentCall: args => ({ card: 'generic', title: `kill job ${oneLine(args.id)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -534,6 +538,7 @@ const skillTool = defineTool<string>({
   parameters: {
     name: { type: 'string', description: 'Skill name. Omit to list every skill.' },
   },
+  presentCall: args => ({ card: 'generic', title: `skill ${oneLine(args.name)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -614,6 +619,7 @@ const readImageTool = defineTool<string>({
   parameters: {
     path: { type: 'string', description: 'Image path: absolute, or relative to the workspace.' },
   },
+  presentCall: args => ({ card: 'generic', title: `image ${oneLine(args.path)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -649,6 +655,7 @@ const exitPlanModeTool = defineTool<string>({
   parameters: {
     plan: { type: 'string', description: 'The plan markdown, starting with a # title.' },
   },
+  presentCall: _args => ({ card: 'generic', title: 'exit plan mode' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args) {
     const plan = typeof args.plan === 'string' ? args.plan : '';
@@ -672,6 +679,7 @@ const askUserQuestionTool = defineTool<string>({
       items: { type: 'string' },
     },
   },
+  presentCall: args => ({ card: 'generic', title: `ask: ${oneLine(args.question)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -702,6 +710,7 @@ const listMcpResourcesTool = defineTool<string>({
   parameters: {
     server: { type: 'string', description: 'Limit the listing to one MCP server.' },
   },
+  presentCall: _args => ({ card: 'generic', title: 'list MCP resources' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args) {
     const list = await listMcpResources(typeof args.server === 'string' ? args.server : undefined);
@@ -717,6 +726,7 @@ const listMcpResourceTemplatesTool = defineTool<string>({
   parameters: {
     server: { type: 'string', description: 'Limit the listing to one MCP server.' },
   },
+  presentCall: _args => ({ card: 'generic', title: 'list MCP templates' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args) {
     const list = await listMcpResourceTemplates(
@@ -735,6 +745,7 @@ const readMcpResourceTool = defineTool<string>({
     uri: { type: 'string', description: 'Resource URI, as listed by list_mcp_resources.' },
     server: { type: 'string', description: 'MCP server name, when the URI is ambiguous.' },
   },
+  presentCall: args => ({ card: 'generic', title: `read MCP ${oneLine(args.uri)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args) {
     return clip(await readMcpResource(
@@ -756,6 +767,7 @@ const createGoalTool = defineTool<string>({
     objective: { type: 'string', description: 'What this session is trying to achieve.' },
     budget: { type: 'number', description: 'Optional step budget.' },
   },
+  presentCall: args => ({ card: 'generic', title: `goal: ${oneLine(args.objective)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -779,6 +791,7 @@ const getGoalTool = defineTool<string>({
   name: 'get_goal',
   description: 'Read the current session goal.',
   parameters: {},
+  presentCall: _args => ({ card: 'generic', title: 'read goal' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(_args, exec) {
     const host = exec.host as StandardToolHost;
@@ -794,6 +807,7 @@ const updateGoalTool = defineTool<string>({
     status: { type: 'string', enum: ['active', 'paused', 'complete'] },
     objective: { type: 'string', description: 'Replacement objective.' },
   },
+  presentCall: args => ({ card: 'generic', title: `goal \u2192 ${oneLine(args.status)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -829,6 +843,7 @@ const scheduleCreateTool = defineTool<string>({
     at: { type: 'string', description: 'ISO timestamp or epoch milliseconds.' },
     repeat_ms: { type: 'number', description: 'Repeat interval in milliseconds.' },
   },
+  presentCall: args => ({ card: 'generic', title: `schedule ${oneLine(args.cron ?? args.when)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -854,6 +869,7 @@ const scheduleListTool = defineTool<string>({
   name: 'schedule_list',
   description: 'List the schedules attached to this session.',
   parameters: {},
+  presentCall: _args => ({ card: 'generic', title: 'list schedules' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(_args, exec) {
     const host = exec.host as StandardToolHost;
@@ -873,6 +889,7 @@ const scheduleUpdateTool = defineTool<string>({
     repeat_ms: { type: 'number' },
     status: { type: 'string', enum: ['active', 'cancelled'] },
   },
+  presentCall: args => ({ card: 'generic', title: `update schedule ${oneLine(args.id)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -896,6 +913,7 @@ const scheduleDeleteTool = defineTool<string>({
   name: 'schedule_delete',
   description: 'Delete one schedule by id.',
   parameters: { id: { type: 'string', description: 'Schedule id from schedule_list.' } },
+  presentCall: args => ({ card: 'generic', title: `delete schedule ${oneLine(args.id)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -922,6 +940,7 @@ const teamTaskCreateTool = defineTool<string>({
     description: { type: 'string', description: 'What the task involves.' },
     assignee: { type: 'string', description: 'Teammate name, when already decided.' },
   },
+  presentCall: args => ({ card: 'generic', title: `task: ${oneLine(args.title ?? args.subject)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -946,6 +965,7 @@ const teamTaskListTool = defineTool<string>({
   name: 'team_task_list',
   description: 'List the shared team tasks.',
   parameters: {},
+  presentCall: _args => ({ card: 'generic', title: 'list tasks' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(_args, exec) {
     const host = exec.host as StandardToolHost;
@@ -965,6 +985,7 @@ const teamTaskUpdateTool = defineTool<string>({
     assignee: { type: 'string' },
     description: { type: 'string' },
   },
+  presentCall: args => ({ card: 'generic', title: `update task ${oneLine(args.id)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -992,6 +1013,7 @@ const browserNavigateTool = defineTool<string>({
   name: 'browser_navigate',
   description: 'Navigate the session\'s headless browser to a URL and return the visible text.',
   parameters: { url: { type: 'string', description: 'Absolute http(s) URL.' } },
+  presentCall: args => ({ card: 'generic', title: `open ${oneLine(args.url)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -1007,6 +1029,7 @@ const browserExtractTool = defineTool<string>({
   name: 'browser_extract',
   description: 'Extract text from the current page, or from one CSS selector.',
   parameters: { selector: { type: 'string', description: 'CSS selector to narrow to.' } },
+  presentCall: _args => ({ card: 'generic', title: 'extract page text' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -1024,6 +1047,7 @@ const browserScreenshotTool = defineTool<string>({
   parameters: {
     path: { type: 'string', description: 'Target file; a temp name is used when omitted.' },
   },
+  presentCall: _args => ({ card: 'generic', title: 'screenshot' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -1041,6 +1065,7 @@ const browserCloseTool = defineTool<string>({
   name: 'browser_close',
   description: 'Close the session\'s headless browser.',
   parameters: {},
+  presentCall: _args => ({ card: 'generic', title: 'close browser' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(_args, exec) {
     const host = exec.host as StandardToolHost;
@@ -1059,6 +1084,7 @@ const listAgentsTool = defineTool<string>({
   name: 'list_agents',
   description: 'List this session\'s subagents: id, busy/idle, message count, parent.',
   parameters: {},
+  presentCall: _args => ({ card: 'generic', title: 'list agents' }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(_args, exec) {
     const host = exec.host as StandardToolHost;
@@ -1079,6 +1105,7 @@ const sendMessageTool = defineTool<string>({
     to: { type: 'string', description: 'Subagent id.' },
     text: { type: 'string', description: 'Message body.' },
   },
+  presentCall: args => ({ card: 'generic', title: `message ${oneLine(args.to)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -1101,6 +1128,7 @@ const interruptAgentTool = defineTool<string>({
     'Interrupt a subagent. The running loop checks the flag between rounds and between '
     + 'tool calls.',
   parameters: { id: { type: 'string', description: 'Subagent id.' } },
+  presentCall: args => ({ card: 'generic', title: `interrupt ${oneLine(args.id)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -1136,6 +1164,7 @@ const lspTool = defineTool<string>({
     character: { type: 'number', description: 'Zero-based character offset.' },
     query: { type: 'string', description: 'Search text, for workspaceSymbol.' },
   },
+  presentCall: args => ({ card: 'generic', title: `lsp ${oneLine(args.method ?? args.action)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args) {
     const file = typeof args.file === 'string' ? args.file : '';
@@ -1202,6 +1231,7 @@ const workflowTool = defineTool<string>({
       },
     },
   },
+  presentCall: args => ({ card: 'generic', title: `workflow ${oneLine(args.name ?? args.steps)}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -1237,6 +1267,7 @@ const runCodeTool = defineTool<string>({
     language: { type: 'string', enum: ['python', 'javascript', 'bash', 'lean'] },
     code: { type: 'string', description: 'The program body.' },
   },
+  presentCall: args => ({ card: 'terminal', title: `run ${oneLine(args.language ?? 'code')}` }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -1479,6 +1510,7 @@ const appendFileTool = defineTool<string>({
     path: { type: 'string', description: 'File path.' },
     content: { type: 'string', description: 'Text to append.' },
   },
+  presentCall: args => ({ card: 'diff', title: `append ${oneLine(args.path)}`, rawInput: args.path }),
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   execute: (args, exec) => writeFileExecute(args, exec, 'append'),
 });
