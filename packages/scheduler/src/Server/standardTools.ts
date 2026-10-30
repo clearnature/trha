@@ -222,7 +222,6 @@ export async function runStandardTool(
   const registered = resolveTool(name);
   if (registered?.handler) return renderToolValue(registered, args, host);
 
-  const now = host.now ?? (() => new Date());
 
   if (name === 'list_mcp_resources') {
     // Migrated to the registry (full DSH contract); `resolveTool` wins for this
@@ -477,34 +476,16 @@ export async function runStandardTool(
   }
 
   if (name === 'create_goal') {
-    if (typeof args.objective !== 'string' || !args.objective.trim()) return 'ERROR: objective is required';
-    const goal: Goal = {
-      objective: args.objective.trim(),
-      status: 'active',
-      budget: typeof args.budget === 'number' ? args.budget : undefined,
-      createdAt: now().toISOString(),
-    };
-    host.state.goal = goal;
-    return `OK: goal created\n${JSON.stringify(goal)}`;
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   if (name === 'get_goal') {
-    return host.state.goal ? JSON.stringify(host.state.goal) : 'No goal is set.';
+    // Migrated to the registry (full DSH contract).
   }
 
   if (name === 'update_goal') {
-    if (!host.state.goal) return 'ERROR: no goal is set';
-    const status = args.status;
-    if (status !== undefined) {
-      if (!['active', 'paused', 'complete'].includes(String(status))) {
-        return 'ERROR: status must be active|paused|complete';
-      }
-      host.state.goal.status = String(status) as Goal['status'];
-    }
-    if (typeof args.objective === 'string' && args.objective.trim()) {
-      host.state.goal.objective = args.objective.trim();
-    }
-    return `OK: goal updated\n${JSON.stringify(host.state.goal)}`;
+    // Migrated to the registry (full DSH contract).
   }
 
   if (name === 'schedule_create') {
@@ -952,3 +933,73 @@ const readMcpResourceTool = defineTool<string>({
 registerTool(toolSpecFrom(listMcpResourcesTool, { plane: 'host' }));
 registerTool(toolSpecFrom(listMcpResourceTemplatesTool, { plane: 'host' }));
 registerTool(toolSpecFrom(readMcpResourceTool, { plane: 'host' }));
+
+/** `create_goal` — create (or replace) the session goal. */
+const createGoalTool = defineTool<string>({
+  name: 'create_goal',
+  description: 'Create the session goal, replacing any existing one.',
+  parameters: {
+    objective: { type: 'string', description: 'What this session is trying to achieve.' },
+    budget: { type: 'number', description: 'Optional step budget.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    if (typeof args.objective !== 'string' || !args.objective.trim()) {
+      throw new Error('objective is required');
+    }
+    const now = host.now ?? (() => new Date());
+    const goal: Goal = {
+      objective: args.objective.trim(),
+      status: 'active',
+      budget: typeof args.budget === 'number' ? args.budget : undefined,
+      createdAt: now().toISOString(),
+    };
+    host.state.goal = goal;
+    return `OK: goal created\n${JSON.stringify(goal)}`;
+  },
+});
+
+/** `get_goal` — read the current session goal. */
+const getGoalTool = defineTool<string>({
+  name: 'get_goal',
+  description: 'Read the current session goal.',
+  parameters: {},
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(_args, exec) {
+    const host = exec.host as StandardToolHost;
+    return host.state.goal ? JSON.stringify(host.state.goal) : 'No goal is set.';
+  },
+});
+
+/** `update_goal` — change the goal's status or objective. */
+const updateGoalTool = defineTool<string>({
+  name: 'update_goal',
+  description: 'Update the session goal: its status, its objective, or both.',
+  parameters: {
+    status: { type: 'string', enum: ['active', 'paused', 'complete'] },
+    objective: { type: 'string', description: 'Replacement objective.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    if (!host.state.goal) throw new Error('no goal is set');
+    const status = args.status;
+    if (status !== undefined) {
+      if (!['active', 'paused', 'complete'].includes(String(status))) {
+        throw new Error('status must be active|paused|complete');
+      }
+      host.state.goal.status = String(status) as Goal['status'];
+    }
+    if (typeof args.objective === 'string' && args.objective.trim()) {
+      host.state.goal.objective = args.objective.trim();
+    }
+    return `OK: goal updated\n${JSON.stringify(host.state.goal)}`;
+  },
+});
+
+// `host.state` is per-session, but the goal lifecycle belongs to the process-level
+// plane in `toolDeclarations.ts`; keep the plane there rather than drift.
+registerTool(toolSpecFrom(createGoalTool, { plane: 'host' }));
+registerTool(toolSpecFrom(getGoalTool, { plane: 'host' }));
+registerTool(toolSpecFrom(updateGoalTool, { plane: 'host' }));
