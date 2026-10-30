@@ -375,7 +375,9 @@ describe('closing the remaining branches', () => {
   });
 
   it('ralph needs a subagent host', async () => {
-    expect(await runExtraTool('ralph', { objective: 'x' }, host)).toMatch(/needs a subagent host/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('ralph', { objective: 'x' }, host))
+      .rejects.toThrow(/needs a subagent host/);
   });
 
   it('terminal_read honours the since cursor and reports exited shells', async () => {

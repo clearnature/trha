@@ -464,24 +464,8 @@ export async function runExtraTool(
 
   // ── ralph loop ───────────────────────────────────────────────────────
   if (name === 'ralph') {
-    const objective = typeof args.objective === 'string' ? args.objective.trim() : '';
-    if (!objective) return 'ERROR: objective is required';
-    const rounds = typeof args.rounds === 'number' ? Math.max(1, Math.min(10, args.rounds)) : 3;
-    if (!host.spawnFresh) return 'ERROR: ralph needs a subagent host';
-    const log: string[] = [];
-    for (let i = 1; i <= rounds; i++) {
-      const task = [
-        `Ralph round ${i}/${rounds}. Objective: ${objective}`,
-        'You start fresh: no prior conversation, only the shared workspace is durable.',
-        'Do the next concrete step, then end with either "STATUS: DONE" or "STATUS: CONTINUE" or "STATUS: BLOCKED: <why>".',
-      ].join('\n');
-      const r = await host.spawnFresh(task, `ralph-${i}`);
-      const done = /STATUS:\s*DONE/i.test(r.reply);
-      const blocked = /STATUS:\s*BLOCKED/i.test(r.reply);
-      log.push(`round ${i} (${r.id}): ${clip(r.reply, 600)}`);
-      if (done || blocked) break;
-    }
-    return clip(log.join('\n\n'));
+    // Migrated to the registry (full DSH contract); `resolveTool` wins for this
+    // name, so the chain never reaches here.
   }
 
   return null;
@@ -843,3 +827,39 @@ registerTool(toolSpecFrom(terminalReadTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(terminalSignalTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(terminalCloseTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(terminalListTool, { plane: 'agent' }));
+
+/** `ralph` — run the objective N times, each round starting fresh. */
+const ralphTool = defineTool<string>({
+  name: 'ralph',
+  description:
+    'Run the objective for a bounded number of rounds, each round starting fresh with '
+    + 'only the workspace as durable state. Stops early on STATUS: DONE or BLOCKED.',
+  parameters: {
+    objective: { type: 'string', description: 'What to keep pushing on.' },
+    rounds: { type: 'number', description: 'Rounds to run, 1–10 (default 3).' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as ExtraHost;
+    const objective = typeof args.objective === 'string' ? args.objective.trim() : '';
+    if (!objective) throw new Error('objective is required');
+    const rounds = typeof args.rounds === 'number' ? Math.max(1, Math.min(10, args.rounds)) : 3;
+    if (!host.spawnFresh) throw new Error('ralph needs a subagent host');
+    const log: string[] = [];
+    for (let i = 1; i <= rounds; i++) {
+      const task = [
+        `Ralph round ${i}/${rounds}. Objective: ${objective}`,
+        'You start fresh: no prior conversation, only the shared workspace is durable.',
+        'Do the next concrete step, then end with either "STATUS: DONE" or "STATUS: CONTINUE" or "STATUS: BLOCKED: <why>".',
+      ].join('\n');
+      const r = await host.spawnFresh(task, `ralph-${i}`);
+      const done = /STATUS:\s*DONE/i.test(r.reply);
+      const blocked = /STATUS:\s*BLOCKED/i.test(r.reply);
+      log.push(`round ${i} (${r.id}): ${clip(r.reply, 600)}`);
+      if (done || blocked) break;
+    }
+    return clip(log.join('\n\n'));
+  },
+});
+
+registerTool(toolSpecFrom(ralphTool, { plane: 'agent' }));
