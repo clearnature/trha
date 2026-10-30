@@ -459,7 +459,10 @@ const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
     name: 'minimal',
     description: 'Lightweight: basic tools only, no compaction or plan',
     tools: catalogToolDefs().map(t => t.name).filter(n => toolNamesForPreset('minimal').has(n)),
-    persona: { enabled: false, template: '', maxBytes: 0 },
+    // DSH's `minimal` preset does carry a persona — it is one short sentence,
+    // not an absent one. Keeping it off here made the mode behave differently
+    // from the upstream preset it claims to mirror.
+    persona: { enabled: true, template: 'You are a helpful software engineer assistant.', maxBytes: 65536 },
     compaction: { enabled: false, prunerEnabled: false, thresholdChars: 0, headChars: 0, tailChars: 0 },
     delegation: { enabled: false, forkEnabled: false, ralphEnabled: false, maxRounds: 0 },
     ptc: { enabled: false, language: '', description: '' },
@@ -470,7 +473,9 @@ const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
     name: 'cordis',
     description: 'Base layer: user composes their own tool set',
     tools: [],
-    persona: { enabled: false, template: '', maxBytes: 0 },
+    // Same persona as `standard` in DSH: the tool descriptions and the skill
+    // catalog carry the operating detail, the persona stays a single sentence.
+    persona: { enabled: true, template: 'You are a coding agent powered by the {{model}} model.', maxBytes: 65536 },
     compaction: { enabled: true, prunerEnabled: true, thresholdChars: 8192, headChars: 4096, tailChars: 1024 },
     delegation: { enabled: true, forkEnabled: true, ralphEnabled: true, maxRounds: 64 },
     ptc: { enabled: false, language: '', description: '' },
