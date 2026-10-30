@@ -22,7 +22,7 @@ import { hardenedEnv, resolveShell, shellRunner } from './shell.js';
 import { defaultSandboxScope, sandboxBlocksNetwork, sandboxEnabled, sandboxedSpawn } from './sandbox.js';
 import { registerTool, renderToolValue, resolveTool } from './toolRegistry.js';
 import { defineTool, textBlock, toolSpecFrom } from './toolSchema.js';
-import { globToRegExp, resolveReadPath, walkFiles, workspaceRelative } from './fsWalk.js';
+import { editDiff, globToRegExp, resolveReadPath, walkFiles, workspaceRelative } from './fsWalk.js';
 import { confineWritePath, limitOutput } from './toolGuard.js';
 import { snapshotFile } from './fileHistory.js';
 import { lspQuery, type LspOperation } from './lsp.js';
@@ -1477,3 +1477,52 @@ const appendFileTool = defineTool<string>({
 
 registerTool(toolSpecFrom(writeTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(appendFileTool, { plane: 'agent' }));
+
+/** `edit` — replace one string in a file, with a unified diff in the result. */
+const editTool = defineTool<string>({
+  name: 'edit',
+  description:
+    'Replace a string in a file. Fails when the old string is missing or matches more '
+    + 'than once unless `replace_all` is set. The result carries a unified diff.',
+  parameters: {
+    path: { type: 'string', description: 'File path.' },
+    old_string: { type: 'string', description: 'Text to replace.' },
+    new_string: { type: 'string', description: 'Replacement text.' },
+    replace_all: { type: 'boolean', description: 'Replace every occurrence.' },
+  },
+  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  async execute(args, exec) {
+    const host = exec.host as StandardToolHost;
+    const base = host.sessionCwd ?? host.workspace;
+    if (typeof args.path !== 'string') throw new Error('path must be a string');
+    const oldString = args.old_string;
+    const newString = args.new_string;
+    if (typeof oldString !== 'string' || oldString === '') throw new Error('old_string is required');
+    if (typeof newString !== 'string') throw new Error('new_string is required');
+    const target = await confineWritePath(
+      base,
+      workspaceRelative(args.path, base),
+      host.writeRoots ?? [],
+    );
+    if (!target) throw new Error('path escapes the workspace');
+    const before = await readFile(target, 'utf8');
+    const parts = before.split(oldString);
+    const hits = parts.length - 1;
+    if (hits === 0) throw new Error(`old_string not found in ${target}`);
+    if (hits > 1 && args.replace_all !== true) {
+      throw new Error(
+        `old_string matches ${hits} times in ${target}; pass replace_all or make it unique`,
+      );
+    }
+    const after = args.replace_all === true
+      ? parts.join(newString)
+      : [parts[0], ...parts.slice(1)].join(newString);
+    await snapshotFile(target);
+    await writeFile(target, after, 'utf8');
+    const summary = `OK: edit -> ${target} (${hits} replacement${hits === 1 ? '' : 's'})`;
+    const diff = editDiff(before, oldString, newString);
+    return diff ? `${summary}\n\n${diff}` : summary;
+  },
+});
+
+registerTool(toolSpecFrom(editTool, { plane: 'agent' }));

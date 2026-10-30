@@ -68,3 +68,22 @@ export function globToRegExp(pattern: string): RegExp {
 export function workspaceRelative(raw: string, base: string): string {
   return path.isAbsolute(raw) ? raw : path.join(base, raw);
 }
+
+const EDIT_DIFF_MAX = 4096;
+
+/** Minimal unified diff for one edit (truncated past 4 KiB). */
+export function editDiff(before: string, oldString: string, newString: string): string {
+  const idx = before.indexOf(oldString);
+  if (idx < 0) return '';
+  const line = before.slice(0, idx).split('\n').length;
+  const oldLines = oldString.split('\n');
+  const newLines = newString.split('\n');
+  const body = [
+    `@@ -${line},${oldLines.length} +${line},${newLines.length} @@`,
+    ...oldLines.map(l => `-${l}`),
+    ...newLines.map(l => `+${l}`),
+  ].join('\n');
+  return body.length > EDIT_DIFF_MAX
+    ? `${body.slice(0, EDIT_DIFF_MAX)}\n… (diff truncated)`
+    : body;
+}

@@ -7,7 +7,7 @@ import cors from 'cors';
 import { HaskellBridge } from '../Bridge/Haskell.js';
 import type { BridgeToolSpec, ToolCallData } from '../Bridge/Haskell.js';
 import { canonicalToolName, toolCatalog, toToolSpecs } from './toolCatalog.js';
-import { confineWritePath, limitOutput } from './toolGuard.js';
+import { limitOutput } from './toolGuard.js';
 import { decidePermission, setPermissionRules, compileRules, getPermissionRules } from '../Permission/permissionRules.js';
 import {
   applyPermissionMode, toggleYolo, modeLabel, MODE_CYCLE,
@@ -47,9 +47,7 @@ import { DEFAULT_AGENT_PRESET, getAgentPreset, listAgentPresets } from './agentP
 // Side effect: registers plane + preset metadata for every tool (step 2 of the
 // plugin migration). Handlers still live in the legacy chains.
 import './toolDeclarations.js';
-import { workspaceRelative } from './fsWalk.js';
 import { renderToolValue, resolveTool, toolNamesForPreset } from './toolRegistry.js';
-import { snapshotFile } from './fileHistory.js';
 import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
 import { resolveTls } from './tls.js';
 import { resolveKernelToken } from '../Core/KernelToken.js';
@@ -148,21 +146,6 @@ const outputPreview = (output: string): string => {
  * (MiMo parity) instead of just "1 replacement".  Line numbers come from the
  * pre-edit content; `replace_all` shows the first occurrence.
  */
-const EDIT_DIFF_MAX = 4096;
-const editDiff = (before: string, oldString: string, newString: string): string => {
-  const idx = before.indexOf(oldString);
-  if (idx < 0) return '';
-  const line = before.slice(0, idx).split('\n').length;
-  const oldLines = oldString.split('\n');
-  const newLines = newString.split('\n');
-  const body = [
-    `@@ -${line},${oldLines.length} +${line},${newLines.length} @@`,
-    ...oldLines.map(l => `-${l}`),
-    ...newLines.map(l => `+${l}`),
-  ].join('\n');
-  return body.length > EDIT_DIFF_MAX ? body.slice(0, EDIT_DIFF_MAX) + '\n… (diff truncated)' : body;
-};
-
 // ── Session shape ───────────────────────────────────────────────────────
 // One server-side session.  `pendingApproval` holds a plan request waiting
 // for a host decision (Phase 2 S1 approval gate).
@@ -1600,32 +1583,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       // above resolves them before this line is ever reached.
     }
     if (name === 'edit') {
-      if (typeof argsObj.path !== 'string') return 'ERROR: path must be a string';
-      const oldString = argsObj.old_string;
-      const newString = argsObj.new_string;
-      if (typeof oldString !== 'string' || oldString === '') return 'ERROR: old_string is required';
-      if (typeof newString !== 'string') return 'ERROR: new_string is required';
-      const target = await confineWritePath(cwd, workspaceRelative(argsObj.path, cwd), extraWriteRoots);
-      if (!target) return 'ERROR: path escapes the workspace';
-      try {
-        const before = await readFile(target, 'utf8');
-        const parts = before.split(oldString);
-        const hits = parts.length - 1;
-        if (hits === 0) return `ERROR: old_string not found in ${target}`;
-        if (hits > 1 && argsObj.replace_all !== true) {
-          return `ERROR: old_string matches ${hits} times in ${target}; pass replace_all or make it unique`;
-        }
-        const after = argsObj.replace_all === true
-          ? parts.join(newString)
-          : [parts[0], ...parts.slice(1)].join(newString);
-        await snapshotFile(target);
-        await writeFile(target, after, 'utf8');
-        const summary = `OK: edit -> ${target} (${hits} replacement${hits === 1 ? '' : 's'})`;
-        const diff = editDiff(before, oldString, newString);
-        return diff ? `${summary}\n\n${diff}` : summary;
-      } catch (e) {
-        return `ERROR: ${(e as Error).message}`;
-      }
+      // Migrated to the registry (full DSH contract); the core-chain pre-check
+      // above resolves it before this line is ever reached.
     }
     if (name === 'glob') {
       // Migrated to the registry (full DSH contract); the core-chain pre-check
