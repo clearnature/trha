@@ -1107,7 +1107,21 @@ registerTool(toolSpecFrom(createWorktreeTool, { plane: 'agent' }));
 registerTool(toolSpecFrom(loadWorkspaceDependenciesTool, { plane: 'agent' }));
 
 /** `web_search` — SearXNG first, then the Bing / DuckDuckGo HTML backends. */
-const webSearchTool = defineTool<string>({
+/**
+ * What `web_search` produces — DSH's `tool-web/search` returns a structured
+ * result so its card can read a count instead of re-counting blank lines.
+ */
+export interface WebSearchResult {
+  /** How many rows came back (at most 10). */
+  results: number;
+  /** The rows joined by blank lines. */
+  text: string;
+}
+
+/** Reproduce the pre-refactor text byte for byte. */
+const renderWebSearch = (v: WebSearchResult): string => v.text;
+
+const webSearchTool = defineTool<WebSearchResult>({
   name: 'web_search',
   description:
     'Search the web. Uses TRHA_SEARX_URL (a SearXNG instance in JSON mode) when set, '
@@ -1122,10 +1136,20 @@ const webSearchTool = defineTool<string>({
   // DSH's `tool-web/search` presents a result card; the distilled fact is how
   // many rows came back.
   presentResult: (_args, result) => {
-    const blocks = String(result ?? '').split('\n\n').filter(b => b.trim() !== '').length;
-    return { card: 'generic' as const, title: `${blocks} result${blocks === 1 ? '' : 's'}` };
+    // The canonical value: no blank-line counting, and no miscount when a row's
+    // body itself contains a blank line.
+    const v = result as WebSearchResult;
+    const n = v?.results ?? 0;
+    return { card: 'generic' as const, title: `${n} result${n === 1 ? '' : 's'}` };
   },
-  output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
+  output: {
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { results: { type: 'number' }, text: { type: 'string' } },
+    },
+    render: (_args, value) => [textBlock(renderWebSearch(value))],
+  },
   timeoutMs: 60_000,
   async execute(args) {
     // Same reason as `web_fetch`: this runs `fetch` in the scheduler process,
@@ -1173,7 +1197,7 @@ const webSearchTool = defineTool<string>({
           };
           const rows = (data.results ?? []).slice(0, 10)
             .map(r => `${r.title ?? ''}\n${r.url ?? ''}\n${(r.content ?? '').slice(0, 200)}`);
-          if (rows.length) return clip(rows.join('\n\n'));
+          if (rows.length) return { results: rows.length, text: clip(rows.join('\n\n')) };
         }
       } catch { /* fall through to the HTML backends */ }
     }
@@ -1192,7 +1216,7 @@ const webSearchTool = defineTool<string>({
         const body = await res.text();
         if (!res.ok) continue; // 202 = DuckDuckGo challenge, 403 = blocked
         const rows = b.parse(body);
-        if (rows.length) return clip(rows.join('\n\n'));
+        if (rows.length) return { results: rows.length, text: clip(rows.join('\n\n')) };
       } catch { /* try the next backend */ }
     }
     throw new Error(
