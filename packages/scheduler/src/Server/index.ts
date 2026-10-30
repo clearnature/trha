@@ -47,6 +47,7 @@ import { DEFAULT_AGENT_PRESET, getAgentPreset, listAgentPresets } from './agentP
 // Side effect: registers plane + preset metadata for every tool (step 2 of the
 // plugin migration). Handlers still live in the legacy chains.
 import './toolDeclarations.js';
+import { workspaceRelative } from './fsWalk.js';
 import { renderToolValue, resolveTool, toolNamesForPreset } from './toolRegistry.js';
 import { snapshotFile } from './fileHistory.js';
 import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
@@ -1481,9 +1482,6 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // Reads may leave the workspace: `bash` already can, so confining only the
   // read tool would buy no safety while breaking absolute paths that callers
   // legitimately use. Writes stay confined.
-  const workspaceRelative = (raw: string, base = WORKSPACE): string =>
-    path.isAbsolute(raw) ? raw : path.join(base, raw);
-
   // A provider requires each assistant(tool_calls) message to be answered by
   // one tool message per call id before anything else.  Incomplete groups
   // happen when the loop is interrupted, a tool is parked for approval, or a

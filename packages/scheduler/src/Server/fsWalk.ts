@@ -63,3 +63,8 @@ export function globToRegExp(pattern: string): RegExp {
   }
   return new RegExp(`^${re}$`);
 }
+
+/** Join a relative path onto a base; absolute paths pass through unchanged. */
+export function workspaceRelative(raw: string, base: string): string {
+  return path.isAbsolute(raw) ? raw : path.join(base, raw);
+}
