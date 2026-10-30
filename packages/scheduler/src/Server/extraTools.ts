@@ -304,6 +304,8 @@ const sessionSearchTool = defineTool<string>({
     limit: { type: 'number', description: 'Maximum sessions to report (default 20).' },
   },
   presentCall: args => ({ card: 'generic', title: `search sessions: ${oneLine(args.query)}` }),
+  // Read-only, no shared mutable state — same marking DSH uses.
+  isConcurrencySafe: () => true,
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -333,6 +335,8 @@ const sessionTraceTool = defineTool<string>({
     sessionId: { type: 'string', description: 'Session id; defaults to the current one.' },
   },
   presentCall: args => ({ card: 'generic', title: `trace ${oneLine(args.sessionId)}` }),
+  // Read-only, no shared mutable state — same marking DSH uses.
+  isConcurrencySafe: () => true,
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -353,6 +357,8 @@ const sessionEventReadTool = defineTool<string>({
     limit: { type: 'number', description: 'How many events to return (default 20).' },
   },
   presentCall: _args => ({ card: 'generic', title: 'read events' }),
+  // Read-only, no shared mutable state — same marking DSH uses.
+  isConcurrencySafe: () => true,
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -373,6 +379,8 @@ const sessionEventSearchTool = defineTool<string>({
     sessionId: { type: 'string', description: 'Session id; defaults to the current one.' },
   },
   presentCall: args => ({ card: 'generic', title: `search events: ${oneLine(args.query)}` }),
+  // Read-only, no shared mutable state — same marking DSH uses.
+  isConcurrencySafe: () => true,
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -396,6 +404,8 @@ const sessionEventTraceTool = defineTool<string>({
     sessionId: { type: 'string', description: 'Session id; defaults to the current one.' },
   },
   presentCall: _args => ({ card: 'generic', title: 'trace events' }),
+  // Read-only, no shared mutable state — same marking DSH uses.
+  isConcurrencySafe: () => true,
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as ExtraHost;
@@ -1088,6 +1098,8 @@ const webSearchTool = defineTool<string>({
     query: { type: 'string', description: 'Search terms.' },
   },
   presentCall: args => ({ card: 'generic', title: `search ${oneLine(args.query)}`, rawInput: args.query }),
+  // Read-only, no shared mutable state — same marking DSH uses.
+  isConcurrencySafe: () => true,
   // DSH's `tool-web/search` presents a result card; the distilled fact is how
   // many rows came back.
   presentResult: (_args, result) => {

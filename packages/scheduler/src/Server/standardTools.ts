@@ -401,6 +401,8 @@ const webFetchTool = defineTool<{ status: number; type: string; text: string }>(
     render: (_args, value) => [textBlock(`HTTP ${value.status} ${value.type}\n${value.text}`)],
   },
   presentCall: args => ({ card: 'generic', title: `fetch ${oneLine(args.url)}`, rawInput: args.url }),
+  // Read-only, no shared mutable state — same marking DSH uses.
+  isConcurrencySafe: () => true,
   // DSH's `tool-web/fetch` presents a result card; the status code is what a
   // reader wants from one line.
   presentResult: (_args, result) => {
@@ -626,6 +628,8 @@ const readImageTool = defineTool<string>({
     path: { type: 'string', description: 'Image path: absolute, or relative to the workspace.' },
   },
   presentCall: args => ({ card: 'generic', title: `image ${oneLine(args.path)}` }),
+  // Read-only, no shared mutable state — same marking DSH uses.
+  isConcurrencySafe: () => true,
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
@@ -1207,6 +1211,8 @@ const subagentTool = defineTool<string>({
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   presentCall: args => ({ card: 'generic', title: `subagent: ${oneLine(args.task ?? args.prompt)}` }),
+  // Read-only, no shared mutable state — same marking DSH uses.
+  isConcurrencySafe: () => true,
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     if (!host.agents) throw new Error('subagents are not available in this host');
@@ -1460,6 +1466,8 @@ const readTool = defineTool<string>({
   },
   output: { schema: { type: 'string' }, render: (_args, value) => [textBlock(value)] },
   presentCall: args => ({ card: 'generic', title: `read ${oneLine(args.path)}`, rawInput: args.path }),
+  // Read-only, no shared mutable state — same marking DSH uses.
+  isConcurrencySafe: () => true,
   async execute(args, exec) {
     const host = exec.host as StandardToolHost;
     const base = host.sessionCwd ?? host.workspace;
