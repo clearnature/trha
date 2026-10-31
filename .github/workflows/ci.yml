@@ -150,6 +150,54 @@ jobs:
   # shell contract (cmd.exe /d /s /c + verbatim quoting) is asserted via injected
   # platform, so this job runs the same suite on a real Windows runner without
   # needing bash.
+  # Windows sandbox：AppContainer 隔离的功能性验收。
+  # 探针在**沙箱内**跑（spawnAppContainer），断言三件事：写 workspace 成功、
+  # 写 C:\Windows 失败、删 workspace 根失败。任一不符即 job 失败（fail-closed）。
+  sandbox-windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: checkout sov-math (kernel math dependency)
+      uses: actions/checkout@v4
+      with:
+        repository: triqchem-lab/math
+        path: .ci/math
+        sparse-checkout: |
+          hs/sov-math
+
+    - uses: haskell-actions/setup@v2
+      with:
+        ghc-version: '9.14.1'
+        cabal-version: '3.16.1.0'
+
+    # WebGPU 组件需要 libwgpu_native 所在目录参与链接。与 haskell job 同样的做法。
+    - name: Provide wgpu-native lib dir
+      shell: bash
+      run: |
+        cat > cabal.project.ci.local <<EOF
+        package trha
+          extra-lib-dirs: $GITHUB_WORKSPACE/3rdparty/wgpu-native/lib
+        EOF
+
+    - name: Build trha-infra
+      run: cabal build --project-file=cabal.project.ci trha:trha-infra
+
+    - name: Run AppContainer isolation probes
+      shell: bash
+      run: |
+        WS="$RUNNER_TEMP/trha-probe-ws"
+        rm -rf "$WS"; mkdir -p "$WS"
+        export TRHA_PROBE_WS="$WS"
+        ghc -isrc/infra -outputdir "$RUNNER_TEMP/probe-obj" \
+            -optl-luserenv -optl-ladvapi32 \
+            -o "$RUNNER_TEMP/acprobe.exe" test/manual/AppContainerIsolation.hs
+        "$RUNNER_TEMP/acprobe.exe" | tee "$RUNNER_TEMP/probe.log"
+        grep -Eq 'write workspace.*-> 0'  "$RUNNER_TEMP/probe.log"
+        grep -Eq 'write C:/Windows.*-> 1' "$RUNNER_TEMP/probe.log"
+        grep -Eq 'rmdir workspace.*-> 1'  "$RUNNER_TEMP/probe.log"
+
   scheduler-windows:
     runs-on: windows-latest
 
