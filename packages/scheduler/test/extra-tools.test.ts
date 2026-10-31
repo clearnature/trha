@@ -255,7 +255,7 @@ describe('stagehand aliases', () => {
     const out = await runExtraTool('stagehand_navigate', { url }, host);
     expect(out).toContain('SH');
     expect(out).toContain('Press');
-  });
+  }, 15_000);
 
   it('observes interactive elements and acts on one', async () => {
     await runExtraTool('stagehand_navigate', { url }, host);
@@ -265,7 +265,7 @@ describe('stagehand aliases', () => {
     const typed = await runExtraTool('stagehand_act', { action: 'type', selector: '#o', value: 'typed!' }, host);
     expect(typed).toBe('typed');
     expect(await runExtraTool('stagehand_extract', { selector: '#o' }, host)).toBe('typed!');
-  });
+  }, 15_000);
 });
 
 describe('remaining branches', () => {

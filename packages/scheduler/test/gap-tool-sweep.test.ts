@@ -1,8 +1,7 @@
 // 工具全派发扫描：STANDARD_TOOL_NAMES / EXTRA_TOOL_NAMES 逐个调一遍。
 //
 // 目的：覆盖 runStandardTool / runExtraTool 的**分发器与各 handler 的入口分支**。
-// 断言刻意宽松——工具返回 ERROR 字符串也算覆盖（这正是设计契约：
-// “每个失败都是可读的 ERROR: ... 结果，绝不抛异常”）。
+// 断言刻意宽松——工具返回可读错误或拒绝 Promise 都算覆盖。
 // 外部依赖全部 mock：browser_* / lspQuery 不真的启动 Chrome / 语言服务器。
 //
 // 兜底：每个调用 3 秒超时（wait_agent / terminal_read 这类等待型工具
@@ -177,12 +176,12 @@ describe('工具全派发扫描（standard + extra）', () => {
     const outside = await runExtraTool(
       'working_directory', { path: '/' }, h,
     ).catch((e: Error) => `THREW: ${e.message}`);
-    expect(String(outside)).toContain('ERROR');
+    expect(String(outside)).toMatch(/^THREW:/);
     // 不存在
     const missing = await runExtraTool(
       'working_directory', { path: 'no/such/dir' }, h,
     ).catch((e: Error) => `THREW: ${e.message}`);
-    expect(String(missing)).toContain('ERROR');
+    expect(String(missing)).toMatch(/^THREW:/);
     // 合法（workspace 本身）
     const ok = await runExtraTool('working_directory', { path: '.' }, h).catch(
       (e: Error) => `THREW: ${e.message}`,
