@@ -42,17 +42,15 @@ jobs:
         sparse-checkout: |
           hs/sov-math
 
-    # runner 镜像已预装 GHC 9.14.1 + cabal 3.16.1.0（install 幂等，2.6 秒），
-    # ghcup 用 system-wide /usr/local/.ghcup；~/.ghcup 不存在 ⇒ 旧缓存恒为空。
-    - name: Install ghcup-hs + GHC 9.14.1 + cabal 3.16.1.0
-      run: |
-        curl -sSLo /tmp/ghcup https://github.com/haskell/ghcup-hs/releases/download/v0.2.6.2/x86_64-linux-ghcup-0.2.6.2
-        chmod +x /tmp/ghcup
-        /tmp/ghcup install ghc 9.14.1
-        /tmp/ghcup install cabal 3.16.1.0
-        /tmp/ghcup set ghc 9.14.1
-        /tmp/ghcup set cabal 3.16.1.0
-        echo "$HOME/.ghcup/bin" >> "$GITHUB_PATH"
+    # 官方 haskell-actions/setup：runner 预装版本优先，缺失走 ghcup。
+    # ghc-version 在官方支持列表内（9.14.1）；cabal 用 latest（官方推荐，
+    # 写死 '3.16.1.0' 这类补丁号在部分渠道元数据里不存在）。
+    - name: Setup Haskell (GHC 9.14.1 + cabal)
+      id: setup-haskell
+      uses: haskell-actions/setup@v2
+      with:
+        ghc-version: '9.14.1'
+        cabal-version: 'latest'
 
     # WebGPU 组件需要 libwgpu_native.so 所在目录参与链接与运行时查找。
     - name: Provide wgpu-native lib dir

@@ -42,19 +42,18 @@ jobs:
         sparse-checkout: |
           hs/sov-math
 
-    # 与 ci.yml 的 haskell job 保持同一种安装方式（ghcup 脚本）。
-    # haskell-actions/setup@v2 在 windows-latest 上装 GHC 9.14.1 会直接失败；
-    # 且 ghcup 的 Windows 资产名是 x86_64-mingw64-*（不是 x86_64-windows-*）。
-    - name: Install ghcup-hs + GHC 9.14.1 + cabal 3.16.1.0
-      shell: bash
-      run: |
-        curl -sSLo "$RUNNER_TEMP/ghcup.exe" https://github.com/haskell/ghcup-hs/releases/download/v0.2.6.2/x86_64-mingw64-ghcup-0.2.6.2.exe
-        "$RUNNER_TEMP/ghcup.exe" --version
-        "$RUNNER_TEMP/ghcup.exe" install ghc 9.14.1
-        "$RUNNER_TEMP/ghcup.exe" install cabal 3.16.1.0
-        "$RUNNER_TEMP/ghcup.exe" set ghc 9.14.1
-        "$RUNNER_TEMP/ghcup.exe" set cabal 3.16.1.0
-        echo "$HOME/.ghcup/bin" >> "$GITHUB_PATH"
+    # 官方 haskell-actions/setup（此前手写 ghcup 脚本的两处坑都规避了）：
+    # 1) haskell-actions/setup 早期在 windows-latest 失败，实为 cabal-version
+    #    写死 '3.16.1.0' —— Windows 走 chocolatey 元数据没有该补丁全称；
+    #    官方推荐 'latest'。
+    # 2) ghcup 的 Windows 资产名是 x86_64-mingw64-*（不是 x86_64-windows-*），
+    #    官方 action 内部已处理，无需手写 curl。
+    - name: Setup Haskell (GHC 9.14.1 + cabal)
+      id: setup-haskell
+      uses: haskell-actions/setup@v2
+      with:
+        ghc-version: '9.14.1'
+        cabal-version: 'latest'
 
     # WebGPU 组件需要 libwgpu_native 所在目录参与链接。
     - name: Provide wgpu-native lib dir
