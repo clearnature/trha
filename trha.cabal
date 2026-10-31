@@ -425,3 +425,15 @@ executable trha-kernel-stub
                   , trha:trha-api
   ghc-options:      -rtsopts -threaded
   default-language: Haskell2010
+
+-- WebGPU 计算的功能性验证：真实 GPU 上跑 WGSL compute kernel，与 CPU 逐元素
+-- 对拍（webgpu-wiring-plan.md §0 的第二条判据）。
+-- 无 GPU 的 CI runner 上 createContext 会失败，测试报 pending 而非失败。
+test-suite trha-webgpu-test
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test-webgpu
+  build-depends:    base ^>=4.22
+                  , trha:trha-webgpu
+                  , hspec
+  default-language: Haskell2010

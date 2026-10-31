@@ -19,6 +19,7 @@ echo "downloading $URL"
 curl -sSL -o "$tmp/wgpu.zip" "$URL"
 unzip -o -q "$tmp/wgpu.zip" -d "$tmp/x"
 cp "$tmp/x/lib/libwgpu_native.a"     "$DST/"
-cp "$tmp/x/lib/libwgpu_native.dll.a" "$DST/"
+# 不复制 libwgpu_native.dll.a：它会让链接器优先选动态库，导致 exe 运行时
+# 找不到 wgpu_native.dll 而静默崩溃（无任何输出）。只留静态库，exe 自包含。
 cp "$tmp/x/lib/wgpu_native.dll"      "$DST/"
 echo "wgpu-native $VER -> $DST"
