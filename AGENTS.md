@@ -80,6 +80,12 @@ children. On a many-core machine vitest's default pool forks dozens of workers.
   (`feat(scheduler): …`). Git hooks live in `.githooks/`
   (`core.hooksPath`); a Mimosa security hook may block commits on static
   findings — triage them, never bypass the gate silently.
+- **Push after commit**（2026-10-31 事故后立的规矩）：每个本地提交完成后必须
+  立即 `git push`。判据是 `git rev-list --count origin/main..HEAD` 等于 0；
+  不等于 0 就是在赌「这块盘不会出事」。
+  > 事故：Windows 沙箱的约 900 行 Haskell 代码只在本地提交，远程 `main` 停在
+  > `d3814c3`；trha 目录被删除后 `.git` 一并消失，`reflog` 只剩一条 `clone`，
+  > 代码无法恢复，只能按设计重写。**未推送的提交等于没写。**
 - **Secrets**: never commit API keys; `.env` is gitignored.
 
 ## Docs
