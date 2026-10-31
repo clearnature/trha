@@ -208,6 +208,13 @@ jobs:
           extra-lib-dirs: $GITHUB_WORKSPACE/3rdparty/wgpu-native/lib
         EOF
 
+    # Windows runner 上 cabal 的包索引是空的（"package list does not exist"），
+    # 不 update 就找不到 vty-crossplatform 这类依赖，直接 Cabal-7107。
+    # haskell job 早就有这一步，sandbox-windows 漏了。
+    - name: cabal update
+      shell: bash
+      run: cabal update
+
     - name: Build trha-infra
       shell: bash
       run: |
