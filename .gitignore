@@ -235,3 +235,7 @@ packages/sandbox-win-helper/target/
 
 # BSD sandbox launcher build output (packages/sandbox-bsd-launcher).
 packages/sandbox-bsd-launcher/trha-sandbox-*
+
+# WebGPU 原生库为预编译二进制，不入库；用 3rdparty/wgpu-native/fetch-windows.sh 获取
+3rdparty/wgpu-native/lib/windows/*.a
+3rdparty/wgpu-native/lib/windows/*.dll
