@@ -20,6 +20,12 @@ export interface BridgeToolSpec {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  /**
+   * Ask the provider to load this definition into context on demand instead of
+   * declaring it up front. Anthropic's `defer_loading`; ignored by providers
+   * that have no such feature (the kernel decides per protocol).
+   */
+  deferLoading?: boolean;
 }
 
 export interface QueryRequest {

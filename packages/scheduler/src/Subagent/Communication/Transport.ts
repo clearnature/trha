@@ -32,7 +32,13 @@ export class Transport {
       throw new Error(`No connection to subagent ${message.to}`);
     }
 
-    const url = `${this.config.protocol}://${connection.host}:${connection.port}/message`;
+    // Subagents live inside this scheduler, so their message endpoint must be
+    // loopback. Honouring a caller-supplied host would make inter-agent traffic
+    // depend on network reachability — an outbound channel between agents that
+    // the sandbox does not cover.
+    const loopback = new Set(['127.0.0.1', '::1', 'localhost']);
+    const host = loopback.has(connection.host) ? connection.host : '127.0.0.1';
+    const url = `${this.config.protocol}://${host}:${connection.port}/message`;
 
     this.logger.debug(`Sending message to ${message.to}: ${url}`);
 

@@ -8,12 +8,17 @@ on:
   release:
     types: [ published ]
 
+# 同一 ref 只保留最新一次运行（docker build 静态二进制很贵）。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
@@ -29,7 +34,7 @@ jobs:
         outputs: type=local,dest=./dist
     
     - name: Upload binary
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: trha-linux-x86_64
         path: dist/trha
@@ -68,7 +73,7 @@ jobs:
     
     steps:
     - name: Download binary
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: trha-linux-x86_64
     
@@ -76,7 +81,7 @@ jobs:
       run: chmod +x trha
     
     - name: Test on ${{ matrix.distro }}
-      uses: docker:// ${{ matrix.distro }}:latest
+      uses: docker://${{ matrix.distro }}:latest
       with:
         args: |
           bash -c "

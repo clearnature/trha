@@ -18,6 +18,7 @@ executable trha
     Config.Home
     Core.Args
     UI.Commands.Registry
+    Core.Bootstrap
     Core.HTTP
     Core.Transcript
     Core.Memory
@@ -33,6 +34,7 @@ executable trha
     Core.Currency
     Core.Export
     Core.Fonts
+    Core.Fs
     Core.Sandbox
     Core.TurnStats
     Core.EffortContract
@@ -54,6 +56,7 @@ executable trha
     UI.Skills
     UI.Selection
     UI.TimeStamp
+    UI.State
     UI.Stash
     UI.Frecency
     UI.ModelPrefs

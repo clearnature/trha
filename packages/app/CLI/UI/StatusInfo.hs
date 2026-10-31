@@ -32,7 +32,7 @@ import System.Directory (getCurrentDirectory, getHomeDirectory)
 import System.Environment (lookupEnv)
 import System.FilePath ((</>))
 import System.Info (arch, compilerName, compilerVersion, os)
-import Infrastructure.Sandbox.Config (loadSandboxConfig, scEnabled)
+import Infrastructure.Sandbox.Config (insideSandbox, loadSandboxConfig, scEnabled)
 import Data.Version (showVersion)
 
 -- | One status row: English label key (localised at render time via
@@ -108,23 +108,32 @@ collectStatusInfo cfg mSid model = do
     , StatusRow "Base URL" (baseUrlLine cfg)
     , StatusRow "Model" model
     , StatusRow "Session ID" (maybe "—" T.pack mSid)
-    , StatusRow "SandBox" sandbox
+    , StatusRow "SandBox" (sandbox <> "   Agent模式：" <> configAgentPreset cfg)
     , StatusRow "Memory" (fromMaybe "—" mem)
     ]
 
 -- | The effective sandbox switch: an explicit env value wins, otherwise the
 -- persisted ~/.trha/sandbox.yaml 'enabled' flag (what the scheduler loads).
+--
+-- Inside the sandbox HOME points at the scratch dir, so the host config is not
+-- visible there and a failed load says nothing about whether the seam is on.
+-- A guest process by definition runs sandboxed, so report that instead of the
+-- "disabled" that a missing file used to imply.
 sandboxLine :: IO Text
 sandboxLine = do
   envV <- lookupEnv "TRHA_SANDBOX"
   home <- getHomeDirectory
   loaded <- loadSandboxConfig (home </> ".trha" </> "sandbox.yaml")
+  guest <- insideSandbox
   let cfgOn = either (const False) scEnabled loaded
       envOn = case fmap (T.toLower . T.strip . T.pack) envV of
         Just v | v `elem` ["on", "1", "true", "enforce"] -> Just True
         Just _ -> Just False
         Nothing -> Nothing
-      on = fromMaybe cfgOn envOn
+      on = case envOn of
+        Just v -> v
+        Nothing | guest -> True
+        Nothing -> cfgOn
   pure (if on then "enabled (linux-bwrap)" else "disabled")
 
 -- | The workspace the tools use: the explicit override, else the shell's

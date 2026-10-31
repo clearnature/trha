@@ -23,6 +23,9 @@ module API.ProviderRuntime
   , anthropicStream
   , responsesStream
   , anthropicRequestBody
+  , anthropicHeaders
+  , anthropicTools
+  , toolChangesBeta
   , StreamCall
   ) where
 
@@ -31,6 +34,7 @@ import Data.Aeson (Object, Value(..), decode, encode, object, toJSON, (.=))
 import Data.Aeson.Key (fromText, toText)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.Maybe (fromMaybe, isNothing)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -45,6 +49,7 @@ import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Data.CaseInsensitive (mk)
 import Network.HTTP.Types.Header (Header)
 import Network.HTTP.Types.Status (statusCode, statusIsSuccessful)
+import System.IO (hPutStrLn, stderr)
 import System.IO.Unsafe (unsafePerformIO)
 
 import Core.Provider.Types
@@ -52,6 +57,7 @@ import LLM.Adapter.Interface (LLMAdapter(..), StreamCall)
 import qualified LLM.Stream as LStream
 import LLM.Adapter.Types
 import LLM.Providers.DeepSeek (buildDeepSeekChatRequest, parseDeepSeekChatTurn)
+import Control.Monad (when)
 import System.Environment (lookupEnv)
 
 
@@ -297,7 +303,7 @@ anthropicRequestBody model msgs specs streaming mthinking =
          ++ [ "thinking" .= object [ "type" .= t ] | Just t <- [mthinking] ]
          ++ [ "thinking" .= object [ "type" .= ("disabled" :: Text) ]
             | needsThinkingDisabled, isNothing mthinking ]
-         ++ [ "tools"  .= map anthropicTool specs | not (null specs) ]
+         ++ [ "tools"  .= anthropicTools specs | not (null specs) ]
   where
     needsThinkingDisabled = any legacyToolTurn msgs
     legacyToolTurn m = case m of
@@ -316,6 +322,26 @@ responsesRequestBody model msgs specs streaming mprev =
        ++ [ "tools" .= map responsesTool specs | not (null specs) ]
 
 -- | Anthropic's streaming caller: SSE with named events.
+-- | DeepSeek's beta gate for mid-conversation tool changes. DSH names the same
+-- value in @llm-deepseek/src/messages-api.ts@ (@MESSAGES_TOOL_CHANGES_BETA@) and
+-- only sends the header when a tool actually asks for deferred loading, which is
+-- what this guards.
+toolChangesBeta :: BS.ByteString
+toolChangesBeta = "mid-conversation-tool-changes-2026-07-01"
+
+-- | Headers for one Anthropic request.
+--
+-- The beta gate is added **only** when a tool asks for deferred loading: opting a
+-- request into a beta surface is the caller's decision, not something a framework
+-- should do on every request. Exported so the wire shape is testable without IO.
+anthropicHeaders :: Text -> [Header] -> [ToolSpec] -> [Header]
+anthropicHeaders apiKey extraHs specs =
+  [ ("Content-Type", "application/json")
+  , ("anthropic-version", "2023-06-01") ]
+  ++ [ ("x-api-key", TE.encodeUtf8 apiKey) | not (T.null (T.strip apiKey)) ]
+  ++ [ ("anthropic-beta", toolChangesBeta) | any tsDeferLoading specs ]
+  ++ extraHs
+
 anthropicStream :: Text -> Text -> Text -> [Header] -> Maybe Text -> IO StreamCall
 anthropicStream baseUrl apiKey model extraHs mthinking = do
   let url = T.unpack (rootOf baseUrl) ++ "/v1/messages"
@@ -327,7 +353,22 @@ anthropicStream baseUrl apiKey model extraHs mthinking = do
     pending <- newIORef (Nothing :: Maybe (Int, Text, Text, Text))
     thinkingRef <- newIORef T.empty
     sigRef <- newIORef (Nothing :: Maybe Text)
-    result <- LStream.streamPostSse url headers (anthropicRequestBody model msgs specs True mthinking) $ \v -> do
+    -- Diagnostics: TRHA_DEBUG_ANTHROPIC=1 prints the wire shape,
+    -- =full additionally dumps the request body (clipped; the API key lives in
+    -- a header, so it never appears here).
+    let reqBody = anthropicRequestBody model msgs specs True mthinking
+    dbg <- lookupEnv "TRHA_DEBUG_ANTHROPIC"
+    when (dbg == Just "1" || dbg == Just "full") $ do
+      let hdrs = anthropicHeaders apiKey extraHs specs
+          deferred = [tsName x | x <- specs, tsDeferLoading x]
+      hPutStrLn stderr $ "[anthropic] model=" <> T.unpack model
+        <> " tools=" <> show (length specs)
+        <> " deferred=" <> show deferred
+        <> " beta=" <> show (lookup "anthropic-beta" hdrs)
+    when (dbg == Just "full") $
+      hPutStrLn stderr $ "[anthropic] body=" <> take 4000 (BLC.unpack (encode reqBody))
+    result <- LStream.streamPostSse url (anthropicHeaders apiKey extraHs specs)
+      reqBody $ \v -> do
       case anthropicEvent v of
         Just (Left txt) -> onEvent (ChunkDelta txt)
         Just (Right u)  -> onEvent (ChunkDone u)
@@ -644,12 +685,32 @@ toAnthropicMessages msgs = (T.intercalate "\n\n" systems, go msgs)
     thinkingBlock _ = []
 
 -- | A tool as Anthropic declares it.
+-- | Anthropic's tools array, with the provider's own constraint applied.
+--
+-- DeepSeek's anthropic-compatible endpoint rejects a request where *every* tool
+-- carries @defer_loading: true@:
+--
+-- > tools: at least one tool must have defer_loading=false.
+-- > All tools cannot be deferred.
+--
+-- When that happens we undefer the first tool instead of sending a request we
+-- already know is invalid; the loss is one eager declaration, not a failed turn.
+anthropicTools :: [ToolSpec] -> [Value]
+anthropicTools [] = []
+anthropicTools specs@(first : rest)
+  | all tsDeferLoading specs =
+      anthropicTool first { tsDeferLoading = False } : map anthropicTool rest
+  | otherwise = map anthropicTool specs
+
 anthropicTool :: ToolSpec -> Value
-anthropicTool s = object
+anthropicTool s = object $
   [ "name"         .= tsName s
   , "description"  .= tsDescription s
   , "input_schema" .= tsParameters s
   ]
+  -- Anthropic's own field name. Only sent when set, so every other provider
+  -- and every unflagged tool keeps the exact previous body.
+  ++ [ "defer_loading" .= True | tsDeferLoading s ]
 
 -- | A tool as the Responses API declares it.
 responsesTool :: ToolSpec -> Value

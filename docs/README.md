@@ -1,6 +1,6 @@
 # docs/ 导览
 
-> 本目录共 **56 份文档**（2026-10-29 追加；计数规则 = `reference/` 下按**条目**计，其余按 `.md` 文件计），按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
+> 本目录共 **57 份文档**（2026-10-30 追加；计数规则 = `reference/` 下按**条目**计，其余按 `.md` 文件计），按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
 >
 > **结构权威**是 `../QWEN.md`（§Architecture Layers / §Development Conventions / §Documentation）与 `architecture/architecture.md`。本文件只是**浏览用导览**，如有冲突，一律以 `QWEN.md` 为准。
 
@@ -56,7 +56,11 @@
 
 - **`sandbox-delivery-plan.md`** — **沙箱交付计划（2026-10-29，未开工）**：范围与前提、M0–M5 里程碑（接口冻结 → Linux → 多智能体 → macOS → Windows → Unix/边缘）、**WBS 48 项原子任务**（含 **T0.13 接线契约**、**T2.7/T2.8 消融实验批**）、关键路径、1 周迭代、7 条 DoD 门禁、接口冻结后的 RFC 变更控制、风险与 30% 缓冲、6 项度量、交付物清单、**§11 技能与智能体协作**（阶段技能映射、单人效率 7 条规则、PERT 估算、攻击面清单）。总计 **55–60 人日 + 30% 缓冲 ≈ 72–78 人日（约 15 周）**
 
-- **`sandbox-architecture.md`** — **沙箱架构第一版设计基线（2026-10-29，未实现）**：现状证据（无 OS 级沙箱、`permissionRules` 默认 allow 且注释误称「沙箱已兜底」）、L1–L4 分层、**§3.1 平台能力矩阵**、**§4.2.1 gVisor 采用与 bwrap personality**、**§4.3 成熟工具访问区对照**、**§4.4 真实事件复盘（Anthropic 2026-05）**、**§5.3.1 实验批（消融）模型**（基线只读/变体隔离/复现元数据/批次配额）、**§5.5.1–5.5.3 内核接线契约与工具执行归属**、**§5.8 实现语言与组件边界**、Windows 权限与路径专项、强类型 `Policy`/`Scope`/`narrow` 设计、多智能体 Scope 模型、runner NDJSON v1 协议、平台后端、编译期+黄金+探针+多 agent+**消融实验判据（§6.5）**、P0–P5 计划与风险。**§5.7 接口一次性冻结**：Haskell 公开 API、协议全部帧、TS `sandboxedSpawn`/`runExperiment`/HTTP 端点、`~/.trha/sandbox.yaml` schema（含 read/write/protectedSubpaths/tmp/experiments）、CLI 命令、P0 落地文件清单。**§9 参考代码索引**：R1–R11 + D1–D4，正文逐条标注可追溯
+- **`sandbox-handoff.md`** — **沙箱交付交接快照（2026-10-30）**：M0–M5 逐项实况、剩余工作按阻塞原因分类（需真机 / 证书 / 虚拟化）、会话开工与收尾约定、已知坑（systemd-run 的 D-Bus 降级、guest 内 `sandbox status` 的判定）。新会话接手沙箱工作先读这份
+
+- **`remote-access-bot-plan.md`** — **远程访问与 IM Bot 接入规划（2026-10-30，未实现）**：DSH / reasonix / trha 三家做法对比（web 暴露 → `SAFETY.md` 免责；bot + webhook 仍需 8080 公网入站）、方案 A–D 推演（选定 **IM 长连接**：零入站端口）、移植清单 B1–B8（allowlist / pairing / ask 姿态 / 队列语义 / 各平台 adapter）、已就位的前置修复与还缺的三项、验收判据（`ss -ltn` 只有 loopback 等）
+
+- **`sandbox-architecture.md`** — **沙箱架构第一版设计基线（2026-10-29，未实现）**：现状证据（无 OS 级沙箱、`permissionRules` 默认 allow 且注释误称「沙箱已兜底」）、L1–L4 分层、**§3.1 平台能力矩阵**、**§4.2.1 gVisor 采用与 bwrap personality**、**§4.3 成熟工具访问区对照**、**§4.4 真实事件复盘（Anthropic 2026-05）**、**§5.3.1 实验批（消融）模型**（基线只读/变体隔离/复现元数据/批次配额）、**§5.5.1–5.5.3 内核接线契约与工具执行归属**、**§5.8 实现语言与组件边界**、Windows 权限与路径专项、强类型 `Policy`/`Scope`/`narrow` 设计、多智能体 Scope 模型、runner NDJSON v1 协议、平台后端、编译期+黄金+探针+多 agent+**消融实验判据（§6.5）**、P0–P5 计划与风险。**§5.7 接口一次性冻结**：Haskell 公开 API、协议全部帧、TS `sandboxedSpawn`/`runExperiment`/HTTP 端点、`~/.trha/sandbox.yaml` schema（含 read/write/protectedSubpaths/tmp/experiments）、CLI 命令、P0 落地文件清单。**§9 参考代码索引**：R1–R11 + D1–D4，正文逐条标注可追溯、L1–L4 分层、**§3.1 平台能力矩阵**、**§4.2.1 gVisor 采用与 bwrap personality**、**§4.3 成熟工具访问区对照**、**§4.4 真实事件复盘（Anthropic 2026-05）**、**§5.3.1 实验批（消融）模型**（基线只读/变体隔离/复现元数据/批次配额）、**§5.5.1–5.5.3 内核接线契约与工具执行归属**、**§5.8 实现语言与组件边界**、Windows 权限与路径专项、强类型 `Policy`/`Scope`/`narrow` 设计、多智能体 Scope 模型、runner NDJSON v1 协议、平台后端、编译期+黄金+探针+多 agent+**消融实验判据（§6.5）**、P0–P5 计划与风险。**§5.7 接口一次性冻结**：Haskell 公开 API、协议全部帧、TS `sandboxedSpawn`/`runExperiment`/HTTP 端点、`~/.trha/sandbox.yaml` schema（含 read/write/protectedSubpaths/tmp/experiments）、CLI 命令、P0 落地文件清单。**§9 参考代码索引**：R1–R11 + D1–D4，正文逐条标注可追溯
 
 - **`improvement-plan-2026-10-27.md`** — **改进计划（2026-10-27）**：合并 qwen 2026-09-20 的独立评价（S1–S6）与本次对照评审（A1–A8），并**重新核实**现状（44 个重复模块、sdk 已并入根构建、haskell-network 已归档（2026-10-27 处置；旧记录 92 文件/11,781 行误把 dist-newstyle 计入）、Presentation 8 文件、26 executable）。含 P0/P1/P2 路线、两项需用户裁定（重复模块归属、死代码去留）、与「不建议做」清单
 

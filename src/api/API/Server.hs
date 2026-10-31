@@ -1081,22 +1081,26 @@ anthropicToolSpecs :: Value -> [LLM.ToolSpec]
 anthropicToolSpecs v =
   [ LLM.ToolSpec (str "name" o) (str "description" o)
       (fromMaybe (object []) (lookupField "input_schema" o))
+      (deferred o)
   | Object o <- rawArray "tools" v ]
   where
     str k o = case lookupField k o of
       Just (String x) -> x
       _               -> ""
+    deferred o = lookupField "deferLoading" o == Just (Bool True)
 
 -- | Responses tool declarations: @{type:"function", name, definition…}@.
 responsesToolSpecs :: Value -> [LLM.ToolSpec]
 responsesToolSpecs v =
   [ LLM.ToolSpec (str "name" o) (str "description" o)
       (fromMaybe (object []) (lookupField "parameters" o))
+      (deferred o)
   | Object o <- rawArray "tools" v ]
   where
     str k o = case lookupField k o of
       Just (String x) -> x
       _               -> ""
+    deferred o = lookupField "deferLoading" o == Just (Bool True)
 
 -- | An array field of a JSON body ([] when absent or not an array).
 rawArray :: Text -> Value -> [Value]

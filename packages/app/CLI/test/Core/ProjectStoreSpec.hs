@@ -18,7 +18,7 @@ import Core.SessionSummary (SessionSummary(..))
 
 summary :: String -> String -> SessionSummary
 summary sid title = SessionSummary sid (T.pack title) 1 (Just "deepseek-flash")
-  (Just "2026-10-27T00:00:00Z") Nothing
+  (Just "2026-10-27T00:00:00Z") Nothing Nothing
 
 spec :: Spec
 spec = do

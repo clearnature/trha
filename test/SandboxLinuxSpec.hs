@@ -4,7 +4,7 @@
 -- unavailable, so the suite stays usable on restricted hosts.
 module SandboxLinuxSpec (sandboxLinuxSpec) where
 
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException, finally, try)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Infrastructure.Sandbox
@@ -14,11 +14,22 @@ import Infrastructure.Sandbox.Plan (LaunchRequest(..), LaunchPlan(..), StdinMode
 import Infrastructure.Sandbox.Probe
 import System.Directory
   ( createDirectoryIfMissing, getHomeDirectory, removeDirectoryRecursive )
-import System.Environment (lookupEnv)
+import System.Environment (lookupEnv, setEnv)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
+import System.Posix.Files (setFileMode)
 import System.Process (readProcessWithExitCode)
 import Test.Hspec
+
+-- | Nested sandboxes (this suite running inside another bwrap) cannot create a
+-- user namespace, so bwrap still exists but probes partial.  Turn that into a
+-- pending instead of a false failure — the boundary itself is fine, this host
+-- just will not let us re-enter it.
+withFullBwrap :: BackendCapabilities -> IO () -> IO ()
+withFullBwrap c action
+  | bcEnforcement c == Full = action
+  | otherwise = pendingWith
+      ("bwrap cannot create a namespace here: " ++ show (bcEnforcement c))
 
 sandboxLinuxSpec :: Spec
 sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
@@ -28,7 +39,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
       Left (SandboxUnavailable _ msg) ->
         pendingWith ("bwrap unavailable: " ++ show msg)
       Left e -> expectationFailure (show e)
-      Right c -> do
+      Right c -> withFullBwrap c $ do
         home <- getHomeDirectory
         let ws = home </> ".trha-sandbox-probe-test"
         createDirectoryIfMissing True ws
@@ -47,7 +58,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
       Left (SandboxUnavailable _ msg) ->
         pendingWith ("bwrap unavailable: " ++ show msg)
       Left e -> expectationFailure (show e)
-      Right c -> do
+      Right c -> withFullBwrap c $ do
         home <- getHomeDirectory
         let ws = home </> ".trha-sandbox-toolchain"
         createDirectoryIfMissing True ws
@@ -61,6 +72,8 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
               , lrEnv = [("PATH", T.pack hostPath)]
               , lrStdin = StdinClosed
               , lrTimeoutMs = Just 60000
+              , lrDenyReads = []
+              , lrDenyFiles = []
               }
         case planWith Linux.backend c (probeScope ws) request of
           Left e -> expectationFailure (show e)
@@ -79,7 +92,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
       Left (SandboxUnavailable _ msg) ->
         pendingWith ("bwrap unavailable: " ++ show msg)
       Left e -> expectationFailure (show e)
-      Right c -> do
+      Right c -> withFullBwrap c $ do
         home <- getHomeDirectory
         let ws = home </> ".trha-sandbox-limits"
         createDirectoryIfMissing True ws
@@ -90,6 +103,8 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
                   , wrReadOnly = []
                   , wrNetwork = NetworkOff
                   , wrLimits = defaultResourceLimits { rlMemoryMiB = 256 }
+                  , wrDenyReadDirs = Nothing
+          , wrDenyReadFiles = Nothing
                   } }
             request = LaunchRequest
               { lrArgv = ["bash", "-c", "ulimit -v"]
@@ -97,6 +112,8 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
               , lrEnv = []
               , lrStdin = StdinClosed
               , lrTimeoutMs = Just 30000
+              , lrDenyReads = []
+              , lrDenyFiles = []
               }
         case planWith Linux.backend c scope request of
           Left e -> expectationFailure (show e)
@@ -115,7 +132,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
       Left (SandboxUnavailable _ msg) ->
         pendingWith ("bwrap unavailable: " ++ show msg)
       Left e -> expectationFailure (show e)
-      Right c -> do
+      Right c -> withFullBwrap c $ do
         home <- getHomeDirectory
         let ws = home </> ".trha-sandbox-ns"
         createDirectoryIfMissing True ws
@@ -126,6 +143,8 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
               , lrEnv = []
               , lrStdin = StdinClosed
               , lrTimeoutMs = Just 30000
+              , lrDenyReads = []
+              , lrDenyFiles = []
               }
         case planWith Linux.backend c (probeScope ws) request of
           Left e -> expectationFailure (show e)
@@ -150,7 +169,7 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
       Left (SandboxUnavailable _ msg) ->
         pendingWith ("bwrap unavailable: " ++ show msg)
       Left e -> expectationFailure (show e)
-      Right c -> do
+      Right c -> withFullBwrap c $ do
         home <- getHomeDirectory
         let root = home </> ".trha-sandbox-experiment"
             variantA = Variant (VariantId "a") NetworkOff
@@ -181,6 +200,8 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
                   , lrEnv = []
                   , lrStdin = StdinClosed
                   , lrTimeoutMs = Just 30000
+                  , lrDenyReads = []
+                  , lrDenyFiles = []
                   }
             case planWith Linux.backend c scopeA request of
               Left e -> expectationFailure (show e)
@@ -191,6 +212,25 @@ sandboxLinuxSpec = describe "Linux sandbox integration (T1.5)" $ do
                     (T.unpack cmd) (map T.unpack args) ""
                   _ <- try (removeDirectoryRecursive root) :: IO (Either SomeException ())
                   code `shouldBe` ExitSuccess
+
+  -- T5.3: bwrap present but unable to unshare must degrade to Partial with the
+  -- reason visible — never fail open, never claim Full.
+  it "degrades to Partial when bwrap cannot unshare (T5.3)" $ do
+    home <- getHomeDirectory
+    let dir = home </> ".trha-fake-bwrap"
+        fake = dir </> "bwrap"
+    createDirectoryIfMissing True dir
+    writeFile fake "#!/bin/sh\nexit 1\n"
+    setFileMode fake 0o755
+    oldPath <- lookupEnv "PATH"
+    let newPath = dir ++ ":" ++ maybe "" id oldPath
+    caps <- (setEnv "PATH" newPath >> Linux.probeLinux)
+      `finally` maybe (pure ()) (setEnv "PATH") oldPath
+    case caps of
+      Left e -> expectationFailure ("probe should degrade, not fail: " ++ show e)
+      Right c -> withFullBwrap c $ do
+        bcEnforcement c `shouldSatisfy` isPartialEnforcement
+        bcNotes c `shouldSatisfy` any ("bwrap probe failed" `T.isInfixOf`)
 
 readInt :: String -> Maybe Int
 readInt raw = case reads raw :: [(Int, String)] of
@@ -206,4 +246,10 @@ probeScope ws = scopeRoot (ScopeId "probe") policy (ExclusivePath (AbsolutePath 
       , wrReadOnly = []
       , wrNetwork = NetworkOff
       , wrLimits = defaultResourceLimits
+      , wrDenyReadDirs = Nothing
+  , wrDenyReadFiles = Nothing
       }
+
+isPartialEnforcement :: Enforcement -> Bool
+isPartialEnforcement (Partial _) = True
+isPartialEnforcement _ = False

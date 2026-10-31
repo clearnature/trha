@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | @~/.trha/sandbox.yaml@ schema v1 (docs/plans/sandbox-architecture.md §5.7.5).
@@ -14,17 +15,27 @@ module Infrastructure.Sandbox.Config
   , loadSandboxConfig
   , saveSandboxConfig
   , networkPolicyOf
+  , insideSandbox
+  , guestByUidMap
   ) where
 
+import Control.Exception (IOException, try)
 import Control.Monad (unless)
 import Data.Aeson (ToJSON(..), Value(..), object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
+import Data.List (isSuffixOf)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import qualified Data.Yaml as Yaml
 import Infrastructure.Sandbox.Policy
   ( NetworkPolicy(..), ResourceLimits(..), defaultResourceLimits )
+import System.Directory (getHomeDirectory)
+import System.Environment (lookupEnv)
+#ifndef mingw32_HOST_OS
+import System.Posix.Files (readSymbolicLink)
+#endif
 
 data NetworkSpec
   = NetOff
@@ -45,6 +56,12 @@ data DefaultsConfig = DefaultsConfig
   , dcReadonlyRoots :: [FilePath]
   , dcEnvAllow      :: [Text]
   , dcScratch       :: FilePath
+  , dcDenyReadDirs  :: Maybe [Text]
+    -- ^ §5.7.5 `read.deny`: home-relative credential directories to mask
+    -- (empty tmpfs). 'Nothing' keeps the shipped 'defaultDenyReads'; an
+    -- explicit list — including an empty one — replaces it.
+  , dcDenyReadFiles :: Maybe [Text]
+    -- ^ Credential files masked by binding @/dev/null@ over them.
   } deriving (Eq, Show)
 
 data ScopeConfig = ScopeConfig
@@ -71,6 +88,8 @@ defaultSandboxConfig = SandboxConfig
       , dcReadonlyRoots = ["~/.cabal", "~/.ghcup", "/usr", "/nix/store"]
       , dcEnvAllow = ["PATH", "HOME", "LANG", "TERM"]
       , dcScratch = "~/.trha/sandbox-scratch"
+      , dcDenyReadDirs = Nothing
+      , dcDenyReadFiles = Nothing
       }
   , scScopes = [("subagent", ScopeConfig "read-only" "process")]
   }
@@ -106,6 +125,8 @@ defaultsJson d = object
       ]
   , "readonlyRoots" .= dcReadonlyRoots d
   , "envAllow" .= dcEnvAllow d
+  , "denyReadDirs" .= dcDenyReadDirs d
+  , "denyReadFiles" .= dcDenyReadFiles d
   ]
 
 networkSpecText :: NetworkSpec -> Text
@@ -156,6 +177,8 @@ parseDefaults (Object o) = do
   roots <- optionalStringList o "readonlyRoots" (dcReadonlyRoots base)
   envAllow <- optionalTextList o "envAllow" (dcEnvAllow base)
   scratch <- optionalText o "scratch" (T.pack (dcScratch base))
+  denyDirs <- optionalNullableList o "denyReadDirs"
+  denyFiles <- optionalNullableList o "denyReadFiles"
   pure DefaultsConfig
     { dcPolicy = policy
     , dcIsolation = isolation
@@ -164,8 +187,24 @@ parseDefaults (Object o) = do
     , dcReadonlyRoots = roots
     , dcEnvAllow = envAllow
     , dcScratch = T.unpack scratch
+    , dcDenyReadDirs = denyDirs
+    , dcDenyReadFiles = denyFiles
     }
 parseDefaults _ = Left "defaults must be an object"
+
+-- | An absent key is 'Nothing' (keep shipped defaults); an explicit list —
+-- even @[]@ — is @Just@, so a config can genuinely un-mask paths it needs.
+-- @null@ is the YAML encoding of an absent 'Maybe' list written back by
+-- 'saveSandboxConfig'; it round-trips to 'Nothing'.
+optionalNullableList :: KM.KeyMap Value -> Text -> Either Text (Maybe [Text])
+optionalNullableList o key = case KM.lookup (Key.fromText key) o of
+  Nothing -> Right Nothing
+  Just Null -> Right Nothing
+  Just (Array items) -> Just <$> mapM parseOne (foldr (:) [] items)
+  Just _ -> Left (key <> " must be an array of strings")
+  where
+    parseOne (String s) = Right s
+    parseOne _ = Left (key <> " must contain only strings")
 
 parseLimits :: Value -> Either Text ResourceLimits
 parseLimits (Object o) = do
@@ -239,3 +278,69 @@ loadSandboxConfig path = do
   pure $ case parsed of
     Left err -> Left (T.pack (Yaml.prettyPrintParseException err))
     Right value -> parseSandboxConfig value
+
+-- | Are we running *inside* the sandbox?
+--
+-- The renderer points @HOME@ at the scope's scratch directory, so a guest
+-- process reading @~/.trha/sandbox.yaml@ finds no file. Anything that infers
+-- "sandbox disabled" from that absence would fail open. Callers that load the
+-- config must ask this first and refuse to downgrade on a *missing* file.
+--
+-- Detection is deliberately cheap and local: PID 1 inside the pid namespace is
+-- bwrap, and the guest HOME ends in the scratch directory name.
+-- | Are we running *inside* the sandbox?
+--
+-- Deliberately conservative: several independent signals, any one of which is
+-- enough. A false positive only makes guest-only commands refuse; a false
+-- negative is a fail-open (host config read from a stale guest copy), so every
+-- signal is biased towards "yes".
+--
+--   1. @TRHA_SANDBOX_GUEST=1@ — written by the renderer itself.
+--   2. @/proc/self/uid_map@ does not map the full uid range: inside a user
+--      namespace it is a short one-line range (measured @1000 0 1@ inside
+--      bwrap vs @0 0 4294967295@ on the host).
+--   3. PID 1 is bwrap, by @comm@ or by the exe target.
+--   4. HOME ends in the scratch directory name (older binaries and other
+--      backends that predate the env marker).
+insideSandbox :: IO Bool
+insideSandbox = do
+  guestEnv <- lookupEnv "TRHA_SANDBOX_GUEST"
+  comm <- readTextFile "/proc/1/comm"
+  exe <- readLink "/proc/1/exe"
+  uidMap <- readTextFile "/proc/self/uid_map"
+  home <- getHomeDirectory
+  pure $
+       guestEnv == Just "1"
+    || comm == Just "bwrap"
+    || maybe False ("bwrap" `isSuffixOf`) exe
+    || not (fullUidMap uidMap)
+    || "sandbox-scratch" `isSuffixOf` home
+  where
+    readTextFile p = do
+      r <- try (TIO.readFile p) :: IO (Either IOException Text)
+      pure (either (const Nothing) (Just . T.strip) r)
+#ifndef mingw32_HOST_OS
+    readLink p = do
+      r <- try (readSymbolicLink p) :: IO (Either IOException FilePath)
+      pure (either (const Nothing) Just r)
+#else
+    -- Windows 没有 /proc/self/uid_map，user namespace 检测不适用。
+    readLink _ = pure Nothing
+#endif
+    -- The host maps every uid; a short range means a user namespace.
+    -- Unreadable procfs says nothing, so it must not decide on its own.
+    fullUidMap Nothing = True
+    fullUidMap (Just t) = not (guestByUidMap t)
+
+-- | Does this @/proc\/self\/uid_map@ content prove we are in a user namespace?
+--
+-- The host maps the whole range (@0 0 4294967295@); bwrap's @--unshare-user@
+-- leaves a short one-line range (measured @1000 0 1@).  Exposed as a pure
+-- function so the parsing is unit-tested without needing a real sandbox.
+guestByUidMap :: Text -> Bool
+guestByUidMap t = case filter (not . T.null) (map T.strip (T.lines t)) of
+  [row] -> case T.words row of
+    [_, _, len] -> len /= "4294967295"
+    _ -> True
+  [] -> False      -- nothing to go on
+  _ -> True        -- multiple ranges: not the host's single full mapping

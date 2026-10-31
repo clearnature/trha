@@ -18,12 +18,18 @@ on:
   pull_request:
     branches: [ main, master ]
 
+# 同一 ref 只保留最新一次运行：连续 push 时取消上一轮未完成的 run，
+# 否则每个 push 都会并行排队、各自把 7 个 job 跑满。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   haskell:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: checkout sov-math (kernel math dependency)
       uses: actions/checkout@v4
@@ -33,14 +39,9 @@ jobs:
         sparse-checkout: |
           hs/sov-math
     
-    - name: Restore ghcup
-      id: ghcup-cache
-      uses: actions/cache/restore@v4
-      with:
-        path: ~/.ghcup
-        key: ghcup-${{ runner.os }}-9.14.1-3.16.1.0
-        restore-keys: ghcup-${{ runner.os }}-
-
+    # runner 镜像已预装 GHC 9.14.1 + cabal 3.16.1.0（install 幂等，2.6 秒），
+    # 且 ghcup 用的是 system-wide 的 /usr/local/.ghcup；`~/.ghcup` 在 runner
+    # 上不存在 ⇒ 原先那对缓存条目恒为 211 B，纯属摆设。
     - name: Install ghcup-hs + GHC 9.14.1 + cabal 3.16.1.0
       run: |
         curl -sSLo /tmp/ghcup https://github.com/haskell/ghcup-hs/releases/download/v0.2.6.2/x86_64-linux-ghcup-0.2.6.2
@@ -51,13 +52,6 @@ jobs:
         /tmp/ghcup set ghc 9.14.1
         /tmp/ghcup set cabal 3.16.1.0
         echo "$HOME/.ghcup/bin" >> "$GITHUB_PATH"
-
-    - name: Save ghcup
-      if: always() && steps.ghcup-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
-      with:
-        path: ~/.ghcup
-        key: ghcup-${{ runner.os }}-9.14.1-3.16.1.0
 
     # WebGPU 组件需要 libwgpu_native.so 所在目录参与链接与运行时查找。
     # 本机把它放在 `cabal.project.local`（不入仓、绝对路径），CI 上没有 → 这里生成一份等价配置。
@@ -70,13 +64,18 @@ jobs:
         EOF
         cat cabal.project.ci.local
     
+    # cabal-install ≥3.10 按 XDG 布局：包索引在 ~/.cache/cabal/packages，
+    # 编译好的依赖在 ~/.local/state/cabal/store。旧写法 ~/.cabal/{packages,store}
+    # 在 cabal 3.16 上恒为空 ⇒ 缓存里只有 dist-newstyle，163 个依赖包每次全量重编。
+    # 仍列 ~/.cabal 只为兼容自定义 CABAL_DIR；默认不存在，actions/cache 跳过。
     - name: Restore Haskell dependencies
       id: haskell-cache
       uses: actions/cache/restore@v4
       with:
         path: |
-          ~/.cabal/packages
-          ~/.cabal/store
+          ~/.cache/cabal/packages
+          ~/.local/state/cabal/store
+          ~/.cabal
           dist-newstyle
         key: ${{ runner.os }}-haskell-${{ hashFiles('trha.cabal', 'cabal.project.ci') }}
         restore-keys: |
@@ -101,8 +100,9 @@ jobs:
       uses: actions/cache/save@v4
       with:
         path: |
-          ~/.cabal/packages
-          ~/.cabal/store
+          ~/.cache/cabal/packages
+          ~/.local/state/cabal/store
+          ~/.cabal
           dist-newstyle
         key: ${{ runner.os }}-haskell-${{ hashFiles('trha.cabal', 'cabal.project.ci') }}
   
@@ -110,18 +110,21 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Use Node.js (from .node-version)
       uses: actions/setup-node@v4
       with:
         node-version-file: .node-version
         cache: 'npm'
+        # 根的 package-lock.json 只锁了 oxlint，真实依赖在各子包；不列出来，
+        # 这个缓存的 key 与实际依赖无关。
+        cache-dependency-path: '**/package-lock.json'
     
     - name: Install dependencies
       run: |
         cd packages/scheduler
-        npm install
+        npm ci
     
     - name: TypeScript 7 toolchain (tsc 7.0)
       run: |
@@ -138,7 +141,7 @@ jobs:
     - name: Build Web (studio assets)
       run: |
         cd packages/app/Web
-        npm install
+        npm ci
         npm run build
     
     - name: Test
@@ -202,18 +205,19 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Use Node.js (from .node-version)
       uses: actions/setup-node@v4
       with:
         node-version-file: .node-version
         cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
 
     - name: Install dependencies
       run: |
         cd packages/scheduler
-        npm install
+        npm ci
 
     - name: Test
       run: |
@@ -224,18 +228,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Use Node.js (from .node-version)
       uses: actions/setup-node@v4
       with:
         node-version-file: .node-version
         cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
 
     - name: Install dependencies
       run: |
         cd packages/app/Desktop
-        npm install
+        npm ci
 
     - name: Test (host contract, handshake, studio client)
       run: |
@@ -252,18 +257,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Use Node.js (from .node-version)
       uses: actions/setup-node@v4
       with:
         node-version-file: .node-version
         cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
 
     - name: Install dependencies
       run: |
         cd packages/app/Web
-        npm install
+        npm ci
 
     - name: Typecheck
       run: |
@@ -286,18 +292,23 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Use Node.js (from .node-version)
       uses: actions/setup-node@v4
       with:
         node-version-file: .node-version
         cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
     
+    # benchmarks 的用例直接 import ../../packages/scheduler/src/**（见
+    # benchmarks/tests/*.ts），Node 从 packages/scheduler/src 逐级向上找 node_modules：
+    # axios 只落在 benchmarks/node_modules，winston/express 则哪儿都没有 ⇒
+    # Cannot find package 'axios' / 'winston'。故两处都要装。
     - name: Install dependencies
       run: |
-        cd benchmarks
-        npm install
+        (cd packages/scheduler && npm ci)
+        (cd benchmarks && npm ci)
     
     - name: Run smoke tests
       run: |
@@ -311,7 +322,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: checkout sov-math (kernel math dependency)
       uses: actions/checkout@v4
@@ -320,15 +331,10 @@ jobs:
         path: .ci/math
         sparse-checkout: |
           hs/sov-math
-    
-    - name: Restore ghcup
-      id: ghcup-cache
-      uses: actions/cache/restore@v4
-      with:
-        path: ~/.ghcup
-        key: ghcup-${{ runner.os }}-9.14.1-3.16.1.0
-        restore-keys: ghcup-${{ runner.os }}-
 
+    # runner 镜像已预装 GHC 9.14.1 + cabal 3.16.1.0（install 幂等，2.6 秒），
+    # 且 ghcup 用的是 system-wide 的 /usr/local/.ghcup；`~/.ghcup` 在 runner
+    # 上不存在 ⇒ 原先那对缓存条目恒为 211 B，纯属摆设。
     - name: Install ghcup-hs + GHC 9.14.1 + cabal 3.16.1.0
       run: |
         curl -sSLo /tmp/ghcup https://github.com/haskell/ghcup-hs/releases/download/v0.2.6.2/x86_64-linux-ghcup-0.2.6.2
@@ -339,13 +345,6 @@ jobs:
         /tmp/ghcup set ghc 9.14.1
         /tmp/ghcup set cabal 3.16.1.0
         echo "$HOME/.ghcup/bin" >> "$GITHUB_PATH"
-
-    - name: Save ghcup
-      if: always() && steps.ghcup-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
-      with:
-        path: ~/.ghcup
-        key: ghcup-${{ runner.os }}-9.14.1-3.16.1.0
 
     - name: Provide wgpu-native lib dir
       run: |
@@ -360,8 +359,9 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: |
-          ~/.cabal/packages
-          ~/.cabal/store
+          ~/.cache/cabal/packages
+          ~/.local/state/cabal/store
+          ~/.cabal
           dist-newstyle
         key: ${{ runner.os }}-haskell-${{ hashFiles('trha.cabal', 'cabal.project.ci') }}
         restore-keys: |
@@ -372,6 +372,7 @@ jobs:
       with:
         node-version-file: .node-version
         cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
     
     - name: Build Haskell core
       run: |
@@ -382,9 +383,14 @@ jobs:
     - name: Build TypeScript scheduler
       run: |
         cd packages/scheduler
-        npm install
+        npm ci
         npm run build
     
+    - name: Install benchmark dependencies
+      run: |
+        cd benchmarks
+        npm ci
+
     - name: Run integration tests
       run: |
         cd benchmarks
@@ -397,7 +403,8 @@ jobs:
       uses: actions/cache/save@v4
       with:
         path: |
-          ~/.cabal/packages
-          ~/.cabal/store
+          ~/.cache/cabal/packages
+          ~/.local/state/cabal/store
+          ~/.cabal
           dist-newstyle
         key: ${{ runner.os }}-haskell-${{ hashFiles('trha.cabal', 'cabal.project.ci') }}

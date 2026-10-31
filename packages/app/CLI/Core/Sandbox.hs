@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | @trha sandbox@ subcommands (P0 skeleton, docs/plans/sandbox-delivery-plan.md T0.9).
@@ -17,15 +18,17 @@ import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BL
 import Control.Monad (when)
 import Config.Settings (resolveConfig)
-import Core.HTTP (createHTTPClient, httpGet)
+import Core.HTTP (createHTTPClient, httpGet, httpPost)
 import Core.Types (CLIConfig(..), CLIError, defaultCLIConfig)
 import Data.Maybe (fromMaybe, isNothing)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Infrastructure.Sandbox
 import Infrastructure.Sandbox.Audit (AuditEvent(..), readAudit)
 import qualified Infrastructure.Sandbox.Backend.Linux as Linux
+import qualified Infrastructure.Sandbox.Backend.Windows as Windows
 import Infrastructure.Sandbox.Config
 import Infrastructure.Sandbox.Probe (runProbes)
 import Infrastructure.Sandbox.Runner (RunnerConfig(..), runRunner)
@@ -33,7 +36,9 @@ import Options.Applicative
 import System.Directory
   ( createDirectoryIfMissing, doesFileExist, getCurrentDirectory, getHomeDirectory )
 import System.Exit (exitFailure)
-import System.FilePath ((</>))
+import System.Environment (getEnvironment)
+import System.FilePath ((</>), (<.>))
+import System.Info (os)
 import System.IO (stderr, stdin, stdout)
 
 data SandboxAction
@@ -46,13 +51,35 @@ data SandboxAction
   | SandboxRunner FilePath FilePath Text (Maybe String) Text
   | SandboxConfigAction SandboxConfigPatch Bool
   | SandboxScopes
+  | SandboxExperiment ExperimentArgs Bool  -- ^ Batch run; True = JSON output
   deriving (Eq, Show)
+
+-- | Parsed options for @trha sandbox experiment@ (T2.7's client face).
+data ExperimentArgs = ExperimentArgs
+  { eaId          :: String
+  , eaRoot        :: FilePath
+  , eaBaseline    :: FilePath
+  , eaVariants    :: [String]        -- ^ repeated --variant
+  , eaSeeds       :: [Int]          -- ^ repeated --seed
+  , eaCommand     :: [String]       -- ^ -- separated argv (no shell string)
+  , eaConcurrency :: Int            -- ^ 1..16, scheduler clamps again
+  , eaRetries     :: Int            -- ^ 0..4
+  , eaOutput      :: Maybe FilePath -- ^ default ~/.trha/experiments/<id>.json
+  } deriving (Eq, Show)
 
 data SandboxConfigPatch = SandboxConfigPatch
   { cfgEnabled :: Maybe Bool
   , cfgPolicy  :: Maybe String
   , cfgNetwork :: Maybe String
   , cfgScratch :: Maybe String
+  , cfgPids    :: Maybe Int
+  , cfgMemory  :: Maybe Int
+  , cfgWall    :: Maybe Int
+  , cfgDenyDirs  :: Maybe [Text]
+    -- ^ `--deny-dirs a,b`: replaces the masked credential directories.
+    -- `--deny-dirs ""` is an explicit empty list (un-masks everything) —
+    -- distinct from not passing the flag at all, which keeps the current value.
+  , cfgDenyFiles :: Maybe [Text]
   } deriving (Eq, Show)
 
 sandboxActionParser :: Parser SandboxAction
@@ -81,6 +108,9 @@ sandboxActionParser = subparser
  <> command "scopes"
       (info (pure SandboxScopes <**> helper)
         (progDesc "List execution scopes (the agent/session tree)"))
+ <> command "experiment"
+      (info (experimentParser <**> helper)
+        (progDesc "Submit an experiment batch to the scheduler"))
   ) <**> helper
   where
     probeParser = SandboxProbe <$> optional (strOption
@@ -107,11 +137,41 @@ sandboxActionParser = subparser
                   (long "enabled" <> metavar "on|off" <> help "Enable or disable the sandbox"))
             <*> optional (strOption (long "policy" <> metavar "POLICY"))
             <*> optional (strOption (long "network" <> metavar "SPEC" <> help "off | allow:host1,host2 | proxy:url"))
-            <*> optional (strOption (long "scratch" <> metavar "DIR")))
+            <*> optional (strOption (long "scratch" <> metavar "DIR"))
+            <*> optional (option auto (long "pids" <> metavar "N"
+                  <> help "cgroup v2 pids.max for each exec (0 = no limit)"))
+            <*> optional (option auto (long "memory-mib" <> metavar "MiB"
+                  <> help "RLIMIT_AS in MiB (0 = no limit; keep 0 for builds)"))
+            <*> optional (option auto (long "wall-ms" <> metavar "MS"
+                  <> help "default wall timeout per exec"))
+            <*> optional (option (eitherReader commaList) (long "deny-dirs" <> metavar "A,B"
+                  <> help "home-relative dirs to mask inside the sandbox (empty = no override list)"))
+            <*> optional (option (eitherReader commaList) (long "deny-files" <> metavar "A,B"
+                  <> help "home-relative files masked with /dev/null")))
       <*> switch (long "json" <> help "Machine-readable output")
     onOff "on" = Right True
     onOff "off" = Right False
     onOff other = Left ("expected on|off, got " ++ other)
+    -- "" is a valid explicit empty list; a plain split would yield [""], so
+    -- drop blank entries.
+    commaList raw = Right (filter (not . T.null) (map T.strip (T.splitOn "," (T.pack raw))))
+    experimentParser = SandboxExperiment
+      <$> (ExperimentArgs
+            <$> strOption (long "id" <> metavar "ID")
+            <*> strOption (long "root" <> metavar "DIR")
+            <*> strOption (long "baseline" <> metavar "DIR")
+            <*> many (strOption (long "variant" <> metavar "ID"))
+            <*> many (option auto (long "seed" <> metavar "N"))
+            <*> some (strArgument (metavar "ARGV..."))
+            <*> option auto
+                  (long "concurrency" <> metavar "N" <> value 1
+                    <> help "parallel tasks 1..16")
+            <*> option auto
+                  (long "retries" <> metavar "N" <> value 0
+                    <> help "fresh-dir retries per failed task 0..4")
+            <*> optional (strOption (long "output" <> metavar "FILE"
+                    <> help "copy the outcome JSON here (default ~/.trha/experiments/<id>.json)")))
+      <*> switch (long "json" <> help "Machine-readable output only")
     runnerParser = SandboxRunner
       <$> strOption (long "workspace" <> metavar "DIR" <> help "Workspace root")
       <*> strOption (long "scratch" <> metavar "DIR" <> help "Exclusive scratch directory")
@@ -127,19 +187,32 @@ runSandboxCommand :: SandboxAction -> IO ()
 runSandboxCommand action = do
   home <- getHomeDirectory
   let path = home </> ".trha" </> "sandbox.yaml"
+  -- Inside the sandbox HOME *is* the scratch dir, so a file at this path is a
+  -- guest-local copy (written by an earlier `sandbox config` in a guest), not
+  -- the host's authoritative config.  Trusting it reported "disabled / pids 0"
+  -- while execution actually used the host's enabled/512/2 GiB — a fail-open.
+  -- Refuse to read it either way, whether or not a copy happens to exist.
+  guest <- insideSandbox
   exists <- doesFileExist path
-  cfg <- if exists
-    then do
-      parsed <- loadSandboxConfig path
-      either (failWith . T.unpack) pure parsed
-    else pure defaultSandboxConfig
+  cfg <-
+    if guest
+      then failWith ("running inside the sandbox: " <> path
+             <> " is guest-local (HOME is the scratch dir), not the host config."
+             <> " Run `trha sandbox status` on the host, or query"
+             <> " /api/sandbox/status on the scheduler.")
+      else
+        if exists
+          then do
+            parsed <- loadSandboxConfig path
+            either (failWith . T.unpack) pure parsed
+          else pure defaultSandboxConfig
   case action of
     SandboxStatus asJson -> do
       caps <- Linux.probeLinux
       case caps of
         Left err -> do
           if asJson
-            then emitJson "none" "none" False [T.pack (show err)]
+            then emitJson Nothing [T.pack (show err)]
             else do
               TIO.putStrLn "backend:     none"
               TIO.putStrLn ("reason:      " <> T.pack (show err))
@@ -148,7 +221,7 @@ runSandboxCommand action = do
               enforcement = T.pack (show (bcEnforcement c))
               notes = bcNotes c
           if asJson
-            then emitJson backend enforcement True notes
+            then emitJson (Just c) notes
             else do
               TIO.putStrLn ("backend:     " <> backend)
               TIO.putStrLn ("enforcement: " <> enforcement)
@@ -164,6 +237,8 @@ runSandboxCommand action = do
                 <> " memoryMiB=" <> T.pack (show (rlMemoryMiB (dcLimits d)))
                 <> " wallMs=" <> T.pack (show (rlWallMs (dcLimits d))))
               TIO.putStrLn ("readonly:    " <> T.pack (show (dcReadonlyRoots d)))
+              when (rlMemoryMiB (dcLimits d) > 0) $
+                TIO.putStrLn ("warn:        memoryMiB caps RLIMIT_AS; node/GHC builds abort — `trha sandbox config --memory-mib 0` to lift")
               TIO.putStrLn ("scopes:      " <> T.pack (show (map fst (scScopes cfg))))
     SandboxProbe _ -> do
       caps <- Linux.probeLinux
@@ -173,7 +248,7 @@ runSandboxCommand action = do
           ws <- getCurrentDirectory
           let scratch = home </> ".trha" </> "sandbox-scratch"
           createDirectoryIfMissing True scratch
-          results <- runProbes Linux.backend c (mkRunnerScope ws scratch "workspace-write" "off")
+          results <- runProbes Linux.backend c (mkRunnerScope cfg home ws scratch "workspace-write" "off")
           mapM_ printProbe results
           if all probeOk results then pure () else exitFailure
     SandboxPolicyGet mscope -> do
@@ -191,7 +266,7 @@ runSandboxCommand action = do
         then TIO.putStrLn "no audit events"
         else mapM_ printAudit events
     SandboxRunner ws scratch policyName experiment network ->
-      runRunnerMode ws scratch policyName experiment network
+      runRunnerMode cfg ws scratch policyName experiment network
     SandboxScopes -> do
       cliCfg <- resolveConfig defaultCLIConfig
       client <- createHTTPClient (configScheme cliCfg) (configHost cliCfg)
@@ -203,11 +278,47 @@ runSandboxCommand action = do
           if null rows
             then TIO.putStrLn "no scopes"
             else mapM_ printScopeRow rows
+    SandboxExperiment args asJson -> do
+      let payload = object
+            [ "id" .= T.pack (eaId args)
+            , "root" .= T.pack (eaRoot args)
+            , "baseline" .= T.pack (eaBaseline args)
+            , "variants" .= [ object ["id" .= T.pack v] | v <- eaVariants args ]
+            , "seeds" .= eaSeeds args
+            , "concurrency" .= eaConcurrency args
+            , "retries" .= eaRetries args
+            , "command" .= map T.pack (eaCommand args)
+            ]
+      cliCfg <- resolveConfig defaultCLIConfig
+      client <- createHTTPClient (configScheme cliCfg) (configHost cliCfg)
+                  (configPort cliCfg) (configToken cliCfg) 3600000 (configProxy cliCfg)
+      r <- httpPost client "/api/sandbox/experiment" payload :: IO (Either CLIError Aeson.Value)
+      case r of
+        Left e -> failWith (show e)
+        Right v -> do
+          let pretty = BL.putStr (Aeson.encode v) >> TIO.putStrLn ""
+          -- The outcome JSON is the deliverable: keep a copy where the user
+          -- looks, in addition to what the scheduler wrote as repro.json.
+          dest <- case eaOutput args of
+            Just p -> pure p
+            Nothing -> pure (home </> ".trha" </> "experiments" </> eaId args <.> "json")
+          BL.writeFile dest (Aeson.encode v)
+          if asJson
+            then pretty
+            else do
+              TIO.putStrLn ("submitted:   " <> T.pack (eaId args))
+              TIO.putStrLn ("outcome:     " <> T.pack dest)
+              pretty
     SandboxConfigAction patch asJson -> do
       let noop = isNothing (cfgEnabled patch)
               && isNothing (cfgPolicy patch)
               && isNothing (cfgNetwork patch)
               && isNothing (cfgScratch patch)
+              && isNothing (cfgPids patch)
+              && isNothing (cfgMemory patch)
+              && isNothing (cfgWall patch)
+              && isNothing (cfgDenyDirs patch)
+              && isNothing (cfgDenyFiles patch)
           cfg' = if noop then cfg else applyConfigPatch cfg patch
       when (not noop) (saveSandboxConfig path cfg')
       if asJson then emitConfigJson cfg' else printConfig cfg'
@@ -257,10 +368,18 @@ applyConfigPatch cfg' patch = cfg'
       { dcPolicy = maybe (dcPolicy base) T.pack (cfgPolicy patch)
       , dcNetwork = maybe (dcNetwork base) parseNetworkSpec (cfgNetwork patch)
       , dcScratch = maybe (dcScratch base) id (cfgScratch patch)
+      , dcLimits = limits
+      , dcDenyReadDirs = maybe (dcDenyReadDirs base) (Just . map T.strip . filter (not . T.null)) (cfgDenyDirs patch)
+      , dcDenyReadFiles = maybe (dcDenyReadFiles base) (Just . map T.strip . filter (not . T.null)) (cfgDenyFiles patch)
       }
   }
   where
     base = scDefaults cfg'
+    limits = ResourceLimits
+      { rlPids = maybe (rlPids (dcLimits base)) id (cfgPids patch)
+      , rlMemoryMiB = maybe (rlMemoryMiB (dcLimits base)) id (cfgMemory patch)
+      , rlWallMs = maybe (rlWallMs (dcLimits base)) id (cfgWall patch)
+      }
 
 parseNetworkSpec :: String -> NetworkSpec
 parseNetworkSpec raw = case T.stripPrefix "allow:" txt of
@@ -284,6 +403,14 @@ emitConfigJson cfg' = do
     , "policy" .= dcPolicy d
     , "network" .= networkSpecText (dcNetwork d)
     , "scratch" .= dcScratch d
+    , "limits" .= object
+        [ "pids" .= rlPids (dcLimits d)
+        , "memoryMiB" .= rlMemoryMiB (dcLimits d)
+        , "wallMs" .= rlWallMs (dcLimits d)
+        ]
+      -- §5.7.5 read.deny: null = shipped defaults, list = explicit override.
+    , "denyReadDirs" .= dcDenyReadDirs d
+    , "denyReadFiles" .= dcDenyReadFiles d
     ]))
   TIO.putStrLn ""
 
@@ -294,6 +421,14 @@ printConfig cfg' = do
   TIO.putStrLn ("policy:   " <> dcPolicy d)
   TIO.putStrLn ("network:  " <> networkSpecText (dcNetwork d))
   TIO.putStrLn ("scratch:  " <> T.pack (dcScratch d))
+  TIO.putStrLn ("limits:   pids=" <> T.pack (show (rlPids (dcLimits d)))
+    <> " memoryMiB=" <> T.pack (show (rlMemoryMiB (dcLimits d)))
+    <> " wallMs=" <> T.pack (show (rlWallMs (dcLimits d))))
+  TIO.putStrLn ("deny:     dirs=" <> denyText (dcDenyReadDirs d)
+    <> " files=" <> denyText (dcDenyReadFiles d))
+  where
+    denyText Nothing = "<defaults>"
+    denyText (Just xs) = T.intercalate "," xs
 
 printProbe :: ProbeResult -> IO ()
 printProbe result = TIO.putStrLn $ T.intercalate "\t"
@@ -302,49 +437,99 @@ printProbe result = TIO.putStrLn $ T.intercalate "\t"
   , probeActual result
   ]
 
--- | Machine-readable status consumed by the scheduler/Desktop.
-emitJson :: Text -> Text -> Bool -> [Text] -> IO ()
-emitJson backend enforcement available notes = do
+-- | Machine-readable status consumed by the scheduler/Desktop (§5.7.4).
+-- Capabilities and platform come from the probe, not from constants: the
+-- Desktop renders them, and an empty list made every backend look the same.
+emitJson :: Maybe BackendCapabilities -> [Text] -> IO ()
+emitJson mcaps notes = do
   BL.putStr (Aeson.encode (object
-    [ "backend" .= backend
-    , "platform" .= ("linux" :: Text)
-    , "enforcement" .= enforcement
-    , "available" .= available
-    , "capabilities" .= ([] :: [Text])
+    [ "backend" .= maybe "none" (unBackendId . bcBackend) mcaps
+    , "platform" .= maybe (platformText (Other (T.pack os))) (platformText . bcPlatform) mcaps
+    , "enforcement" .= maybe "none" (T.pack . show . bcEnforcement) mcaps
+    , "available" .= maybe False (const True) mcaps
+    , "capabilities" .= maybe [] (map (T.pack . show) . Set.toList . bcCapabilities) mcaps
     , "notes" .= notes
     ]))
   TIO.putStrLn ""
 
+platformText :: Platform -> Text
+platformText Linux = "linux"
+platformText FreeBSD = "freebsd"
+platformText OpenBSD = "openbsd"
+platformText Darwin = "darwin"
+platformText Windows = "win32"
+platformText Android = "android"
+platformText (Other name) = name
+
 -- | Internal entry point used by the scheduler: read NDJSON from stdin,
 -- execute through the Linux backend, write frames to stdout.
-runRunnerMode :: FilePath -> FilePath -> T.Text -> Maybe String -> T.Text -> IO ()
-runRunnerMode ws scratch policyName experiment network = do
+--
+-- The config is the single source of truth for limits, readonly roots and the
+-- env allow-list (T1.2/T2.3).  @--policy@ / @--network@ stay CLI overrides
+-- because the scheduler passes them per scope.
+runRunnerMode :: SandboxConfig -> FilePath -> FilePath -> T.Text -> Maybe String -> T.Text -> IO ()
+runRunnerMode cfg ws scratch policyName experiment network = do
+  home <- getHomeDirectory
+  hostEnv <- getEnvironment
+  let allow = map T.unpack (dcEnvAllow (scDefaults cfg))
+      baseEnv = [ (T.pack k, T.pack v)
+                | (k, v) <- hostEnv
+                , k `elem` allow || k == "HOME" ]
+      scope = mkRunnerScope cfg home ws scratch policyName network
+#ifdef mingw32_HOST_OS
+  -- Windows: the runner delegates to the Rust helper (restricted token) —
+  -- renderWindows already emits `trha-sandbox-win.exe … -- ARGV`. bwrap does
+  -- not exist on this host, so probing the Linux backend here would fail the
+  -- runner before any frame.
+  caps <- Windows.probeWindows
+  case caps of
+    Left err -> failWith (show err)
+    Right c -> runRunner
+      (RunnerConfig stdin stdout (T.pack <$> experiment) baseEnv)
+      Windows.backend c scope
+#else
   caps <- Linux.probeLinux
   case caps of
     Left err -> failWith (show err)
     Right c -> runRunner
-      (RunnerConfig stdin stdout (T.pack <$> experiment))
-      Linux.backend
-      c
-      (mkRunnerScope ws scratch policyName network)
+      (RunnerConfig stdin stdout (T.pack <$> experiment) baseEnv)
+      Linux.backend c scope
+#endif
 
-mkRunnerScope :: FilePath -> FilePath -> T.Text -> T.Text -> Scope
-mkRunnerScope ws scratch policyName networkSpec =
-  scopeRoot (ScopeId "runner") policy (ExclusivePath (AbsolutePath scratch))
+-- | Build the runner scope from the config defaults.
+mkRunnerScope :: SandboxConfig -> FilePath -> FilePath -> FilePath -> T.Text -> T.Text -> Scope
+mkRunnerScope cfg home ws scratch policyName networkSpec =
+  scopeRoot (ScopeId "runner") policy (ExclusivePath (AbsolutePath (expandHome home scratch)))
   where
+    d = scDefaults cfg
     net = networkPolicyOf (parseNetworkSpec (T.unpack networkSpec))
+    ro = map (AbsolutePath . expandHome home) (dcReadonlyRoots d)
+    homeDir = expandHome home scratch
     policy = case T.toLower policyName of
       "read-only" -> ReadOnly emptyReadOnlyPolicy
-        { roReadableRoots = [AbsolutePath ws]
+        { roReadableRoots = AbsolutePath ws : ro
         , roNetwork = net
+        , roEnvAllow = dcEnvAllow d
         }
       _ -> WorkspaceWrite WritableRoot
         { wrRoot = AbsolutePath ws
-        , wrScratch = ExclusivePath (AbsolutePath scratch)
-        , wrReadOnly = []
+        , wrScratch = ExclusivePath (AbsolutePath homeDir)
+        , wrReadOnly = ro
         , wrNetwork = net
-        , wrLimits = defaultResourceLimits
+        , wrLimits = dcLimits d
+          -- §5.7.5 read.deny: the config's list, if set, replaces the shipped
+          -- defaults at the *policy* level — narrow() keeps a parent override,
+          -- so subagent scopes inherit it too.
+        , wrDenyReadDirs = dcDenyReadDirs d
+        , wrDenyReadFiles = dcDenyReadFiles d
         }
+
+-- | @~@ in the config expands against the (host) home of the runner.
+expandHome :: FilePath -> FilePath -> FilePath
+expandHome home path = case path of
+  '~':'/':rest -> home </> rest
+  "~" -> home
+  _ -> path
 
 failWith :: String -> IO a
 failWith message = do

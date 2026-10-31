@@ -20,8 +20,11 @@ export async function loadPluginsFrom(dir: string): Promise<Plugin[]> {
   for (const file of files) {
     const url = pathToFileURL(path.join(dir, file.name)).href;
     try {
-      const mod = (await import(url)) as { default?: unknown };
-      const p = mod.default;
+      const mod = (await import(url)) as { default?: unknown; name?: unknown; apply?: unknown };
+      // DSH's tool plugins are **named** exports (`export const name` +
+      // `export function apply`), while trha's own plugins use a default
+      // export. Accept both: fall back to the module namespace itself.
+      const p = mod.default ?? mod;
       if (isPlugin(p)) {
         plugins.push(p);
       } else {
@@ -39,7 +42,10 @@ export async function loadPluginFromFile(filePath: string): Promise<Plugin | nul
   const url = pathToFileURL(filePath).href;
   try {
     const mod = (await import(url)) as { default?: unknown };
-    return isPlugin(mod.default) ? mod.default : null;
+    // Same fallback as `loadPluginsFrom`: DSH plugins export `name`/`apply` by
+    // name, so the module namespace itself is the plugin.
+    const p = mod.default ?? mod;
+    return isPlugin(p) ? p : null;
   } catch (e) {
     console.warn(`plugin loader: failed to load ${filePath}:`, e);
     return null;
@@ -48,8 +54,14 @@ export async function loadPluginFromFile(filePath: string): Promise<Plugin | nul
 
 function isPlugin(p: unknown): p is Plugin {
   if (typeof p !== 'object' || p === null) return false;
-  const o = p as { name?: unknown; version?: unknown; description?: unknown };
-  return typeof o.name === 'string'
-    && typeof o.version === 'string'
-    && typeof o.description === 'string';
+  const o = p as {
+    name?: unknown; version?: unknown; description?: unknown;
+    activate?: unknown; apply?: unknown;
+  };
+  if (typeof o.name !== 'string') return false;
+  // DSH shape (`export const name` + `export function apply`) carries no
+  // version/description; trha's declarative plugins carry those instead and may
+  // have no lifecycle hook at all. Accept either.
+  if (typeof o.activate === 'function' || typeof o.apply === 'function') return true;
+  return typeof o.version === 'string' && typeof o.description === 'string';
 }

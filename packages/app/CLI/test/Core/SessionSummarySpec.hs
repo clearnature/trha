@@ -23,7 +23,7 @@ spec = do
       sessionSummaryOf "s1" []
         `shouldBe` SessionSummary { ssId = "s1", ssTitle = defaultTitle "s1"
                                   , ssTurns = 0, ssModel = Nothing, ssLastTs = Nothing
-                                  , ssUsage = Nothing }
+                                  , ssUsage = Nothing, ssCwd = Nothing }
 
     it "extracts model from the session event" $ do
       let ev = sessionEvent "session" ["ts" .= ("2026-09-05T00:00:00Z" :: Text), "model" .= ("deepseek-chat" :: Text)]

@@ -85,5 +85,18 @@ spec = describe "Core.RunState" $ do
         `shouldBe` unlines
           [ "kernel: pid 10 (running)"
           , "scheduler: (no pid file) (not running)" ]
+  describe "zombieStat" $ do
+    it "treats a Z state as gone" $
+      zombieStat "1234 (trha) Z 1 1234 1234 0 -1 4194560" `shouldBe` True
+
+    it "keeps a running process alive" $
+      zombieStat "1234 (trha) S 1 1234 1234 0 -1 4194560" `shouldBe` False
+
+    -- comm may contain spaces and parentheses: "node (dist/cli.js)"
+    it "finds the state after a comm containing parens and spaces" $
+      zombieStat "77 (node (dist/cli.js)) Z 1 77 77 0 -1 0" `shouldBe` True
+
+    it "does not mistake the state letter for part of comm" $
+      zombieStat "9 (a) R 1 9 9" `shouldBe` False
   where
     isInfixOf needle hay = BC.pack needle `BC.isInfixOf` BC.pack hay

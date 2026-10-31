@@ -7,7 +7,6 @@ import cors from 'cors';
 import { HaskellBridge } from '../Bridge/Haskell.js';
 import type { BridgeToolSpec, ToolCallData } from '../Bridge/Haskell.js';
 import { canonicalToolName, toolCatalog, toToolSpecs } from './toolCatalog.js';
-import { confineWritePath, limitOutput } from './toolGuard.js';
 import { decidePermission, setPermissionRules, compileRules, getPermissionRules } from '../Permission/permissionRules.js';
 import {
   applyPermissionMode, toggleYolo, modeLabel, MODE_CYCLE,
@@ -34,21 +33,23 @@ import { transcribeWav, AsrNotConfigured } from './transcribe.js';
 import { lspStatus } from './lsp.js';
 import { isExtraTool, runExtraTool, type ExtraHost, type Terminal } from './extraTools.js';
 import {
-  isStandardTool, runStandardTool, startJob,
+  isStandardTool, runStandardTool,
   type AgentHooks, type Goal, type PendingQuestion, type Schedule, type TeamTask,
   type Todo, type JobRecord,
 } from './standardTools.js';
 import { startPluginWatcher } from '../Plugins/watcher.js';
 import { resolveWorkspace } from './workspace.js';
-import { execShell } from './shell.js';
-import { defaultSandboxScope, readSandboxConfig, sandboxEnabled, sandboxedSpawn, sandboxStatus, setSandboxConfigRuntime, setSandboxEnabledRuntime, writeSandboxConfig, type SandboxConfigView } from './sandbox.js';
-import { snapshotFile } from './fileHistory.js';
+import { runExperiment, readSandboxConfig, sandboxEnabled, sandboxStatus, setSandboxConfigRuntime, setSandboxEnabledRuntime, writeSandboxConfig, type SandboxConfigView } from './sandbox.js';
+import { rateLimit } from './rateLimit.js';
+import { DEFAULT_AGENT_PRESET, getAgentPreset, listAgentPresets } from './agentPresets.js';
+// Side effect: registers plane + preset metadata for every tool (step 2 of the
+// plugin migration). Handlers still live in the legacy chains.
+import './toolDeclarations.js';
+import { renderToolValue, resolveTool, toolNamesForPreset } from './toolRegistry.js';
 import { agentDirs, loadAgentDefinitions } from './agentDefs.js';
 import { resolveTls } from './tls.js';
 import { resolveKernelToken } from '../Core/KernelToken.js';
-import { mkdir, readdir, readFile, stat, writeFile, appendFile } from 'node:fs/promises';
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export interface ServerConfig {
@@ -118,7 +119,40 @@ const catalogToolDefs = (): ToolDef[] => toolCatalog.map(def => {
 // Pushed to /api/events/:sessionId as `tool:update`; mirrors CLI ToolEvent.
 
 interface ToolEvent {
+  /**
+   * The provider's `tool_calls[].id`. Stable across the whole call, so a shell
+   * can pair start with end and an upgraded kernel can key a typed state
+   * machine on it. Every event carries one.
+   */
+  callId: string;
+  /**
+   * Explicit lifecycle phase. `status` says how the call ended; `phase` says
+   * whether this event opens or closes it. Derived from `status` today so old
+   * shells that ignore it keep working.
+   */
+  phase: 'start' | 'end';
   name: string;
+  /**
+   * The call's arguments as a parsed object. This is what a typed consumer
+   * (kernel state machine, Desktop card, web inspector) should read.
+   */
+  input?: Record<string, unknown>;
+  /**
+   * Replayable presentation metadata (DSH's `output.presentationMeta`): what a
+   * shell needs to redraw this call's card after a reconnect or a resume. Only
+   * present when the tool declares `presentationMeta`.
+   */
+  meta?: unknown;
+  /**
+   * Tool-supplied card intent (DSH's `presentCall`): how this specific call
+   * should be labelled. Absent means the shell draws its generic row.
+   */
+  view?: {
+    card: 'generic' | 'terminal' | 'diff';
+    title: string;
+    rawInput?: unknown;
+  };
+  /** Legacy `key=value` flattening, kept so older shells keep rendering. */
   args?: string[];
   status: 'running' | 'succeeded' | 'failed';
   error?: string;
@@ -131,9 +165,23 @@ interface ToolEvent {
 /** Tail-capped output preview for tool cards: last 12 lines, at most 2 KiB. */
 const OUTPUT_PREVIEW_LINES = 12;
 const OUTPUT_PREVIEW_BYTES = 2048;
+/**
+ * A patch gets a much larger budget: cutting it mid-hunk makes the card
+ * unreadable. The TUI renders `tcOutput` with a dedicated diff widget **only in
+ * the expanded state**, so a longer preview never inflates a folded card.
+ */
+const OUTPUT_PREVIEW_LINES_DIFF = 200;
+const OUTPUT_PREVIEW_BYTES_DIFF = 32_768;
+
+/** A unified-diff hunk header — the same shape the TUI keys on. */
+const looksLikeDiff = (text: string): boolean => /^@@ -\d+,\d+ \+\d+,\d+ @@/m.test(text);
+
 const outputPreview = (output: string): string => {
-  const tail = output.split('\n').slice(-OUTPUT_PREVIEW_LINES).join('\n');
-  return tail.length > OUTPUT_PREVIEW_BYTES ? '…' + tail.slice(-OUTPUT_PREVIEW_BYTES) : tail;
+  const diff = looksLikeDiff(output);
+  const lines = diff ? OUTPUT_PREVIEW_LINES_DIFF : OUTPUT_PREVIEW_LINES;
+  const bytes = diff ? OUTPUT_PREVIEW_BYTES_DIFF : OUTPUT_PREVIEW_BYTES;
+  const tail = output.split('\n').slice(-lines).join('\n');
+  return tail.length > bytes ? `…${tail.slice(-bytes)}` : tail;
 };
 
 /**
@@ -141,21 +189,6 @@ const outputPreview = (output: string): string => {
  * (MiMo parity) instead of just "1 replacement".  Line numbers come from the
  * pre-edit content; `replace_all` shows the first occurrence.
  */
-const EDIT_DIFF_MAX = 4096;
-const editDiff = (before: string, oldString: string, newString: string): string => {
-  const idx = before.indexOf(oldString);
-  if (idx < 0) return '';
-  const line = before.slice(0, idx).split('\n').length;
-  const oldLines = oldString.split('\n');
-  const newLines = newString.split('\n');
-  const body = [
-    `@@ -${line},${oldLines.length} +${line},${newLines.length} @@`,
-    ...oldLines.map(l => `-${l}`),
-    ...newLines.map(l => `+${l}`),
-  ].join('\n');
-  return body.length > EDIT_DIFF_MAX ? body.slice(0, EDIT_DIFF_MAX) + '\n… (diff truncated)' : body;
-};
-
 // ── Session shape ───────────────────────────────────────────────────────
 // One server-side session.  `pendingApproval` holds a plan request waiting
 // for a host decision (Phase 2 S1 approval gate).
@@ -228,6 +261,8 @@ interface SchedulerSession {
   /** Instructions injected with /steer; consumed at the next model call. */
   steer?: string[];
   createdAt: Date;
+  /** When a `time-context` reading was last injected into this history. */
+  lastTimeContextAt?: number;
   /** Provider-reported prompt tokens of the previous request (ground truth). */
   lastPromptTokens?: number;
   cacheHitTokens?: number;
@@ -244,11 +279,22 @@ interface SchedulerSession {
   /** Subagent linkage: a child session points at the one that spawned it. */
   parentId?: string;
   depth?: number;
+  /**
+   * Agent preset for this session (`standard` | `ptc` | `minimal` | `cordis`).
+   * Decides which tools the model is offered; unset means the default preset.
+   */
+  agentPreset?: string;
   abortRequested?: boolean;
   /** Team tasks are shared on the root session. */
   teamTasks?: TeamTask[];
   /** Tool working directory for this session (inside the workspace). */
   cwd?: string;
+  /**
+   * The session's workspace *root*: set by `/workspace` (or at creation) and
+   * never moved by the `cd` tool.  `cwd` may be any descendant of this; the
+   * tools clamp to it, so an agent cannot walk out of the project it was given.
+   */
+  workspaceRoot?: string;
   /** Cards shown to the user; never part of the model's history. */
   presentations?: Array<{ card: string; at: string }>;
   /** User-facing title and tags (rename/tag; absent until set). */
@@ -378,8 +424,16 @@ async function withSystemPrompt(
   const langSuffix = code && code.toLowerCase() !== 'auto'
     ? `\n\nReason about the problem in ${reasoningLanguageName(code)}; answer in the user's language.`
     : '';
-  const agentSuffix = extraInstructions?.trim()
-    ? `\n\nAgent instructions:\n\n${extraInstructions.trim()}`
+  // DSH's `agent-instructions` caps the injected text (`maxBytes: 65536`); an
+  // unbounded agent file would otherwise eat the context window one turn at a
+  // time and never recover.
+  const AGENT_INSTRUCTIONS_MAX = 65_536;
+  const rawInstructions = (extraInstructions ?? '').trim();
+  const instructions = rawInstructions.length > AGENT_INSTRUCTIONS_MAX
+    ? `${rawInstructions.slice(0, AGENT_INSTRUCTIONS_MAX)}\n…(agent instructions truncated)`
+    : rawInstructions;
+  const agentSuffix = instructions
+    ? `\n\nAgent instructions:\n\n${instructions}`
     : '';
   const rules = await loadRuleFiles();
   const system = base
@@ -427,7 +481,7 @@ const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
   standard: {
     name: 'standard',
     description: 'Full coding agent with all tools and capabilities',
-    tools: catalogToolDefs().map(t => t.name).filter(n => n !== 'run_code'),
+    tools: catalogToolDefs().map(t => t.name).filter(n => toolNamesForPreset('standard').has(n)),
     persona: {
       enabled: true,
       template: 'You are a coding agent powered by the {{model}} model.\nYour working directory is {{cwd}}.',
@@ -442,7 +496,7 @@ const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
   ptc: {
     name: 'ptc',
     description: 'Program-the-code: model writes a program, one call multi-tool',
-    tools: catalogToolDefs().map(t => t.name).filter(n => !['workflow', 'todo', 'plan'].includes(n)),
+    tools: catalogToolDefs().map(t => t.name).filter(n => toolNamesForPreset('ptc').has(n)),
     persona: {
       enabled: true,
       template: 'You are a coding agent powered by the {{model}} model.\nYour working directory is {{cwd}}.\n\n`run_code` is the only tool you can call directly — a tool call naming any other tool fails.\nReach every tool the SDK declares below from inside the program.',
@@ -461,11 +515,11 @@ const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
   minimal: {
     name: 'minimal',
     description: 'Lightweight: basic tools only, no compaction or plan',
-    // Real catalog names only: the old list advertised `describe_image` and
-    // `ask_user`, neither of which has ever had a handler.
-    tools: catalogToolDefs().map(t => t.name)
-      .filter(n => ['bash', 'read', 'write', 'grep', 'glob', 'edit', 'web_fetch', 'ask_user_question'].includes(n)),
-    persona: { enabled: false, template: '', maxBytes: 0 },
+    tools: catalogToolDefs().map(t => t.name).filter(n => toolNamesForPreset('minimal').has(n)),
+    // DSH's `minimal` preset does carry a persona — it is one short sentence,
+    // not an absent one. Keeping it off here made the mode behave differently
+    // from the upstream preset it claims to mirror.
+    persona: { enabled: true, template: 'You are a helpful software engineer assistant.', maxBytes: 65536 },
     compaction: { enabled: false, prunerEnabled: false, thresholdChars: 0, headChars: 0, tailChars: 0 },
     delegation: { enabled: false, forkEnabled: false, ralphEnabled: false, maxRounds: 0 },
     ptc: { enabled: false, language: '', description: '' },
@@ -476,7 +530,9 @@ const MODES: Record<string, ModeConfig> & { standard: ModeConfig } = {
     name: 'cordis',
     description: 'Base layer: user composes their own tool set',
     tools: [],
-    persona: { enabled: false, template: '', maxBytes: 0 },
+    // Same persona as `standard` in DSH: the tool descriptions and the skill
+    // catalog carry the operating detail, the persona stays a single sentence.
+    persona: { enabled: true, template: 'You are a coding agent powered by the {{model}} model.', maxBytes: 65536 },
     compaction: { enabled: true, prunerEnabled: true, thresholdChars: 8192, headChars: 4096, tailChars: 1024 },
     delegation: { enabled: true, forkEnabled: true, ralphEnabled: true, maxRounds: 64 },
     ptc: { enabled: false, language: '', description: '' },
@@ -552,7 +608,21 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
   }
 
-  app.use(cors());
+  // CORS: this listener's own origins only.  A wildcard `cors()` makes every
+  // page the user happens to visit a potential caller of the API — with the
+  // Bearer token being the only thing standing in the way.
+  app.use(cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);   // non-browser callers (CLI/curl)
+      const port = config.port;
+      const allowed = [
+        `https://localhost:${port}`, `http://localhost:${port}`,
+        `https://127.0.0.1:${port}`, `http://127.0.0.1:${port}`,
+      ];
+      cb(null, allowed.includes(origin));
+    },
+    credentials: true,
+  }));
   app.use(express.json());
 
   // Authentication: Bearer token by default; the /studio pages are served
@@ -561,10 +631,20 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // the Reasonix loopback gate.  Cross-origin browsers are always refused;
   // token-less non-browser callers keep working through the Bearer check.
   app.use((req, res, next) => {
-    if (req.path === '/health' || req.path.startsWith('/v1/') || req.path.startsWith('/studio')) return next();
+    const loopbackOnly = (config.host ?? '127.0.0.1') === '127.0.0.1';
+    // `/health` is always open (the CLI probes it before it has a token).
+    //
+    // `/v1/*` and `/studio` are "same-host only": they exist for local tools
+    // and the bundled UI on this loopback listener.  Exempting them
+    // unconditionally is how a harness leaks an unauthenticated LLM endpoint
+    // the moment someone sets `TRHA_HOST=0.0.0.0` — the incident that pushed
+    // comparable tools to SSH tunnels instead of public ports.
+    if (req.path === '/health') return next();
+    if (loopbackOnly && (req.path.startsWith('/v1/') || req.path.startsWith('/studio'))) {
+      return next();
+    }
     const origin = req.headers.origin;
     const isRead = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
-    const loopbackOnly = (config.host ?? '127.0.0.1') === '127.0.0.1';
     const sessionOk = cookieValue(req.headers.cookie, SESSION_COOKIE) === sessionSecret;
     const authOk = req.headers.authorization === `Bearer ${config.token}`
       || req.query.token === config.token;
@@ -990,17 +1070,99 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     res.json({ roots: extraWriteRoots });
   });
 
-  // ── Service status (sidebar: LSP / MCP) ───────────────────────────────
-  app.get('/api/balance', async (_req, res) => {
+  // ── 实验批入口（T2.7/T2.8 唯一 HTTP 执行路径）────────
+  // POST /api/sandbox/experiment: run the variants × seeds matrix.
+  // body: { id, root, baseline, variants: [{id, network?}], seeds, concurrency,
+  //         command?: string[], retries?, cacheState?, userId?, toolchain? }
+  // The request is *bounded*: command is a fixed argv (no shell string),
+  // concurrency is capped, and every task runs sandboxed — the endpoint is
+  // just the scheduling seam, not an escape hatch.
+  app.post('/api/sandbox/experiment', async (req, res) => {
     try {
-      res.json(await fetchBalance());
+      const b = req.body ?? {};
+      if (typeof b.id !== 'string' || !b.id.trim()) return res.status(400).json({ error: 'id required' });
+      if (typeof b.root !== 'string' || typeof b.baseline !== 'string')
+        return res.status(400).json({ error: 'root and baseline required' });
+      if (!Array.isArray(b.variants) || !b.variants.length || !b.variants.every((v: unknown) => typeof v === 'object' && v !== null && typeof (v as { id?: unknown }).id === 'string'))
+        return res.status(400).json({ error: 'variants: non-empty [{id}] required' });
+      if (!Array.isArray(b.seeds) || !b.seeds.length || !b.seeds.every((s: unknown) => Number.isInteger(s)))
+        return res.status(400).json({ error: 'seeds: non-empty integer array required' });
+      if (!Array.isArray(b.command) || !b.command.length || !b.command.every((c: unknown) => typeof c === 'string'))
+        return res.status(400).json({ error: 'command: non-empty string array required' });
+      const concurrency = b.concurrency === undefined ? 1 : Number(b.concurrency);
+      if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16)
+        return res.status(400).json({ error: 'concurrency must be an integer in [1,16]' });
+      const retries = b.retries === undefined ? 0 : Number(b.retries);
+      if (!Number.isInteger(retries) || retries < 0 || retries > 4)
+        return res.status(400).json({ error: 'retries must be an integer in [0,4]' });
+      const batch = {
+        id: b.id,
+        root: b.root as string,
+        baseline: b.baseline as string,
+        variants: (b.variants as { id: string }[]),
+        seeds: (b.seeds as number[]),
+        concurrency,
+      };
+      const outcome = await runExperiment(batch, {
+        makeRequest: task => ({ argv: b.command as string[], cwd: task.work }),
+        retries,
+        ...(typeof b.toolchain === 'object' && b.toolchain !== null
+          ? { toolchain: Object.fromEntries(Object.entries(b.toolchain).filter(([, v]) => typeof v === 'string')) as Record<string, string> }
+          : {}),
+        ...(typeof b.cacheState === 'string' ? { cacheState: b.cacheState as 'cold' | 'warm' } : {}),
+        ...(typeof b.userId === 'string' ? { userId: b.userId } : {}),
+      });
+      res.json(outcome);
+    } catch (e) {
+      res.status(503).json({ error: (e as Error).message });
+    }
+  });
+
+  // ── Agent presets ─────────────────────────────────────────────────────
+  // One definition for every shell: Desktop used to hold these inline and the
+  // TUI could only guess. `?id=` resolves a single preset (404 when unknown, so
+  // `--agent-preset <typo>` can be rejected instead of silently falling back).
+  app.get('/api/agent/presets', (req, res) => {
+    const id = typeof req.query.id === 'string' ? req.query.id : undefined;
+    if (id !== undefined) {
+      const preset = getAgentPreset(id);
+      if (!preset) return res.status(404).json({ error: `unknown agent preset "${id}"` });
+      return res.json({ default: DEFAULT_AGENT_PRESET, preset });
+    }
+    res.json({ default: DEFAULT_AGENT_PRESET, presets: listAgentPresets() });
+  });
+
+  // ── Service status (sidebar: LSP / MCP) ───────────────────────────────
+  // Balance is a *read-only* query: DeepSeek documents no rate limit for it and
+  // it costs nothing, so refusing calls would be wrong — the TUI refreshes it
+  // on every turn, and a 429 would freeze the displayed value at a stale
+  // number. Cache instead: repeat calls inside the TTL are served locally, so a
+  // polling script cannot hammer the provider while event-driven refreshes keep
+  // working.
+  const BALANCE_TTL_MS = 10_000;
+  let balanceCache: { at: number; value: Awaited<ReturnType<typeof fetchBalance>> } | null = null;
+  app.get('/api/balance', async (_req, res) => {
+    const now = Date.now();
+    if (balanceCache && now - balanceCache.at < BALANCE_TTL_MS) {
+      return res.json(balanceCache.value);
+    }
+    try {
+      const value = await fetchBalance();
+      balanceCache = { at: Date.now(), value };
+      res.json(value);
     } catch (e) {
       res.status(503).json({ error: String(e) });
     }
   });
 
   // ── Voice transcription (MiMo ASR contract) ───────────────────────────
+  // This one *is* metered (an ASR call per request), so a sliding window is the
+  // right control: sustained hammering is a cost attack, not a UI refresh.
+  const transcribeLimit = rateLimit(60_000, 10);
   app.post('/api/transcribe', async (req, res) => {
+    if (!transcribeLimit()) {
+      return res.status(429).json({ error: 'too many transcription requests; retry in a minute' });
+    }
     const file = typeof req.body?.path === 'string' ? req.body.path.trim() : '';
     if (!file) return res.status(400).json({ error: 'path is required' });
     try {
@@ -1124,11 +1286,44 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     const askTimeout = typeof req.body.askTimeout === 'number' && req.body.askTimeout > 0
       ? Math.round(req.body.askTimeout * 1000)
       : undefined;
+    // Per-session workspace.  The scheduler is shared by every client (TUI,
+    // desktop, web), so a single process-wide WORKSPACE cannot serve people
+    // working in different projects: whichever client started the scheduler
+    // would decide the workspace for all of them.  The caller knows its own
+    // directory, so let it say — validated here, because this value becomes
+    // the tool layer's read/write boundary.
+    const requestedCwd = typeof req.body.cwd === 'string' ? req.body.cwd.trim() : '';
+    // Agent preset narrows the tool set the model is offered. Unknown ids are
+    // refused: a typo would otherwise silently fall back to `standard` (the
+    // full set), which is the opposite of what the caller asked for.
+    const requestedPreset = typeof req.body.agentPreset === 'string'
+      ? req.body.agentPreset.trim()
+      : '';
+    if (requestedPreset && !getAgentPreset(requestedPreset)) {
+      return res.status(400).json({ error: `Unknown agentPreset: ${requestedPreset}` });
+    }
+    const agentPreset = requestedPreset || undefined;
+    let sessionCwd: string | undefined;
+    if (requestedCwd) {
+      if (!path.isAbsolute(requestedCwd)) {
+        return res.status(400).json({ error: 'cwd must be an absolute path' });
+      }
+      const abs = path.resolve(requestedCwd);
+      if (abs === path.parse(abs).root) {
+        return res.status(400).json({ error: 'cwd must not be the filesystem root' });
+      }
+      if (!existsSync(abs)) {
+        return res.status(400).json({ error: `cwd does not exist: ${abs}` });
+      }
+      sessionCwd = abs;
+    }
     const created = {
       id: sessionId, mode, messages: [] as SessionMessage[],
       pendingApproval: null, createdAt: new Date(),
       permissionMode: approval, planMode,
       yoloRestore: null as PermissionMode | null,
+      ...(sessionCwd !== undefined ? { cwd: sessionCwd, workspaceRoot: sessionCwd } : {}),
+      ...(agentPreset !== undefined ? { agentPreset } : {}),
       ...(askTimeout !== undefined ? { askTimeoutMs: askTimeout } : {}),
     };
     sessions.set(sessionId, created);
@@ -1214,6 +1409,33 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     res.json({ id: session.id, title: session.title ?? null, tags: session.tags ?? [] });
   });
 
+  // Change the session's workspace.  This is the *human* channel: the model
+  // has no tool that reaches it (its `cd` is clamped to the current
+  // workspace), so an agent can never widen its own sandbox.  Only the
+  // `/workspace` slash command — typed by a person — calls this.
+  app.post('/api/session/:id/cwd', async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    const raw = typeof req.body?.cwd === 'string' ? req.body.cwd.trim() : '';
+    if (!raw || !path.isAbsolute(raw)) {
+      return res.status(400).json({ error: 'cwd must be an absolute path' });
+    }
+    const abs = path.resolve(raw);
+    if (abs === path.parse(abs).root) {
+      return res.status(400).json({ error: 'cwd must not be the filesystem root' });
+    }
+    if (!existsSync(abs)) {
+      return res.status(400).json({ error: `no such directory: ${abs}` });
+    }
+    session.cwd = abs;
+    // Moving the workspace moves its root too: `cd` clamps to the root, so
+    // leaving it behind would strand the session in the old project.
+    session.workspaceRoot = abs;
+    // Await: a restart on the same stateDir must see the new workspace.
+    await persistSession(session);
+    res.json({ cwd: session.cwd });
+  });
+
   // ── Agent step ────────────────────────────────────────────────────────
 
   // Run one full agent step and return the (aggregated) reply text.
@@ -1248,64 +1470,6 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // keeps Node's default (`cmd.exe /d /s /c`).
   //
   // Contract unchanged: 120 s timeout, 4 MiB of output, `exit <code>` first.
-  const SHELL_TIMEOUT_MS = 120_000;
-  const SHELL_MAX_BUFFER = 4 * 1024 * 1024;
-  const execAsync = promisify(exec);
-  const runShell = async (
-    cmd: string,
-    opts: { cwd: string },
-  ): Promise<{ code: number; stdout: string; stderr: string; note: string }> => {
-    const shell = execShell();
-    // Compatibility default (TRHA_SANDBOX=off): the unconfined path below is
-    // unchanged. When the seam is enabled, execution goes through the runner
-    // and a failure is returned as a failed tool call, never a fallback.
-    if (sandboxEnabled()) {
-      try {
-        const result = await sandboxedSpawn(defaultSandboxScope(opts.cwd), {
-          argv: [shell ?? 'bash', '-c', cmd],
-          cwd: opts.cwd,
-          timeoutMs: SHELL_TIMEOUT_MS,
-        });
-        return {
-          code: result.code ?? 1,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          note: result.ok ? '' : (result.stderr ? '' : 'sandbox denied the command'),
-        };
-      } catch (e) {
-        return {
-          code: 1,
-          stdout: '',
-          stderr: (e as Error).message,
-          note: 'sandbox unavailable',
-        };
-      }
-    }
-    try {
-      const { stdout, stderr } = await execAsync(cmd, {
-        cwd: opts.cwd,
-        timeout: SHELL_TIMEOUT_MS,
-        maxBuffer: SHELL_MAX_BUFFER,
-        ...(shell ? { shell } : {}),
-      });
-      return { code: 0, stdout, stderr, note: '' };
-    } catch (e) {
-      const err = e as {
-        code?: number | string; stdout?: string; stderr?: string;
-        message: string; killed?: boolean;
-      };
-      const code = typeof err.code === 'number' ? err.code : (err.killed ? 124 : 1);
-      const stdout = err.stdout ?? '';
-      const stderr = err.stderr ?? '';
-      // A kill is a timeout (exec's own message would just repeat the command);
-      // otherwise exec's "Command failed: …" only adds noise once the command
-      // produced output, so keep it for the empty case (ENOENT / bad cwd).
-      const note = err.killed
-        ? `timed out after ${SHELL_TIMEOUT_MS / 1000} s`
-        : (stdout || stderr ? '' : err.message);
-      return { code, stdout, stderr, note };
-    }
-  };
   // Background jobs cannot outlive this process, so they are process-local on
   // purpose (the tool tells the model exactly that).
   const jobsBySession = new Map<string, Map<string, JobRecord>>();
@@ -1337,12 +1501,40 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   const STUCK_REPEATS = 3;
 
   const emitToolLifecycle = async (
-    sessionId: string, name: string, args: string[],
+    sessionId: string, callId: string, name: string, input: Record<string, unknown>,
     status: 'running' | 'succeeded' | 'failed', startedAt?: number, error?: string,
     output?: string,
+    // The canonical value behind `output`, when it survived the trip here.
+    value?: unknown,
+    // Replayable card metadata from `output.presentationMeta`, when the tool sets it.
+    meta?: unknown,
   ): Promise<void> => {
+    const args = Object.entries(input)
+      .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`);
+    // Opening event: how the call should be labelled (`presentCall`). Closing
+    // event: what the tool says it produced (`presentResult`). Without either,
+    // the shell falls back to the tool name.
+    //
+    // `presentResult` receives the *rendered* text here, not the canonical value
+    // `execute` returned — trha renders inside `executeTool`, so that value is
+    // already gone by this point. Tools that only need to summarise the result
+    // (exit code, replacement count) are fine with that.
+    const spec = resolveTool(name);
+    const view = status === 'running'
+      ? spec?.presentCall?.(input)
+      // `value` is what `execute` returned; `output` is only its rendering.
+      // Tools that switched to a structured return read their own fields here.
+      : spec?.presentResult?.(input, value ?? output);
+    // A tool that cannot produce a meaningful label must fall back to the
+    // generic row: `oneLine('')` yields '', so `title: `present ${...}`` could
+    // render as `present ` — worse than the plain tool name.
+    const usableView = view !== undefined && view.title.trim() !== '' ? view : undefined;
     const ev: ToolEvent = {
-      name, args, status,
+      callId,
+      phase: status === 'running' ? 'start' : 'end',
+      name, input, args, status,
+      ...(usableView === undefined ? {} : { view: usableView }),
+      ...(meta === undefined ? {} : { meta }),
       ...(error !== undefined ? { error } : {}),
       ...(startedAt !== undefined ? { durationMs: Date.now() - startedAt } : {}),
       ...(output !== undefined ? { output } : {}),
@@ -1353,72 +1545,21 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
   };
 
-  const parseToolArgs = (c: ToolCallData): string[] => {
+  /** The call's arguments as an object; `{}` when the model sent bad JSON. */
+  const parseToolInput = (c: ToolCallData): Record<string, unknown> => {
     try {
-      const o = JSON.parse(c.arguments) as Record<string, unknown>;
-      return Object.entries(o).map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`);
+      const o = JSON.parse(c.arguments) as unknown;
+      return o && typeof o === 'object' && !Array.isArray(o)
+        ? (o as Record<string, unknown>)
+        : {};
     } catch {
-      return [c.arguments];
+      return {};
     }
   };
 
   // Reads may leave the workspace: `bash` already can, so confining only the
   // read tool would buy no safety while breaking absolute paths that callers
   // legitimately use. Writes stay confined.
-  const resolveReadPath = (raw: unknown, base = WORKSPACE): string | null => {
-    if (typeof raw !== 'string' || !raw.trim()) return null;
-    return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(base, raw);
-  };
-
-  /** Recursive file walk with a depth/file cap and the usual noise skipped. */
-  const walkFiles = async (dir: string, cap: number): Promise<string[]> => {
-    const out: string[] = [];
-    const skip = new Set(['node_modules', '.git', 'dist', 'dist-newstyle', '.lake', 'target']);
-    const walk = async (d: string, depth: number): Promise<void> => {
-      if (out.length >= cap || depth > 12) return;
-      let entries;
-      try { entries = await readdir(d, { withFileTypes: true }); } catch { return; }
-      for (const e of entries) {
-        if (out.length >= cap) return;
-        if (e.name.startsWith('.') && e.isDirectory()) continue;
-        const full = path.join(d, e.name);
-        if (e.isDirectory()) {
-          if (skip.has(e.name)) continue;
-          await walk(full, depth + 1);
-        } else if (e.isFile()) {
-          out.push(full);
-        }
-      }
-    };
-    await walk(dir, 0);
-    return out;
-  };
-
-  /** Minimal glob: `**` spans directories, `*`/`?` stay within a segment. */
-  const globToRegExp = (pattern: string): RegExp => {
-    let re = '';
-    for (let i = 0; i < pattern.length; i++) {
-      const ch = pattern[i];
-      if (ch === '*') {
-        if (pattern[i + 1] === '*') {
-          re += '.*';
-          i += 1;
-          if (pattern[i + 1] === '/') i += 1;
-        } else {
-          re += '[^/]*';
-        }
-      } else if (ch === '?') {
-        re += '[^/]';
-      } else {
-        re += ch !== undefined && '.+^${}()|[]\\'.includes(ch) ? `\\${ch}` : ch;
-      }
-    }
-    return new RegExp(`^${re}$`);
-  };
-
-  const workspaceRelative = (raw: string, base = WORKSPACE): string =>
-    path.isAbsolute(raw) ? raw : path.join(base, raw);
-
   // A provider requires each assistant(tool_calls) message to be answered by
   // one tool message per call id before anything else.  Incomplete groups
   // happen when the loop is interrupted, a tool is parked for approval, or a
@@ -1462,7 +1603,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     && !/[;>]|&&|\brm\b|\bsudo\b|\bmv\b|\bcp\b|\bchmod\b|\bkill\b|\btee\b|\bdd\b/.test(cmd)
     && /^(ls|cat|head|tail|wc|pwd|date|whoami|uname|which|echo|printf|curl|wget|rg|grep|find|file|stat|du|df|env|printenv|git\s+(status|log|diff|show|branch|remote|rev-parse))\b/i.test(cmd);
 
-  const executeTool = async (c: ToolCallData, sessionId?: string): Promise<string> => {
+  const executeTool = async (
+    c: ToolCallData,
+    sessionId?: string,
+    // Sink for the canonical value `renderToolValue` returns; the turn loop
+    // forwards it to `presentResult`.
+    valueSink?: { value?: unknown; meta?: unknown },
+  ): Promise<string> => {
     let argsObj: Record<string, unknown> = {};
     try {
       argsObj = JSON.parse(c.arguments) as Record<string, unknown>;
@@ -1491,141 +1638,55 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         return `REQUIRE_APPROVAL: ${verdict.reason}`;
       }
     }
-    if (name === 'bash') {
-      const cmd = typeof argsObj.command === 'string' ? argsObj.command : '';
-      if (!cmd.trim()) return 'ERROR: missing command';
-      if (argsObj.background === true) {
-        if (!sessionId) return 'ERROR: background jobs need a session';
-        const id = startJob(
-          { workspace: cwd, state: {}, jobs: jobsFor(sessionId), sessionId },
-          cmd,
-        );
-        return `OK: started ${id} (use job_output to read it)`;
+    // Registered tools win over the core chain as well, so a preset or an
+    // external plugin can replace `bash`/`read`/`write`/`grep`/`glob`. The chain
+    // below stays as the fallback for everything not migrated yet.
+    {
+      const registeredCore = resolveTool(name);
+      if (registeredCore?.handler) {
+        const session = sessionId ? sessions.get(sessionId) : undefined;
+        if (!session) return `ERROR: ${name} needs a live session`;
+        const rendered = await renderToolValue(registeredCore, argsObj, {
+          workspace: WORKSPACE,
+          state: session,
+          jobs: jobsFor(sessionId!),
+          sessionId: sessionId!,
+          sessionCwd: cwd,
+          writeRoots: extraWriteRoots,
+          agents: agentHooksFor(session),
+        }).catch((e: unknown) => ({ text: `ERROR: ${String(e)}`, value: undefined, meta: undefined }));
+        if (valueSink) {
+          if (rendered.value !== undefined) valueSink.value = rendered.value;
+          if (rendered.meta !== undefined) valueSink.meta = rendered.meta;
+        }
+        if (!rendered.text.startsWith('UNCHANGED:')) await persistSession(session);
+        return rendered.text;
       }
-      const r = await runShell(cmd, { cwd });
-      const body = `exit ${r.code}\n${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ''}`;
-      return limitOutput(r.note ? `${body}\n${r.note}` : body);
+    }
+
+    if (name === 'bash') {
+      // Migrated to the registry (full DSH contract); the core-chain pre-check
+      // above resolves it before this line is ever reached.
     }
     if (name === 'read') {
-      const target = resolveReadPath(argsObj.path, cwd);
-      if (!target) return 'ERROR: missing/invalid path argument';
-      try {
-        const text = await readFile(target, 'utf8');
-        const lines = text.split('\n');
-        const offset = Number(argsObj.offset);
-        const limit = Number(argsObj.limit);
-        const start = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) - 1 : 0;
-        const count = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : lines.length;
-        const slice = lines.slice(start, start + count);
-        return limitOutput(slice.map((l, i) => `${start + i + 1}\t${l}`).join('\n'));
-      } catch (e) {
-        return `ERROR: ${(e as Error).message}`;
-      }
+      // Migrated to the registry (full DSH contract); the core-chain pre-check
+      // above resolves it before this line is ever reached.
     }
     if (name === 'write' || name === 'append_file') {
-      if (typeof argsObj.path !== 'string') return 'ERROR: path must be a string';
-      // Relative paths are relative to the *workspace*, not to whatever cwd the
-      // scheduler happens to have — the model has no way to know the latter,
-      // and "path escapes the workspace" for "hello.txt" is a dead end.
-      const target = await confineWritePath(WORKSPACE, workspaceRelative(argsObj.path, cwd), extraWriteRoots);
-      if (!target) return 'ERROR: path escapes the workspace';
-      const rawContent = argsObj.content;
-      if (rawContent === undefined || rawContent === null) return 'ERROR: missing content';
-      const content = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
-      try {
-        if (name === 'write') {
-          await mkdir(path.dirname(target), { recursive: true });
-          await snapshotFile(target);
-          await writeFile(target, content, 'utf8');
-        } else {
-          await snapshotFile(target);
-          await appendFile(target, content, 'utf8');
-        }
-        return `OK: ${name} -> ${target} (${content.length} chars)`;
-      } catch (e) {
-        return `ERROR: ${(e as Error).message}`;
-      }
+      // Migrated to the registry (full DSH contract); the core-chain pre-check
+      // above resolves them before this line is ever reached.
     }
     if (name === 'edit') {
-      if (typeof argsObj.path !== 'string') return 'ERROR: path must be a string';
-      const oldString = argsObj.old_string;
-      const newString = argsObj.new_string;
-      if (typeof oldString !== 'string' || oldString === '') return 'ERROR: old_string is required';
-      if (typeof newString !== 'string') return 'ERROR: new_string is required';
-      const target = await confineWritePath(WORKSPACE, workspaceRelative(argsObj.path, cwd), extraWriteRoots);
-      if (!target) return 'ERROR: path escapes the workspace';
-      try {
-        const before = await readFile(target, 'utf8');
-        const parts = before.split(oldString);
-        const hits = parts.length - 1;
-        if (hits === 0) return `ERROR: old_string not found in ${target}`;
-        if (hits > 1 && argsObj.replace_all !== true) {
-          return `ERROR: old_string matches ${hits} times in ${target}; pass replace_all or make it unique`;
-        }
-        const after = argsObj.replace_all === true
-          ? parts.join(newString)
-          : [parts[0], ...parts.slice(1)].join(newString);
-        await snapshotFile(target);
-        await writeFile(target, after, 'utf8');
-        const summary = `OK: edit -> ${target} (${hits} replacement${hits === 1 ? '' : 's'})`;
-        const diff = editDiff(before, oldString, newString);
-        return diff ? `${summary}\n\n${diff}` : summary;
-      } catch (e) {
-        return `ERROR: ${(e as Error).message}`;
-      }
+      // Migrated to the registry (full DSH contract); the core-chain pre-check
+      // above resolves it before this line is ever reached.
     }
     if (name === 'glob') {
-      if (typeof argsObj.pattern !== 'string' || !argsObj.pattern.trim()) {
-        return 'ERROR: pattern is required';
-      }
-      const root = typeof argsObj.path === 'string' ? argsObj.path : '.';
-      const dir = resolveReadPath(root, cwd);
-      if (!dir) return 'ERROR: path must be a string';
-      try {
-        const found = await walkFiles(dir, 4000);
-        const re = globToRegExp(argsObj.pattern);
-        const hits = found
-          .filter(f => re.test(path.relative(dir, f)))
-          .slice(0, 200)
-          .map(f => path.relative(dir, f));
-        return hits.length ? hits.join('\n') : '(no matches)';
-      } catch (e) {
-        return `ERROR: ${(e as Error).message}`;
-      }
+      // Migrated to the registry (full DSH contract); the core-chain pre-check
+      // above resolves it before this line is ever reached.
     }
     if (name === 'grep') {
-      if (typeof argsObj.pattern !== 'string' || !argsObj.pattern) return 'ERROR: pattern is required';
-      let re: RegExp;
-      try {
-        re = new RegExp(argsObj.pattern, 'm');
-      } catch (e) {
-        return `ERROR: invalid pattern: ${(e as Error).message}`;
-      }
-      const dir = resolveReadPath(typeof argsObj.path === 'string' ? argsObj.path : '.', cwd);
-      if (!dir) return 'ERROR: path must be a string';
-      const only = typeof argsObj.glob === 'string' ? globToRegExp(argsObj.glob) : null;
-      try {
-        const files = await walkFiles(dir, 4000);
-        const out: string[] = [];
-        for (const f of files) {
-          const rel = path.relative(dir, f);
-          if (only && !only.test(rel)) continue;
-          let text: string;
-          try { text = await readFile(f, 'utf8'); } catch { continue; }
-          if (text.includes('\u0000')) continue;      // binary
-          const lines = text.split('\n');
-          for (let i = 0; i < lines.length; i++) {
-            if (re.test(lines[i] ?? '')) {
-              out.push(`${rel}:${i + 1}:${(lines[i] ?? '').slice(0, 300)}`);
-              if (out.length >= 200) break;
-            }
-          }
-          if (out.length >= 200) break;
-        }
-        return out.length ? out.join('\n') : '(no matches)';
-      } catch (e) {
-        return `ERROR: ${(e as Error).message}`;
-      }
+      // Migrated to the registry (full DSH contract); the core-chain pre-check
+      // above resolves it before this line is ever reached.
     }
     if (isStandardTool(name)) {
       const session = sessionId ? sessions.get(sessionId) : undefined;
@@ -1637,8 +1698,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         state: session,
         jobs: jobsFor(sessionId!),
         sessionId: sessionId!,
+        sessionCwd: cwd,
+        writeRoots: extraWriteRoots,
         agents: agentHooksFor(session),
-      }).catch((e: unknown) => `ERROR: ${String(e)}`);
+      }, valueSink).catch((e: unknown) => `ERROR: ${String(e)}`);
       if (out !== null) {
         // todos/goal/schedules belong to the session: persist them with it,
         // and wait — a crash right after the tool must not lose the update.
@@ -1659,6 +1722,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         sessionId: sessionId!,
         agents: agentHooksFor(session),
         cwd: () => session.cwd ?? WORKSPACE,
+        workspaceRoot: () => session.workspaceRoot ?? WORKSPACE,
         setCwd: (dir: string) => {
           session.cwd = dir;
           void persistSession(session);
@@ -1684,7 +1748,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         spawnFresh: (task, label) => spawnAgent(session, task, label),
         extraWriteRoots: () => extraWriteRoots,
       };
-      const out = await runExtraTool(name, argsObj, host).catch((e: unknown) => `ERROR: ${String(e)}`);
+      const out = await runExtraTool(name, argsObj, host, valueSink).catch((e: unknown) => `ERROR: ${String(e)}`);
       if (out !== null) {
         await persistSession(session);
         return out;
@@ -1735,11 +1799,15 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     }
     // Plugins may rewrite the tool set offered to the model.
     const allTools = (plugins.service('tools') as { list(): BridgeToolSpec[] }).list();
-    // An agent definition can narrow the tool set. Without one, behaviour is
-    // unchanged (every tool the mode exposes).
-    const toolsBase = target.toolsAllow?.length
-      ? allTools.filter(t => target.toolsAllow!.includes(t.name))
-      : allTools;
+    // The agent preset narrows the set first (this is what makes
+    // `--agent-preset minimal` actually hide tools), then an agent definition
+    // can narrow it further. Without either, behaviour is unchanged: the preset
+    // defaults to `standard`, which exposes every tool.
+    const presetTools = toolNamesForPreset(session.agentPreset ?? DEFAULT_AGENT_PRESET);
+    const toolsBase = allTools.filter(t =>
+      presetTools.has(t.name)
+      && (!target.toolsAllow?.length || target.toolsAllow.includes(t.name)),
+    );
     const toolsCfg = (await plugins.runWaterfall('agent:tools', toolsBase)) as BridgeToolSpec[];
     session.messages.push({ role: 'user', content: message });
     events.emit('agent:message', { sessionId: session.id, role: 'user', content: message });
@@ -1793,6 +1861,24 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         // Repair an incomplete tool_calls group before it reaches the provider
         // (interrupt / approval park / throwing tool).
         session.messages = repairToolPairs(session.messages);
+        // DSH's `time-context`: a durable clock reading in the history, so the
+        // model knows what "today" is. Rate-limited because every injection
+        // rewrites the request prefix and costs a cache miss; 0 disables it.
+        // Ported from `packages/context/time-context` (default 600000 ms).
+        const timeContextMs = Number(process.env.TRHA_TIME_CONTEXT_MS ?? 600_000);
+        if (timeContextMs > 0
+            && (session.lastTimeContextAt === undefined
+                || Date.now() - session.lastTimeContextAt >= timeContextMs)) {
+          const now = new Date();
+          session.messages.push({
+            role: 'user',
+            content: `[time-context] now is ${now.toISOString()}`
+              + ` (${Intl.DateTimeFormat().resolvedOptions().timeZone})`,
+            source: 'time-context',
+          });
+          session.lastTimeContextAt = Date.now();
+          persistSession(session);
+        }
         const promptMessages = await withSystemPrompt(
           mode, target.model ?? 'deepseek-flash',
           session.cwd ?? WORKSPACE, session.messages,
@@ -1834,7 +1920,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       } catch {
         // Kernel unreachable: demo tool lifecycle + mode-context echo
         // (kept for Phase 2 S2 tool-event tests and offline development).
-        const demo: ToolEvent = { name: 'bash', args: ['echo demo-tool'], status: 'running' };
+        const demo: ToolEvent = {
+        callId: 'demo-tool', phase: 'start',
+        name: 'bash', args: ['echo demo-tool'], status: 'running',
+      };
         events.emit('tool:update', { sessionId: session.id, ...demo });
         emitSafe(plugins.emitToolCall(session.id, demo.name, demo.args));
         const started = Date.now();
@@ -1890,15 +1979,42 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         persistSession(session);
         return stuck;
       }
+      // Concurrency: consecutive `isConcurrencySafe` calls run **execution** in
+      // parallel. Everything else — the opening event, the closing event, the
+      // transcript push, persistence — stays sequential, because the provider
+      // requires one tool message per call id *in order* and a parallel push
+      // would interleave them. A non-safe call is a barrier: it flushes the
+      // current batch before running on its own.
+      type Batch = { calls: ToolCallData[]; safe: boolean };
+      const batches: Batch[] = [];
       for (const call of calls) {
+        const safe = resolveTool(canonicalToolName(call.name))
+          ?.isConcurrencySafe?.(parseToolInput(call)) ?? false;
+        const last = batches[batches.length - 1];
+        if (safe && last?.safe) last.calls.push(call);
+        else batches.push({ calls: [call], safe });
+      }
+
+      const runOne = async (call: ToolCallData) => {
         const started = Date.now();
-        await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'running');
-        const output = await executeTool(call, session.id).catch(
+        await emitToolLifecycle(session.id, call.id, call.name, parseToolInput(call), 'running');
+        // The canonical value behind `output`; `presentResult` prefers it over
+        // the rendered text so a tool can summarise its own result.
+        const valueSink: { value?: unknown; meta?: unknown } = {};
+        const output = await executeTool(call, session.id, valueSink).catch(
           (e: unknown) => `ERROR: ${String(e)}`,
         );
+        return { call, started, output, valueSink };
+      };
+
+      for (const batch of batches) {
+        const ran = batch.safe && batch.calls.length > 1
+          ? await Promise.all(batch.calls.map(runOne))
+          : [await runOne(batch.calls[0]!)];
+        for (const { call, started, output, valueSink } of ran) {
         // ask 权限规则：暂停执行并发起确认（批准后重放该工具）
         if (output.startsWith('REQUIRE_APPROVAL:')) {
-          await emitToolLifecycle(session.id, call.name, parseToolArgs(call), 'failed', started, output);
+          await emitToolLifecycle(session.id, call.id, call.name, parseToolInput(call), 'failed', started, output);
           // Park the call, but keep the history valid: the provider rejects an
           // assistant(tool_calls) message that has no tool reply.  The approval
           // replay replaces this placeholder with the real output.
@@ -1916,10 +2032,18 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         // message per call id before anything else. So the tool result goes in
         // first, and *then* any marker-derived message (a card, a question).
         const failed = output.startsWith('ERROR');
-        await emitToolLifecycle(session.id, call.name, parseToolArgs(call),
+        await emitToolLifecycle(session.id, call.id, call.name, parseToolInput(call),
           failed ? 'failed' : 'succeeded', started, failed ? output : undefined,
-          failed ? undefined : outputPreview(output));
-        session.messages.push({ role: 'tool', tool_call_id: call.id, content: output });
+          failed ? undefined : outputPreview(output),
+          failed ? undefined : valueSink.value,
+          failed ? undefined : valueSink.meta);
+        // The tool message carries the replayable card metadata next to the
+        // content the model sees, so a resume can redraw the card without
+        // re-running the tool. `SessionMessage` allows extra keys on purpose.
+        session.messages.push({
+          role: 'tool', tool_call_id: call.id, content: output,
+          ...(valueSink.meta === undefined ? {} : { meta: valueSink.meta }),
+        });
         // `UNCHANGED:` means the tool declined to modify state; writing the
         // session anyway would churn the file (and its mtime) for nothing.
         if (!output.startsWith('UNCHANGED:')) await persistSession(session);
@@ -1951,6 +2075,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           events.emit('agent:plan', { sessionId: session.id, status: 'awaiting_approval', message: plan });
           await persistSession(session);
           return plan;
+        }
         }
       }
     }
@@ -3214,6 +3339,16 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
 //  * when TRHA_LEASE_STDIN=1, stdin is a lease: the host closing it (normal
 //    exit or crash of the parent) makes the scheduler drain and exit.
 export function startServer(config: ServerConfig = defaultServerConfig) {
+  // A non-loopback listener with the default token is an unauthenticated admin
+  // API on the network. Refusing here is the difference between "exposed on
+  // purpose, with a secret" and "exposed by accident".
+  const host = config.host ?? '127.0.0.1';
+  if (host !== '127.0.0.1' && host !== 'localhost' && config.token === 'dev-token') {
+    throw new Error(
+      'refusing to listen on a non-loopback address with the default token: '
+      + 'set TRHA_TOKEN (or pass --token) to a real secret, or prefer an SSH tunnel'
+    );
+  }
   const { app } = createServer(config);
   const tls = resolveTls();
   return new Promise<void>((resolve) => {

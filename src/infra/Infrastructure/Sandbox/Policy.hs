@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Sandbox policy: the platform-independent core of the sandbox seam.
@@ -24,6 +25,11 @@ module Infrastructure.Sandbox.Policy
   , Policy(..)
   , emptyReadOnlyPolicy
   , defaultResourceLimits
+  , defaultDenyReads
+  , defaultDenyFiles
+  , effectiveDenyDirs
+  , effectiveDenyFilesFor
+  , baseWritableRoot
     -- * Capabilities and enforcement
   , Capability(..)
   , Enforcement(..)
@@ -36,33 +42,36 @@ module Infrastructure.Sandbox.Policy
   , narrow
   ) where
 
+import Data.Aeson (ToJSON(..))
 import Data.List (isPrefixOf)
+import GHC.Generics (Generic)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
-import System.FilePath (addTrailingPathSeparator, normalise)
+import qualified Data.Text as T
+import System.FilePath ((</>), addTrailingPathSeparator, normalise)
 
 -- | An absolute path in the execution world. Callers are responsible for
 -- canonicalisation before constructing one; platform backends re-check it.
 newtype AbsolutePath = AbsolutePath { unAbsolutePath :: FilePath }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Generic, Show)
 
 -- | A directory only this scope may write to.
 newtype ExclusivePath = ExclusivePath { unExclusivePath :: AbsolutePath }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Generic, Show)
 
 -- | Egress policy. Defaults to 'NetworkOff' in the shipped configuration.
 data NetworkPolicy
   = NetworkOff
   | NetworkAllow [Text]
   | NetworkProxy Text
-  deriving (Eq, Show)
+  deriving (Eq, Generic, Show)
 
 data ResourceLimits = ResourceLimits
   { rlPids      :: Int
   , rlMemoryMiB :: Int
   , rlWallMs    :: Int
-  } deriving (Eq, Show)
+  } deriving (Eq, Generic, Show)
 
 -- | Shipped defaults.  @0@ means "no limit".
 --
@@ -78,11 +87,42 @@ defaultResourceLimits = ResourceLimits
   , rlWallMs = 600000
   }
 
+-- | Credential directories hidden from every sandbox.  Kept static (ADR-005:
+-- no runtime probing) and filtered by the caller to paths that exist, because
+-- an empty tmpfs can only be mounted over an existing path.
+defaultDenyReads :: [FilePath]
+defaultDenyReads =
+  [ ".ssh", ".aws", ".gnupg", ".kube", ".docker"
+  , ".config" </> "gh", ".config" </> "gcloud"
+  , ".config" </> "@deepseek-ai", ".config" </> "Codex"
+  , ".config" </> "gist"
+    -- The whole ~/.trha: runtime.json carries the kernel **and scheduler**
+    -- tokens, and PUT /api/sandbox/config only checks that token. Readable
+    -- from a guest (the root is mounted read-only), an agent could take its
+    -- own sandbox down. HOME already points at scratch, so nothing in here
+    -- is needed inside.
+  , ".trha"
+  ]
+
+-- | Credential *files* hidden from every sandbox.
+--
+-- A file cannot be masked with a tmpfs, so the renderer binds @/dev/null@ over
+-- it instead. Measured gaps (docs/evidence/sandbox-ubuntu-probe-2026-10-30.md):
+-- plaintext tokens in @~/.git-credentials@ and API keys in a
+-- @claude_code_zai_env.sh@-style script were readable inside the sandbox
+-- because only directories were listed before.
+defaultDenyFiles :: [FilePath]
+defaultDenyFiles =
+  [ ".git-credentials", ".netrc", "_netrc"
+  , ".config" </> "git" </> "credentials"
+  , "claude_code_zai_env.sh"
+  ]
+
 data ReadOnlyPolicy = ReadOnlyPolicy
   { roReadableRoots :: [AbsolutePath]
   , roNetwork       :: NetworkPolicy
   , roEnvAllow      :: [Text]
-  } deriving (Eq, Show)
+  } deriving (Eq, Generic, Show)
 
 emptyReadOnlyPolicy :: ReadOnlyPolicy
 emptyReadOnlyPolicy = ReadOnlyPolicy
@@ -97,7 +137,36 @@ data WritableRoot = WritableRoot
   , wrReadOnly :: [AbsolutePath]
   , wrNetwork  :: NetworkPolicy
   , wrLimits   :: ResourceLimits
-  } deriving (Eq, Show)
+  , wrDenyReadDirs  :: Maybe [Text]
+    -- ^ Home-relative credential *directories* to hide. 'Nothing' (the frozen
+    -- default) means "use 'defaultDenyReads'"; 'Just' replaces the list for
+    -- this policy (§5.7.5 `read.deny`). Narrowing keeps the parent's override:
+    -- a child may not restore something the parent masked.
+  , wrDenyReadFiles :: Maybe [Text]
+    -- ^ Same, for credential *files* (bound over with @/dev/null@).
+  } deriving (Eq, Generic, Show)
+
+-- | WritableRoot without a credential-list override (both fields 'Nothing' =
+-- shipped defaults). Every existing construction site stays valid through
+-- record update; this helper only shortens new ones.
+baseWritableRoot :: AbsolutePath -> ExclusivePath -> [AbsolutePath] -> NetworkPolicy -> ResourceLimits -> WritableRoot
+baseWritableRoot root scratch readOnly network limits = WritableRoot
+  { wrRoot = root
+  , wrScratch = scratch
+  , wrReadOnly = readOnly
+  , wrNetwork = network
+  , wrLimits = limits
+  , wrDenyReadDirs = Nothing
+  , wrDenyReadFiles = Nothing
+  }
+
+-- | The deny-read lists actually in force: a policy override wins, otherwise
+-- the shipped defaults. Home-relative entries join under the guest's HOME hint.
+effectiveDenyDirs :: WritableRoot -> [FilePath]
+effectiveDenyDirs = maybe defaultDenyReads (map T.unpack) . wrDenyReadDirs
+
+effectiveDenyFilesFor :: WritableRoot -> [FilePath]
+effectiveDenyFilesFor = maybe defaultDenyFiles (map T.unpack) . wrDenyReadFiles
 
 -- | The three execution policies. There is deliberately no fourth
 -- "shared/none" constructor: running without a backend is a launch-time
@@ -106,7 +175,19 @@ data Policy
   = ReadOnly ReadOnlyPolicy
   | WorkspaceWrite WritableRoot
   | DangerFullAccess
-  deriving (Eq, Show)
+  deriving (Eq, Generic, Show)
+
+instance ToJSON AbsolutePath where
+  toJSON (AbsolutePath p) = toJSON p
+
+instance ToJSON ExclusivePath where
+  toJSON (ExclusivePath p) = toJSON p
+
+instance ToJSON NetworkPolicy
+instance ToJSON ResourceLimits
+instance ToJSON ReadOnlyPolicy
+instance ToJSON WritableRoot
+instance ToJSON Policy
 
 -- | Platform-independent capability vocabulary (§5.7.2).
 data Capability
@@ -195,9 +276,23 @@ narrowWritable parent child
   | not (isUnder (wrRoot child) (unExclusivePath (wrScratch child))) = Nothing
   | not (all (isUnderAny (wrRoot parent : wrReadOnly parent)) (wrReadOnly child)) = Nothing
   | not (limitsWithin (wrLimits parent) (wrLimits child)) = Nothing
+  -- The masking set narrows monotonically: an unset child keeps the parent's
+  -- override (it may not silently restore the shipped defaults); an explicit
+  -- child list must be a subset of the parent's effective set.
+  | not (denyWithin (effectiveDenyDirs parent) (wrDenyReadDirs child)) = Nothing
+  | not (denyWithin (effectiveDenyFilesFor parent) (wrDenyReadFiles child)) = Nothing
   | otherwise = do
       network <- narrowerNetwork (wrNetwork parent) (wrNetwork child)
-      pure child { wrNetwork = network }
+      pure child
+        { wrNetwork = network
+        , wrDenyReadDirs = Just (maybe (map T.pack (effectiveDenyDirs parent)) id (wrDenyReadDirs child))
+        , wrDenyReadFiles = Just (maybe (map T.pack (effectiveDenyFilesFor parent)) id (wrDenyReadFiles child))
+        }
+
+-- | Is the child's optional deny-list a subset of the parent's effective one?
+denyWithin :: [FilePath] -> Maybe [Text] -> Bool
+denyWithin _ Nothing = True
+denyWithin parent (Just child) = all (`elem` parent) (map T.unpack child)
 
 limitsWithin :: ResourceLimits -> ResourceLimits -> Bool
 limitsWithin parent child =

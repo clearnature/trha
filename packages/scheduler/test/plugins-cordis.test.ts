@@ -191,3 +191,20 @@ describe('capability surface', () => {
     expect(info.map(x => x.name).sort()).toEqual(['bridge', 'events']);
   });
 });
+
+describe('DSH-style inject (services as properties)', () => {
+  it('mounts injected services on ctx so ctx.<name> works in apply()', async () => {
+    const manager = new PluginManager();
+    const dir = { ensure: () => '/tmp/x', set: (_a: string) => '/tmp/x' };
+    manager.registerService('workingDirectory', dir);
+    let seen: unknown;
+    await manager.register({
+      name: 'dsh-tool-demo',
+      inject: ['workingDirectory'],
+      apply(ctx) {
+        seen = (ctx as unknown as Record<string, unknown>).workingDirectory;
+      },
+    });
+    expect(seen).toBe(dir);
+  });
+});

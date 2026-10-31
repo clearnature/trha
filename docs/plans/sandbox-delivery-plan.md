@@ -1,6 +1,7 @@
 # 沙箱交付计划（WBS · 里程碑 · 质量门禁）
 
-> 状态（**2026-10-29 建档**）：**计划基线，未开工**。设计依据是 [`sandbox-architecture.md`](./sandbox-architecture.md)（接口在 P0 冻结，§5.7）。
+> 状态（**2026-10-30 更新**）：M0–M2 已交付，M3/M4/M5 实现完成但缺真机验证；逐项实况见 §2 的进度行与 `sandbox-handoff.md`（本目录）。
+> 本文件保留 **WBS、判据与门禁**；判据发生变化的条目在行内标注「修订 2026-10-30」。设计依据是 [`sandbox-architecture.md`](./sandbox-architecture.md)（接口在 P0 冻结，§5.7）。
 > 本文只回答三件事：**拆成什么任务、什么时候交付、什么算完成**。设计问题回架构文档，代码索引见其 §9。
 
 ## 0. 范围与前提
@@ -49,21 +50,36 @@
 
 ### 2.2 P1 Linux（9 项，10 人日）
 
-> **P2 进度（2026-10-29）**：T2.1 Scope 树 / `narrow`（既有，`scopeChild`/`inherit`）、T2.2 每 scope `work/` 回收（`runExperiment` 结束后清理，保留 `out/`）、T2.4 命名空间隔离探针（PID/NET：沙箱内 `/proc` 仅本沙箱进程、`/proc/net/tcp` 仅表头）、T2.5 跨 scope 隔离集成测试、T2.7 `runExperiment`（变体 × 种子矩阵、`concurrency`、失败重试新目录、`repro.json`）、T2.8 复现元数据（`reproJson`）、**审计 `experiment: {batch, variant, seed}` 标签（runner `--experiment`）** **已完成**；T2.3 配额（**memory 用 `prlimit --as`，默认关闭；pids 不映射 `--nproc`（RLIMIT_NPROC 按宿主 uid 计数，会让 bwrap `clone` EAGAIN），留 cgroup 扩展点**）、T2.4 探针、T2.6 scope 树（scheduler `GET /api/sandbox/scopes`、CLI `trha sandbox scopes`、Desktop `SandboxPanel` 的「作用域/Scopes」行）**已完成**，显示 session/agent 树的 policy/isolation。实验批的 `network` 目前只记录在 `repro.json`，执行阶段仍断网。
+> **实况修复（2026-10-30，针对「配置写了但执行路径不消费」）**：
+> ① **配置接线**——runner 把 `sandbox.yaml` 的 `defaults.limits`（pids / memoryMiB / wallMs）、`readonlyRoots`、`envAllow` 真正注入 `Scope`/`LaunchRequest`。此前 `mkRunnerScope` 硬编码 `defaultResourceLimits` 且 `wrReadOnly = []`，所以 `limits.pids: 512` / `memoryMiB: 2048` 是**死配置**（实测沙箱内 700 个进程全部创建成功、`ulimit -v` 为 unlimited；接线后实测 `ulimit -v` = 2 GiB、`pids.max` 由 cgroup 路径处理）。
+> ② **工具链（T1.9）**——HOME 指向 scratch 后 cabal 找不到 `~/.local/state/cabal/store`，全部依赖显示 `requires build`。渲染器现在从 `lrEnv` 的宿主 HOME 派生 `XDG_STATE_HOME` / `XDG_CONFIG_HOME` / `XDG_DATA_HOME`（经 `--ro-bind / /` 只读可见）与可写的 `XDG_CACHE_HOME`（scratch 下）；实测沙箱内 `XDG_STATE_HOME` 指向宿主 store 且可见。
+> ③ **读面（T1.2 修订）**——`LaunchRequest` 新增可选字段 `lrDenyReads`，guest 内对凭据目录（`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.kube`、`~/.docker`、`~/.config/{gh,gcloud}`）挂空 tmpfs；`read-ssh` 探针改用**宿主绝对路径**——原来的 `$HOME/.ssh` 在 guest 里指向 scratch，永远"失败"，是假阳性。
+> ④ **JSON 契约（§5.7.4）**——`trha sandbox status --json` 的 `capabilities` / `platform` 改为 probe 实际值（此前固定 `[]` 与 `"linux"`，与文本输出自相矛盾）。
+> ⑤ **T1.6 闭环**——`pwsh` 在 `TRHA_SANDBOX=on` 时经 `sandboxedSpawn`（Windows 尚无后端，因此 fail-closed 报 `SandboxUnavailable`），第 5 个执行点不再无边界 spawn。
+> ⑥ **判据可执行性**——Linux / runner 集成 spec 在「bwrap 存在但无法建命名空间」（嵌套沙箱、受限宿主、AppArmor 限制）时 `pending` 而非假失败。
+> ⑦ **回归修复**——不含 `readonlyRoots` 的宿主（如无 `/nix/store`）此前会让 `--ro-bind` 直接失败、**整个沙箱不可用**；红只读根改用 `--ro-bind-try`（writable 仍严格 `--bind`）。
+> ⑧ **配置可自助**——`trha sandbox config` 新增 `--pids` / `--memory-mib` / `--wall-ms`（此前 limits 只能手改 YAML），`status` 在 `memoryMiB > 0` 时打印警告：RLIMIT_AS 会让 node/GHC 构建 abort（本机 `vitest` 实测 `Aborted (core dumped)`），建议构建机保持 0。
+> 验证（同日）：`cabal test trha-sandbox-test` **84 例 0 失败**（嵌套宿主 14 pending）；`npx tsc --noEmit` **0 error**；`trha sandbox status --json` 输出真实 capabilities；`trha sandbox config --memory-mib 0` 往返正确。
 >
-> **进度（2026-10-29）**：T1.1 bwrap 渲染、T1.2 读写策略、T1.4 runner（含端到端测试）、T1.5 探针、**T1.6 执行点接入（bash / run_code / terminal；`TRHA_SANDBOX=on` 时经 runner，默认 off 保持原行为）**、**T1.7 审计（`~/.trha/logs/sandbox.jsonl`，0600，10 MiB 轮转）**、**T1.8 UI（`/api/sandbox/status` + Desktop 面板显示真实 backend/enforcement/notes；`trha sandbox status --json`、`trha sandbox probe`；TUI 状态栏 `sandbox:off/on` 徽标 + `/sandbox` 交互面板：开关 / 策略 / 网络 / scratch）**、**`/sandbox` 接线闭环：`sandbox.yaml` 新增 `enabled`/`scratch` 与 `saveSandboxConfig`；CLI `sandbox config [--enabled on|off] [--policy] [--network] [--scratch] [--json]`；scheduler `GET/PUT /api/sandbox/config` + 运行时开关（`setSandboxEnabledRuntime`）；TUI 面板经 `setSandboxConfig` 落盘并即时生效**、**复核修复（2026-10-29）：Bug1 `sandboxOn` 死代码（徽标启动读 env 初值 + 异步 `GET /api/sandbox/config` 取运行时 `enabled`）；Bug2 `/status` 的 Sandbox 行改读 env + `sandbox.yaml`（不再是 workspace 路径）**。**审计 deny 结构化（2026-10-29）：runner 把 stderr 的 `Read-only file system` / `Permission denied` / `Operation not permitted` 等转成 `Deny` 帧并写 `AuditDeny` 事件，`sandboxedSpawn.denials` 不再为空**。**network 放行（ADR-009）：`NetworkAllow` → `--share-net` 全放行（domains 仅审计），`NetworkProxy` → 代理环境变量；实测 `off` 无 DNS、`allow:` 可解析。剩余缺口：按域名的强制 ACL 需要代理桥。**、**T1.9 工具链回归（沙箱内 ghc/node 可用）**、`trha sandbox runner` **已完成**；`terminal_open`（交互 PTY）、T1.3（Landlock，可选）待做。已知处理：scratch 目录自动创建，沙箱内 `HOME` 指向 scratch，`PATH` 继承宿主。
+> **P2 进度（2026-10-29）**：T2.1 Scope 树 / `narrow`（既有，`scopeChild`/`inherit`）、T2.2 每 scope `work/` 回收（`runExperiment` 结束后清理，保留 `out/`）、T2.4 命名空间隔离探针（PID/NET：沙箱内 `/proc` 仅本沙箱进程、`/proc/net/tcp` 仅表头）、T2.5 跨 scope 隔离集成测试、T2.7 **已完成（2026-10-30 第二轮收口）**：执行层 = scheduler `runExperiment`（`packages/scheduler/src/Server/sandbox.ts`，变体×种子矩阵 + attempt-N 重试 + work/ 回收 + repro.json）；**入口 = `POST /api/sandbox/experiment`（command 只收显式 argv、concurrency ≤16、retries ≤4，校验先于 seam 开关）与 CLI `trha sandbox experiment`（经 Bridge.submitExperiment 提交，outcome 落 `~/.trha/experiments/<id>.json`）**；此前的两条缺口（repro 字段不全 / 无调用入口）已在上游修掉（commits `ede7f6b`、`8055d53`）。**审计 `experiment: {batch, variant, seed}` 标签（runner `--experiment`）已完成**；T2.3 配额（**memory 用 `prlimit --as`，默认关闭；pids 已由 cgroup v2 实现（ADR-010，2026-10-30）：探测 systemd 委派目录 → 每 exec 一个 `trha-<cid>-<pid>` 子 cgroup + `pids.max`，spawn 后写 `cgroup.procs`，退出 `rmdir`；不可用时审计 `AuditError` 且 `trha sandbox status` 的 notes 显示原因，不静默降级**）、T2.6 scope 树（scheduler `GET /api/sandbox/scopes`、CLI `trha sandbox scopes`、Desktop `SandboxPanel` 的「作用域/Scopes」行）**已完成**，显示 session/agent 树的 policy/isolation。实验批的 `network` 目前只记录在 `repro.json`，执行阶段仍断网。
+>
+> **T2.8 补完（2026-10-30 第二轮）**：`repro.json` 全字段对齐——`cacheState`/`userId`/`policyHash`/`toolchain`/`results`（此前 TS 侧缺这些、Haskell `reproFileJson` 新增）。`policyHash` 用**显式 key-order 管道分隔 canonical 文本**（有意不用 aeson Generic：字段排序按字母序会让哈希依赖字段名），SHA-512 截 32 hex；Haskell `canonicalPolicyText` 与 TS `policyCanonicalText` 逐字节一致，**两侧测试互钉同一对字面量**（canonical 文本 + digest `e8b065d988e2ae560939865205581095`），任一侧漂移必有一个套件变红。
+>
+> **§5.7.5 read.deny 接线补完（2026-10-30 第二轮）**：`sandbox.yaml` 的 `defaults.denyReadDirs`/`denyReadFiles`（CLI `--deny-dirs/--deny-files`）→ `WritableRoot` 新增可选 `wrDenyReadDirs`/`wrDenyReadFiles`（接口冻结纪律下的纯新增；`Nothing` = 出厂默认，空数组 = 显式全不遮）→ runner `existingDenyReads` 改从 **scope 策略**取列表。`narrow` 把遮蔽集当作策略单调收紧：子级不设继承父级、子级显式放宽 ⇒ `PolicyRejected`（commit `2f4e650`）。端到端双向实测：配置 deny=.ssh ⇒ guest 读宿主凭据失败；配置只 deny=.aws ⇒ guest 经宿主绝对路径可读 .ssh（证明消费配置值而非硬编码）。
+>
+> **进度（2026-10-29）**：T1.1 bwrap 渲染、T1.2 读写策略、T1.4 runner（含端到端测试）、T1.5 探针、**T1.6 执行点接入（bash / run_code / terminal；`TRHA_SANDBOX=on` 时经 runner，默认 off 保持原行为）**、**T1.7 审计（`~/.trha/logs/sandbox.jsonl`，0600，10 MiB 轮转）**、**T1.8 UI（`/api/sandbox/status` + Desktop 面板显示真实 backend/enforcement/notes；`trha sandbox status --json`、`trha sandbox probe`；TUI 状态栏 `sandbox:off/on` 徽标 + `/sandbox` 交互面板：开关 / 策略 / 网络 / scratch）**、**`/sandbox` 接线闭环：`sandbox.yaml` 新增 `enabled`/`scratch` 与 `saveSandboxConfig`；CLI `sandbox config [--enabled on|off] [--policy] [--network] [--scratch] [--json]`；scheduler `GET/PUT /api/sandbox/config` + 运行时开关（`setSandboxEnabledRuntime`）；TUI 面板经 `setSandboxConfig` 落盘并即时生效**、**复核修复（2026-10-29）：Bug1 `sandboxOn` 死代码（徽标启动读 env 初值 + 异步 `GET /api/sandbox/config` 取运行时 `enabled`）；Bug2 `/status` 的 Sandbox 行改读 env + `sandbox.yaml`（不再是 workspace 路径）**。**审计 deny 结构化（2026-10-29）：runner 把 stderr 的 `Read-only file system` / `Permission denied` / `Operation not permitted` 等转成 `Deny` 帧并写 `AuditDeny` 事件，`sandboxedSpawn.denials` 不再为空**。**network 放行（ADR-009）：`NetworkAllow` → `--share-net` 全放行（domains 仅审计），`NetworkProxy` → 代理环境变量；实测 `off` 无 DNS、`allow:` 可解析。剩余缺口：按域名的强制 ACL 需要代理桥。**、**T1.9 工具链回归（沙箱内 ghc/node 可用）**、`trha sandbox runner` **已完成**；**`terminal_open` 沙箱接入已完成（2026-10-30）**——runner 的 `exec` 不再阻塞帧循环，`stdin` 帧按 id 路由到子进程（`stdin` 句柄登记在 session 表里，`shutdown` 统一回收），drain 改为按块读（交互式提示符没有换行）；scheduler 侧新增 `sandboxedInteractive()`，`terminal_open` 在 `TRHA_SANDBOX=on` 时走它。**语义差异（有意）**：这是「管道 + 长驻 shell」，不是真 PTY——`terminal_signal` 在该模式下终止整个会话而非只给前台进程发信号；真 PTY（`forkpty`）需要 runner 侧再加一层，暂未做。**T1.3 探测已完成（2026-10-30）**：`Sandbox/Landlock.hs` 读 `/sys/kernel/security/lsm` 判定是否启用，按内核版本给出 ABI 提示（5.13→1 … 6.12→5），`trha sandbox status` 的 notes 显示 `landlock: enabled, kernel ABI ~5 (rules need a launcher; not enforced yet)`；**规则强制未做**——Landlock 规则必须由目标进程自己装（`landlock_create_ruleset` + `landlock_restrict_self`），需要与 P5 的 Capsicum/pledge 同款 launcher，届时再决定是否接线。已知处理：scratch 目录自动创建，沙箱内 `HOME` 指向 scratch，`PATH` 继承宿主。
 
 | ID | 任务 | 依赖 | 验收 | 估算 |
 |---|---|---|---|---|
 | T1.1 | bwrap 渲染器完整实现（mount 白名单、`--unshare-all`、`--new-session`、`--die-with-parent`） | T0.5 | 黄金测试逐字节稳定 | 1.0 |
-| T1.2 | 读/写/临时区策略落地（read allow-list、write allow-only、private-session temp） | T1.1 | 属性测试：writable bind ⊆ 策略根 | 1.0 |
+| T1.2 | 读/写/临时区策略落地（**修订 2026-10-30**：读面 = 整根只读 + 凭据目录空 tmpfs `lrDenyReads`；write allow-only；private-session temp） | T1.1 | 属性测试：writable bind ⊆ 策略根；`read-ssh` 探针用宿主路径且必须失败 | 1.0 |
 | T1.3 | Landlock（可选，ABI 探测；不可用则 `partial`） | T1.1 | 写入 `~/.ssh` 被拒；ABI 缺失时 `missing` 可见 | 2.0 |
 | T1.4 | runner 真实 spawn：流式 stdout/stderr、超时、进程组回收 | T0.7 | 取消后无残留进程 | 1.5 |
-| T1.5 | 探针套件（写 `/etc` 失败、workspace 成功、读 `~/.ssh` 失败、断网、fork 炸弹、setsid 逃逸） | T1.4 | §6.3 六例全绿 | 1.5 |
-| T1.6 | 接入 5 个执行点（bash、run_code、terminal、terminal_open、win32 PowerShell 分支保留） | T1.4 | 无绕过路径（grep 检查） | 1.0 |
+| T1.5 | 探针套件（写 `/etc` 失败、workspace 成功、读宿主 `~/.ssh` 失败、断网、fork 炸弹、setsid 逃逸） | T1.4 | §6.3 六例全绿；无法建命名空间的宿主自动 `pending`（修订 2026-10-30） | 1.5 |
+| T1.6 | 接入 5 个执行点（bash、run_code、terminal、terminal_open、**pwsh**——修订 2026-10-30：`on` 时走 `sandboxedSpawn`，Windows 无后端即 fail-closed） | T1.4 | 无绕过路径（grep 检查：`spawn(` 只出现在 `off` 分支） | 1.0 |
 | T1.7 | 审计日志 `sandbox.jsonl`（allow/deny/partial/error） | T1.4 | 轮转、0600、字段符合 §5.7.7 | 0.5 |
 | T1.8 | UI 状态（Desktop `SandboxPanel` 显示真实 backend/enforcement）；默认 `off` 走原路径并在 UI 显示 `backend: none` | T1.5 | `off` 时 UI 显示 `none`；`on` 时显示真实 backend | 0.5 |
-| T1.9 | 工具链回归（GHC/cargo/node/LSP/PTY/Chrome） | T1.6 | 真实构建与 PTY 交互不被破坏 | 1.0 |
+| T1.9 | 工具链回归（GHC/cargo/node/LSP/PTY/Chrome） | T1.6 | 真实构建与 PTY 交互不被破坏；**沙箱内 `cabal build --offline` 能复用宿主 store（XDG 注入，修订 2026-10-30）** | 1.0 |
 
 ### 2.3 P2 多智能体与实验批（8 项，7.5 人日）
 
@@ -101,6 +117,16 @@
 | T4.7 | 签名/分发（helper 与主程序同签名策略） | T4.6 | 安装包可用 | 1.0 |
 | T4.8 | 可选：AppContainer/MXC（`Strong`） | T4.6 | 独立评估，不阻塞 M4 | 5.0 |
 
+> **P4 进度（2026-10-30，无 Windows 主机的前提下的最大推进）**
+>
+> - **T4.1 完成**：`packages/sandbox-win-helper/`（Rust crate `trha-sandbox-win`）。NDJSON v1 帧与 Haskell `Protocol.hs` 逐字对齐，21 个单测在 Linux 上跑绿；两种入口——长驻 NDJSON 模式与 `-- argv` 一次性模式（后者正是 runner 驱动它时的形态）。
+> - **T4.4 完成、T4.5 完成**：Job Object（`KILL_ON_JOB_CLOSE` + 可选 `ACTIVE_PROCESS`/`PROCESS_MEMORY`）与 `GetFinalPathNameByHandleW` 路径规范化；`cargo check --target x86_64-pc-windows-gnu` 通过。
+> - **T4.2/T4.3 部分完成（2026-10-30 接线）**：`CreateRestrictedToken`（`DISABLE_MAX_PRIVILEGE|WRITE_RESTRICTED`）与 `grant_directory_write`（`SetEntriesInAclW` + `SetNamedSecurityInfoW`）已实现；**spawn 侧新增 `CreateProcessAsUserW` 路径**（可继承 stdio 管道 + `STARTUPINFOW`/`STARTF_USESTDHANDLES`，子进程先 `CREATE_SUSPENDED` 入 Job 再 `ResumeThread`；未用 `STARTUPINFOEX` 属性列表，靠 `SetHandleInformation` 只让子进程侧的三根管道可继承），read-only 策略真正走受限令牌（写全拒、读不受限）；**workspace-write 也已接线**：先 `grant_directory_write` 给 workspace 授权当前用户 SID，再用该 SID 作为 restricting SID 建令牌，写入只在那里成立。两套组合都只能在真机确认，归 T4.6。命令行引号规则与 env 块编码抽到 `winargs.rs`，7 个纯函数单测在 Linux 上跑。
+> - **诚实性修正**：因此 `enforcement` 对两种策略都报 `Partial`（此前 workspace-write 会误报 `Full`）。这是 T4.6 探针通过前唯一诚实的取值。
+> - **T4.6 探针集合已定义**：写内 / 写外 / 读密钥 / junction 逃逸 / 网络，外加 read-only 变体（写内也须失败）；4 个用例锁定集合形状。**真机执行仍未发生**，需 Windows runner。
+> - **Haskell 侧渲染器完成**：`renderWindows` 把 Scope 策略渲染成 `trha-sandbox-win.exe --workspace … --scratch … --policy … --network … -- argv`，5 个黄金用例在 Linux 上全绿。
+> - **剩余**：T4.2/T4.3 接线（+ 真机确定 restricting SID 策略）、T4.6 真机跑通、T4.7 签名分发、T4.8 AppContainer（可选）。
+
 ### 2.6 P5 Unix 与边缘（5 项，12 人日，缓冲 +30%）
 
 | ID | 任务 | 依赖 | 验收 | 估算 |
@@ -110,6 +136,15 @@
 | T5.3 | 边缘 Linux probe 降级（无 userns/Landlock → `partial`/`none`） | T1.5 | 缺失能力可见；命令拒绝执行 | 2.0 |
 | T5.4 | VM CI（qemu FreeBSD/OpenBSD） | T5.1、T5.2 | 探针可重复运行 | 2.0 |
 | T5.5 | 平台文档与索引收尾 | 全部 | §9 索引与实际文件一致 | 1.0 |
+
+> **P5 进度（2026-10-30，无 BSD 主机的前提下的最大推进）**
+>
+> - **T5.1 渲染器 + launcher 骨架完成**：`Backend/FreeBSD.hs` 生成 `trha-sandbox-bsd --workspace … --scratch … --policy … --network … -- argv`；`packages/sandbox-bsd-launcher/launcher.c` 在 `#ifdef __FreeBSD__` 下预开 writable 目录 fd → `cap_rights_limit` → `cap_enter()`，其它平台编译成拒绝执行的 stub（exit 126）。`enforcement` 如实报 `Partial`（capsicum 限制的是已开 fd 的 capability，不是路径）。
+> - **T5.2 渲染器 + launcher 骨架完成**：`Backend/OpenBSD.hs` 渲染**语义化**参数，便于黄金测试直接断言：`--pledge "<promises>"` 与 `--unveil "path:perms"`。read-only → `stdio rpath proc exec`；workspace-write 追加 `wpath cpath`；网络放行追加 `inet`；workspace 的 unveil 权限随策略是 `:r` 或 `:rw`，系统路径恒 `:r`。同一个 `launcher.c` 在 `#ifdef __OpenBSD__` 下依次 `unveil` → 锁定 → `pledge`。两个 launcher 都**未在真机验证**，只经过 `-fsyntax-only` 与 `make check` 的 9 项契约 smoke。
+> - **T5.3 完成**：新增用例「bwrap 存在但无法 unshare → 降级为 `Partial` 且 notes 可见」；`Enforcement = None` 时拒绝执行由既有用例覆盖。
+> - **T5.4 未做**：qemu 跑 FreeBSD/OpenBSD 需要虚拟化环境与镜像分发，不在当前机器能力内。
+> - **T5.5 完成**：§9 索引核对——R1–R7 的 7 个外部仓库根与 R9 的 7 个本仓文件全部存在（逐一 `test -e` 验证）；R9 补记了沙箱落地后的实现文件（Runner / Cgroup / Landlock / Probe / 四个平台渲染器 / Windows helper 的 Rust 模块）。
+> - 新增 10 个黄金用例（FreeBSD 3 + OpenBSD 6 + T5.3 降级 1），全部在 Linux 上跑绿。
 
 ## 3. 依赖与关键路径
 
@@ -242,7 +277,7 @@ T0.1 ─▶ T0.2 ─▶ T0.3 ─▶ T0.6 ─▶ T0.7 ─▶ T1.4 ─▶ T1.5 ─
 | PR 提交前 | `review`（隔离 diff 评审） | 每个 PR | 逐文件问题（正确性/缺测试/隐藏行为） |
 | 安全敏感改动 | `security-review` | 涉及策略、路径、协议、权限、凭证 | 注入/路径穿越/凭据/授权检查 |
 | 里程碑退出 | `brooks-sweep` + `brooks-test` + `brooks-review` | M0–M5 评审 | 腐化/测试质量/设计味道报告 |
-| 会话收尾 | `handoff-memory` + `context_budget` | 每次会话结束 | `HANDOFF.md` 短索引、上下文余量 |
+| 会话收尾 | `handoff-memory` + `context_budget` | 每次会话结束 | `sandbox-handoff.md` 短索引、上下文余量 |
 
 调用方式（手动触发，不自动运行）：`run_skill { name: "<skill>" }`、`review { task: "..." }`、`security_review { task: "..." }`、`explore { task: "..." }`。
 
@@ -251,7 +286,7 @@ T0.1 ─▶ T0.2 ─▶ T0.3 ─▶ T0.6 ─▶ T0.7 ─▶ T1.4 ─▶ T1.5 ─
 1. **小步可验证**：单任务 ≤ 1 人日，单 PR ≤ 400 行；每个任务至少新增 1 条可运行判据（测试或探针）。
 2. **先测试后实现**：用 `test-driven-development` 强制红灯；避免「看起来完成」——这也是本项目历史上「假绿」的教训。
 3. **估算按任务记录**：每个任务完成时记录实际耗时；偏差 >50% 的任务进入里程碑复盘，并在下一 sprint 调整。
-4. **上下文靠仓库，不靠对话**：`HANDOFF.md` 只放索引/指针（当前里程碑、下一任务、未决问题、证据路径），不放全文；新会话先读它，而不是重述历史。
+4. **上下文靠仓库，不靠对话**：`sandbox-handoff.md` 只放索引/指针（当前里程碑、下一任务、未决问题、证据路径），不放全文；新会话先读它，而不是重述历史。
 5. **验证带宽用技能补**：单人没有第二双眼睛，`review` + `security-review` 是固定动作，不因「自己写的」跳过。
 6. **独立任务才并行**：只有写路径不重叠时用 `subagent-driven-development`/`parallel_tasks`；共享 `trha.cabal`、`docs/README.md` 的改动串行。
 7. **失败即停**：探针失败先修再继续，不带病进入下一任务。
@@ -260,10 +295,10 @@ T0.1 ─▶ T0.2 ─▶ T0.3 ─▶ T0.6 ─▶ T0.7 ─▶ T1.4 ─▶ T1.5 ─
 
 | 时机 | 动作 | 落点 |
 |---|---|---|
-| 开工 | 读 `HANDOFF.md` + 本文当前里程碑；`context_budget` 确认余量 | — |
+| 开工 | 读 `sandbox-handoff.md` + 本文当前里程碑；`context_budget` 确认余量 | — |
 | 任务中 | TDD；只碰当前任务涉及的文件 | — |
 | 提交前 | `review`；安全敏感改动加 `security-review` | PR 描述 |
-| 收尾 | 更新 `HANDOFF.md`（进度/下一任务/未决）；同步 `task_plan.md` | 仓库 |
+| 收尾 | 更新 `sandbox-handoff.md`（进度/下一任务/未决）；同步 `task_plan.md` | 仓库 |
 
 ### 11.4 与门禁的关系
 

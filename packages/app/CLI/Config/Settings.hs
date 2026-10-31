@@ -30,6 +30,7 @@ module Config.Settings
   ) where
 
 import Core.Types (CLIConfig(..), defaultCLIConfig)
+import Control.Exception (try)
 import Control.Monad (forM_, unless, when)
 import Data.Aeson (Result(..), Value(..), fromJSON, toJSON)
 import qualified Data.Aeson.KeyMap as KM
@@ -73,7 +74,10 @@ initConfig = do
   exists <- doesFileExist homePath
   unless exists (writeSettingsAtomic homePath defaultCLIConfig)
   -- The file may pre-date the hardened initialiser; tighten it regardless.
-  setFileMode homePath 0o600
+  -- Read-only homes (a sandbox guest whose HOME is the scratch dir) cannot
+  -- chmod: fsync-mode changes fail there, so tolerate the error instead of
+  -- crashing every `trha` invocation inside the sandbox.
+  _ <- try (setFileMode homePath 0o600) :: IO (Either IOError ())
   resolveConfig defaultCLIConfig
 
 -- | Save configuration to @~/.trha/settings.yaml@ (atomic, 0600).

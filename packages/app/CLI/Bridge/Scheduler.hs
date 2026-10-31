@@ -43,6 +43,8 @@ module Bridge.Scheduler
   , tagSession
   , fetchServiceStatus
   , fetchBalance
+  , fetchUsageStats
+  , UsageRow(..)
   , transcribeVoice
   , compactSession
   , retrySession
@@ -56,6 +58,8 @@ module Bridge.Scheduler
   , setInUseProvider
   , setSandboxConfig
   , fetchSandboxConfig
+  , submitExperiment
+  , setSessionCwd
   , startLoop
   , fetchLoops
   , stopLoops
@@ -116,6 +120,7 @@ import qualified Data.ByteString as BS
 import Control.Concurrent (forkIO, killThread, newEmptyMVar, putMVar, takeMVar)
 import Control.Monad (join, void, when)
 import Data.Maybe (fromMaybe)
+import System.Directory (getCurrentDirectory)
 import System.Timeout (timeout)
 import Control.Exception (SomeAsyncException, SomeException, catch, fromException, throwIO)
 import Data.Text (Text)
@@ -157,12 +162,21 @@ createSchedulerBridge config = do
 --------------------------------------------------------------------------------
 
 -- | Create a session on the orchestration layer.
+--
+-- @cwd@ is the client's own directory: the scheduler serves every client
+-- (TUI/desktop/web), so the session — not the process — must say which
+-- project it belongs to.
 createSession :: SchedulerBridge -> IO (Either CLIError SessionId)
 createSession bridge = do
   cfg <- resolveConfig defaultCLIConfig
+  cwd <- getCurrentDirectory
   result <- httpPost (bridgeHTTP bridge) "/api/session/start"
     (object [ "mode" .= ("standard" :: Text)
-            , "askTimeout" .= configAskTimeout cfg ])
+            , "askTimeout" .= configAskTimeout cfg
+            -- The agent preset decides which tools the model is offered; without
+            -- it the scheduler falls back to `standard` (the full set).
+            , "agentPreset" .= configAgentPreset cfg
+            , "cwd" .= T.pack cwd ])
   return $ case result of
     Right (Object r) -> case parseMaybe (.: "sessionId") r of
       Just sessionId -> Right sessionId
@@ -475,6 +489,28 @@ setSandboxConfig bridge enabled policy network scratch = do
     Left e  -> Left e
     Right _ -> Right ()
 
+-- | Submit an experiment batch (T2.7): the scheduler runs the variants ×
+-- seeds matrix and returns {batchId, results, reproPath}. The CLI has no
+-- sandbox executor of its own — the batching, retries and audit tags live
+-- behind /api/sandbox/experiment by design (ADR-002: execution belongs to
+-- the scheduling layer).
+submitExperiment :: SchedulerBridge -> Value -> IO (Either CLIError Value)
+submitExperiment bridge payload =
+  httpPost (bridgeHTTP bridge) "/api/sandbox/experiment" payload
+
+-- | Point the session at a different workspace.
+--
+-- This is the human channel: the model has no tool that reaches this endpoint
+-- (its `cd` is clamped to the current workspace), so an agent can never widen
+-- its own sandbox. Reached only through the `/workspace` slash command.
+setSessionCwd :: SchedulerBridge -> SessionId -> FilePath -> IO (Either CLIError FilePath)
+setSessionCwd bridge sid dir = do
+  r <- (httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/cwd")
+         (object [ "cwd" .= T.pack dir ])) :: IO (Either CLIError Value)
+  pure $ case r of
+    Left e  -> Left e
+    Right _ -> Right dir
+
 -- | Copy this session into a child (/fork); @upto@ truncates the history.
 forkSession :: SchedulerBridge -> SessionId -> Maybe Int -> IO (Either CLIError SessionId)
 forkSession bridge sid upto = do
@@ -583,6 +619,44 @@ transcribeVoice bridge path = do
 -- | Provider account balance (DeepSeek @/user/balance@, via the scheduler).
 fetchBalance :: SchedulerBridge -> IO (Either CLIError Balance)
 fetchBalance bridge = httpGet (bridgeHTTP bridge) "/api/balance"
+
+-- | One row of @GET /api/usage-stats@: accounting aggregated per session mode.
+--
+-- The kernel bills @input_cache_hit_tokens@ / @input_cache_miss_tokens@
+-- separately, and this row exposes the same split, so the numbers here match
+-- the provider's invoice instead of an estimate.
+data UsageRow = UsageRow
+  { urMode       :: Text
+  , urRequests   :: Int
+  , urPrompt     :: Int
+  , urCompletion :: Int
+  , urCacheHit   :: Int
+  , urCacheMiss  :: Int
+  , urHitRatio   :: Double
+  , urResets     :: Int
+  , urCost       :: Text
+  } deriving (Eq, Show)
+
+instance FromJSON UsageRow where
+  parseJSON = withObject "UsageRow" $ \o -> UsageRow
+    <$> o .: "model"
+    <*> o .:? "requests" .!= 0
+    <*> o .:? "promptTokens" .!= 0
+    <*> o .:? "completionTokens" .!= 0
+    <*> o .:? "cacheHitTokens" .!= 0
+    <*> o .:? "cacheMissTokens" .!= 0
+    <*> o .:? "cacheHitRatio" .!= 0
+    <*> o .:? "contextResets" .!= 0
+    <*> o .:? "cost" .!= "—"
+
+fetchUsageStats :: SchedulerBridge -> IO (Either CLIError [UsageRow])
+fetchUsageStats bridge = do
+  r <- httpGet (bridgeHTTP bridge) "/api/usage-stats"
+  pure $ case r of
+    Left e -> Left e
+    Right v -> case parseMaybe (\o -> o .: "rows") v :: Maybe [UsageRow] of
+      Just rows -> Right rows
+      Nothing -> Left (ValidationError "Missing rows in /api/usage-stats")
 
 -- | LSP / MCP service state for the sidebar (best effort: [] when the
 -- scheduler predates the endpoints).

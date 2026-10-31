@@ -15,16 +15,16 @@ module UI.Commands
 
 import Data.Aeson (object, (.=))
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, fetchUsageStats, UsageRow(..), compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setSessionCwd, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus)
 import UI.ProviderPresets (presets, preBaseUrl, preKind, preName)
 import Core.Currency (CurrencyTable(..), loadCurrency, saveCurrency)
 import Core.Replay (ReplayBlock(..), renderReplay, renderReplayText)
 import Core.Export (exportMarkdown, exportJson, defaultExportName)
-import Core.TurnStats (Prices(..), turnSummary)
+import Core.TurnStats (Prices(..), pricesForModel, turnSummary)
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import Core.Memory (allMemories, rememberText)
 import Core.ProjectStore (ProjectSession(..), projectSessions)
-import Core.Transcript (listLocalSessions, loadTranscript, recordChunk, recordModelRequest, recordSession, recordToolEvent, recordUser)
+import Core.Transcript (listLocalSessions, listLocalSessionsIn, loadTranscript, recordChunk, recordModelRequest, recordSession, recordToolEvent, recordUser)
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, catch, try)
 import qualified Data.Map as Map
@@ -405,24 +405,51 @@ executeCommand lang _ _ _ ShowMemory = do
     else return $ Just $ T.intercalate "\n\n"
            [ "# " <> name <> "\n" <> body | (name, body) <- entries ]
 
-executeCommand lang _ sessionRef _ ShowStats = do
+executeCommand lang bridge sessionRef _ ShowStats = do
+  rows <- fetchUsageStats bridge
   cur <- readIORef sessionRef
-  case cur of
-    Nothing -> return $ Just (tr lang "No active session.")
+  home <- getHomeDirectory
+  transcript <- case cur of
+    Nothing -> pure []
     Just sid -> do
-      home <- getHomeDirectory
       let p = home </> ".trha" </> "sessions" </> sid </> "transcript.jsonl"
       ok <- doesFileExist p
       if not ok
-        then return $ Just (tr lang "No transcript for this session yet.")
+        then pure []
         else do
           content <- TIO.readFile p
-          return $ Just $ T.unlines
-            [ tr lang "Stats:"
-            , tr lang "  session: " <> T.pack sid
-            , tr lang "  transcript lines: " <> T.pack (show (length (T.lines content)))
-            , tr lang "  characters: " <> T.pack (show (T.length content))
-            ]
+          pure [tr lang "  transcript lines: " <> T.pack (show (length (T.lines content)))]
+  pure $ Just $ T.unlines $ case rows of
+    Left err -> [tr lang "Failed to read usage stats: " <> T.pack (show err)] <> transcript
+    Right [] -> [tr lang "No usage recorded yet."] <> transcript
+    Right rs ->
+      ( tr lang "Usage per session mode (hit% = cache hit / (hit + miss), same split the invoice uses):"
+        : ("mode" `pad` 10 <> "requests" `pad` 9 <> "prompt" `pad` 14
+             <> "hit%" `pad` 8 <> "out" `pad` 10 <> "resets" `pad` 8 <> "cost")
+        : map fmtRow rs
+      ) <> transcript
+  where
+    pad t n = T.justifyLeft n ' ' t
+    fmtRow r = pad (urMode r) 10
+      <> pad (T.pack (show (urRequests r))) 9
+      <> pad (T.pack (show (urPrompt r))) 14
+      <> pad (pct (urHitRatio r)) 8
+      <> pad (T.pack (show (urCompletion r))) 10
+      <> pad (T.pack (show (urResets r))) 8
+      <> costText r
+    pct ratio = T.pack (show (fromIntegral (round (ratio * 10000) :: Int) / 100 :: Double)) <> "%"
+    -- The scheduler only prices a row when TRHA_PRICE_* is configured. Fall
+    -- back to the built-in DeepSeek table and mark it as an estimate (≈), so a
+    -- missing env var never makes the number look authoritative.
+    costText r
+      | urCost r == "—" || T.null (urCost r) = "≈¥" <> money (estimateCost r)
+      | otherwise = "¥" <> urCost r
+    estimateCost r =
+      let p = pricesForModel "deepseek"
+      in ( fromIntegral (urCacheMiss r) * priceInput p
+           + fromIntegral (urCacheHit r) * priceCached p
+           + fromIntegral (urCompletion r) * priceOutput p ) / 1e6
+    money x = T.pack (show (fromIntegral (round (x * 10000) :: Int) / 10000 :: Double))
 
 executeCommand lang _ _ _ Cls = do
   -- The REPL clears the terminal; the TUI treats it as "clear the view".
@@ -646,6 +673,23 @@ executeCommand lang bridge sessionRef _ (Btw question) = do
           return $ Just $ case r of
             Left e -> tr lang "Error: " <> T.pack (show e)
             Right answer -> answer
+
+-- | Change the session's workspace.
+--
+-- The *human* channel: the model has no tool that reaches this endpoint — its
+-- `cd` is clamped to the current workspace — so only a person typing this can
+-- move the sandbox root.
+executeCommand lang bridge sessionRef _ (Workspace mdir) = do
+  cur <- readIORef sessionRef
+  case cur of
+    Nothing -> return $ Just (tr lang "No active session.")
+    Just sid -> case mdir of
+      Nothing -> return $ Just (tr lang "Usage: /workspace <absolute-path>")
+      Just dir -> do
+        r <- setSessionCwd bridge sid (T.unpack (T.strip dir))
+        return $ Just $ case r of
+          Left e  -> tr lang "Error: " <> T.pack (show e)
+          Right p -> tr lang "Workspace: " <> T.pack p
 
 executeCommand lang bridge sessionRef _ Retry = do
   cur <- readIORef sessionRef
@@ -913,8 +957,10 @@ executeCommand lang bridge sessionRef _ Deny = do
 -- | List local sessions (from ~/.trha transcript index).  Sessions of the
 -- current project come first, using the @~/.trha/projects/<slug>@ index.
 executeCommand lang _ _ _ ResumeList = do
-  sessions <- listLocalSessions
   cwd <- getCurrentDirectory
+  -- Only this project's transcripts: another project's conversation resumed
+  -- here would pull in its workspace and its files.
+  sessions <- listLocalSessionsIn cwd
   mine <- projectSessions cwd
   let mineIds = map psId mine
       (local, others) = partition (\s -> T.pack (ssId s) `elem` mineIds) sessions

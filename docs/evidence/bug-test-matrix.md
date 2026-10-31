@@ -54,7 +54,7 @@
 
 | 项 | 修的问题 | 测试 |
 |---|---|---|
-| provider 超时 | `responseTimeoutNone` 意味着 provider 静默就**永久挂住**；现在按 `TRHA_STREAM_TIMEOUT_MS`（默认 20s）中断，并**保留已收到的部分内容**再报错 | `StreamTimeoutSpec.hs`（2 例：静默流中断带 `timed out`；默认值 20s/非法值回落） |
+| provider 超时 | `responseTimeoutNone` 意味着 provider 静默就**永久挂住**。现在两段预算：首字节 `TRHA_STREAM_FIRST_BYTE_TIMEOUT_MS`（默认 90s，覆盖排队/长上下文 prompt 处理），首字节之后静默 `TRHA_STREAM_TIMEOUT_MS`（默认 45s）；超时**保留已收到的部分内容**再报错，错误文案区分 `no first byte` 与 `mid-stream` | `StreamTimeoutSpec.hs`（5 例：长但活跃不误杀；中途静默报 `mid-stream`；首字节慢于 idle 但快于首字节预算时成功；首字节超时报 `no first byte`；默认 45s/90s 与非法值回落） |
 | 多智能体并发 | 两个父会话同时跑、各自 spawn 子会话：子会话不串味、`parentId` 正确 | `agents-concurrent.test.ts`（2 例） |
 | 中断正在跑的智能体 | `interrupt_agent` 在目标**真的忙**时命中，目标在下一轮边界返回 `(interrupted)` | 同文件（第 2 例） |
 | 调度跨天/时区 | 带偏移的 `at`（`+08:00`）按那一刻的 UTC 实例存储；未来数月不触发；过期重复任务补跑一次并把游标推到未来 | `schedule-time.test.ts`（3 例） |

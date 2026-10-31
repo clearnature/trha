@@ -11,7 +11,7 @@ sampleModels :: [ModelInfo]
 sampleModels = [ ModelInfo "a" "" 1000, ModelInfo "b" "" 2000 ]
 
 sampleSessions :: [SessionSummary]
-sampleSessions = [ SessionSummary "s1" "t" 1 Nothing Nothing Nothing ]
+sampleSessions = [ SessionSummary "s1" "t" 1 Nothing Nothing Nothing Nothing ]
 
 spec :: Spec
 spec = do

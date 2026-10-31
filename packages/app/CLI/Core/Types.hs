@@ -24,6 +24,7 @@ module Core.Types
   , parsePlanView
   , renderPlanBrief
   , ToolRunStatus(..)
+  , ToolCallView(..)
   , ToolEvent(..)
   , TodoStatus(..)
   , TodoItem(..)
@@ -280,12 +281,35 @@ data ToolRunStatus
   deriving (Show, Eq)
 
 -- | One tool lifecycle event.
+-- | How a tool wants its call labelled (DSH's @presentCall@).
+--
+-- 'Nothing' means the shell draws its generic row, which is what every tool
+-- does today. Carried on the opening event only.
+data ToolCallView = ToolCallView
+  { tvCard  :: Text -- ^ @generic@ | @terminal@ | @diff@
+  , tvTitle :: Text -- ^ short, always-visible label for this call
+  } deriving (Show, Eq)
+
+instance FromJSON ToolCallView where
+  parseJSON = withObject "ToolCallView" $ \o -> do
+    card  <- o .:? "card" .!= ("generic" :: Text)
+    title <- o .:? "title" .!= ("" :: Text)
+    pure (ToolCallView card title)
+
+instance ToJSON ToolCallView where
+  toJSON (ToolCallView card title) =
+    object ["card" .= card, "title" .= title]
+
 data ToolEvent = ToolEvent
-  { teName       :: ToolName
+  { teCallId     :: Text        -- ^ provider tool_call id; stable pairing key
+  , tePhase      :: Maybe Text  -- ^ @start@ | @end@; 'Nothing' from older servers
+  , teName       :: ToolName
   , teArgs       :: [Text]
   , teStatus     :: ToolRunStatus
   , teDurationMs :: Maybe Int
   , teOutput     :: Maybe Text -- ^ tail output preview (kernel, succeeded only)
+  , teView       :: Maybe ToolCallView -- ^ tool-supplied card intent
+  , teMeta       :: Maybe Value -- ^ DSH's @presentationMeta@: replayable card data
   } deriving (Show, Eq)
 
 instance FromJSON ToolRunStatus where
@@ -303,6 +327,8 @@ instance ToJSON ToolRunStatus where
 
 instance FromJSON ToolEvent where
   parseJSON = withObject "ToolEvent" $ \o -> do
+    callId <- o .:? "callId" .!= ("" :: Text)
+    phase  <- o .:? "phase"
     name <- o .: "name"
     args <- o .:? "args" .!= ([] :: [Text])
     dur  <- o .:? "durationMs"
@@ -312,8 +338,10 @@ instance FromJSON ToolEvent where
       "succeeded" -> pure ToolRunSucceeded
       "failed"    -> ToolRunFailed <$> o .:? "error" .!= ""
       _           -> fail "unknown tool status"
-    out <- o .:? "output"
-    pure $ ToolEvent name args status dur out
+    out  <- o .:? "output"
+    view <- o .:? "view"
+    meta <- o .:? "meta"
+    pure $ ToolEvent callId phase name args status dur out view meta
 
 -- | Status of one team task (the agent's TODO list).
 data TodoStatus = TodoPending | TodoInProgress | TodoDone
@@ -443,15 +471,19 @@ modelForProvider p current
   | otherwise                  = current
 
 instance ToJSON ToolEvent where
-  toJSON (ToolEvent name args st dur out) =
+  toJSON (ToolEvent cid phase name args st dur out view meta) =
     object $
-      [ "name" .= name
+      [ "callId" .= cid
+      , "name" .= name
       , "args" .= args
       , "status" .= statusTag st
       , "durationMs" .= dur
       ]
+      ++ [ "phase" .= p | Just p <- [phase] ]
       ++ [ "error" .= err | ToolRunFailed err <- [st], err /= "" ]
       ++ [ "output" .= o | Just o <- [out] ]
+      ++ [ "view" .= v | Just v <- [view] ]
+      ++ [ "meta" .= m | Just m <- [meta] ]
     where
       statusTag ToolRunRunning   = ("running" :: Text)
       statusTag ToolRunSucceeded = "succeeded"
@@ -471,6 +503,7 @@ data CLIConfig = CLIConfig
   , configVerbose    :: Bool
   , configTheme      :: Text
   , configLang       :: Text -- ^ BCP 47 tag: "zh-Hans" (default), "zh-Hant", "en", …
+  , configAgentPreset :: Text -- ^ agent preset: standard|ptc|minimal|cordis (default: standard)
   , configEffort     :: Text -- ^ reasoning effort: auto|minimal|low|medium|high
   , configMetrics    :: Text -- ^ status-line metric keys (comma separated)
   , configMarkdown   :: Bool -- ^ render assistant replies as markdown
@@ -506,6 +539,7 @@ instance FromJSON CLIConfig where
     <*> v .: "configVerbose"
     <*> v .:? "configTheme" .!= "tokyo-night"
     <*> v .:? "configLang" .!= "zh-Hans"
+    <*> v .:? "configAgentPreset" .!= "standard"
     <*> v .:? "configEffort" .!= "auto"
     <*> v .:? "configMetrics" .!= "model,mode,cache,ctx,compact,session"
     <*> v .:? "configMarkdown" .!= True
@@ -537,6 +571,7 @@ defaultCLIConfig = CLIConfig
   , configVerbose   = False
   , configTheme     = "tokyo-night"
   , configLang      = "zh-Hans"
+  , configAgentPreset = "standard"
   , configEffort    = "auto"
   , configMetrics   = "model,mode,cache,ctx,compact,session"
   , configMarkdown  = True

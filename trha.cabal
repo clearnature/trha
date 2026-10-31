@@ -164,10 +164,14 @@ library trha-infra
     Infrastructure.Sandbox.Audit
     Infrastructure.Sandbox.Experiment
     Infrastructure.Sandbox.Process
+    Infrastructure.Sandbox.Cgroup
+    Infrastructure.Sandbox.Landlock
     Infrastructure.Telemetry.Metrics
   hs-source-dirs:   src/infra
   build-depends:    base ^>=4.22
                   , trha:trha-core
+                  , cryptonite
+                  , memory
                   , text
                   , aeson
                   , directory
@@ -229,6 +233,7 @@ executable trha
     Config.Home
     Core.Args
     UI.Commands.Registry
+    Core.Bootstrap
     Core.HTTP
     Core.Transcript
     Core.Memory
@@ -244,6 +249,7 @@ executable trha
     Core.Currency
     Core.Export
     Core.Fonts
+    Core.Fs
     Core.Sandbox
     Core.TurnStats
     Core.EffortContract
@@ -265,6 +271,7 @@ executable trha
     UI.Skills
     UI.Selection
     UI.TimeStamp
+    UI.State
     UI.Stash
     UI.Frecency
     UI.ModelPrefs
@@ -322,6 +329,10 @@ test-suite trha-sandbox-test
                   , SandboxLinuxSpec
                   , SandboxMacSpec
                   , SandboxRunnerSpec
+                  , SandboxCgroupSpec
+                  , SandboxWindowsSpec
+                  , SandboxBsdSpec
+                  , SandboxLandlockSpec
                   , AuditSpec
                   , ExperimentSpec
                   , ConfigSpec

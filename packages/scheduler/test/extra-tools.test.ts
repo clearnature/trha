@@ -2,13 +2,17 @@
 // ralph, search/models/plugins, and the stagehand aliases.
 
 import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
+import { chmodSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runExtraTool, type ExtraHost, type Terminal } from '../src/Server/extraTools.js';
 import { browserCloseAll } from '../src/Server/browser.js';
+
+const sandboxFixture = fileURLToPath(new URL('./fixtures/mock-sandbox-runner.mjs', import.meta.url));
 
 let dir = '';
 let host: ExtraHost;
@@ -44,17 +48,23 @@ describe('editor + working directory', () => {
     expect(await readFile(path.join(dir, 'a.txt'), 'utf8')).toBe('one\nmid\nTWO\n');
     // ambiguous replace is refused
     await runExtraTool('str_replace_editor', { command: 'create', path: 'dup.txt', file_text: 'x x' }, host);
-    expect(await runExtraTool('str_replace_editor', { command: 'str_replace', path: 'dup.txt', old_str: 'x', new_str: 'y' }, host))
-      .toMatch(/appears 2 times/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('str_replace_editor', { command: 'str_replace', path: 'dup.txt', old_str: 'x', new_str: 'y' }, host))
+      .rejects.toThrow(/appears 2 times/);
   });
 
   it('switches cwd inside the workspace and refuses to leave it', async () => {
     await mkdir(path.join(dir, 'sub'));
     expect(await runExtraTool('working_directory', {}, host)).toBe(dir);
-    expect(await runExtraTool('working_directory', { path: 'sub' }, host)).toBe(`OK: cwd is now ${path.join(dir, 'sub')}`);
+    // DSH contract: `output.render` emits the canonical value — the bare path,
+    // not an "OK: cwd is now …" wrapper.
+    expect(await runExtraTool('working_directory', { path: 'sub' }, host)).toBe(path.join(dir, 'sub'));
     expect(await runExtraTool('working_directory', {}, host)).toBe(path.join(dir, 'sub'));
-    expect(await runExtraTool('working_directory', { path: '/etc' }, host)).toMatch(/must stay inside/);
-    expect(await runExtraTool('working_directory', { path: 'nope' }, host)).toMatch(/no such directory/);
+    // Failures throw; the call site turns them into `ERROR: …`.
+    await expect(runExtraTool('working_directory', { path: '/etc' }, host))
+      .rejects.toThrow(/must stay inside/);
+    await expect(runExtraTool('working_directory', { path: 'nope' }, host))
+      .rejects.toThrow(/no such directory/);
   });
 });
 
@@ -74,7 +84,43 @@ describe('persistent terminals', () => {
     expect(await runExtraTool('terminal_list', {}, host)).toContain(id!);
     expect(await runExtraTool('terminal_close', { id }, host)).toMatch(/closed/);
     expect(host.terminals.size).toBe(0);
-    expect(await runExtraTool('terminal_read', { id }, host)).toMatch(/no terminal/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('terminal_read', { id }, host)).rejects.toThrow(/no terminal/);
+  });
+});
+
+describe('persistent terminals (sandbox seam on)', () => {
+  it('runs the shell inside the sandbox and keeps it interactive', async () => {
+    chmodSync(sandboxFixture, 0o755);
+    const previousSandbox = process.env.TRHA_SANDBOX;
+    const previousRunner = process.env.TRHA_SANDBOX_RUNNER;
+    const previousInteractive = process.env.MOCK_SANDBOX_INTERACTIVE;
+    process.env.TRHA_SANDBOX = 'on';
+    process.env.TRHA_SANDBOX_RUNNER = sandboxFixture;
+    process.env.MOCK_SANDBOX_INTERACTIVE = '1';
+    try {
+      const h = makeHost();
+      const opened = await runExtraTool('terminal_open', {}, h);
+      expect(opened).toMatch(/sandboxed shell/);
+      const id = /term-1/.exec(opened ?? '')?.[0];
+      expect(id).toBeTruthy();
+
+      await runExtraTool('terminal_send', { id, input: 'hello' }, h);
+      let read = '';
+      for (let i = 0; i < 30 && !read.includes('echo:hello'); i++) {
+        await new Promise(r => setTimeout(r, 50));
+        read = await runExtraTool('terminal_read', { id }, h);
+      }
+      expect(read).toContain('echo:hello');
+      expect(await runExtraTool('terminal_close', { id }, h)).toMatch(/closed/);
+    } finally {
+      if (previousSandbox === undefined) delete process.env.TRHA_SANDBOX;
+      else process.env.TRHA_SANDBOX = previousSandbox;
+      if (previousRunner === undefined) delete process.env.TRHA_SANDBOX_RUNNER;
+      else process.env.TRHA_SANDBOX_RUNNER = previousRunner;
+      if (previousInteractive === undefined) delete process.env.MOCK_SANDBOX_INTERACTIVE;
+      else process.env.MOCK_SANDBOX_INTERACTIVE = previousInteractive;
+    }
   });
 });
 
@@ -91,14 +137,17 @@ describe('session queries', () => {
   it('waits for an idle agent and reports unknown ones', async () => {
     const h = makeHost({ agents });
     expect(await runExtraTool('wait_agent', { id: 's1' }, h)).toMatch(/idle/);
-    expect(await runExtraTool('wait_agent', { id: 'nope' }, h)).toMatch(/no agent/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('wait_agent', { id: 'nope' }, h)).rejects.toThrow(/no agent/);
     expect(await runExtraTool('wait_agent', { id: 'busy-1', timeout_ms: 150 }, h)).toMatch(/TIMEOUT/);
   });
 
   it('reads one team task', async () => {
     const h = makeHost({ agents });
     expect(await runExtraTool('team_task_get', { id: 't1' }, h)).toContain('"subject":"one"');
-    expect(await runExtraTool('team_task_get', { id: 't9' }, h)).toMatch(/no team task/);
+    // Migrated tools throw instead of returning `ERROR: …`.
+    await expect(runExtraTool('team_task_get', { id: 't9' }, h))
+      .rejects.toThrow(/no team task/);
   });
 
   it('searches transcripts and traces one', async () => {
@@ -112,7 +161,9 @@ describe('session queries', () => {
     expect(hits).not.toContain('\tb\t');
     expect(await runExtraTool('session_search', { query: 'zzz' }, h)).toMatch(/no session/);
     expect(await runExtraTool('session_trace', { sessionId: 'a' }, h)).toContain('#0\tuser');
-    expect(await runExtraTool('session_trace', { sessionId: 'zzz' }, h)).toMatch(/no session/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('session_trace', { sessionId: 'zzz' }, h))
+      .rejects.toThrow(/no session/);
   });
 
   it('reads, searches and traces kernel events', async () => {
@@ -142,7 +193,9 @@ describe('models, plugins, search', () => {
     expect(await runExtraTool('list_subagent_models', {}, h)).toContain('deepseek-flash');
     expect(await runExtraTool('plugin_manager', {}, h)).toContain('demo');
     expect(await runExtraTool('cordis_inspect_query', { name: 'demo' }, h)).toContain('onInit');
-    expect(await runExtraTool('cordis_inspect_query', { name: 'x' }, h)).toMatch(/no plugin/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('cordis_inspect_query', { name: 'x' }, h))
+      .rejects.toThrow(/no plugin/);
   });
 
   it('queries SearXNG when configured', async () => {
@@ -160,7 +213,9 @@ describe('models, plugins, search', () => {
 
   it('explains a missing plugin market instead of failing silently', async () => {
     delete process.env.TRHA_PLUGIN_MARKET;
-    expect(await runExtraTool('plugin_market', {}, host)).toMatch(/needs TRHA_PLUGIN_MARKET/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('plugin_market', {}, host))
+      .rejects.toThrow(/needs TRHA_PLUGIN_MARKET/);
   });
 });
 
@@ -217,13 +272,19 @@ describe('remaining branches', () => {
   it('unified_edit behaves like str_replace_editor', async () => {
     expect(await runExtraTool('unified_edit', { command: 'create', path: 'u.txt', file_text: 'a' }, host)).toMatch(/created/);
     expect(await runExtraTool('unified_edit', { command: 'view', path: 'u.txt' }, host)).toContain('a');
-    expect(await runExtraTool('unified_edit', { command: 'nope', path: 'u.txt' }, host)).toMatch(/unknown command/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('unified_edit', { command: 'nope', path: 'u.txt' }, host))
+      .rejects.toThrow(/unknown command/);
   });
 
   it('terminal errors name the missing terminal', async () => {
-    expect(await runExtraTool('terminal_send', { id: 'term-9', input: 'x' }, host)).toMatch(/no terminal/);
-    expect(await runExtraTool('terminal_signal', { id: 'term-9' }, host)).toMatch(/no terminal/);
-    expect(await runExtraTool('terminal_close', { id: 'term-9' }, host)).toMatch(/no terminal/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('terminal_send', { id: 'term-9', input: 'x' }, host))
+      .rejects.toThrow(/no terminal/);
+    await expect(runExtraTool('terminal_signal', { id: 'term-9' }, host))
+      .rejects.toThrow(/no terminal/);
+    await expect(runExtraTool('terminal_close', { id: 'term-9' }, host))
+      .rejects.toThrow(/no terminal/);
     expect(await runExtraTool('terminal_list', {}, host)).toBe('(no terminals)');
   });
 
@@ -256,8 +317,14 @@ describe('remaining branches', () => {
   });
 
   it('pwsh reports a missing binary clearly', async () => {
-    const out = await runExtraTool('pwsh', { command: 'echo hi' }, host);
-    expect(out).toMatch(/^ERROR: neither pwsh nor powershell\.exe is installed|^exit 0/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`; on a host
+    // where pwsh exists the call succeeds instead, so accept both.
+    try {
+      const out = await runExtraTool('pwsh', { command: 'echo hi' }, host);
+      expect(out).toMatch(/^exit 0/);
+    } catch (e) {
+      expect(String(e)).toMatch(/neither pwsh nor powershell\.exe is installed/);
+    }
   });
 
   it('session events degrade when the kernel is unreachable', async () => {
@@ -299,8 +366,9 @@ describe('remaining branches', () => {
   });
 
   it('rejects an unknown stagehand action', async () => {
-    const out = await runExtraTool('stagehand_act', { action: 'hover', selector: '#x' }, host);
-    expect(out).toMatch(/unsupported action/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('stagehand_act', { action: 'hover', selector: '#x' }, host))
+      .rejects.toThrow(/unsupported action/);
   });
 });
 
@@ -322,7 +390,9 @@ describe('closing the remaining branches', () => {
   });
 
   it('ralph needs a subagent host', async () => {
-    expect(await runExtraTool('ralph', { objective: 'x' }, host)).toMatch(/needs a subagent host/);
+    // Migrated tools throw on failure instead of returning `ERROR: …`.
+    await expect(runExtraTool('ralph', { objective: 'x' }, host))
+      .rejects.toThrow(/needs a subagent host/);
   });
 
   it('terminal_read honours the since cursor and reports exited shells', async () => {
@@ -336,7 +406,8 @@ describe('closing the remaining branches', () => {
     await new Promise(r => setTimeout(r, 250));
     const after = await runExtraTool('terminal_read', { id: 'term-1', since: cursor }, h);
     expect(after).toMatch(/status: exited/);
-    expect(await runExtraTool('terminal_send', { id: 'term-1', input: 'x' }, h)).toMatch(/has exited/);
+    await expect(runExtraTool('terminal_send', { id: 'term-1', input: 'x' }, h))
+      .rejects.toThrow(/has exited/);
   });
 
   it('plugin_market accepts a URL', async () => {
@@ -369,8 +440,10 @@ describe('closing the remaining branches', () => {
 
   it('team tools explain a host without agent hooks', async () => {
     const bare = makeHost();
-    expect(await runExtraTool('team_task_get', { id: 't1' }, bare)).toMatch(/not available|no team task/);
-    expect(await runExtraTool('spawn_teammate', { task: 'x' }, bare)).toMatch(/not available/);
-    expect(await runExtraTool('wait_agent', { id: 'x' }, bare)).toMatch(/no agent/);
+    await expect(runExtraTool('team_task_get', { id: 't1' }, bare))
+      .rejects.toThrow(/not available/);
+    await expect(runExtraTool('spawn_teammate', { task: 'x' }, bare))
+      .rejects.toThrow(/not available/);
+    await expect(runExtraTool('wait_agent', { id: 'x' }, bare)).rejects.toThrow(/no agent/);
   });
 });

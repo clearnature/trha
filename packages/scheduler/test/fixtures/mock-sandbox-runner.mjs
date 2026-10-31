@@ -59,6 +59,9 @@ rl.on('line', (line) => {
   }
   if (frame.op === 'exec') {
     if (process.env.MOCK_SANDBOX_HANG === '1') return;
+    // Interactive mode: stay alive until a stdin frame says "exit", so the
+    // scheduler's persistent-shell path (terminal_open) can be exercised.
+    if (process.env.MOCK_SANDBOX_INTERACTIVE === '1') return;
     if (process.env.MOCK_SANDBOX_ERROR === '1') {
       process.stdout.write(JSON.stringify({
         v: 1, op: 'error', id: frame.id, kind: 'runner', message: 'boom',
@@ -73,6 +76,20 @@ rl.on('line', (line) => {
     process.stdout.write(JSON.stringify({
       v: 1, op: 'exit', id: frame.id, code: 0,
     }) + '\n');
+    return;
+  }
+  if (frame.op === 'stdin') {
+    if (process.env.MOCK_SANDBOX_INTERACTIVE === '1') {
+      if (String(frame.data).trim() === 'exit') {
+        process.stdout.write(JSON.stringify({
+          v: 1, op: 'exit', id: frame.id, code: 0,
+        }) + '\n');
+        return;
+      }
+      process.stdout.write(JSON.stringify({
+        v: 1, op: 'stdout', id: frame.id, data: `echo:${frame.data}`,
+      }) + '\n');
+    }
     return;
   }
   if (frame.op === 'shutdown') {

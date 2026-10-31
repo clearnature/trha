@@ -181,6 +181,7 @@ layerTable =
     -- L7 -- async (network / long work); must never run on the key thread
   , ("/retry", CmdAsync)
   , ("/btw", CmdAsync)
+  , ("/workspace", CmdAsync)
   , ("/recap", CmdAsync)
   , ("/compact", CmdAsync)
   , ("/queue", CmdAsync)

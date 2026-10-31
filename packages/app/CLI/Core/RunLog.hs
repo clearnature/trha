@@ -20,7 +20,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime)
 import System.Directory (createDirectoryIfMissing)
 import System.Environment (lookupEnv)
 import System.FilePath ((</>))
-import System.Posix.Files (setFileMode)
+import Core.Fs (chmodQuiet)
 
 import Config.Settings (getConfigDir)
 
@@ -37,10 +37,10 @@ logLine :: Text -> IO ()
 logLine msg = (do
   dir <- logDir
   createDirectoryIfMissing True dir
-  setFileMode dir 0o700
+  chmodQuiet dir 0o700
   now <- getCurrentTime
   let day = formatTime defaultTimeLocale "%Y%m%d" now
       stamp = formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" now
       path = dir </> ("trha-" <> day <> ".log")
   TIO.appendFile path (T.pack stamp <> " " <> msg <> "\n")
-  setFileMode path 0o600) `catch` \(_ :: IOException) -> pure ()
+  chmodQuiet path 0o600) `catch` \(_ :: IOException) -> pure ()

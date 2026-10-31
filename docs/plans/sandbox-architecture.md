@@ -643,6 +643,7 @@ data LaunchRequest = LaunchRequest
   , lrEnv       :: [(EnvName, Text)]
   , lrStdin     :: StdinMode
   , lrTimeoutMs :: Maybe Int
+  , lrDenyReads :: [AbsolutePath]   -- 2026-10-30 新增可选字段（ADR-012）：guest 内挂空 tmpfs 的路径，调用方预过滤「存在」
   }
 
 data LaunchPlan = LaunchPlan
@@ -888,13 +889,23 @@ experiments:
 
 未知键 → 报错（fail-closed），不做静默忽略；`version` 不匹配 → 拒绝启动沙箱并提示迁移。
 
+**实现现状（2026-10-30 修订）**：
+
+- `defaults.limits` / `readonlyRoots` / `envAllow` 由 runner 读入并真正生效（ADR-011）；`--policy` / `--network` 仍是 scheduler 的 per-scope 覆盖。
+- `read.mode=allow` 尚未实现为完整 allow-list；当前是「整根只读 + `read.deny` 目录挂空 tmpfs」（ADR-012）。`read.allow` / `write.roots` / `protectedSubpaths` / `tmp` 仍在 schema 里但未接线（仅 `limits` / `readonlyRoots` / `envAllow` / `scratch` / `policy` / `network` 生效）。
+- `readonlyRoots` 中的路径**可以不存在**：渲染用 `--ro-bind-try`（本机无 `/nix/store`，严格 `--ro-bind` 曾让整个沙箱起不来）。
+- `memoryMiB > 0` 会限制沙箱内进程的虚拟内存；GHC/Node 构建建议保持 0。
+
 #### 5.7.6 CLI（P0 先接 stub）
 
 ```bash
 trha sandbox status [--json]        # 后端、enforcement、policies 来源
 trha sandbox probe [--scope <id>]   # 运行探针，退出码 = 是否全绿
-trha sandbox config [--enabled on|off] [--policy <p>] [--network <spec>] [--scratch <dir>] [--json]
+trha sandbox config [--enabled on|off] [--policy <p>] [--network <spec>] [--scratch <dir>]
+                    [--pids N] [--memory-mib MiB] [--wall-ms MS] [--json]
                                     # 无参数 = 显示；带参数 = 落盘 ~/.trha/sandbox.yaml
+                                    # limits 于 2026-10-30 接入执行路径（ADR-011）；
+                                    # --memory-mib 是 RLIMIT_AS，构建机建议 0
 trha sandbox scopes                 # 执行作用域（session/agent 树：policy + isolation）
 trha sandbox runner --workspace <dir> --scratch <dir> --policy <p> [--network <spec>] [--experiment <tag>]
                                     # NDJSON runner 入口（scheduler 内部使用）
@@ -1088,7 +1099,7 @@ P0 与 P1 之间不引入任何 UI 变更；Desktop 的 `SandboxPanel` 在 P1 �
 | **R6** | MiMo-Code | `/data/training/cli/MiMo-Code` | `packages/cli/src/workflow/sandbox.ts:107`（QuickJS `evalScript`）<br>`packages/cli/src/tool/external-directory.ts:102`（`assertWriteAllowed` / `external_directory:ask`）<br>`packages/cli/src/file/protected.ts:6`（TCC / 用户目录保护） |
 | **R7** | haskell-agent | `/data/work/functional-programming/hs/haskell-agent` | `packages/agent-server/src/Agent/Server/Sandbox.hs:128`（`protocolVersion = 1`）、`:385`（runner 启动参数）<br>`packages/agent-server/src/Agent/Server/Sandbox/Worker.hs:3`（租户 VM 内 worker）<br>`packages/agent-tools/src/Agent/Tools/IO.hs:540`（macOS Seatbelt profile）<br>`docs/agent-server.md:236`（gVisor / cgroup / 网络策略） |
 | **R8** | gVisor | `google/gvisor` | `ADOPTERS.md`（采用者）<br>`g3doc/architecture_guide/platforms.md`（KVM / systrap / ptrace）<br>`g3doc/user_guide/personalities/bwrap.md`（bwrap personality 标志映射与差异）<br><https://gvisor.dev/users/> |
-| **R9** | trha 现状 | `/home/yanli/work/trha` | `packages/scheduler/src/Server/toolGuard.ts:17`（`confineWritePath`）<br>`packages/scheduler/src/Permission/permissionRules.ts:83`（`decidePermission`，默认 allow）<br>`packages/scheduler/src/Server/shell.ts:91`（`hardenedEnv`）<br>`src/infra/Infrastructure/Sandbox/Process.hs:28`（`execute`，无隔离）<br>`packages/app/Desktop/src/renderer/ui/SandboxPanel.tsx:6`（占位 UI）<br>`packages/scheduler/src/Subagent/Manager/Manager.ts:61`（`spawn`）<br>`packages/scheduler/src/Server/standardTools.ts:283`（`subagent` 工具） |
+| **R9** | trha 现状 | `/home/yanli/work/trha` | `packages/scheduler/src/Server/toolGuard.ts:17`（`confineWritePath`）<br>`packages/scheduler/src/Permission/permissionRules.ts:83`（`decidePermission`，默认 allow）<br>`packages/scheduler/src/Server/shell.ts:91`（`hardenedEnv`）<br>`src/infra/Infrastructure/Sandbox/Process.hs:28`（`execute`，无隔离）<br>`packages/app/Desktop/src/renderer/ui/SandboxPanel.tsx:6`（占位 UI）<br>`packages/scheduler/src/Subagent/Manager/Manager.ts:61`（`spawn`）<br>`packages/scheduler/src/Server/standardTools.ts:283`（`subagent` 工具）<br>**2026-10-30 补齐（沙箱落地后的实现索引）**：`src/infra/Infrastructure/Sandbox/Runner.hs`（NDJSON 执行循环 + 长驻 stdin）、`Sandbox/Cgroup.hs`（cgroup v2 pids）、`Sandbox/Landlock.hs`（启用状态探测）、`Sandbox/Probe.hs`（三平台探针集合）、`Backend/{Linux,Windows,FreeBSD,OpenBSD}.hs`（平台渲染器）、`packages/sandbox-win-helper/src/{protocol,policy,win32}.rs`（Windows helper） |
 | **R10** | Anthropic 安全复盘 | `anthropic.com` | 《How we contain Claude across products》（2026-05-25）：四类事故、三家产品隔离、93% 批准率、0.1%/5–6% 注入成功率<br><https://www.anthropic.com/engineering/how-we-contain-claude> |
 | **R11** | Claude Mythos Preview 评估 | `red.anthropic.com` | 《Claude Mythos Preview's cybersecurity capabilities》（浏览器沙箱逃逸、内核提权、FreeBSD NFS RCE；其逃逸 demo 注明测试 harness 未启用浏览器进程沙箱）<br><https://red.anthropic.com/2026/mythos-preview/> |
 

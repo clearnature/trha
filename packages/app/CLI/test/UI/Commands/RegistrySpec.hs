@@ -34,7 +34,7 @@ spec = do
                                     , "/doctor", "/memory", "/remember", "/stats", "/usage", "/compact"
                                     , "/attachments", "/clear-attachments", "/mcp", "/lsp"
                                     , "/preset", "/hooks", "/paste", "/vim", "/output-style"
-                                    , "/session-info", "/transcript", "/retry", "/btw", "/recap", "/queue", "/steer"
+                                    , "/session-info", "/transcript", "/retry", "/btw", "/workspace", "/recap", "/queue", "/steer"
                                     , "/fork", "/branch", "/goal", "/switch", "/loop", "/graph", "/workflow", "/currency"
                                     , "/cls", "/ask-timeout", "/reasoning-language"
                                     , "/todo", "/tree", "/agents", "/sandbox", "/rename", "/tag", "/quit", "/exit", "/stop" ])

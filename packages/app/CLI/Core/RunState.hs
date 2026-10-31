@@ -47,6 +47,7 @@ module Core.RunState
   , removeRuntimeSection
     -- * Pure helpers (tested)
   , looksLikeOurProcess
+  , zombieStat
   ) where
 
 import Control.Exception (IOException, try)
@@ -255,10 +256,36 @@ pidAlive :: Int -> IO Bool
 pidAlive pid =
   if pid <= 0 then pure False else do
     r <- try (signalProcess nullSignal (fromIntegral pid)) :: IO (Either IOException ())
-    pure (either (const False) (const True) r)
+    case r of
+      Left _ -> pure False
+      Right _ -> do
+        -- A zombie still accepts signal 0.  Without this check a service whose
+        -- process already exited reads as alive forever, and 'stopService'
+        -- burns its whole 5 s budget — twice, serially — before Ctrl+Alt+Q
+        -- returns.  That regression appeared when the CLI started spawning the
+        -- kernel itself (Core.Bootstrap drops the ProcessHandle, so nothing
+        -- ever reaps it).
+        st <- try (readFile ("/proc/" ++ show pid ++ "/stat")) :: IO (Either IOException String)
+        pure $ case st of
+          Right s -> not (zombieStat s)
+          Left _ -> True   -- no procfs to consult: trust the signal probe
 #else
 pidAlive _ = pure False
 #endif
+
+-- | Does this @\/proc\/<pid>\/stat@ line describe a zombie?
+--
+-- The format is @pid (comm) STATE ...@, and @comm@ may itself contain spaces
+-- and parentheses (e.g. @node (dist/cli.js)@), so the state is the first field
+-- after the *last* @)@ — not after the first one.
+zombieStat :: String -> Bool
+zombieStat s = case drop (lastParen + 1) s of
+  (' ' : st : _) -> st == 'Z'
+  _ -> False
+  where
+    lastParen = case [ i | (i, c) <- zip [0 :: Int ..] s, c == ')' ] of
+      [] -> -1
+      is -> last is
 
 waitGone :: Int -> Int -> IO Bool
 waitGone pid totalMs = go (max 1 (totalMs `div` 100))

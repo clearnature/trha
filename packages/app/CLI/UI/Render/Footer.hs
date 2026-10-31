@@ -59,7 +59,8 @@ footerSegments model mSession status mUsage =
 metricKeys :: [Text]
 metricKeys =
   [ "model", "git", "workspace", "context", "tokens", "session", "usage"
-  , "mode", "cache", "ctx", "compact", "tps"
+  , "mode", "cache", "ctx", "compact", "tps", "balance", "cost", "peak"
+  , "out", "cacheTokens", "sessTokens", "costTurn", "costSession"
   ]
 
 -- | Keys shown by default (order matters).
@@ -111,9 +112,9 @@ footerMetrics lang order live statics = map render order
     render "mode"      = tr lang "Mode: " <> fromMaybe (tr lang "unknown") (flMode live)
     render "cache"     = case (rate (flCacheNow live), rate (flCacheSum live)) of
       (Just now, Just avg) -> tr lang "cache " <> tr lang "turn hit " <> now
-                                <> tr lang " · avg " <> avg
+                                <> tr lang " · session " <> avg
       (Just now, Nothing)  -> tr lang "cache " <> tr lang "turn hit " <> now
-      (Nothing, Just avg)  -> tr lang "cache " <> tr lang "avg " <> avg
+      (Nothing, Just avg)  -> tr lang "cache " <> tr lang "session " <> avg
       _                    -> ""
     render "ctx"       = case flCtxUsed live of
       Just used -> tr lang "context " <> shortTokens used

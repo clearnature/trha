@@ -34,6 +34,7 @@ data SessionSummary = SessionSummary
   , ssModel   :: Maybe Text
   , ssLastTs  :: Maybe Text -- ^ timestamp of the last recorded event
   , ssUsage   :: Maybe Int  -- ^ cumulative tokens from @done@ events (M1-4)
+  , ssCwd     :: Maybe Text -- ^ project the session was started in
   } deriving (Show, Eq)
 
 -- | Fallback title when a session has no user message yet.
@@ -58,6 +59,7 @@ sessionSummaryOf sid events =
     , ssModel = modelOf
     , ssLastTs = lastTsOf
     , ssUsage = totalOf
+    , ssCwd = cwdOf
     }
   where
     userEvents = [ v | v <- events, eventOf v == Just "user" ]
@@ -66,6 +68,9 @@ sessionSummaryOf sid events =
       []      -> Nothing
     modelOf = case [ v | v <- events, eventOf v == Just "session" ] of
       (v : _) -> fieldOf v "model"
+      []      -> Nothing
+    cwdOf = case [ v | v <- events, eventOf v == Just "session" ] of
+      (v : _) -> fieldOf v "cwd"
       []      -> Nothing
     lastTsOf = case reverse events of
       (v : _) -> fieldOf v "ts"

@@ -42,6 +42,9 @@ data ToolCard = ToolCard
   , tcStatus :: Maybe ToolStatus
   , tcDur    :: Maybe Int
   , tcOutput :: [Text]
+  -- ^ DSH's @card@ kind: @generic@ | @terminal@ | @diff@. Decides the title
+  -- prefix, so a shell command reads as a shell command and a patch as a patch.
+  , tcCard   :: Text
   } deriving (Show, Eq)
 
 -- | Fold state of a card: collapsed shows one summary line, expanded
@@ -61,6 +64,13 @@ cardWidth = 72
 -- | Card title line, e.g. @[tool] read_file@.
 toolTitle :: Text -> Text
 toolTitle name = "[tool] " <> name
+
+-- | Title prefix for a card kind. Unknown kinds fall back to @[tool]@, which is
+-- what every tool produced before the kind existed.
+cardPrefix :: Text -> Text
+cardPrefix "terminal" = "[sh] "
+cardPrefix "diff"     = "[diff] "
+cardPrefix _          = "[tool] "
 
 -- | One line per argument, indented by two spaces and truncated to
 -- 'cardWidth' total characters.
@@ -99,7 +109,7 @@ statusSuffix mst mdur = case mst of
 toolCardCollapsed :: ToolCard -> [Text]
 toolCardCollapsed card = [truncateTo (cardWidth - 2) title]
   where
-    title = toolTitle (T.pack (tcName card))
+    title = cardPrefix (tcCard card) <> T.pack (tcName card)
               <> statusSuffix (tcStatus card) (tcDur card)
               <> maybe "" (" " <>) (argSummary (tcArgs card))
     argSummary [] = Nothing

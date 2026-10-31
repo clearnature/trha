@@ -1,7 +1,8 @@
 // P0/P1 judgement tests for the scheduler-side sandbox seam.
 // docs/plans/sandbox-architecture.md §6.1/§6.2: no unconfined fallback.
 
-import { chmodSync, existsSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,10 +10,12 @@ import { describe, it, expect } from 'vitest';
 import {
   SandboxUnavailableError,
   defaultSandboxScope,
+  policyCanonicalText,
   readSandboxConfig,
   sandboxEnabled,
   sandboxStatus,
   runExperiment,
+  sandboxedInteractive,
   sandboxedSpawn,
   setSandboxConfigRuntime,
   setSandboxEnabledRuntime,
@@ -87,8 +90,61 @@ describe('sandboxedSpawn (on, mock runner)', () => {
   });
 });
 
-describe('sandboxStatus (on, mock runner)', () => {
-  it('asks the runner for the real backend', async () => {
+/** Poll until the predicate holds (mock runner frames arrive asynchronously). */
+async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (cond()) return;
+    await new Promise(r => setTimeout(r, 20));
+  }
+  throw new Error('timed out waiting for frames');
+}
+
+describe('sandboxedInteractive (on, mock runner)', () => {
+  it('keeps a session open and routes stdin frames', async () => {
+    chmodSync(fixture, 0o755);
+    const previousSandbox = process.env.TRHA_SANDBOX;
+    const previousRunner = process.env.TRHA_SANDBOX_RUNNER;
+    const previousInteractive = process.env.MOCK_SANDBOX_INTERACTIVE;
+    process.env.TRHA_SANDBOX = 'on';
+    process.env.TRHA_SANDBOX_RUNNER = fixture;
+    process.env.MOCK_SANDBOX_INTERACTIVE = '1';
+    try {
+      const session = await sandboxedInteractive(scope, { argv: ['bash', '-l'], cwd: '/tmp' });
+      let output = '';
+      session.onData(chunk => { output += chunk; });
+      const exited = new Promise<number>(resolve => session.onExit(resolve));
+
+      session.write('hello\n');
+      await waitFor(() => output.includes('echo:hello'));
+      expect(output).toContain('echo:hello');
+
+      session.write('exit\n');
+      expect(await exited).toBe(0);
+    } finally {
+      if (previousSandbox === undefined) delete process.env.TRHA_SANDBOX;
+      else process.env.TRHA_SANDBOX = previousSandbox;
+      if (previousRunner === undefined) delete process.env.TRHA_SANDBOX_RUNNER;
+      else process.env.TRHA_SANDBOX_RUNNER = previousRunner;
+      if (previousInteractive === undefined) delete process.env.MOCK_SANDBOX_INTERACTIVE;
+      else process.env.MOCK_SANDBOX_INTERACTIVE = previousInteractive;
+    }
+  });
+
+  it('refuses instead of running unconfined when the seam is off', async () => {
+    const previousSandbox = process.env.TRHA_SANDBOX;
+    delete process.env.TRHA_SANDBOX;
+    try {
+      await expect(
+        sandboxedInteractive(scope, { argv: ['bash', '-l'], cwd: '/tmp' }),
+      ).rejects.toBeInstanceOf(SandboxUnavailableError);
+    } finally {
+      if (previousSandbox !== undefined) process.env.TRHA_SANDBOX = previousSandbox;
+    }
+  });
+});
+
+describe('sandboxStatus (on, mock runner)', () => {  it('asks the runner for the real backend', async () => {
     chmodSync(fixture, 0o755);
     const previousSandbox = process.env.TRHA_SANDBOX;
     const previousRunner = process.env.TRHA_SANDBOX_RUNNER;
@@ -126,12 +182,26 @@ describe('runExperiment (on, mock runner)', () => {
         concurrency: 2,
       }, {
         makeRequest: task => ({ argv: ['echo', 'x'], cwd: task.work }),
+        cacheState: 'cold',
+        userId: 'probe-user',
+        toolchain: { ghc: '9.14.1' },
       });
       expect(outcome.results).toHaveLength(4);
       expect(outcome.results.every(r => r.ok)).toBe(true);
       expect(outcome.results.map(r => `${r.variant}/${r.seed}`).sort())
         .toEqual(['a/1', 'a/2', 'b/1', 'b/2']);
       expect(existsSync(path.join(root, 'repro.json'))).toBe(true);
+      // T2.8: the repro file carries the full canonical field set.
+      const repro = JSON.parse(readFileSync(path.join(root, 'repro.json'), 'utf8'));
+      expect(repro.batch).toBe('b1');
+      expect(repro.cacheState).toBe('cold');
+      expect(repro.userId).toBe('probe-user');
+      expect(repro.toolchain).toEqual({ ghc: '9.14.1' });
+      expect(repro.policyHash).toMatch(/^[0-9a-f]{32}$/);
+      // (The exact digest is pinned in the cross-language differential test
+      // below — this fixture uses a temp root, so its hash differs by design.)
+      expect(repro.results).toHaveLength(4);
+      expect(repro.results.every((r: { ok: boolean }) => r.ok)).toBe(true);
       // T2.2: work/ is reclaimed, out/ is kept.
       expect(existsSync(path.join(root, 'a', '1', 'out'))).toBe(true);
       expect(existsSync(path.join(root, 'a', '1', 'work'))).toBe(false);
@@ -142,6 +212,25 @@ describe('runExperiment (on, mock runner)', () => {
       else process.env.TRHA_SANDBOX_RUNNER = previousRunner;
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+// Cross-language differential with test/ExperimentSpec.hs: both suites pin
+// the exact canonical text and its sha512 digest for the same fixture
+// (root /ws/experiments/b1, baseline …/baseline). Either side's renderer
+// drifting turns one of the two red.
+describe('policyCanonicalText (cross-language differential)', () => {
+  it('agrees byte for byte with the Haskell canonicalPolicyText', () => {
+    expect(policyCanonicalText('/ws/experiments/b1', '/ws/experiments/b1/baseline')).toBe(
+      'workspace-write|"/ws/experiments/b1"'
+        + '|"/ws/experiments/b1/.batch-work"'
+        + '|["/ws/experiments/b1/baseline"]'
+        + '|off|0,0,600000|-|-',
+    );
+    expect(createHash('sha512')
+      .update(policyCanonicalText('/ws/experiments/b1', '/ws/experiments/b1/baseline'))
+      .digest('hex')
+      .slice(0, 32)).toBe('e8b065d988e2ae560939865205581095');
   });
 });
 

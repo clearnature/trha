@@ -26,25 +26,29 @@ import Control.Monad.IO.Class (liftIO)
 import System.Timeout (timeout)
 import Core.Clipboard (saveClipboardImage)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.RunState (stopAll, stopResultText)
 import Core.Export (exportMarkdown, exportJson, defaultExportName)
 import Core.TurnStats (Prices(..), turnSummary, estimateCost, hasPrices, isOffPeak, pricesForModel)
 import UI.Event
 import Core.SSE (SseNotice(..))
-import Data.Aeson (Value, object, (.=), decode, encode)
+import Data.Aeson (Value(..), object, (.=), decode, encode)
+import qualified Data.Aeson.Key as AK
+import qualified Data.Aeson.KeyMap as KM
+import qualified Data.Foldable as F
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text.Encoding as TE
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import Core.PlanStore (savePlanSnapshot)
 import Core.ProjectStore (ensureProject, recordProjectSession)
-import Core.Transcript (listLocalSessions, loadTranscript, recordChunk, recordSession, recordToolEvent, recordUser)
+import Core.Transcript (listLocalSessions, listLocalSessionsIn, loadTranscript, recordChunk, recordSession, recordToolEvent, recordUser)
 import UI.Commands (executeCommand, runSettingsCommand)
 import UI.Commands.Registry
     ( Command(..), parseCommandWith, pickerItems, pickerItemsGrouped
     , groupKey, groupTitle, registryHelp )
 import UI.SettingsView (SettingsEntry(..), settingsEntries, filterEntries, isOverridden, maskSecret)
+import UI.State
 import UI.StatusInfo (StatusRow(..), collectStatusInfo)
 import UI.StatsView (StatsBlock(..), buildStatsBlocks)
 import UI.I18n (Lang(..), langName, parseLang, tr)
@@ -111,187 +115,14 @@ import UI.Theme
     ( ColorSpec(..), TermColor(..), TermStyle(..), Theme, themeColors, themeName
     , defaultTheme, themes, resolveTheme, themeFor, supportsTrueColor )
 
--- | Provider add/edit wizard: one field per step; the editor holds the
--- current value.  Editing starts from an existing provider, adding from a
--- blank one.
-data ProviderWizard = ProviderWizard
-  { pwStep    :: Int
-  , pwName    :: Text
-  , pwKind    :: Text
-  , pwBaseUrl :: Text
-  , pwModels  :: Text
-  , pwDefault :: Text
-  , pwKey     :: Text
-  , pwEffort  :: Text      -- ^ reasoning effort (blank = auto)
-  , pwVision  :: Text      -- ^ comma separated vision models
-  , pwAuthHeader :: Text   -- ^ yes / no
-  , pwNoProxy    :: Text   -- ^ yes / no
-  , pwHeaders    :: Text   -- ^ extra HTTP headers (JSON object)
-  , pwExtraBody  :: Text   -- ^ extra body fields (JSON object)
-  , pwThinking   :: Text   -- ^ anthropic thinking mode
-  , pwResponsesMode :: Text -- ^ responses: stateless | stateful
-  , pwCtxWindow   :: Text   -- ^ context window override (tokens)
-  } deriving (Show, Eq)
+-- | Provider wizard state and helpers live in "UI.State".
 
-wizardPrompts :: [Text]
-wizardPrompts =
-  [ "Provider name"
-  , "Kind (openai / anthropic / responses)"
-  , "Base URL"
-  , "Models (comma separated)"
-  , "Default model"
-  , "API key (blank = keep existing)"
-  , "Reasoning effort (auto|minimal|low|medium|high)"
-  , "Vision models (comma separated, optional)"
-  , "Send auth header (yes/no)"
-  , "Bypass proxy (yes/no)"
-  , "Extra headers (JSON object, optional)"
-  , "Extra body (JSON object, optional)"
-  , "Thinking mode (anthropic only: adaptive, optional)"
-  , "Responses mode (stateless|stateful, optional)"
-  , "Context window (tokens, optional)" ]
 
-wizardValue :: ProviderWizard -> Int -> Text
-wizardValue w n = case n of
-  0 -> pwName w
-  1 -> pwKind w
-  2 -> pwBaseUrl w
-  3 -> pwModels w
-  4 -> pwDefault w
-  5 -> pwKey w
-  6 -> pwEffort w
-  7 -> pwVision w
-  8 -> pwAuthHeader w
-  9 -> pwNoProxy w
-  10 -> pwHeaders w
-  11 -> pwExtraBody w
-  12 -> pwThinking w
-  13 -> pwResponsesMode w
-  _ -> pwCtxWindow w
+-- | Application state lives in "UI.State" (split out for readability).
 
-wizardSet :: Int -> Text -> ProviderWizard -> ProviderWizard
-wizardSet n v w = case n of
-  0 -> w { pwName = v }
-  1 -> w { pwKind = v }
-  2 -> w { pwBaseUrl = v }
-  3 -> w { pwModels = v }
-  4 -> w { pwDefault = v }
-  5 -> w { pwKey = v }
-  6 -> w { pwEffort = v }
-  7 -> w { pwVision = v }
-  8 -> w { pwAuthHeader = v }
-  9 -> w { pwNoProxy = v }
-  10 -> w { pwHeaders = v }
-  11 -> w { pwExtraBody = v }
-  12 -> w { pwThinking = v }
-  13 -> w { pwResponsesMode = v }
-  _ -> w { pwCtxWindow = v }
 
--- | Application state
-data AppState = AppState
-  { appMessages  :: [ChatMessage]
-  , appInput     :: Editor Text ResourceName
-  , appSessionId :: Maybe SessionId
-  , appModel     :: Text
-  , appEffort    :: Text
-  , appStatus    :: Text
-  , appBusy      :: Bool          -- ^ True while awaiting a response
-  , appPending   :: Maybe PendingMsg -- ^ Assistant reply being accumulated (streaming)
-  , appLastUsage :: Maybe Int     -- ^ Token usage of the last completed reply
-  , appHist      :: HistState     -- ^ Input history navigation (REPL-shared file)
-  , appDialogs   :: DialogStack      -- ^ modal dialog stack (top owns keys)
-  , appEscLast   :: Maybe UTCTime    -- ^ last escape press (double-esc window)
-  , appQuitLast  :: Maybe UTCTime    -- ^ last Ctrl+C press (double-press quit window)
-  , appBridge    :: SchedulerBridge
-  , appChan      :: BChan AppEvent
-  , appLang      :: Lang
-  , appSettings  :: Maybe SettingsPanel -- ^ /settings overlay (navigation/edit)
-  , appEffCfg    :: CLIConfig           -- ^ effective config snapshot for the panel
-  , appSysRows   :: [StatusRow]         -- ^ cached /settings Status rows
-  , appMetrics    :: [(Text, Text)]     -- ^ static metric values (workspace/git)
-  , appGitStat    :: Text               -- ^ +N -M ?K for the second status line
-  , appCostSum    :: Double             -- ^ session cost estimate (CNY)
-  , appNow        :: Maybe UTCTime      -- ^ clock for the peak/off-peak label
-  , appTz         :: Maybe TimeZone     -- ^ local zone for the status-bar clock
-  , appPlan       :: Maybe PlanView     -- ^ live multi-step plan (kernel-owned)
-  , appFolds      :: Map.Map Int ToolFold -- ^ tool-card fold states, keyed by msgId
-  , appSelStart   :: Maybe Int            -- ^ drag-selection anchor (message id)
-  , appSelEnd     :: Maybe Int            -- ^ drag-selection cursor (message id)
-  , appCardFocus  :: Maybe Int          -- ^ focused tool card (msgId); Nothing = none
-  , appMode       :: Maybe SessionMode  -- ^ permission posture (Shift+Tab / Ctrl+Y)
-  , appSandbox    :: SandboxSettings    -- ^ /sandbox panel state (TUI-local)
-  , appCacheNow   :: Maybe (Int, Int)   -- ^ last turn's (cache hit, miss)
-  , appCacheSum   :: (Int, Int)         -- ^ session-total (cache hit, miss)
-  , appCtxUsed    :: Maybe Int          -- ^ last prompt tokens (context used)
-  , appToast      :: Maybe (Text, UTCTime) -- ^ transient notice + its stamp
-  , appRoute      :: Route              -- ^ Home (launch) or Session view
-  , appRecent     :: [SessionSummary]   -- ^ local sessions shown on Home
-  , appStash      :: Stash              -- ^ parked drafts (M7-4)
-  , appCwd        :: Maybe Text         -- ^ working directory shown on the sidebar
-  , appFiles      :: [Text]             -- ^ a few workspace files (from the @ index)
-  , appGoal       :: Maybe Text         -- ^ session goal objective
-  , appInstructions :: [Text]           -- ^ AGENTS.md / REASONIX.md detected
-  , appFrecency   :: Frecency           -- ^ command-panel usage counts
-  , appModelPrefs :: ModelPrefs         -- ^ model favourites/recents
-  , appTheme      :: Theme              -- ^ active palette (switchable at runtime)
-  , appAgents     :: [AgentEntry]       -- ^ session tree for the sidebar
-  , appVerbose    :: Bool               -- ^ expand every tool card
-  , appLsp        :: [Text]             -- ^ LSP status lines
-  , appMcp        :: [Text]             -- ^ MCP status lines
-  , appBalance    :: Maybe Balance      -- ^ provider account balance
-  , appTurnStart  :: Maybe UTCTime      -- ^ when the current turn started
-  , appLastTps    :: Maybe Double       -- ^ completion tokens/s of the last turn
-  , appApproval   :: Maybe Text         -- ^ parked tool-approval message (M3)
-  , appAskTool    :: Maybe (String, [Text])  -- ^ tool identity captured from the ask event
-  , appPendingDelete :: Maybe String        -- ^ session id awaiting delete confirmation
-  , appPendingStop   :: Bool                -- ^ Ctrl+Alt+Q confirmation is open (service stop)
-  , appUsage      :: Maybe Usage        -- ^ real usage echo of the last turn
-  , appCtxSize    :: Maybe Int          -- ^ context size of the active model
-  , appSidebar    :: SidebarState       -- ^ sidebar open/closed/auto (M4-1)
-  , appTodos      :: [TodoItem]         -- ^ team tasks shown in the sidebar
-  , appSessionTitle :: Maybe Text       -- ^ local transcript title of the session
-  , appIndex      :: [Completion]       -- ^ @\@@-file index (M4-2)
-  , appComp       :: Maybe CompletionState -- ^ open completion popup
-  , appPalette    :: Maybe Dialog       -- ^ inline slash-command palette (DialogCommands)
-  , appLeader     :: Bool               -- ^ leader key armed (M4-3)
-  , appProvider   :: Maybe Text         -- ^ selected provider (Nothing = kernel inUse)
-  , appProviders  :: [ProviderInfo]     -- ^ provider registry from the kernel
-  , appSkills     :: [Skill]            -- ^ discovered SKILL.md files (.agents/.trha)
-  , appCustomCmds :: [CustomCommand]    -- ^ user commands (~/.trha/commands)
-  , appWizard     :: Maybe ProviderWizard -- ^ provider add/edit in progress
-  }
+-- | Chat payload, resource names and the settings panel live in "UI.State".
 
--- | Chat message with timestamp
-data ChatMessage = ChatMessage
-  { msgRole    :: Text
-  , msgContent :: Text
-  , msgTime    :: Text
-  , msgTool    :: Maybe ToolCard -- ^ structured tool-card payload
-  , msgMeta    :: Maybe Text     -- ^ per-turn footer (model / token usage)
-  , msgId      :: Int            -- ^ position-based id (stable: append-only)
-  } deriving (Show)
-
--- | Plain message (no tool payload, no footer).
-mkMsg :: Text -> Text -> Text -> ChatMessage
-mkMsg role content t = ChatMessage role content t Nothing Nothing 0
-
--- | Tool-card message (content holds the collapsed headline for transcript
--- replay; the UI renders the foldable card from the payload).
-toolMsg :: Text -> ToolCard -> Text -> ChatMessage
-toolMsg role card t =
-  ChatMessage role (toolHeadline card) t (Just card) Nothing 0
-
--- PendingMsg / ToolInv / AppEvent live in UI.Event (pure, unit-tested).
-
--- | Resource names
-data ResourceName
-  = MessageArea
-  | InputArea
-  -- | Per-message render cache key (message id, expanded?, focused?, selected?).
-  | MsgCache Int Bool Bool Bool
-  -- | The thinking block's ▸/▾ toggle (click target).
-  | ThinkToggle Int
-  deriving (Show, Eq, Ord)
 
 -- | Create initial state
 -- | TRHA_SANDBOX=on/1/true/enforce enables the sandbox badge.
@@ -324,10 +155,13 @@ initialState bridge chan cfg = AppState
   , appMetrics   = []
   , appGitStat   = ""
   , appCostSum   = 0
+  , appLastCost  = 0
+  , appSessTokens = 0
   , appNow       = Nothing
   , appTz        = Nothing
   , appPlan      = Nothing
   , appFolds     = Map.empty
+  , appRunningTools = Map.empty
   , appSelStart  = Nothing
   , appSelEnd    = Nothing
   , appCardFocus = Nothing
@@ -335,6 +169,7 @@ initialState bridge chan cfg = AppState
   , appSandbox   = defaultSandboxSettings
   , appCacheNow  = Nothing
   , appCacheSum  = (0, 0)
+  , appCacheTurns = 0
   , appCtxUsed   = Nothing
   , appToast     = Nothing
   , appRoute     = RouteHome
@@ -354,6 +189,8 @@ initialState bridge chan cfg = AppState
   , appBalance    = Nothing
   , appTurnStart  = Nothing
   , appLastTps    = Nothing
+  , appLastDecodeTps = Nothing
+  , appFirstToken = Nothing
   , appApproval  = Nothing
   , appAskTool   = Nothing
   , appPendingDelete = Nothing
@@ -471,8 +308,8 @@ runTUI bridge cfg = do
     dirs <- skillDirs ws
     skills <- scanSkills dirs
     writeBChan chan (EvSkills skills)
-    -- Home route: the local transcripts the user can resume.
-    recent <- listLocalSessions
+    -- Home route: the local transcripts of *this project* only.
+    recent <- listLocalSessionsIn ws
     writeBChan chan (EvRecent recent)
     -- Sidebar: cwd, a few files, and which instruction files exist.
     instrs <- filterM (doesFileExist . (ws </>)) ["AGENTS.md", "REASONIX.md", "QWEN.md", "CLAUDE.md"]
@@ -879,7 +716,12 @@ resumeSession :: Text -> EventM ResourceName AppState ()
 resumeSession selText = do
   lang <- gets appLang
   t <- liftIO now
-  local <- liftIO listLocalSessions
+  cwd <- liftIO getCurrentDirectory
+  -- `--all` is the escape hatch for transcripts written before sessions
+  -- recorded their cwd: they are invisible to the per-project list but still
+  -- resumable when asked for explicitly.
+  let wantAll = T.strip selText == "--all"
+  local <- liftIO (if wantAll then listLocalSessions else listLocalSessionsIn cwd)
   case pickLocalSession (T.unpack selText) local of
     Nothing -> do
       let recent = take 5 local
@@ -899,7 +741,16 @@ resumeSession selText = do
                          , appStatus = tr (appLang st) "Resumed " <> T.pack (ssId s)
                          , appBusy = False
                          , appPending = Nothing
-                         , appRoute = RouteSession }
+                         , appRoute = RouteSession
+                         -- Cache totals are per session: carrying them across a
+                         -- switch silently blends two sessions' hit rates.
+                         , appCacheNow = Nothing
+                         , appCacheSum = (0, 0)
+                         , appCacheTurns = 0
+                         , appLastCost = 0
+                         , appSessTokens = 0
+                         , appLastDecodeTps = Nothing
+                         , appFirstToken = Nothing }
       when (null msgs) $
         appendMsg (mkMsg "system" (tr lang "Session " <> T.pack (ssId s) <> tr lang " has an empty transcript.") t)
       appendMsg (mkMsg "system" (tr lang "Note: continuing needs the session on the orchestration side.") t)
@@ -961,7 +812,7 @@ blocksToMessages blocks =
   where
     toMsg b = case rbTool b of
       Just (name, args) ->
-        toolMsg "tool" (ToolCard name args Nothing Nothing []) (maybe "" id (rbTime b))
+        toolMsg "tool" (ToolCard name args Nothing Nothing [] "") (maybe "" id (rbTime b))
       Nothing           -> mkMsg (rbRole b) (rbContent b) (maybe "" id (rbTime b))
 
 drawMessages :: AppState -> Widget ResourceName
@@ -1388,8 +1239,13 @@ drawStatus st = Widget Greedy Fixed $ do
                 <> (if T.null (appGitStat st) then "" else "  " <> appGitStat st)
     cacheSeg = case (appCacheNow st, appCacheSum st) of
       (Just (h, m), (h0, m0)) | h + m > 0 && h0 + m0 > 0 ->
-        "缓存 本次命中 " <> pct h m <> " · 平均 " <> pct h0 m0
+        "缓存 现在 " <> pct h m <> " · 累计 " <> pct h0 m0
+          <> turnsSuffix (appCacheTurns st)
       _ -> ""
+    -- Turns that reported cache numbers, so a stable percentage is explainable.
+    turnsSuffix n
+      | n > 0 = " · " <> T.pack (show n) <> " 轮"
+      | otherwise = ""
     pct a b =
       T.pack (showFFloat (Just 2) (fromIntegral a * 100 / fromIntegral (a + b) :: Double) "") <> "%"
     -- MiMo's accounting: the usable window reserves 20% for the reply, and
@@ -1401,15 +1257,56 @@ drawStatus st = Widget Greedy Fixed $ do
       (Just used, Just size) | size > 0 ->
         "上下文 " <> shortK used
           <> " (" <> T.pack (show (ctxPct used size)) <> "%)"
+      -- Without a known window we can still show how much was used; hiding it
+      -- entirely (the old behaviour) made the segment look broken whenever
+      -- configCtxSize was unset.
+      (Just used, _) -> "上下文 " <> shortK used
       _ -> ""
     compactSeg = case (appCtxUsed st, appCtxSize st) of
       (Just used, Just size) | size > 0 ->
         "压缩 " <> T.pack (show (max 0 (100 - ctxPct used size))) <> "%"
       _ -> ""
+    -- Completion throughput of the last turn (computed when usage arrived).
+    oneDec v = T.pack (showFFloat (Just 1) v "")
+    -- Two rates, same numerator: end-to-end (from submit) and pure decode
+    -- (from the first token).  Providers quote the latter; users feel the
+    -- former, so show both once we have them.
+    tpsSeg = case (appLastTps st, appLastDecodeTps st) of
+      (Just e2e, Just dec) | e2e > 0 && dec > 0 ->
+        "速度 " <> oneDec e2e <> " t/s（生成 " <> oneDec dec <> "）"
+      (Just e2e, _) | e2e > 0 -> "速度 " <> oneDec e2e <> " t/s"
+      (_, Just dec) | dec > 0 -> "生成 " <> oneDec dec <> " t/s"
+      _ -> ""
+    -- Per-turn token spend, so the "million-token" bill is readable per round.
+    tokensSeg = case appLastUsage st of
+      Just n | n > 0 -> "本轮 " <> commas n <> " tok"
+      _ -> ""
+    usageSeg = case appUsage st of
+      Just u | usageTotalTokens u > 0 ->
+        "in " <> shortK (usagePromptTokens u)
+          <> " / out " <> shortK (usageCompletionTokens u)
+          <> " / 合计 " <> shortK (usageTotalTokens u)
+      _ -> ""
     prices = pricesOf (appModel st) (appEffCfg st)
-    costSeg = if hasPrices prices
-                then "费用 ≈¥" <> T.pack (showFFloat (Just 4) (appCostSum st) "")
-                else "费用 ≈¥—"
+    costSessionSeg = if hasPrices prices
+                then "会话 ¥" <> T.pack (showFFloat (Just 4) (appCostSum st) "")
+                else "会话 ¥—"
+    -- This turn's cost, so one expensive round is visible immediately.
+    costTurnSeg = if hasPrices prices && appLastCost st > 0
+                then "本次 ¥" <> T.pack (showFFloat (Just 4) (appLastCost st) "")
+                else ""
+    outSeg = case appUsage st of
+      Just u | usageCompletionTokens u > 0 ->
+        "输出 " <> commas (usageCompletionTokens u)
+      _ -> ""
+    -- Cache tokens as the provider bills them: hit and miss side by side.
+    cacheTokensSeg = case appCacheNow st of
+      Just (hit, miss) | hit + miss > 0 ->
+        "命中 " <> commas hit <> " | 未命中 " <> commas miss
+      _ -> ""
+    sessTokensSeg
+      | appSessTokens st > 0 = "会话 " <> commas (appSessTokens st) <> " tok"
+      | otherwise = ""
     peak = case appNow st of
       Just t | isOffPeak t -> "低峰"
       _ -> "高峰"
@@ -1417,8 +1314,52 @@ drawStatus st = Widget Greedy Fixed $ do
       Just b -> "余额 " <> balanceCurrency b
                   <> T.pack (showFFloat (Just 2) (balanceTotal b) "")
       Nothing -> "余额 —"
-    statsLine = T.intercalate "  " (filter (not . T.null)
-      [cacheSeg, ctxSeg, compactSeg, balanceSeg, costSeg, peak])
+    -- The configured order decides what is shown.  \`model\`/\`git\`/\`workspace\`
+    -- /\`session\` live on the first row, so only status-class keys apply here;
+    -- a config with none of them falls back to the full default set.
+    statusKeys :: [Text]
+    statusKeys = [ "cache", "ctx", "compact", "tps", "tokens", "out"
+                 , "cacheTokens", "sessTokens", "costTurn", "costSession"
+                 , "usage", "balance", "cost", "peak" ]
+    aliasKey "context" = "ctx"   -- the catalogue alias users tend to write
+    aliasKey k = k
+    configuredKeys =
+      [ aliasKey k | k <- parseMetrics (configMetrics (appEffCfg st))
+                   , aliasKey k `elem` statusKeys ]
+    defaultStatsKeys = [ "cache", "ctx", "compact", "tps", "tokens", "out"
+                       , "cacheTokens", "sessTokens", "costTurn", "costSession"
+                       , "balance", "peak" ]
+    -- A configured list only decides *order*; everything else still shows.
+    -- Hiding on configuration alone surprised users whose config predated the
+    -- newer keys (they saw three segments and assumed the rest were broken).
+    statsKeys = if null configuredKeys
+                  then defaultStatsKeys
+                  else configuredKeys
+                       ++ [ k | k <- defaultStatsKeys, k `notElem` configuredKeys ]
+    segFor k = case k of
+      "cache"   -> cacheSeg
+      "ctx"     -> ctxSeg
+      "compact" -> compactSeg
+      "tps"     -> tpsSeg
+      "tokens"  -> tokensSeg
+      "out"     -> outSeg
+      "cacheTokens" -> cacheTokensSeg
+      "sessTokens"  -> sessTokensSeg
+      "costTurn"    -> costTurnSeg
+      "costSession" -> costSessionSeg
+      "usage"   -> usageSeg
+      "balance" -> balanceSeg
+      "cost"    -> costSessionSeg
+      "peak"    -> peak
+      _         -> ""
+    statsLine = T.intercalate "  "
+      [ s | k <- statsKeys, s <- [segFor k], not (T.null s) ]
+    -- Thousands separators, matching the reference status line (21,444 not 21.4K).
+    commas :: Int -> Text
+    commas n = T.pack (reverse (go (reverse (show n))))
+      where
+        go [] = []
+        go xs = let (a, b) = splitAt 3 xs in a ++ (if null b then [] else ',' : go b)
     shortK n
       | n >= 1000000 = T.pack (showFFloat (Just 1) (fromIntegral n / 1e6 :: Double) "") <> "M"
       | n >= 1000    = T.pack (showFFloat (Just 1) (fromIntegral n / 1e3 :: Double) "") <> "K"
@@ -2505,7 +2446,7 @@ flushPendingAt musage t1 = do
           withMeta m
             | not (T.null meta) = m { msgMeta = Just meta }
             | otherwise = m
-          toolMsgs = [ toolMsg "tool" (ToolCard (tiName inv) (tiArgs inv) Nothing Nothing []) (pmStart pm)
+          toolMsgs = [ toolMsg "tool" (ToolCard (tiName inv) (tiArgs inv) Nothing Nothing [] "") (pmStart pm)
                      | inv <- reverse (pmTools pm) ]
           thinkText = flushThinking pm
           thinkSecs = case appTurnStart st of
@@ -2553,7 +2494,14 @@ handleAppEvent (EvSession result) = do
       -- Auto-created sessions are recorded silently so that the system
       -- message does not interleave between the user message and the reply.
       modify $ \s -> s { appSessionId = Just sid, appStatus = tr (appLang s) "Ready"
-                       , appRoute = RouteSession }
+                       , appRoute = RouteSession
+                       , appCacheNow = Nothing
+                       , appCacheSum = (0, 0)
+                       , appCacheTurns = 0
+                       , appLastCost = 0
+                       , appSessTokens = 0
+                       , appLastDecodeTps = Nothing
+                       , appFirstToken = Nothing }
       liftIO $ setWindowTitle ("trha · " <> T.take 8 (T.pack sid))
       liftIO $ refreshMode (appBridge st) sid (appChan st)
     Left err -> do
@@ -2564,7 +2512,15 @@ handleAppEvent (EvSession result) = do
   scrollBottom
 handleAppEvent (EvResponse result) = case result of
   Right chunk -> case chunk of
-    ChunkDelta text    -> appendDelta text >> scrollBottom
+    ChunkDelta text    -> do
+      -- The first delta ends the TTFT window; the pure-decode rate is measured
+      -- from here, to the final usage.  Recorded once per turn.
+      first <- gets appFirstToken
+      when (isNothing first) $ do
+        t <- liftIO getCurrentTime
+        modify $ \s -> s { appFirstToken = Just t }
+      appendDelta text
+      scrollBottom
     ChunkToolCall n as -> addToolLine n as >> scrollBottom
     ChunkDone usage    -> do
       let real = usageTotalTokens usage > 0
@@ -2578,6 +2534,13 @@ handleAppEvent (EvResponse result) = case result of
           tps = if real && elapsed > 0 && usageCompletionTokens usage > 0
                   then Just (fromIntegral (usageCompletionTokens usage) / elapsed)
                   else appLastTps st0
+          -- Same numerator, but the clock starts at the first token: this is
+          -- the number a provider's own dashboard reports as "t/s".
+          decodeTps = case (appFirstToken st0, usageCompletionTokens usage) of
+            (Just tFirst, n) | real && n > 0 ->
+              let d = realToFrac (diffUTCTime t1 tFirst) :: Double
+              in if d > 0.02 then Just (fromIntegral n / d) else Nothing
+            _ -> appLastDecodeTps st0
       modify $ \s -> s { appLastUsage = Just (usageTotalTokens usage)
                        , appUsage = if real then Just usage else appUsage s
                        , appCacheNow = if cacheSeen then Just (hit, miss) else appCacheNow s
@@ -2585,12 +2548,19 @@ handleAppEvent (EvResponse result) = case result of
                                          then let (h0, m0) = appCacheSum s
                                               in (h0 + hit, m0 + miss)
                                          else appCacheSum s
+                       , appCacheTurns = if cacheSeen
+                                           then appCacheTurns s + 1
+                                           else appCacheTurns s
                        , appCtxUsed = if usagePromptTokens usage > 0
                                         then Just (usagePromptTokens usage
                                                    + usageCompletionTokens usage)
                                         else appCtxUsed s
                        , appLastTps = tps
+                       , appLastDecodeTps = decodeTps
                        , appCostSum = appCostSum s + estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
+                       , appLastCost = estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
+                       , appSessTokens = appSessTokens s + usageTotalTokens usage
+                       , appFirstToken = Nothing
                        , appTurnStart = Nothing }
       flushPending (if real then Just usage else Nothing)
       st3 <- get
@@ -2613,7 +2583,14 @@ handleAppEvent (EvResponse result) = case result of
         appendMsg (mkMsg "system"
           (tr lang0 "The session no longer exists on the scheduler; the next message creates a new one.") t)
         modify $ \st -> st { appSessionId = Nothing
-                           , appStatus = tr (appLang st) "Session expired" }
+                           , appStatus = tr (appLang st) "Session expired"
+                           , appCacheNow = Nothing
+                           , appCacheSum = (0, 0)
+                           , appCacheTurns = 0
+                           , appLastCost = 0
+                           , appSessTokens = 0
+                           , appLastDecodeTps = Nothing
+                           , appFirstToken = Nothing }
       else appendMsg (mkMsg "error" ("Error: " <> msg) t)
     bell <- gets (configBell . appEffCfg)
     when bell $ liftIO (putStr "\a" >> hFlush stdout)
@@ -2686,7 +2663,8 @@ handleAppEvent (EvSessions result) = do
   case result of
     Right [] -> appendMsg (mkMsg "system" (tr lang "No sessions.") t)
     Right sids -> do
-      local <- liftIO listLocalSessions
+      cwd <- liftIO getCurrentDirectory
+      local <- liftIO (listLocalSessionsIn cwd)
       modify $ \s -> s { appDialogs = stackPush (DialogSessions local 0) (appDialogs s) }
       -- legacy ids row kept for parity with the REPL
       appendMsg (mkMsg "system" ((tr lang "Sessions:" <> "\n")
@@ -2779,8 +2757,30 @@ handleAppEvent (EvTool result) = do
               _                 -> False) $
         modify $ \st -> st { appAskTool = Just (teName ev, teArgs ev) }
       case teStatus ev of
-        ToolRunRunning -> return ()
-        _              -> appendMsg (toolCardMsg ev t)
+        ToolRunRunning -> do
+          -- A long tool call used to be invisible until it finished: the card
+          -- only existed once the closing event arrived. Open the card now and
+          -- remember which message it is, so `end` can rewrite it.
+          appendMsg (toolCardMsg ev t)
+          st <- get
+          -- `appendMsg` appends, so the message just added is the last one and
+          -- its id is (length - 1); `listToMaybe` would hand back the oldest.
+          let mid = length (appMessages st) - 1
+          when (not (T.null (teCallId ev))) $
+            modify $ \s -> s { appRunningTools =
+              Map.insert (teCallId ev) mid (appRunningTools s) }
+        _ -> do
+          st <- get
+          let running = Map.lookup (teCallId ev) (appRunningTools st)
+          case running of
+            Just mid -> do
+              -- Rewrite the opening card in place: one call, one card.
+              modify $ \s -> s
+                { appMessages = map (\m -> if msgId m == mid then toolCardMsg ev t else m)
+                                  (appMessages s)
+                , appRunningTools = Map.delete (teCallId ev) (appRunningTools s)
+                }
+            Nothing -> appendMsg (toolCardMsg ev t)
     Left err -> do
       appendMsg (mkMsg "error" (tr lang "SSE: " <> T.pack (show err)) t)
       modify $ \st -> st { appStatus = tr (appLang st) "Error" }
@@ -2834,6 +2834,7 @@ toolCardMsg ev t = toolMsg "tool" card t
     card = ToolCard (teName ev) (teArgs ev)
                     (Just (toCardStatus (teStatus ev))) (teDurationMs ev)
                     (maybe [] T.lines (teOutput ev))
+                    (maybe "generic" tvCard (teView ev))
 
 -- | Approve the pending step, run it as an ordinary agent turn, then report the
 -- result.
@@ -2870,8 +2871,15 @@ statusTagOf (ToolRunFailed _) = "✗"
 -- | Render a tool card with its status footer (message text).
 renderToolEvent :: ToolEvent -> Text
 renderToolEvent ev =
-  T.unlines (toolCardWithStatus (T.pack (teName ev)) (teArgs ev)
+  T.unlines (toolCardWithStatus (cardLabel ev) (teArgs ev)
               (toCardStatus (teStatus ev)) (teDurationMs ev))
+  where
+    -- DSH's `presentCall`: the tool says how this specific call should be
+    -- labelled. Falls back to the tool name when the event carries no view,
+    -- which is every tool today.
+    cardLabel e = case teView e of
+      Just v | not (T.null (tvTitle v)) -> tvTitle v
+      _                                 -> T.pack (teName e)
 
 -- | Map the wire status to the card status type.
 toCardStatus :: ToolRunStatus -> ToolStatus
@@ -3002,9 +3010,29 @@ handleSlash input = do
             appendMsg (mkMsg "system" ("effort: " <> lvl) t)
           else appendMsg (mkMsg "error" ("Unknown effort: " <> lvl <> "  " <> shown) t)
     "/home" -> do
-      local <- liftIO listLocalSessions
+      cwd <- liftIO getCurrentDirectory
+      local <- liftIO (listLocalSessionsIn cwd)
       modify $ \s -> s { appRoute = RouteHome, appRecent = local
                        , appStatus = tr (appLang s) "Home" }
+    -- Human channel: move the session's workspace.  No tool reaches this
+    -- endpoint, so an agent cannot widen its own sandbox root.
+    "/workspace" -> do
+      st2 <- get
+      let arg = T.strip (T.drop (T.length "/workspace") input)
+      case appSessionId st2 of
+        Nothing -> appendMsg (mkMsg "system" (tr lang "No active session.") t)
+        Just sid
+          | T.null arg ->
+              appendMsg (mkMsg "system"
+                (tr lang "Usage: /workspace <absolute-path>  (shows the sandbox root)") t)
+          | otherwise -> do
+              r <- liftIO (setSessionCwd (appBridge st2) sid (T.unpack arg))
+              case r of
+                Left e -> appendMsg (mkMsg "error"
+                            (tr lang "Error: " <> T.pack (show e)) t)
+                Right p -> do
+                  modify $ \s -> s { appCwd = Just (T.pack p) }
+                  appendMsg (mkMsg "system" ("Workspace: " <> T.pack p) t)
     _ | cmd == "/fav" || "/fav " `T.isPrefixOf` cmd -> do
       st2 <- get
       let arg = T.strip (T.drop 4 input)
@@ -3089,9 +3117,10 @@ handleSlash input = do
           forM_ msg $ \m -> appendMsg (mkMsg "system" m t)
           scrollBottom
     "/sessions" -> do
-      local <- liftIO listLocalSessions
+      cwd <- liftIO getCurrentDirectory
+      local <- liftIO (listLocalSessionsIn cwd)
       if null local
-        then appendMsg (mkMsg "system" (tr lang "No local sessions found. Run a conversation first.") t)
+        then appendMsg (mkMsg "system" (tr lang "No local sessions in this directory yet. Run a conversation first.") t)
         else modify $ \s -> s { appDialogs = stackPush (DialogSessions local 0) (appDialogs s) }
     "/models" -> do
       st2 <- get
@@ -3228,12 +3257,15 @@ handleSlash input = do
                         | p <- ps ]) t)
         Left err -> appendMsg (mkMsg "error" (T.pack (show err)) t)
     "/resume" -> do
-      local <- liftIO listLocalSessions
+      cwd <- liftIO getCurrentDirectory
+      local <- liftIO (listLocalSessionsIn cwd)
       if null local
-        then appendMsg (mkMsg "system" (tr lang "No local sessions found. Run a conversation first.") t)
+        then do
+          appendMsg (mkMsg "system" (tr lang "No local sessions in this directory yet.") t)
+          appendMsg (mkMsg "system" (tr lang "/resume --all shows sessions from other (or older) projects.") t)
         else do
           appendMsg (mkMsg "system" ("Local sessions:\n" <> T.unlines (localSessionLines (appLang st) local)) t)
-          appendMsg (mkMsg "system" (tr lang "Resume with /resume <number-or-id>.") t)
+          appendMsg (mkMsg "system" (tr lang "Resume with /resume <number-or-id>  (/resume --all for every project).") t)
     _ 
       | "/resume " `T.isPrefixOf` cmd -> resumeSession (T.strip (T.drop 8 input))
       | cmd == "/plan" ->
@@ -3279,7 +3311,14 @@ handleSlash input = do
             else do
               cur <- gets appSessionId
               when (cur == Just sid) $
-                modify $ \s -> s { appSessionId = Nothing }
+                modify $ \s -> s { appSessionId = Nothing
+                                 , appCacheNow = Nothing
+                                 , appCacheSum = (0, 0)
+                                 , appCacheTurns = 0
+                                 , appLastCost = 0
+                                 , appSessTokens = 0
+                                 , appLastDecodeTps = Nothing
+                                 , appFirstToken = Nothing }
               void $ liftIO $ async $ do
                 _ <- deleteSession bridge sid
                 writeBChan chan (EvDeleted sid)
@@ -3318,7 +3357,10 @@ handleSlash input = do
             mref <- liftIO (newIORef (appModel st))
             r <- liftIO $ executeCommand lang bridge ref mref c
             sid' <- liftIO (readIORef ref)
-            modify $ \s -> s { appSessionId = sid' }
+            modify $ \s -> s { appSessionId = sid'
+                             , appCacheNow = Nothing
+                             , appCacheSum = (0, 0)
+                             , appCacheTurns = 0 }
             case r of
               Just out | not (T.null (T.strip out)) -> appendMsg (mkMsg "system" out t)
               _ -> pure ()
@@ -3347,7 +3389,42 @@ refreshSidebar bridge chan sid = do
 -- While the step runs, tool lifecycle events arrive over SSE; they are
 -- recorded to the transcript and surfaced through 'EvTool'.
 handleChat :: Text -> EventM ResourceName AppState ()
-handleChat input = handleChatWith input input
+handleChat input = do
+  -- DSH's `context/file-reference`: `@path` becomes the file's body. Expanded
+  -- here (not in the scheduler) because the path is relative to the user's cwd.
+  expanded <- liftIO (expandFileReferences input)
+  handleChatWith input expanded
+
+-- | Expand `@path` references in a prompt into fenced file bodies.
+--
+-- Ported from `deepseek-harness/packages/context/file-reference`: a token that
+-- starts with `@` and names an existing file is kept and followed by that file's
+-- contents, so the model reads it without spending a tool round trip.
+--
+-- A missing path — or a stray `@` in ordinary prose — is left untouched:
+-- expansion must never turn a typo into a failed turn. Bodies are capped at the
+-- same size the `read` tool caps at.
+expandFileReferences :: Text -> IO Text
+expandFileReferences input
+  | not (T.any (== '@') input) = pure input
+  | otherwise = T.unwords <$> mapM expand (T.words input)
+  where
+    expand tok
+      | T.length tok > 1 && "@" `T.isPrefixOf` tok && not ("@@" `T.isPrefixOf` tok) = do
+          let p = T.unpack (T.drop 1 tok)
+          isFile <- doesFileExist p
+          if not isFile
+            then pure tok
+            else do
+              body <- try (TIO.readFile p) :: IO (Either IOException Text)
+              pure $ case body of
+                Left _ -> tok
+                Right b ->
+                  let capped = if T.length b > 20000
+                                 then T.take 20000 b <> "\n… (file truncated)"
+                                 else b
+                   in tok <> "\n```\n" <> capped <> "\n```"
+      | otherwise = pure tok
 
 -- | 'handleChat' with a separate visible text.  A skill sends its instructions
 -- as the model turn while the transcript/UI keeps the @/skill:<name>@ trigger
@@ -3419,9 +3496,7 @@ handleChatWith display sendText = do
     toolSink chan sid ev = case ev of
       Right toolEv -> do
         recordToolEvent sid toolEv
-        case teStatus toolEv of
-          ToolRunRunning -> return ()
-          _              -> writeBChan chan (EvTool (Right toolEv))
+        writeBChan chan (EvTool (Right toolEv))
       Left err -> writeBChan chan (EvTool (Left err))
 
 -- | Numbered preview of the stash (one line per draft).
@@ -3458,36 +3533,8 @@ helpTextFor lang = T.unlines $
 --          enter       tab bar: activate list | list: edit/toggle value
 --          type        filter list (search)  esc: close / cancel edit
 
-data SettingsTab
-  = TabSettings
-  | TabStatus
-  | TabStats
-  deriving (Show, Eq, Enum, Bounded)
+-- SettingsTab / SettingsFocus / SettingsPanel live in "UI.State".
 
-data SettingsFocus
-  = FocusTabs
-  | FocusSearch
-  | FocusList
-  deriving (Show, Eq)
-
--- | Panel state: active tab, focus region, list selection/query/edit.
-data SettingsPanel = SettingsPanel
-  { spTab   :: SettingsTab
-  , spFocus :: SettingsFocus
-  , spSel   :: Int            -- ^ selected index within the filtered rows
-  , spQuery :: Text           -- ^ live filter (typed while the list is focused)
-  , spEdit  :: Maybe Text     -- ^ Just buffer while editing a text value
-  , spError :: Maybe Text     -- ^ last apply error (shown under the list)
-  } deriving (Show)
-
-tabList :: [SettingsTab]
-tabList = [minBound .. maxBound]
-
-tabLabel :: Lang -> SettingsTab -> Text
-tabLabel lang t = tr lang (case t of
-  TabSettings -> "Settings"
-  TabStatus   -> "Status"
-  TabStats    -> "Stats")
 
 -- | Rows for the current effective config in the active language.
 settingsRows :: AppState -> [SettingsEntry]

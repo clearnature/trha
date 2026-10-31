@@ -71,6 +71,21 @@ sandboxRunnerSpec = describe "runner end-to-end (T1.4)" $ do
       frame <- readFrame hOut
       frame `shouldSatisfy` isError
 
+  -- terminal_open 走同一条协议：Exec 不能阻塞帧循环，否则后面的 stdin 帧
+  -- 永远送不进去（交互式 shell 就是靠这个活的）。
+  it "keeps a child alive across stdin frames (persistent shell)" $ do
+    caps <- requireBwrap
+    withRunner caps $ \ws hIn hOut -> do
+      writeFrame hIn (Hello "s" Nothing "workspace-write" "process")
+      _ <- readFrame hOut
+      writeFrame hIn (Exec "t1" ["sh"] (T.pack ws) [] Nothing (Just 20000))
+      writeFrame hIn (Stdin "t1" "echo from-stdin\n")
+      out <- collectOutputUntil hOut "t1" (T.isInfixOf "from-stdin")
+      out `shouldSatisfy` T.isInfixOf "from-stdin"
+      writeFrame hIn (Stdin "t1" "exit 0\n")
+      frames <- collect hOut "t1"
+      exitOf frames `shouldBe` 0
+
 -- Helpers ---------------------------------------------------------------
 
 withRunner :: BackendCapabilities -> (FilePath -> Handle -> Handle -> IO a) -> IO a
@@ -92,10 +107,12 @@ withRunner caps action = do
           , wrReadOnly = []
           , wrNetwork = NetworkOff
           , wrLimits = defaultResourceLimits
+          , wrDenyReadDirs = Nothing
+          , wrDenyReadFiles = Nothing
           })
         (ExclusivePath (AbsolutePath ws))
   _ <- forkIO $
-    runRunner (RunnerConfig hIn hOutW Nothing) Linux.backend caps scope
+    runRunner (RunnerConfig hIn hOutW Nothing []) Linux.backend caps scope
       `finally` putMVar done ()
   let shutdown = do
         _ <- try (writeFrame hInW Shutdown) :: IO (Either SomeException ())
@@ -122,7 +139,11 @@ requireBwrap = do
     Left (SandboxUnavailable _ msg) ->
       pendingWith ("bwrap unavailable: " ++ show msg) >> fail "unreachable"
     Left e -> expectationFailure (show e) >> fail "unreachable"
-    Right c -> pure c
+    Right c
+      | bcEnforcement c == Full -> pure c
+      | otherwise ->
+          pendingWith ("bwrap cannot create a namespace here: "
+                        ++ show (bcEnforcement c)) >> fail "unreachable"
 
 isReady :: Either ProtocolError Frame -> Bool
 isReady (Right Ready{}) = True
@@ -148,6 +169,21 @@ collect handle cid = go []
         Right f@(Exit i _ _) | i == cid -> pure (reverse (f : acc))
         Right _ -> go acc
         Left err -> fail ("protocol error: " ++ show err)
+
+-- | 收 stdout/stderr 直到匹配（交互式用例：Exit 之前就要看到输出）。
+collectOutputUntil :: Handle -> Text -> (Text -> Bool) -> IO Text
+collectOutputUntil handle cid done = go ""
+  where
+    go acc = do
+      frame <- readFrame handle
+      case frame of
+        Right (Stdout i d) | i == cid -> step (acc <> d)
+        Right (Stderr i d) | i == cid -> step (acc <> d)
+        Right (Exit _ _ _) -> pure acc
+        Right _ -> go acc
+        Left err -> fail ("protocol error: " ++ show err)
+      where
+        step acc' = if done acc' then pure acc' else go acc'
 
 stdoutOf :: [Frame] -> Text
 stdoutOf frames = T.concat [d | Stdout _ d <- frames]

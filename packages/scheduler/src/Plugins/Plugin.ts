@@ -13,6 +13,8 @@
 //     listeners with release handles (unwound on unregister, like `on`).
 
 import { ServiceRegistry } from './Registry.js';
+import { registerTool as registerExternalTool, unregisterTool } from '../Server/toolRegistry.js';
+import { toolSpecFrom, type ToolDefinition } from '../Server/toolSchema.js';
 
 /** Release handle returned by ctx.* subscriptions. */
 export type Release = () => void;
@@ -46,6 +48,21 @@ export interface PluginContext {
   serial(event: string, handler: SerialHandler): Release;
   /** Resolve a service declared in `inject` (throws when missing). */
   service(name: string): unknown;
+  /**
+   * Register a model-facing tool.
+   *
+   * This is what separates an **external** plugin from a builtin: builtins are
+   * fixed at import time and ship with the harness, while a plugin registered
+   * here appears at runtime, disappears on `deactivate()`, and is recorded with
+   * `origin: 'external'` so diagnostics can tell them apart.
+   *
+   * Accepts DSH's shape directly (`ctx.registerTool(defineTool({ ... }))`); the
+   * plane defaults to `agent` because that is what a preset mounts.
+   */
+  registerTool(
+    def: ToolDefinition,
+    opts?: { plane?: 'host' | 'agent'; presets?: string[] },
+  ): Release;
 }
 
 /** Minimal event bus shape used by the plugin manager. */
@@ -56,11 +73,23 @@ export interface EventBus {
 
 export interface Plugin {
   name: string;
-  version: string;
-  description: string;
+  /** Optional: DSH-shaped tool plugins carry neither version nor description. */
+  version?: string;
+  description?: string;
 
   /** Declared service dependencies (must all be registered beforehand). */
   inject?: string[];
+
+  /**
+   * DSH's `apply(ctx)` — the form every `dsh-tool-*` package uses:
+   *
+   * ```ts
+   * export const name = 'tool-working-directory'
+   * export const inject = ['tools', 'workingDirectory']
+   * export function apply(ctx) { ctx.tools.register(defineTool({...})) }
+   * ```
+   */
+  apply?(ctx: PluginContext): void | Promise<void>;
 
   // Cordis-style lifecycle (Phase 3 C1)
   activate?(ctx: PluginContext): void | Promise<void>;
@@ -168,9 +197,33 @@ export class PluginManager {
         return off;
       },
       service: (name) => this.services.require(name),
+      registerTool: (def, opts) => {
+        // External tools are tagged so diagnostics can separate them from the
+        // builtins the harness ships. `deactivate()` must undo this, so the
+        // release handle joins the same list `ctx.on` appends to.
+        registerExternalTool(toolSpecFrom(def, {
+          plane: opts?.plane ?? 'agent',
+          origin: 'external',
+          ...(opts?.presets === undefined ? {} : { presets: opts.presets }),
+        }));
+        const release: Release = () => unregisterTool(def.name);
+        active.push(release);
+        return release;
+      },
     };
-    if (plugin.activate) {
-      await plugin.activate(ctx);
+    // DSH exposes injected services as **properties** (`ctx.workingDirectory`),
+    // not only through `ctx.service('…')`. Mount them before activation so a
+    // `dsh-tool-*` shaped plugin runs unchanged.
+    const ctxWithServices = ctx as PluginContext & Record<string, unknown>;
+    for (const dep of plugin.inject ?? []) {
+      ctxWithServices[dep] = this.services.require(dep);
+    }
+
+    // DSH's `apply(ctx)` is the same lifecycle step as `activate`; accept either
+    // form so a `dsh-tool-*` shaped module loads unchanged.
+    const activate = plugin.activate ?? plugin.apply;
+    if (activate) {
+      await activate.call(plugin, ctx);
     }
 
     this.plugins.set(plugin.name, plugin);

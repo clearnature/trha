@@ -6,11 +6,12 @@
 // NDJSON v1. A runner failure is a failed tool call — never a silent fallback.
 
 import { spawn, execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { PROTOCOL_VERSION, decodeFrame, encodeFrame, type ExecFrame, type Frame, type HelloFrame } from './sandboxProtocol.js';
+import { PROTOCOL_VERSION, decodeFrame, encodeFrame, type ExecFrame, type Frame, type HelloFrame, type StdinFrame } from './sandboxProtocol.js';
 
 export type SandboxIsolation = 'shared' | 'process' | 'strong' | 'remote';
 
@@ -227,6 +228,20 @@ function workspaceFor(scope: SandboxScope, request: SandboxRequest): string {
 }
 
 /** Scope used by the scheduler when only cwd/policy env vars are available. */
+/**
+ * True when the sandbox is **on** and its network policy denies egress.
+ *
+ * The bwrap backend enforces this for child processes (`--unshare-net`), but
+ * built-in tools such as `web_fetch` run `fetch` inside the scheduler process
+ * and would otherwise ignore the policy entirely — an agent could answer
+ * "network: off" with a plain HTTP GET.
+ */
+export function sandboxBlocksNetwork(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!sandboxEnabled(env)) return false;
+  const spec = parseNetworkSpec(cachedConfig?.network ?? env.TRHA_SANDBOX_NETWORK ?? 'off');
+  return spec.kind === 'off';
+}
+
 export function defaultSandboxScope(
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -325,15 +340,178 @@ export async function sandboxedSpawn(
   ];
   const child = spawn(runner, args, { stdio: ['pipe', 'pipe', 'pipe'] });
   // Preserve the caller's PATH so host toolchains (ghcup/cabal/fnm) remain
-  // reachable; the runner still filters credentials and sets HOME.
+  // reachable; the runner still filters credentials and sets HOME.  HOME is
+  // passed as a *hint only*: the renderer turns it into XDG_STATE_HOME etc.
+  // (host package store, read-only) before HOME is pointed at scratch.
   const withEnv: SandboxRequest = {
     ...request,
     env: {
       PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+      HOME: process.env.HOME ?? os.homedir(),
       ...request.env,
     },
   };
   return exchange(child, scope, withEnv);
+}
+
+/** A long-lived sandboxed child (persistent shell) driven by the caller. */
+export type SandboxSession = {
+  /** Exec id on the wire; also the audit correlation id. */
+  id: string;
+  /** Feed bytes to the child's stdin. */
+  write(data: string): void;
+  /** Terminate the runner (and with it the sandboxed child). */
+  kill(): void;
+  /** Every stdout/stderr chunk, plus rendered deny frames. */
+  onData(cb: (chunk: string) => void): void;
+  /** Fires once, on child exit or runner failure. */
+  onExit(cb: (code: number) => void): void;
+};
+
+/**
+ * Start a long-lived child inside the sandbox and keep it interactive.
+ *
+ * `sandboxedSpawn` resolves once the exit frame arrives; this variant hands
+ * back a session as soon as the runner says `ready`, which is what a
+ * persistent shell (`terminal_open`) needs. The runner waits for its child on
+ * a separate thread, so stdin frames keep flowing while it runs.
+ */
+export async function sandboxedInteractive(
+  scope: SandboxScope,
+  request: SandboxRequest,
+): Promise<SandboxSession> {
+  if (!sandboxEnabled()) {
+    throw new SandboxUnavailableError(
+      'disabled',
+      'TRHA_SANDBOX is off; refusing to run through the sandbox seam',
+    );
+  }
+  if (scope.policy.kind === 'danger-full-access') {
+    throw new SandboxUnavailableError('policy', 'danger-full-access must not be rendered');
+  }
+  const runner = process.env.TRHA_SANDBOX_RUNNER ?? 'trha';
+  mkdirSync(scope.scratch, { recursive: true, mode: 0o700 });
+  const args = [
+    'sandbox', 'runner',
+    '--workspace', workspaceFor(scope, request),
+    '--scratch', scope.scratch,
+    '--policy', policyName(scope.policy),
+    '--network', networkSpecText(scope.policy),
+    ...(request.experiment ? ['--experiment', request.experiment] : []),
+  ];
+  const child = spawn(runner, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+  const id = 'i1';
+  const dataHandlers: Array<(chunk: string) => void> = [];
+  const exitHandlers: Array<(code: number) => void> = [];
+  let exited = false;
+  const emit = (chunk: string): void => {
+    for (const cb of dataHandlers) cb(chunk);
+  };
+  const finish = (code: number): void => {
+    if (exited) return;
+    exited = true;
+    for (const cb of exitHandlers) cb(code);
+  };
+  if (!child.stdin || !child.stdout || !child.stderr) {
+    child.kill();
+    throw new SandboxUnavailableError('runner', 'runner has no stdio pipes');
+  }
+  const stdin = child.stdin;
+  const envPairs = Object.entries({
+    PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+    HOME: process.env.HOME ?? os.homedir(),
+    ...request.env,
+  }).map(([name, value]) => ({ name, value }));
+
+  const ready = new Promise<void>((resolve, reject) => {
+    let buffer = '';
+    child.stdout!.setEncoding('utf8');
+    child.stdout!.on('data', (chunk: string) => {
+      buffer += chunk;
+      for (;;) {
+        const nl = buffer.indexOf('\n');
+        if (nl < 0) return;
+        const line = buffer.slice(0, nl);
+        buffer = buffer.slice(nl + 1);
+        if (!line.trim()) continue;
+        let frame: Frame;
+        try {
+          frame = decodeFrame(line);
+        } catch (e) {
+          reject(e);
+          child.kill();
+          return;
+        }
+        switch (frame.op) {
+          case 'ready': {
+            const execFrame = {
+              v: PROTOCOL_VERSION,
+              op: 'exec',
+              id,
+              argv: request.argv,
+              cwd: request.cwd,
+              ...(envPairs.length ? { env: envPairs } : {}),
+              ...(request.timeoutMs !== undefined ? { timeoutMs: request.timeoutMs } : {}),
+            } as ExecFrame;
+            stdin.write(encodeFrame(execFrame));
+            resolve();
+            break;
+          }
+          case 'stdout':
+          case 'stderr':
+            emit(frame.data);
+            break;
+          case 'deny':
+            emit(`\n[sandbox denied ${frame.kind}: ${frame.target}]\n`);
+            break;
+          case 'exit':
+            finish(frame.code);
+            break;
+          case 'error':
+            emit(`ERROR: ${frame.message}\n`);
+            finish(-1);
+            break;
+          default:
+            break;
+        }
+      }
+    });
+  });
+  child.stderr.setEncoding('utf8');
+  // Runner diagnostics only: the child's own stderr arrives as frames.
+  child.stderr.on('data', () => {});
+  child.on('error', () => finish(-1));
+  child.on('exit', () => finish(-1));
+
+  const helloFrame: HelloFrame = {
+    v: PROTOCOL_VERSION,
+    op: 'hello',
+    scope: scope.id,
+    ...(scope.parent !== undefined ? { parent: scope.parent } : {}),
+    policy: policyName(scope.policy),
+    isolation: scope.isolation,
+  };
+  stdin.write(encodeFrame(helloFrame));
+  await ready;
+
+  return {
+    id,
+    write(data: string): void {
+      if (exited) return;
+      stdin.write(encodeFrame({ v: PROTOCOL_VERSION, op: 'stdin', id, data } as StdinFrame));
+    },
+    kill(): void {
+      child.kill('SIGTERM');
+      const t = setTimeout(() => child.kill('SIGKILL'), 1000);
+      if (typeof t.unref === 'function') t.unref();
+    },
+    onData(cb: (chunk: string) => void): void {
+      dataHandlers.push(cb);
+    },
+    onExit(cb: (code: number) => void): void {
+      exitHandlers.push(cb);
+    },
+  };
 }
 
 function exchange(
@@ -521,6 +699,12 @@ export interface ExperimentRunOptions {
   onStart?: (task: ExperimentTask) => void | Promise<void>;
   /** Remove `work/` after every attempt (default true); `out/` is kept. */
   cleanupWork?: boolean;
+  /** KVCache makes cold/warm runs an order of magnitude apart (T2.8): record it. */
+  cacheState?: 'cold' | 'warm';
+  /** A shared user id lets one variant warm another's cache: record it. */
+  userId?: string;
+  /** Toolchain entries (interpreter/compiler paths and versions) to record. */
+  toolchain?: Record<string, string>;
 }
 
 export interface ExperimentOutcome {
@@ -609,18 +793,66 @@ export async function runExperiment(
     Array.from({ length: Math.max(1, batch.concurrency) }, () => worker()),
   );
 
+  // T2.8 field set, kept in sync with Haskell `reproFileJson` (Experiment.hs):
+  // batch/cacheState/userId/baseline/root/policyHash/toolchain/variants/
+  // seeds/concurrency/results. policyHash hashes the *canonical* JSON form of
+  // the effective task policy — same key order as the Haskell Generic encoder
+  // (constructor index + fields in declaration order) so both sides agree.
+  const policyHash = computePolicyHash(batch);
   const reproPath = path.join(batch.root, 'repro.json');
   writeFileSync(reproPath, JSON.stringify({
     batch: batch.id,
+    cacheState: options.cacheState ?? null,
+    userId: options.userId ?? null,
     baseline: batch.baseline,
-    variants: batch.variants.map(v => ({
-      id: v.id,
-      network: v.network ? 'on' : 'off',
-    })),
+    root: batch.root,
+    policyHash,
+    toolchain: options.toolchain ?? {},
+    variants: batch.variants.map(v => ({ id: v.id, network: v.network ? 'on' : 'off' })),
     seeds: batch.seeds,
     concurrency: Math.max(1, batch.concurrency),
-    toolchain: {},
+    results: results.map(r => ({
+      variant: r.variant, seed: r.seed, ok: r.ok, attempt: r.attempt,
+    })),
   }, null, 2));
 
   return { batchId: batch.id, results, reproPath };
+}
+
+/**
+ * SHA-512 (truncated to 32 hex chars) over the canonical policy text,
+ * byte-for-byte mirroring `Infrastructure.Sandbox.Experiment.policyHashJson`:
+ *
+ *   workspace-write|"<root>"|"<scratch>"|[<ro>...]|off|pids,mem,wall|-|-
+ *
+ * The canonical form is deliberately NOT a JSON dump: aeson's Generic
+ * encoding sorts record fields alphabetically and would make the hash depend
+ * on field *names*. An explicit pipe-separated rendering is stable in both
+ * languages; both sides pin the exact string and its digest in their tests,
+ * so drift turns one suite red. `batchScopes` always renders workspace-write
+ * with NetworkOff and the shipped limits/deny (no override infra yet), which
+ * is also what the Haskell batchRootScope/variantScope build.
+ */
+const SHIPPED_LIMITS = '0,0,600000';
+
+export function policyCanonicalText(root: string, baseline: string): string {
+  const q = (p: string): string => JSON.stringify(p);
+  const list = (xs: string[]): string => `[${xs.map(q).join(',')}]`;
+  return [
+    'workspace-write',
+    q(root),
+    q(path.join(root, '.batch-work')),
+    list([baseline]),
+    'off',
+    SHIPPED_LIMITS,
+    '-',   // wrDenyReadDirs unset → shipped defaults
+    '-',   // wrDenyReadFiles unset → shipped defaults
+  ].join('|');
+}
+
+export function computePolicyHash(batch: ExperimentBatch): string {
+  return createHash('sha512')
+    .update(policyCanonicalText(batch.root, batch.baseline))
+    .digest('hex')
+    .slice(0, 32);
 }

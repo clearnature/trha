@@ -81,6 +81,7 @@ data Command
   | TranscriptView
   | Retry
   | Btw Text
+  | Workspace (Maybe Text)
   | Recap
   | Queue (Maybe Text)
   | Steer Text
@@ -192,6 +193,7 @@ slashRegistry =
   , SlashCommand "/transcript" False True "Replay the current session transcript"
   , SlashCommand "/retry"    False True  "Retry the last turn exactly"
   , SlashCommand "/btw"      True  True  "Ask a side question without changing the conversation"
+  , SlashCommand "/workspace" True True  "Show or change the session workspace (human-only; agents cannot reach it)"
   , SlashCommand "/recap"    False True  "Summarize the conversation so far"
   , SlashCommand "/queue"    True  True  "Queue a message for after this turn (usage: /queue [message])"
   , SlashCommand "/steer"    True  True  "Steer the running turn (usage: /steer <prompt>)"
@@ -268,7 +270,7 @@ groupMembers =
                , "/goal", "/todo", "/tree", "/agents", "/graph", "/workflow"
                , "/loop", "/queue", "/steer" ])
   , (GModel,   [ "/model", "/models", "/provider", "/switch", "/fav", "/preset" ])
-  , (GContext, [ "/context", "/usage", "/memory", "/remember", "/btw"
+  , (GContext, [ "/context", "/usage", "/memory", "/remember", "/btw", "/workspace"
                , "/recap", "/retry", "/diff" ])
   , (GTools,   [ "/mcp", "/lsp", "/hooks", "/plugins", "/skills", "/doctor"
                , "/currency" ])
@@ -346,6 +348,10 @@ parseCommandBase input = case T.words (T.strip input) of
   ("/transcript" : _) -> TranscriptView
   ("/retry" : _) -> Retry
   ("/btw" : question) -> Btw (T.unwords question)
+  ("/workspace" : args) ->
+    Workspace (case filter (not . T.null) args of
+                 [] -> Nothing
+                 ws -> Just (T.unwords ws))
   ("/recap" : _) -> Recap
   ("/queue" : []) -> Queue Nothing
   ("/queue" : text) -> Queue (Just (T.unwords text))
