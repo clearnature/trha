@@ -17,8 +17,12 @@ module Infrastructure.Platform.FileMode
   ) where
 
 #ifndef mingw32_HOST_OS
-import System.Posix.Files
-  ( FileMode, ownerReadMode, ownerWriteMode, setFileMode, unionFileModes )
+-- FileMode 类型来自 System.Posix.Types（CMode 的别名）；System.Posix.Files
+-- 只导出 fileMode / setFileMode 之类的函数，不导出该类型名本身。
+-- 这条 import 只在 Linux/macOS 编译，Windows 本地构建看不到它——
+-- 正是「CI 只跑根包」时期漏掉的错误。
+import System.Posix.Files (ownerReadMode, ownerWriteMode, setFileMode, unionFileModes)
+import System.Posix.Types (FileMode)
 #else
 import Data.Bits ((.|.))
 import Data.Word (Word32)
