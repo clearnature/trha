@@ -185,10 +185,19 @@ jobs:
         sparse-checkout: |
           hs/sov-math
 
-    - uses: haskell-actions/setup@v2
-      with:
-        ghc-version: '9.14.1'
-        cabal-version: '3.16.1.0'
+    # 与 haskell job 保持同一种安装方式（ghcup 脚本）。
+    # 此前这里用 haskell-actions/setup@v2，在 windows-latest 上装 GHC 9.14.1
+    # 直接失败；haskell job 早已改成 ghcup 脚本，只有这里还留着 setup@v2。
+    - name: Install ghcup-hs + GHC 9.14.1 + cabal 3.16.1.0
+      shell: bash
+      run: |
+        curl -sSLo "$RUNNER_TEMP/ghcup.exe" https://github.com/haskell/ghcup-hs/releases/download/v0.2.6.2/x86_64-mingw64-ghcup-0.2.6.2.exe
+        "$RUNNER_TEMP/ghcup.exe" --version
+        "$RUNNER_TEMP/ghcup.exe" install ghc 9.14.1
+        "$RUNNER_TEMP/ghcup.exe" install cabal 3.16.1.0
+        "$RUNNER_TEMP/ghcup.exe" set ghc 9.14.1
+        "$RUNNER_TEMP/ghcup.exe" set cabal 3.16.1.0
+        echo "$HOME/.ghcup/bin" >> "$GITHUB_PATH"
 
     # WebGPU 组件需要 libwgpu_native 所在目录参与链接。与 haskell job 同样的做法。
     - name: Provide wgpu-native lib dir
