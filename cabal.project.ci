@@ -1,8 +1,14 @@
--- Minimal project for the macOS sandbox CI job.
--- The root cabal.project references the local sov-math checkout (kernel math,
--- a sibling repository) and an absolute builddir; neither exists on a GitHub
--- runner.  The workflow checks sov-math out into .ci/math and only builds the
--- trha-infra library plus its sandbox test suite.
+-- CI 项目文件。
+--
+-- GitHub runner 上没有 sibling 的 math 仓库，也没有本机的 builddir 与绝对路径，
+-- 所以这里只列 CI 需要的包；sov-math 由 workflow 检出到 .ci/math。
+--
+-- 2026-10-31 扩展：原先只含「根包 + sov-math」，于是 trha-test（254 例）、
+-- trha-cli-test、trha-webgpu-test 从未在 CI 里跑过——「本地红、CI 绿」的假象
+-- 就是这么来的。现在把 CLI 与 sdk 一并纳入，让 CI 的覆盖范围与本地
+-- cabal.project 对齐。
 packages:
   .
+  packages/app/CLI
+  packages/sdk
   .ci/math/hs/sov-math
