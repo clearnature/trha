@@ -22,7 +22,7 @@ import Control.Monad (forM)
 import Data.Maybe (catMaybes)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist)
 import System.FilePath ((</>))
-import System.Posix.Files (setFileMode)
+import Infrastructure.Platform.FileMode (setFileMode)
 
 -- | Standard subdirectories of @~/.trha@, in display order.
 --

@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -25,7 +26,9 @@ import System.Console.Haskeline (defaultSettings, getPassword, runInputT)
 import System.Directory (doesFileExist)
 import System.Exit (ExitCode(..))
 import System.IO (hFlush, hIsTerminalDevice, stdin, stdout)
+#ifndef mingw32_HOST_OS
 import System.Posix.Files (FileStatus, fileMode, getFileStatus)
+#endif
 import System.Process (readProcessWithExitCode)
 
 import API.Providers (loadKeys, loadProviderStore, providerFilePath, saveKeys, saveProviderStore)
@@ -182,12 +185,20 @@ runLocalChecks lang cfg = do
         (fromMaybe (tr lang "not found") gitText)
     ]
 
+#ifndef mingw32_HOST_OS
 modeIs0700 :: FilePath -> IO Bool
 modeIs0700 dir = do
   r <- try (getFileStatus dir) :: IO (Either IOException FileStatus)
   pure $ case r of
     Right st -> (fileMode st .&. 0o777) == 0o700
     Left _   -> False
+#else
+-- Windows 没有 POSIX mode：目录权限由 ACL 管理
+-- （见 Infrastructure.Sandbox.Win32.Acl），没有可校验的等价物，
+-- 因此这里不阻断安装流程。
+modeIs0700 :: FilePath -> IO Bool
+modeIs0700 _ = pure True
+#endif
 
 gitVersion :: IO (Maybe Text)
 gitVersion = do

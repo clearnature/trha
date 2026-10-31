@@ -54,7 +54,12 @@ import System.Directory (createDirectoryIfMissing, doesFileExist, getHomeDirecto
 import System.Environment (lookupEnv)
 import System.FilePath (takeDirectory, (</>))
 import System.Random (randomIO)
+#ifndef mingw32_HOST_OS
 import System.Posix.Process (getProcessID)
+#else
+-- Windows 没有 System.Posix.Process；System.Process.getCurrentPid 跨平台。
+import System.Process (Pid, getCurrentPid)
+#endif
 
 #ifndef mingw32_HOST_OS
 import System.Posix.Files (ownerReadMode, ownerWriteMode, setFileMode, unionFileModes)
@@ -294,3 +299,9 @@ removeKernelRuntime = do
             renameFile tmp p
       _ -> pure ()
     _ -> pure ()
+
+#ifdef mingw32_HOST_OS
+-- Windows 没有 System.Posix.Process；用跨平台的 getCurrentPid 顶替。
+getProcessID :: IO Pid
+getProcessID = getCurrentPid
+#endif

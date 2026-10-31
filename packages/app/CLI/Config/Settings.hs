@@ -51,7 +51,7 @@ import System.Directory
     , renameFile
     )
 import System.FilePath ((</>))
-import System.Posix.Files (setFileMode)
+import Infrastructure.Platform.FileMode (setFileMode)
 
 --------------------------------------------------------------------------------
 -- Public API

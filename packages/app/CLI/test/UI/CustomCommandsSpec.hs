@@ -9,7 +9,7 @@ import qualified Data.Text.IO as TIO
 import System.Directory
     ( createDirectoryIfMissing, getTemporaryDirectory, removePathForcibly )
 import System.FilePath ((</>))
-import System.Posix.Process (getProcessID)
+import System.Process (getCurrentPid)
 import Test.Hspec
 
 import UI.Commands.Registry (Command(..), parseCommandWith)
@@ -69,7 +69,7 @@ spec = do
 withDirs :: ([FilePath] -> IO a) -> IO a
 withDirs act = do
   tmp <- getTemporaryDirectory
-  pid <- getProcessID
+  pid <- getCurrentPid
   let base = tmp </> ("trha-customcmds-spec-" ++ show pid)
       dirs = [base </> "project", base </> "home"]
   ignore (removePathForcibly base)

@@ -13,8 +13,7 @@ module Core.Fs
 
 import Control.Exception (IOException, try)
 import Control.Monad (void)
-import System.Posix.Files (setFileMode)
-import System.Posix.Types (FileMode)
+import Infrastructure.Platform.FileMode (FileMode, setFileMode)
 
 -- | @chmod@ that tolerates a filesystem which refuses the change.
 --

@@ -267,7 +267,9 @@ static int32_t rowdot_table(const int32_t *w, const int32_t *x, int64_t n,
  * 输入/输出契约与 'trha_gf27_matmul' 完全一致；速度应显著优于 gather 版。
  * 数学 = 加法群×乘法群联合周期：乘查 mulTable（Z/26 周期），加查 addTable（(Z/3)³）。
  * 行间并行（OpenMP）：每行点积彼此独立，rows ≥ 几百时接近线性加速。 */
+#ifdef _OPENMP
 #include <omp.h>
+#endif
 
 int trha_gf27_matmul_table(int32_t *out,
                            const int32_t *w,

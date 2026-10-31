@@ -9,7 +9,7 @@ import qualified Data.Text.IO as TIO
 import System.Directory
     ( createDirectoryIfMissing, getTemporaryDirectory, removePathForcibly )
 import System.FilePath ((</>))
-import System.Posix.Process (getProcessID)
+import System.Process (getCurrentPid)
 import Test.Hspec
 
 import Core.Memory (memoryFiles)
@@ -35,7 +35,7 @@ spec = describe "memoryFiles" $ do
 withScratch :: (FilePath -> IO a) -> IO a
 withScratch act = do
   tmp <- getTemporaryDirectory
-  pid <- getProcessID
+  pid <- getCurrentPid
   let dir = tmp </> ("trha-memory-spec-" ++ show pid)
   ignore (removePathForcibly dir)
   createDirectoryIfMissing True dir

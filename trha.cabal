@@ -77,8 +77,13 @@ library trha-llm
                   , network
   default-language: Haskell2010
   c-sources:        src/llm/cbits/gf27_avx2.c
-  cc-options:       -O2 -fopenmp
-  ld-options:       -fopenmp
+  -- Windows 上 GHC 自带 clang/mingw 既没有 omp.h 也没有 libomp 运行时，
+  -- 因此只在非 Windows 启用 OpenMP；C 侧已用 #ifdef _OPENMP 包住 include。
+  if os(windows)
+    cc-options:     -O2
+  else
+    cc-options:     -O2 -fopenmp
+    ld-options:     -fopenmp
 
 -- API Server (OpenAI/Anthropic/Responses protocols)
 -- visibility: public so the standalone CLI package (packages/app/CLI) can
@@ -105,6 +110,7 @@ library trha-api
   else
     extra-lib-dirs-static: 3rdparty/wgpu-native/lib
   build-depends:    base ^>=4.22
+                  , process
                   , trha:trha-core
                   , trha:trha-llm
                   , trha:trha-infra
@@ -138,6 +144,10 @@ library trha-api
 -- depend on it via `trha:trha-infra` for `trha sandbox`.
 library trha-infra
   visibility:        public
+  -- Windows 侧 AppContainer 需要 userenv.dll
+  -- （DeriveAppContainerSidFromAppContainerName / CreateAppContainerProfile）。
+  if os(windows)
+    extra-libraries: userenv
   exposed-modules:  
     Core.HTTPProxy
     Infrastructure.Storage.JSON
@@ -163,6 +173,7 @@ library trha-infra
     Infrastructure.Sandbox.Win32.Process
     Infrastructure.Sandbox.Win32.AppContainer
     Infrastructure.Sandbox.Win32.Path
+    Infrastructure.Platform.FileMode
     Infrastructure.Sandbox.Protocol
     Infrastructure.Sandbox.Runner
     Infrastructure.Sandbox.Config

@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Config.HomeSpec (spec) where
@@ -12,8 +13,10 @@ import System.Directory
     ( createDirectoryIfMissing, doesDirectoryExist, getTemporaryDirectory
     , removeDirectoryRecursive )
 import System.FilePath ((</>))
+#ifndef mingw32_HOST_OS
 import System.Posix.Files (fileMode, getFileStatus)
-import System.Posix.Process (getProcessID)
+#endif
+import System.Process (getCurrentPid)
 
 spec :: Spec
 spec = do
@@ -37,14 +40,16 @@ spec = do
         forM_ homeLayout $ \sub -> do
           let dir = root </> sub
           doesDirectoryExist dir `shouldReturn` True
+#ifndef mingw32_HOST_OS
           mode <- fileMode <$> getFileStatus dir
           (mode .&. 0o777) `shouldBe` 0o700
+#endif
 
 -- | Private scratch directory for this process, removed afterwards.
 withScratch :: (FilePath -> IO a) -> IO a
 withScratch act = do
   tmp <- getTemporaryDirectory
-  pid <- getProcessID
+  pid <- getCurrentPid
   let root = tmp </> ("trha-home-spec-" ++ show pid)
   ignore (removeDirectoryRecursive root)
   createDirectoryIfMissing True root
