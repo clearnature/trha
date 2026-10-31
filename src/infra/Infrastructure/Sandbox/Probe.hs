@@ -8,6 +8,7 @@
 module Infrastructure.Sandbox.Probe
   ( Probe(..)
   , ProbeExpect(..)
+  , ProbeResult(..)
   , defaultProbes
   , macProbes
   , windowsProbes
@@ -103,8 +104,20 @@ windowsProbes =
 -- 'readProcessWithExitCode' **不经过 shell**：直接传 @echo ok>file@ 只会把
 -- @>@ 当成普通参数；而 @cmd /c@ 后面的参数会被 cmd 拼回一条命令行，重定向与
 -- 内建命令因此才生效。
+-- | 把「一条 shell 命令」包装成 argv 前缀。
+--
+-- POSIX 走 @bash -lc@；Windows 走 @cmd /s /c@。
+--
+-- Windows 侧的两个要点：
+--
+--   * 必须用**完整路径**：AppContainer 的环境块是空的，没有 @PATH@，裸 @cmd@
+--     找不到可执行文件。
+--   * 必须带 @/s@：'renderCommandLine' 会给含空格的参数加双引号，而
+--     @cmd /c "echo x> f"@ 会把整串引号内容当成**可执行文件名**（实测报
+--     「不是内部或外部命令」）。@/s@ 让 cmd 先剥掉最外层引号再按普通规则
+--     解析，重定向与内建命令因此才生效。
 shellWrap :: Platform -> Text -> [Text]
-shellWrap Windows cmd = ["cmd", "/c", cmd]
+shellWrap Windows cmd = ["C:\\Windows\\System32\\cmd.exe", "/s", "/c", cmd]
 shellWrap _ cmd = ["bash", "-lc", cmd]
 
 runProbe :: Backend -> BackendCapabilities -> Scope -> Probe -> IO ProbeResult

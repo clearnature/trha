@@ -1,0 +1,9 @@
+#!/bin/sh
+# 提交即推送：未推送的提交等于没写。
+# 立此规矩的直接原因（2026-10-31）：trha 目录两次被整体清空（连 .git 一起），
+# 工作区里未推送的约 900 行 Haskell 全部丢失，只能按设计重写。
+if git push origin HEAD >/dev/null 2>&1; then
+  echo "  [auto-push] ok"
+else
+  echo "  [auto-push] 失败，请手动 git push"
+fi
