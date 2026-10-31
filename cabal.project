@@ -5,7 +5,7 @@
 --
 -- 2026-10-27：构建产物放在隐藏目录 `.dist-newstyle`（不是源码，不进 git）。
 -- 若本机已有旧的 `dist-newstyle`，先 `mv dist-newstyle .dist-newstyle` 再构建。
-builddir: /home/yanli/work/trha/.dist-newstyle
+builddir: .dist-newstyle
 packages:
   .
   packages/app/CLI
@@ -15,5 +15,6 @@ packages:
   packages/sdk
   -- 2026-10-26 接线（A 方案）：内核载体 C[A₄] + Plancherel 内积的唯一实现在
   -- sov-math（零浮点、强类型、170 项测试）。**不 vendor、不重写**——否则就是
-  -- 「第二个实现无等价证明」。此处是本地路径依赖；若 sov-math 迁移目录，只改这一行。
-  /home/yanli/work/math/hs/sov-math
+  -- 「第二个实现无等价证明」。此处是相对路径依赖（trha 与 math 为兄弟目录）；
+  -- 若 sov-math 迁移目录，只改这一行。
+  ../math/hs/sov-math

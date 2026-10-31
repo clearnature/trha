@@ -122,7 +122,8 @@ library trha-api
                   , directory
                   , filepath
                   , random
-                  , unix
+  if !os(windows)
+    build-depends: unix
   default-language: Haskell2010
 
 -- Infrastructure Layer
@@ -178,7 +179,8 @@ library trha-infra
                   , http-types
                   , yaml
                   , time
-                  , unix
+  if !os(windows)
+    build-depends: unix
   default-language: Haskell2010
 
 -- WebGPU backend —— 真实绑定 wgpu-native 的 C API
@@ -305,7 +307,8 @@ executable trha
                   , time
                   , haskeline >= 0.8
                   , yaml
-                  , unix
+  if !os(windows)
+    build-depends: unix
   default-language: Haskell2010
 
 -- Test Suite
@@ -324,7 +327,6 @@ test-suite trha-sandbox-test
   build-depends:    base ^>=4.22
                   , directory
                   , filepath
-                  , unix
                   , process
                   , hspec
                   , QuickCheck
@@ -333,6 +335,8 @@ test-suite trha-sandbox-test
                   , text
                   , containers
                   , trha:trha-infra
+  if !os(windows)
+    build-depends: unix
   -- timeout-based runner tests need the threaded RTS (same reason as
   -- trha-test): without it the 200 ms deadline never fires.
   ghc-options:      -threaded
@@ -363,7 +367,6 @@ test-suite trha-test
   build-depends:    base ^>=4.22
                   , directory
                   , filepath
-                  , unix
                   , process
                   , trha:trha-core
                   , sov-math
@@ -386,6 +389,8 @@ test-suite trha-test
                   , wai
                   , http-types
                   , http-client
+  if !os(windows)
+    build-depends: unix
   -- -threaded 是必需的：warp 的 testWithApplication 要把 server 跑在另一个
   -- capability 上，非 threaded RTS 下请求会以 NoResponseDataReceived 失败。
   ghc-options:      -rtsopts -threaded
