@@ -209,7 +209,20 @@ jobs:
         EOF
 
     - name: Build trha-infra
-      run: cabal build --project-file=cabal.project.ci trha:trha-infra
+      shell: bash
+      run: |
+        set -o pipefail
+        cabal build --project-file=cabal.project.ci trha:trha-infra 2>&1 | tee win-build.log
+
+    # 与 haskell job 同样的出口：job 日志走 Azure Blob（本机代理连不上），
+    # 而 artifact 走 api.github.com（可下载），所以失败时把日志存成 artifact。
+    - name: Upload Windows build log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-build-output
+        path: win-build.log
+        if-no-files-found: warn
 
     - name: Run AppContainer isolation probes
       shell: bash
