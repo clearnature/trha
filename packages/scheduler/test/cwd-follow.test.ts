@@ -91,7 +91,7 @@ describe('working_directory applies to the other tools', () => {
     const body = (await step.json()) as { messages: Array<{ role: string; content: string }> };
     const toolResults = body.messages.filter(m => m.role === 'tool').map(m => m.content);
 
-    expect(toolResults[0]).toMatch(/cwd is now .*sub/);
+    expect(toolResults[0]).toBe(path.join(realpathOr(dir), 'sub'));
     // the file inside sub/, not the one at the root with the same name
     expect(toolResults[1]).toContain('inner-file');
     expect(toolResults[1]).not.toContain('outer-file');
