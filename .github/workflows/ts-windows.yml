@@ -45,6 +45,7 @@ jobs:
       with:
         name: ts-windows-node_modules
         path: packages/scheduler/node_modules
+        include-hidden-files: true
         retention-days: 1
 
   ts-windows-vitest:

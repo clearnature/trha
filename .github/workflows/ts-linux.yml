@@ -47,6 +47,7 @@ jobs:
       with:
         name: ts-linux-node_modules
         path: packages/scheduler/node_modules
+        include-hidden-files: true
         retention-days: 1
 
   ts-linux-typecheck:
