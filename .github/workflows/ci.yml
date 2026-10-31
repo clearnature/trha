@@ -93,7 +93,20 @@ jobs:
     # 刻意用 `pendingWith` 兜底（见 test-webgpu/Spec.hs 头部注释），所以 runner 无 GPU 也应绿。
     # ⚠️ 那条兜底分支**本机从未走到过**（本机有 GPU），首次 CI 请确认它确实是 pending 而非崩溃。
     - name: Test
-      run: cabal test --project-file=cabal.project.ci all
+      run: |
+        set -o pipefail
+        cabal test --project-file=cabal.project.ci all 2>&1 | tee test-output.log
+
+    # 测试输出存成 artifact：GitHub 的 /actions/jobs/{id}/logs 会 302 到 Azure
+    # Blob，经代理下载常断连（curl: 52 Empty reply from server），拿不到失败
+    # 详情。artifact 是可靠的出口，失败时也能下载。
+    - name: Upload test output
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-output
+        path: test-output.log
+        if-no-files-found: warn
 
     - name: Save Haskell dependencies
       if: always() && steps.haskell-cache.outputs.cache-hit != 'true'
