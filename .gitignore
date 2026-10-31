@@ -48,6 +48,8 @@ credentials/
 **/token*
 # ... but the Web design tokens are source, not a secret dump.
 !packages/app/Web/src/styles/tokens.css
+# Windows 沙箱的 Token 模块是本项目代码（受限令牌），不是凭据
+!src/infra/Infrastructure/Sandbox/Win32/Token.hs
 **/secret*
 **/password*
 **/credential*
