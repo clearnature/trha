@@ -156,6 +156,7 @@ library trha-infra
     Infrastructure.Sandbox.Win32.Job
     Infrastructure.Sandbox.Win32.Process
     Infrastructure.Sandbox.Win32.AppContainer
+    Infrastructure.Sandbox.Win32.Path
     Infrastructure.Sandbox.Protocol
     Infrastructure.Sandbox.Runner
     Infrastructure.Sandbox.Config
