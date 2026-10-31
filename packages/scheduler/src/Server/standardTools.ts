@@ -1839,7 +1839,11 @@ const bashTool = defineTool<BashResult>({
   // marker into `exitCode`/`signal` so the card can show a pill.
   presentResult: (args, result) => {
     const r = result as ToolResult;
-    const block = r.content.length === 1 ? r.content[0] : undefined;
+    // r.content 可能缺失：错误/中断路径下 result 只带 isError，没有 content。
+    // 直接读 .length 会抛 TypeError，在 CI 里表现为 presentResult 崩溃、
+    // agent-tools/agents-concurrent 一系列断言拿到空字符串而失败。
+    const content = r.content ?? [];
+    const block = content.length === 1 ? content[0] : undefined;
     if (block === undefined || block.type !== 'text') return undefined;
     const raw = block.text;
     const isBackground = (args as { background?: unknown }).background === true;
