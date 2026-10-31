@@ -110,4 +110,4 @@ jobs:
     - name: vitest run
       run: |
         cd packages/scheduler
-        npx vitest run
+        node node_modules/vitest/vitest.mjs run
