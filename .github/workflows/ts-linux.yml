@@ -1,0 +1,112 @@
+name: ts-linux
+
+# scheduler 的 TypeScript 工具链 + 测试（Ubuntu）。原 ci.yml 的 typescript job
+# 拆成四个独立 job：install → typecheck → build，vitest 只依赖 install。
+# 失败定位：typecheck 红 = 类型错；vitest 红 = 用例错；build 红 = emit 错。
+
+on:
+  push:
+    paths:
+      - 'packages/scheduler/**'
+      - 'packages/app/Web/**'
+      - '.github/workflows/ts-linux.yml'
+  pull_request:
+    paths:
+      - 'packages/scheduler/**'
+      - 'packages/app/Web/**'
+      - '.github/workflows/ts-linux.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ts-linux-install:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js (from .node-version)
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+        cache: 'npm'
+        # 根的 package-lock.json 只锁了 oxlint，真实依赖在各子包。
+        cache-dependency-path: '**/package-lock.json'
+    - name: npm ci (scheduler)
+      run: |
+        cd packages/scheduler
+        npm ci
+    - name: pin TypeScript 7.0.x
+      run: |
+        cd packages/scheduler
+        npx tsc --version
+        node -e "const v=require('typescript/package.json').version; if (!v.startsWith('7.0.')) { console.error('expected TypeScript 7.0.x, got ' + v); process.exit(1); }"
+    - name: upload node_modules
+      uses: actions/upload-artifact@v4
+      with:
+        name: ts-linux-node_modules
+        path: packages/scheduler/node_modules
+        retention-days: 1
+
+  ts-linux-typecheck:
+    needs: ts-linux-install
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js (from .node-version)
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+    - name: download node_modules
+      uses: actions/download-artifact@v4
+      with:
+        name: ts-linux-node_modules
+        path: packages/scheduler/node_modules
+    - name: typecheck
+      run: |
+        cd packages/scheduler
+        npm run typecheck
+
+  ts-linux-build:
+    needs: ts-linux-typecheck
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js (from .node-version)
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+    - name: download node_modules
+      uses: actions/download-artifact@v4
+      with:
+        name: ts-linux-node_modules
+        path: packages/scheduler/node_modules
+    - name: build (scheduler)
+      run: |
+        cd packages/scheduler
+        npm run build
+    - name: build web (studio assets)
+      run: |
+        cd packages/app/Web
+        npm ci
+        npm run build
+
+  ts-linux-vitest:
+    needs: ts-linux-install
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js (from .node-version)
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+    - name: download node_modules
+      uses: actions/download-artifact@v4
+      with:
+        name: ts-linux-node_modules
+        path: packages/scheduler/node_modules
+    - name: vitest run
+      run: |
+        cd packages/scheduler
+        npx vitest run

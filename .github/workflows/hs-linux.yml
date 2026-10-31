@@ -1,0 +1,115 @@
+name: hs-linux
+
+# Haskell 全量构建 + 测试（Ubuntu）。原 ci.yml 的 haskell job 迁出。
+# 排查口诀：失败先看 job 名 —— build 挂在依赖/编译，test 挂在用例。
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'test-sandbox/**'
+      - 'test-webgpu/**'
+      - 'packages/app/CLI/**'
+      - 'trha.cabal'
+      - 'cabal.project.ci'
+      - '.github/workflows/hs-linux.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'trha.cabal'
+      - 'cabal.project.ci'
+      - '.github/workflows/hs-linux.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hs-linux-build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: checkout sov-math (kernel math dependency)
+      uses: actions/checkout@v4
+      with:
+        repository: triqchem-lab/math
+        path: .ci/math
+        sparse-checkout: |
+          hs/sov-math
+
+    # runner 镜像已预装 GHC 9.14.1 + cabal 3.16.1.0（install 幂等，2.6 秒），
+    # ghcup 用 system-wide /usr/local/.ghcup；~/.ghcup 不存在 ⇒ 旧缓存恒为空。
+    - name: Install ghcup-hs + GHC 9.14.1 + cabal 3.16.1.0
+      run: |
+        curl -sSLo /tmp/ghcup https://github.com/haskell/ghcup-hs/releases/download/v0.2.6.2/x86_64-linux-ghcup-0.2.6.2
+        chmod +x /tmp/ghcup
+        /tmp/ghcup install ghc 9.14.1
+        /tmp/ghcup install cabal 3.16.1.0
+        /tmp/ghcup set ghc 9.14.1
+        /tmp/ghcup set cabal 3.16.1.0
+        echo "$HOME/.ghcup/bin" >> "$GITHUB_PATH"
+
+    # WebGPU 组件需要 libwgpu_native.so 所在目录参与链接与运行时查找。
+    - name: Provide wgpu-native lib dir
+      run: |
+        cat > cabal.project.ci.local <<EOF
+        package trha
+          extra-lib-dirs: $GITHUB_WORKSPACE/3rdparty/wgpu-native/lib
+          ghc-options: -optl-Wl,-rpath,$GITHUB_WORKSPACE/3rdparty/wgpu-native/lib
+        EOF
+        cat cabal.project.ci.local
+
+    # cabal-install ≥3.10 按 XDG 布局；~/.cabal 仅为兼容自定义 CABAL_DIR。
+    - name: Restore Haskell dependencies
+      id: haskell-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ~/.cache/cabal/packages
+          ~/.local/state/cabal/store
+          ~/.cabal
+          dist-newstyle
+        key: ${{ runner.os }}-haskell-${{ hashFiles('trha.cabal', 'cabal.project.ci') }}
+        restore-keys: |
+          ${{ runner.os }}-haskell-
+
+    - name: Install dependencies
+      run: |
+        cabal update --project-file=cabal.project.ci
+        cabal build --project-file=cabal.project.ci --only-dependencies
+
+    - name: Build
+      run: |
+        set -o pipefail
+        cabal build --project-file=cabal.project.ci all 2>&1 | tee build-output.log
+
+    # trha-webgpu-test 在无 GPU 时用 pendingWith 兜底，runner 上应为 pending 而非崩溃。
+    - name: Test
+      run: |
+        set -o pipefail
+        cabal test --project-file=cabal.project.ci all 2>&1 | tee test-output.log
+
+    # job 日志 302 到 Azure Blob（代理常断连），artifact 是可靠出口。
+    - name: Upload test output
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: hs-linux-test-output
+        path: '*-output.log'
+        if-no-files-found: warn
+
+    - name: Save Haskell dependencies
+      if: always() && steps.haskell-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ~/.cache/cabal/packages
+          ~/.local/state/cabal/store
+          ~/.cabal
+          dist-newstyle
+        key: ${{ runner.os }}-haskell-${{ hashFiles('trha.cabal', 'cabal.project.ci') }}

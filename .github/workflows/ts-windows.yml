@@ -1,0 +1,67 @@
+name: ts-windows
+
+# scheduler 的 TypeScript 测试（Windows）。原 ci.yml 的 scheduler-windows job
+# 拆出：install → vitest 两段，失败域一目了然。
+# 注：win32 shell 契约（cmd.exe /d /s /c + 原样引号）由注入 fake shell 断言，
+# 与平台无关 —— 所以这份用例在 ts-linux 也同步跑（见 ts-linux.yml）。
+
+on:
+  push:
+    paths:
+      - 'packages/scheduler/**'
+      - '.github/workflows/ts-windows.yml'
+  pull_request:
+    paths:
+      - 'packages/scheduler/**'
+      - '.github/workflows/ts-windows.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ts-windows-install:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js (from .node-version)
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+        cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
+    - name: npm ci (scheduler)
+      run: |
+        cd packages/scheduler
+        npm ci
+    - name: pin TypeScript 7.0.x
+      run: |
+        cd packages/scheduler
+        npx tsc --version
+        node -e "const v=require('typescript/package.json').version; if (!v.startsWith('7.0.')) { console.error('expected TypeScript 7.0.x, got ' + v); process.exit(1); }"
+    - name: upload node_modules
+      uses: actions/upload-artifact@v4
+      with:
+        name: ts-windows-node_modules
+        path: packages/scheduler/node_modules
+        retention-days: 1
+
+  ts-windows-vitest:
+    needs: ts-windows-install
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js (from .node-version)
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+    - name: download node_modules
+      uses: actions/download-artifact@v4
+      with:
+        name: ts-windows-node_modules
+        path: packages/scheduler/node_modules
+    - name: vitest run
+      run: |
+        cd packages/scheduler
+        npx vitest run
