@@ -151,7 +151,11 @@ foreign import ccall unsafe "wgpuDeviceCreateShaderModule"
 
 -- | 由 WGSL 源创建 shader 模块（WGSL 经描述符的 @nextInChain@ 传入）。
 createShaderModule :: Device -> Ptr ShaderModuleDescriptor -> IO ShaderModule
-createShaderModule d desc = fromPtr <$> rawCreateShaderModule (toPtr d) desc
+createShaderModule d desc = do
+  p <- rawCreateShaderModule (toPtr d) desc
+  if p == nullPtr
+    then error "wgpu: wgpuDeviceCreateShaderModule returned NULL —— WGSL 编译失败（可用 wgpuDevicePopErrorScope 查看详情）"
+    else pure (fromPtr p)
 
 -- | @WGPUBindGroupLayout wgpuDeviceCreateBindGroupLayout(WGPUDevice, WGPUBindGroupLayoutDescriptor const*)@。
 foreign import ccall unsafe "wgpuDeviceCreateBindGroupLayout"
@@ -175,7 +179,11 @@ foreign import ccall unsafe "wgpuDeviceCreateComputePipeline"
 
 -- | 创建计算管线。
 createComputePipeline :: Device -> Ptr ComputePipelineDescriptor -> IO ComputePipeline
-createComputePipeline d desc = fromPtr <$> rawCreateComputePipeline (toPtr d) desc
+createComputePipeline d desc = do
+  p <- rawCreateComputePipeline (toPtr d) desc
+  if p == nullPtr
+    then error "wgpu: wgpuDeviceCreateComputePipeline returned NULL —— 管线校验失败（WGSL 或 bind group layout 不匹配）"
+    else pure (fromPtr p)
 
 -- | @WGPUBindGroup wgpuDeviceCreateBindGroup(WGPUDevice, WGPUBindGroupDescriptor const*)@。
 foreign import ccall unsafe "wgpuDeviceCreateBindGroup"
@@ -183,7 +191,11 @@ foreign import ccall unsafe "wgpuDeviceCreateBindGroup"
 
 -- | 创建 bind group。
 createBindGroup :: Device -> Ptr BindGroupDescriptor -> IO BindGroup
-createBindGroup d desc = fromPtr <$> rawCreateBindGroup (toPtr d) desc
+createBindGroup d desc = do
+  p <- rawCreateBindGroup (toPtr d) desc
+  if p == nullPtr
+    then error "wgpu: wgpuDeviceCreateBindGroup returned NULL —— 绑定与 layout 不匹配"
+    else pure (fromPtr p)
 
 -- ---------------------------------------------------------------------------
 -- 命令编码与提交

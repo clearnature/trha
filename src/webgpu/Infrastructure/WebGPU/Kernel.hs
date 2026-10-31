@@ -22,6 +22,7 @@ import Foreign.Storable (poke, sizeOf)
 
 import Infrastructure.WebGPU.Buffer (GpuBuffer (..), readWords)
 import Infrastructure.WebGPU.Context (Context (..))
+import Infrastructure.WebGPU.Error (clearError, lastError)
 import Infrastructure.WebGPU.Raw.FFI
   ( beginComputePass
   , copyBufferToBuffer
@@ -81,6 +82,7 @@ withClearedN sz f = allocaBytes sz $ \p -> fillBytes p 0 sz >> f p
 -- | 由 WGSL 源码建内核；@nBindings@ 是 storage buffer 绑定个数（binding 0..n-1）。
 newKernel :: Context -> String -> Int -> String -> IO Kernel
 newKernel ctx wgsl nBindings entry = do
+  clearError
   shader <- withCStringLen wgsl $ \(codePtr, codeLen) ->
     withCleared $ \(wgslPtr :: Ptr ShaderSourceWGSL) ->
       withCleared $ \(smPtr :: Ptr ShaderModuleDescriptor) -> do
@@ -150,6 +152,10 @@ newKernel ctx wgsl nBindings entry = do
           }
       createComputePipeline (ctxDevice ctx) cpPtr
 
+  e <- lastError
+  case e of
+    Just err -> error ("wgpu newKernel failed: " <> show err)
+    Nothing -> pure ()
   pure (Kernel pipeline bgl nBindings)
 
 -- | 跑一次内核：@buffers@ 按 binding 顺序（0..n-1）给出；@workgroups@ 是 (x,y,z)。
