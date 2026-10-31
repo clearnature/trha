@@ -112,7 +112,7 @@ withRunner caps action = do
           })
         (ExclusivePath (AbsolutePath ws))
   _ <- forkIO $
-    runRunner (RunnerConfig hIn hOutW Nothing []) Linux.backend caps scope
+    runRunner (RunnerConfig hIn hOutW Nothing) Linux.backend caps scope
       `finally` putMVar done ()
   let shutdown = do
         _ <- try (writeFrame hInW Shutdown) :: IO (Either SomeException ())

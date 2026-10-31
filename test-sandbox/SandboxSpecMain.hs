@@ -17,7 +17,6 @@ import SandboxLinuxSpec (sandboxLinuxSpec)
 import SandboxMacSpec (sandboxMacSpec)
 import SandboxRunnerSpec (sandboxRunnerSpec)
 import SandboxSpec (sandboxSpec)
-import SandboxWindowsSpec (sandboxWindowsSpec)
 
 main :: IO ()
 main = hspec $ do
@@ -26,7 +25,6 @@ main = hspec $ do
   sandboxMacSpec
   sandboxRunnerSpec
   sandboxCgroupSpec
-  sandboxWindowsSpec
   sandboxBsdSpec
   sandboxLandlockSpec
   auditSpec

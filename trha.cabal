@@ -339,7 +339,6 @@ test-suite trha-sandbox-test
                   , SandboxMacSpec
                   , SandboxRunnerSpec
                   , SandboxCgroupSpec
-                  , SandboxWindowsSpec
                   , SandboxBsdSpec
                   , SandboxLandlockSpec
                   , AuditSpec

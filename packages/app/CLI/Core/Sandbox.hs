@@ -36,7 +36,6 @@ import Options.Applicative
 import System.Directory
   ( createDirectoryIfMissing, doesFileExist, getCurrentDirectory, getHomeDirectory )
 import System.Exit (exitFailure)
-import System.Environment (getEnvironment)
 import System.FilePath ((</>), (<.>))
 import System.Info (os)
 import System.IO (stderr, stdin, stdout)
@@ -470,29 +469,23 @@ platformText (Other name) = name
 runRunnerMode :: SandboxConfig -> FilePath -> FilePath -> T.Text -> Maybe String -> T.Text -> IO ()
 runRunnerMode cfg ws scratch policyName experiment network = do
   home <- getHomeDirectory
-  hostEnv <- getEnvironment
-  let allow = map T.unpack (dcEnvAllow (scDefaults cfg))
-      baseEnv = [ (T.pack k, T.pack v)
-                | (k, v) <- hostEnv
-                , k `elem` allow || k == "HOME" ]
-      scope = mkRunnerScope cfg home ws scratch policyName network
+  let scope = mkRunnerScope cfg home ws scratch policyName network
 #ifdef mingw32_HOST_OS
-  -- Windows: the runner delegates to the Rust helper (restricted token) —
-  -- renderWindows already emits `trha-sandbox-win.exe … -- ARGV`. bwrap does
-  -- not exist on this host, so probing the Linux backend here would fail the
-  -- runner before any frame.
+  -- Windows: the Windows backend renders the AppContainer launch itself.
+  -- bwrap does not exist on this host, so probing the Linux backend here
+  -- would fail the runner before any frame.
   caps <- Windows.probeWindows
   case caps of
     Left err -> failWith (show err)
     Right c -> runRunner
-      (RunnerConfig stdin stdout (T.pack <$> experiment) baseEnv)
+      (RunnerConfig stdin stdout (T.pack <$> experiment))
       Windows.backend c scope
 #else
   caps <- Linux.probeLinux
   case caps of
     Left err -> failWith (show err)
     Right c -> runRunner
-      (RunnerConfig stdin stdout (T.pack <$> experiment) baseEnv)
+      (RunnerConfig stdin stdout (T.pack <$> experiment))
       Linux.backend c scope
 #endif
 

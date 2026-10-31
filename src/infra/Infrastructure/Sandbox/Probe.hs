@@ -141,6 +141,8 @@ runProbe backend caps scope probe =
       , lrEnv = []
       , lrStdin = StdinClosed
       , lrTimeoutMs = Just 15000
+      , lrDenyReads = []
+      , lrDenyFiles = []
       }
 
 -- | POSIX / macOS：argv 里已经带了 bwrap / sandbox-exec 包装，直接执行即可。
