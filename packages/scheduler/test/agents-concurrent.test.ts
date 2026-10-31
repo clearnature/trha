@@ -33,7 +33,9 @@ function routedKernel(opts: { slowFirst?: string; delayMs?: number } = {}) {
   kernel.post('/session/start', (_q, res) => res.json({}));
   kernel.post('/v1/chat/completions', async (req, res) => {
     const msgs = req.body.messages as Array<{ role: string; content: string }>;
-    const lastUser = [...msgs].reverse().find(m => m.role === 'user')?.content ?? '';
+    // time-context 注入会插在真实 user 消息后面（带 source: 'time-context'），
+    // 必须跳过，否则 script 永远匹配不上、tool_calls 不下发。
+    const lastUser = [...msgs].reverse().find(m => m.role === 'user' && m.source !== 'time-context')?.content ?? '';
     const results = msgs.filter(m => m.role === 'tool').map(m => m.content);
     const toolCall = (name: string, args: Record<string, unknown>): void => {
       res.json({
