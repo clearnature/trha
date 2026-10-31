@@ -55,16 +55,19 @@ capsPartial :: BackendCapabilities
 capsPartial = BackendCapabilities
   { bcBackend = backendIdWindows
   , bcPlatform = Windows
-  , bcCapabilities = Set.fromList [CapFsRead, CapFsWrite, CapResource]
+  , bcCapabilities = Set.fromList
+      [ CapFsRead, CapFsWrite, CapResource, CapNet, CapCred ]
   , bcEnforcement = Partial (PartialReason
-      (Set.fromList [CapNet, CapPid, CapSyscall, CapCred])
-      "AppContainer confines filesystem writes and Job Object bounds resources; \
-      \network / pid / syscall / credential are not confined")
+      (Set.fromList [CapPid, CapSyscall])
+      "AppContainer confines filesystem, network and credentials; \
+      \pid namespace and syscall filtering are not confined")
   , bcNotes =
       [ "filesystem: capability SID ACL — allow write to workspace, deny FILE_DELETE_CHILD on Everyone"
       , "resources: Job Object — KILL_ON_JOB_CLOSE + optional memory/process caps"
       , "process: CreateProcess + SECURITY_CAPABILITIES (no SE_* privilege required)"
-      , "not confined: network, pid namespace, syscall filtering, credential filtering"
+      , "network: no internetClient capability granted → outbound blocked"
+      , "credentials: empty environment block → parent env and its secrets not inherited"
+      , "not confined: pid namespace, syscall filtering"
       ]
   }
 
@@ -81,9 +84,8 @@ renderWindows scope req = do
   pure LaunchPlan
     { lpBackend = backendIdWindows
     , lpArgv = lrArgv req
-    , lpEnforcement = Partial (PartialReason
-        (Set.fromList [CapNet, CapPid, CapSyscall, CapCred])
-        "AppContainer: filesystem + resources only")
+    -- 与 'capsPartial' 共用同一份声明：计划里的 enforcement 不能与探测结果打架。
+    , lpEnforcement = bcEnforcement capsPartial
     , lpMounts = mounts
     , lpNetwork = network
     , lpLimits = limits

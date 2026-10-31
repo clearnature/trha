@@ -19,10 +19,11 @@ module Infrastructure.Sandbox.Win32.Process
   , waitForProcess
   , terminateProcess
   , closeSpawned
+  , readPipeChunks
   ) where
 
 import Data.Bits ((.|.))
-import Data.Word (Word16, Word32, Word64)
+import Data.Word (Word8, Word16, Word32, Word64)
 import Foreign
 import Foreign.C.String (CWString, withCWString)
 import Foreign.C.Types (CInt(..))
@@ -44,6 +45,10 @@ createNoWindow = 0x08000000
 -- | @EXTENDED_STARTUPINFO_PRESENT@：让 CreateProcess 读 @STARTUPINFOEXW@。
 extendedStartupInfoPresent :: Dword
 extendedStartupInfoPresent = 0x00080000
+
+-- | @CREATE_UNICODE_ENVIRONMENT@：@lpEnvironment@ 按 UTF-16 解释。
+createUnicodeEnvironment :: Dword
+createUnicodeEnvironment = 0x00000400
 
 -- | @PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES@
 procThreadAttributeSecurityCapabilities :: Word64
@@ -391,67 +396,99 @@ spawnAppContainer
 spawnAppContainer container exe args cwd =
   withCWString (normalizePath exe) $ \wideExe ->
     withCWString (renderCommandLine (normalizePath exe) args) $ \wideCmd ->
-      withCWString (normalizePath cwd) $ \wideCwd ->
-        alloca $ \secCapsPtr -> alloca $ \piPtr -> alloca $ \sizeOut -> do
-          -- 1. 容器身份（不使用额外 capability）
-          poke secCapsPtr SecurityCapabilities
-            { scAppContainerSid = containerSidRaw container
-            , scCapabilities = nullPtr
-            , scCapabilityCount = 0
-            , scReserved = 0
-            }
-          -- 2. 属性列表需要两次 Initialize：首次 NULL 拿大小（预期失败）
-          _ <- c_InitializeProcThreadAttributeList nullPtr 1 0 sizeOut
-          size <- peek sizeOut
-          if size == 0
-            then pure (Left (ProcessError "InitializeProcThreadAttributeList" 0))
-            else allocaBytes (fromIntegral size) $ \listPtr -> do
-              okInit <- c_InitializeProcThreadAttributeList listPtr 1 0 sizeOut
-              if okInit == 0
-                then Left <$> mkErr "InitializeProcThreadAttributeList"
-                else do
-                  okUpd <- c_UpdateProcThreadAttribute
-                    listPtr 0 procThreadAttributeSecurityCapabilities
-                    (castPtr secCapsPtr) (fromIntegral securityCapabilitiesSize)
-                    nullPtr nullPtr
-                  if okUpd == 0
-                    then do
-                      c_DeleteProcThreadAttributeList listPtr
-                      Left <$> mkErr "UpdateProcThreadAttribute"
-                    else do
-                      result <- alloca $ \siExPtr -> do
-                        poke siExPtr StartupInfoExW
-                          { siexFlags = startfUseShowWindow
-                          , siexShowWindow = swHide
-                          , siexStdInput = nullPtr
-                          , siexStdOutput = nullPtr
-                          , siexStdError = nullPtr
-                          , siexAttributeList = listPtr
-                          }
-                        ok <- c_CreateProcessW
-                          nullPtr
-                          wideCmd
-                          nullPtr nullPtr
-                          0
-                          ( extendedStartupInfoPresent
-                              .|. createSuspended
-                              .|. createNoWindow )
-                          nullPtr wideCwd
-                          (castPtr siExPtr)
-                          piPtr
-                        if ok == 0
-                          then Left <$> mkErr "CreateProcessW"
-                          else do
-                            pi' <- peek piPtr
-                            pure (Right SpawnedProcess
-                              { spProcess = piProcess pi'
-                              , spThread = piThread pi'
-                              , spPid = piPid pi'
-                              , spStdout = nullPtr
-                              , spStderr = nullPtr
-                              })
-                      c_DeleteProcThreadAttributeList listPtr
-                      pure result
+      withCWString (normalizePath cwd) $ \wideCwd -> do
+        outPair <- createPipe
+        case outPair of
+          Left e -> pure (Left e)
+          Right (outRead, outWrite) -> do
+            errPair <- createPipe
+            case errPair of
+              Left e -> do
+                _ <- c_CloseHandle outRead
+                _ <- c_CloseHandle outWrite
+                pure (Left e)
+              Right (errRead, errWrite) -> do
+                okOut <- c_SetHandleInformation outWrite handleFlagInherit handleFlagInherit
+                okErr <- c_SetHandleInformation errWrite handleFlagInherit handleFlagInherit
+                if okOut == 0 || okErr == 0
+                  then do
+                    mapM_ c_CloseHandle [outRead, outWrite, errRead, errWrite]
+                    pure (Left (ProcessError "SetHandleInformation" 0))
+                  else do
+                    result <- alloca $ \secCapsPtr -> alloca $ \piPtr -> alloca $ \sizeOut -> do
+                      -- 1. 容器身份（不使用额外 capability）
+                      poke secCapsPtr SecurityCapabilities
+                        { scAppContainerSid = containerSidRaw container
+                        , scCapabilities = nullPtr
+                        , scCapabilityCount = 0
+                        , scReserved = 0
+                        }
+                      -- 2. 属性列表需要两次 Initialize：首次 NULL 拿大小（预期失败）
+                      _ <- c_InitializeProcThreadAttributeList nullPtr 1 0 sizeOut
+                      size <- peek sizeOut
+                      if size == 0
+                        then pure (Left (ProcessError "InitializeProcThreadAttributeList" 0))
+                        else allocaBytes (fromIntegral size) $ \listPtr -> do
+                          okInit <- c_InitializeProcThreadAttributeList listPtr 1 0 sizeOut
+                          if okInit == 0
+                            then Left <$> mkErr "InitializeProcThreadAttributeList"
+                            else do
+                              okUpd <- c_UpdateProcThreadAttribute
+                                listPtr 0 procThreadAttributeSecurityCapabilities
+                                (castPtr secCapsPtr) (fromIntegral securityCapabilitiesSize)
+                                nullPtr nullPtr
+                              if okUpd == 0
+                                then do
+                                  c_DeleteProcThreadAttributeList listPtr
+                                  Left <$> mkErr "UpdateProcThreadAttribute"
+                                else do
+                                  r <- alloca $ \siExPtr -> do
+                                    poke siExPtr StartupInfoExW
+                                      { siexFlags = startfUseStdHandles .|. startfUseShowWindow
+                                      , siexShowWindow = swHide
+                                      , siexStdInput = nullPtr
+                                      , siexStdOutput = outWrite
+                                      , siexStdError = errWrite
+                                      , siexAttributeList = listPtr
+                                      }
+                                    -- 空环境块（只有两个 UTF-16 NUL）：子进程不继承
+                                    -- 父进程环境变量，凭据不会随执行泄露。
+                                    allocaArray 2 $ \envPtr -> do
+                                      pokeArray envPtr [0, 0 :: Word16]
+                                      ok <- c_CreateProcessW
+                                        nullPtr
+                                        wideCmd
+                                        nullPtr nullPtr
+                                        1                               -- bInheritHandles
+                                        ( extendedStartupInfoPresent
+                                            .|. createSuspended
+                                            .|. createNoWindow
+                                            .|. createUnicodeEnvironment )
+                                        (castPtr envPtr) wideCwd
+                                        (castPtr siExPtr)
+                                        piPtr
+                                      if ok == 0
+                                        then Left <$> mkErr "CreateProcessW"
+                                        else do
+                                          pi' <- peek piPtr
+                                          pure (Right SpawnedProcess
+                                            { spProcess = piProcess pi'
+                                            , spThread = piThread pi'
+                                            , spPid = piPid pi'
+                                            , spStdout = outRead
+                                            , spStderr = errRead
+                                            })
+                                  c_DeleteProcThreadAttributeList listPtr
+                                  pure r
+                    -- 3. 父进程关掉写端，否则读端永远等不到 EOF
+                    _ <- c_CloseHandle outWrite
+                    _ <- c_CloseHandle errWrite
+                    case result of
+                      Left e -> do
+                        _ <- c_CloseHandle outRead
+                        _ <- c_CloseHandle errRead
+                        pure (Left e)
+                      Right sp -> pure (Right sp)
 
 -- ── 管道与进程操作 ────────────────────────────────────────────────────────
 
@@ -496,3 +533,31 @@ closeSpawned sp = do
   _ <- c_CloseHandle (spStdout sp)
   _ <- c_CloseHandle (spStderr sp)
   pure ()
+
+-- ── 管道读取 ──────────────────────────────────────────────────────────────
+
+foreign import stdcall unsafe "windows.h ReadFile"
+  c_ReadFile :: Handle -> Ptr Word8 -> Dword -> Ptr Dword -> Ptr () -> IO Bool32
+
+-- | 逐块读取管道，直到对端关闭。
+--
+-- 回调期间 @buf@ 有效且内容不复制——需要保留就立刻拷走。单块上限 4 KiB，
+-- 跨块的行切分由调用方负责（这里只负责把字节搬出来）。
+--
+-- @nRead@ 每次循环前清零：@ReadFile@ 失败时不会写它，不清就会读到上一轮的
+-- 垃圾值甚至未初始化内存。
+readPipeChunks :: Handle -> (Ptr Word8 -> Int -> IO ()) -> IO ()
+readPipeChunks hPipe sink =
+  allocaBytes chunkSize $ \buf ->
+    alloca $ \nReadPtr -> go buf nReadPtr
+  where
+    chunkSize = 4096 :: Int
+    go buf nReadPtr = do
+      poke nReadPtr (0 :: Dword)
+      _ <- c_ReadFile hPipe buf (fromIntegral chunkSize) nReadPtr nullPtr
+      n <- peek nReadPtr
+      if n == 0
+        then pure ()
+        else do
+          sink buf (fromIntegral n)
+          go buf nReadPtr

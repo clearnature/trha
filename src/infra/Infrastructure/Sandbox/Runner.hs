@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Runner: line-delimited frame IO plus the P1 execution loop (T1.4).
@@ -16,7 +17,7 @@ module Infrastructure.Sandbox.Runner
 
 import Control.Concurrent (forkIO, newEmptyMVar, newMVar, putMVar, takeMVar, withMVar)
 import Control.Concurrent.MVar (MVar)
-import Control.Exception (IOException, SomeException, try)
+import Control.Exception (IOException, SomeException, finally, try)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
@@ -39,6 +40,15 @@ import System.Process
   ( CreateProcess(..), ProcessHandle, StdStream(..), createProcess
   , interruptProcessGroupOf, proc, terminateProcess, waitForProcess )
 import System.Timeout (timeout)
+#ifdef mingw32_HOST_OS
+import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.Word (Word32)
+import Foreign (Ptr, castPtr)
+import qualified Infrastructure.Sandbox.Win32.Acl as W32Acl
+import qualified Infrastructure.Sandbox.Win32.AppContainer as W32AC
+import qualified Infrastructure.Sandbox.Win32.Job as W32Job
+import qualified Infrastructure.Sandbox.Win32.Process as W32Proc
+#endif
 
 data RunnerConfig = RunnerConfig
   { rcInput      :: Handle
@@ -107,9 +117,23 @@ renderError err = case err of
 runExec :: Scope -> BackendCapabilities -> Maybe Text -> Handle -> Text -> LaunchRequest -> LaunchPlan -> IO ()
 runExec scope caps experiment out cid request plan = case lpArgv plan of
   [] -> writeFrame out (Error (Just cid) "backend" "empty argv")
-  (cmd : args) -> do
+  argv@(cmd : args) -> do
     record scope caps experiment AuditAllow
       ("exec " <> T.intercalate " " (lrArgv request))
+#ifdef mingw32_HOST_OS
+    if bcPlatform caps == Windows
+      then runExecWindows scope caps experiment out cid request plan argv
+      else runExecPosix scope caps experiment out cid request plan cmd args
+#else
+    runExecPosix scope caps experiment out cid request plan cmd args
+#endif
+
+-- | POSIX / macOS 路径：bwrap / sandbox-exec 已把隔离表达在 argv 里，
+-- 这里只负责起进程并把 stdout/stderr 转成帧。
+runExecPosix ::
+  Scope -> BackendCapabilities -> Maybe Text -> Handle -> Text
+  -> LaunchRequest -> LaunchPlan -> Text -> [Text] -> IO ()
+runExecPosix scope caps experiment out cid request _plan cmd args = do
     started <- try $ createProcess (proc (T.unpack cmd) (map T.unpack args))
       { cwd = Just (unAbsolutePath (lrCwd request))
       , env = Just [(T.unpack k, T.unpack v) | (k, v) <- lrEnv request]
@@ -211,4 +235,144 @@ denySink scope caps experiment out cid line =
       , ("net", "Network is unreachable")
       , ("net", "Could not resolve host")
       ]
+
+#ifdef mingw32_HOST_OS
+-- ── Windows：AppContainer + Job + 目录授权 ────────────────────────────────
+
+-- | Windows 启动路径。
+--
+-- 与 POSIX 的本质差别：隔离**不在 argv 里**，而是在进程创建那一刻由
+-- @SECURITY_CAPABILITIES@ 属性与 capability SID 的 ACL 共同决定。所以这里必须
+-- 自己做四件事：派生容器 SID、给可写目录授权、建 Job、先入 Job 再 resume。
+--
+-- 任何一步失败都写 @error@ 帧并停下——**没有不带隔离的回退路径**。
+runExecWindows ::
+  Scope -> BackendCapabilities -> Maybe Text -> Handle -> Text
+  -> LaunchRequest -> LaunchPlan -> [Text] -> IO ()
+runExecWindows scope caps experiment out cid request plan argv@(cmd : args) = do
+  let containerName = "trha-sandbox-" <> T.unpack (unScopeId (scId scope))
+  sidR <- W32AC.deriveContainerSid containerName
+  case sidR of
+    Left e -> failExec ("container SID: " <> T.pack (show e))
+    Right sid -> do
+      sidTextR <- W32AC.containerSidText sid
+      case sidTextR of
+        Left e -> do
+          W32AC.freeContainerSid sid
+          failExec ("sid text: " <> T.pack (show e))
+        Right sidText -> do
+          -- 1. 可写目录逐个授权；任一失败即中止
+          grants <- mapM (\p -> W32Acl.grantWriteAccess p sidText) writeDirs
+          case [ e | Left e <- grants ] of
+            (err : _) -> do
+              W32AC.freeContainerSid sid
+              failExec ("acl: " <> T.pack (W32Acl.renderAclError err))
+            [] -> do
+              -- 2. Job 必须在 resume 之前建好，否则有逃逸窗口
+              jobR <- W32Job.createJob W32Job.defaultJobLimits
+              case jobR of
+                Left e -> do
+                  W32AC.freeContainerSid sid
+                  failExec ("job: " <> T.pack (show e))
+                Right job -> do
+                  spR <- W32Proc.spawnAppContainer
+                           sid (T.unpack cmd) (map T.unpack args)
+                           (unAbsolutePath (lrCwd request))
+                  case spR of
+                    Left e -> do
+                      W32Job.closeJob job
+                      W32AC.freeContainerSid sid
+                      failExec ("spawn: " <> T.pack (show e))
+                    Right sp -> do
+                      _ <- W32Job.assignToJob job (W32Proc.spProcess sp)
+                      _ <- W32Proc.resumeThread sp
+                      lock <- newMVar ()
+                      outDone <- newEmptyMVar
+                      errDone <- newEmptyMVar
+                      _ <- forkIO $
+                        drainPtr lock out (Stdout cid) Nothing
+                          (W32Proc.spStdout sp)
+                          `finally` putMVar outDone ()
+                      _ <- forkIO $
+                        drainPtr lock out (Stderr cid)
+                          (Just (denySink scope caps experiment out cid))
+                          (W32Proc.spStderr sp)
+                          `finally` putMVar errDone ()
+                      codeR <- waitWithTimeoutWin (lrTimeoutMs request) sp
+                      takeMVar outDone
+                      takeMVar errDone
+                      W32Proc.closeSpawned sp
+                      W32Job.closeJob job
+                      W32AC.freeContainerSid sid
+                      case codeR of
+                        Left e -> failExec ("wait: " <> T.pack (show e))
+                        Right code -> do
+                          writeFrame out Exit
+                            { exitId = cid
+                            , exitCode = fromIntegral code
+                            , exitSignal = Nothing
+                            }
+                          record scope caps experiment
+                            (if code == 0 then AuditAllow else AuditError)
+                            ("exit " <> T.pack (show code))
+  where
+    writeDirs =
+      [ unAbsolutePath (msSource m)
+      | m <- lpMounts plan
+      , msMode m == MountReadWrite
+      ]
+    failExec msg = writeFrame out (Error (Just cid) "backend" msg)
+runExecWindows _ _ _ out cid _ _ [] =
+  writeFrame out (Error (Just cid) "backend" "empty argv")
+
+-- | 带超时的等待。超时先 TerminateProcess 再返回 124（与 POSIX 分支一致）。
+waitWithTimeoutWin ::
+  Maybe Int -> W32Proc.SpawnedProcess -> IO (Either W32Proc.ProcessError Word32)
+waitWithTimeoutWin (Just ms) sp = do
+  waited <- timeout (fromIntegral ms * 1000) (W32Proc.waitForProcess sp)
+  case waited of
+    Just code -> pure code
+    Nothing -> do
+      W32Proc.terminateProcess sp
+      pure (Right 124)
+waitWithTimeoutWin Nothing sp = W32Proc.waitForProcess sp
+
+-- | 把管道字节流切成行，逐行发帧。
+--
+-- 'W32Proc.readPipeChunks' 只给字节块，行边界可能跨块，所以用 IORef 保住半行；
+-- 对端关闭后再把残留的最后一行（无换行结尾）补发出去。
+drainPtr ::
+  MVar () -> Handle -> (Text -> Frame) -> Maybe (Text -> IO ()) -> Ptr () -> IO ()
+drainPtr lock out mkFrame onLine hPipe = do
+  pendingRef <- newIORef BS.empty
+  W32Proc.readPipeChunks hPipe $ \buf n -> do
+    chunk <- BS.packCStringLen (castPtr buf, n)
+    pending <- readIORef pendingRef
+    let (complete, rest) = splitLines (pending <> chunk)
+    writeIORef pendingRef rest
+    mapM_ emitLine complete
+  rest <- readIORef pendingRef
+  if BS.null rest then pure () else emitLine rest
+  where
+    emitLine line = do
+      let text = TE.decodeUtf8With TEE.lenientDecode (dropCR line)
+      withMVar lock $ \_ -> writeFrame out (mkFrame text)
+      maybe (pure ()) ($ text) onLine
+
+-- | 按 LF 切行，返回 (完整行, 未完成的尾巴)。
+splitLines :: BS.ByteString -> ([BS.ByteString], BS.ByteString)
+splitLines = go []
+  where
+    go acc s = case BC.elemIndex '\n' s of
+      Nothing -> (reverse acc, s)
+      Just i ->
+        let (line, rest) = BS.splitAt i s
+        in go (line : acc) (BS.drop 1 rest)
+
+-- | 去掉 CRLF 里的 CR。
+dropCR :: BS.ByteString -> BS.ByteString
+dropCR s
+  | not (BS.null s) && BS.last s == 13 = BS.init s
+  | otherwise = s
+#endif
 

@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Sandbox audit log (T1.7): one JSON object per line in
@@ -25,7 +26,9 @@ import System.Directory
   ( createDirectoryIfMissing, doesFileExist, getFileSize, getHomeDirectory
   , removeFile, renameFile )
 import System.FilePath ((</>), takeDirectory)
+#ifndef mingw32_HOST_OS
 import System.Posix.Files (ownerReadMode, ownerWriteMode, setFileMode, unionFileModes)
+#endif
 
 data AuditKind = AuditAllow | AuditDeny | AuditPartial | AuditError
   deriving (Eq, Show)
@@ -90,7 +93,9 @@ appendAuditAt path event = do
   let stamped = event
         { aeTs = T.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" now) }
   BL.appendFile path (Aeson.encode stamped <> "\n")
+#ifndef mingw32_HOST_OS
   setFileMode path (ownerReadMode `unionFileModes` ownerWriteMode)
+#endif
 
 readAudit :: Int -> IO [AuditEvent]
 readAudit limit = auditFile >>= \path -> readAuditAt path limit
