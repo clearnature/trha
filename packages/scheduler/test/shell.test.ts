@@ -30,8 +30,13 @@ describe('resolveShell', () => {
 
   it('uses the live platform when not injected', () => {
     const live = resolveShell('echo hi');
-    expect(live.cmd.length).toBeGreaterThan(0);
-    expect(live.args).toContain('echo hi');
+    expect(live).toEqual(process.platform === 'win32'
+      ? {
+          cmd: 'cmd.exe',
+          args: ['/d', '/s', '/c', '"echo hi"'],
+          options: { windowsVerbatimArguments: true },
+        }
+      : { cmd: 'bash', args: ['-lc', 'echo hi'] });
   });
 });
 
