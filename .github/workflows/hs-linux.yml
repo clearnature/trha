@@ -51,6 +51,7 @@ jobs:
       with:
         ghc-version: '9.14.1'
         cabal-version: 'latest'
+        cabal-update: false
 
     # WebGPU 组件需要 libwgpu_native.so 所在目录参与链接与运行时查找。
     - name: Provide wgpu-native lib dir
