@@ -189,7 +189,7 @@ jobs:
 npm test -- --reporter=verbose
 
 # 运行特定测试
-npm test -- --grep "SchedulerClient"
+npm test -- -t "SchedulerClient"
 ```
 
 ### 覆盖率不足

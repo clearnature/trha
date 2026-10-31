@@ -195,7 +195,7 @@ jobs:
     - name: Run integration tests
       run: |
         cd benchmarks
-        npm test -- --grep "Bridge"
+        npm test -- -t "Bridge"
       env:
         MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
 
