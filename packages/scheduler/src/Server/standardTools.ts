@@ -236,9 +236,17 @@ export async function runStandardTool(
   // one tool at a time: anything not yet registered still runs below.
   const registered = resolveTool(name);
   if (registered?.handler) {
-    const rendered = await renderToolValue(registered, args, host);
-    if (out) { out.value = rendered.value; if (rendered.meta !== undefined) out.meta = rendered.meta; }
-    return rendered.text;
+    try {
+      const rendered = await renderToolValue(registered, args, host);
+      if (out) { out.value = rendered.value; if (rendered.meta !== undefined) out.meta = rendered.meta; }
+      return rendered.text;
+    } catch (e) {
+      // 业务校验错误（browser.ts 的 "url must be http(s)"、"screenshot path
+      // escapes the workspace" 等）按 DSH 契约作为工具结果返回，而不是向外抛：
+      // 模型需要读到错误消息才能自我纠正，测试也按 "ERROR: ..." 形态断言。
+      const message = e instanceof Error ? e.message : String(e);
+      return `ERROR: ${message}`;
+    }
   }
 
 
