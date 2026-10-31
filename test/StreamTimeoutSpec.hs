@@ -79,7 +79,9 @@ slowFirstByteApp _req respond =
 -- budget (applied to the header wait) can catch this.
 silentHeadersApp :: Application
 silentHeadersApp _req respond = do
-  threadDelay 1000000
+  -- 3 秒而非 1 秒：Windows 上 http-client 建立连接本身可能占用数百毫秒，
+  -- 1 秒的延迟与 200ms 的首字节预算贴太近，容易因调度抖动判成「没超时」。
+  threadDelay 3000000
   respond $ responseStream status200 [("Content-Type", "text/event-stream")] $ \write flush -> do
     write $ Builder.string8 "data: [DONE]\n\n"
     flush

@@ -12,7 +12,7 @@
 
 module SessionPersistSpec (sessionPersistSpec) where
 
-import Control.Exception (bracket)
+import Control.Exception (IOException, bracket, try)
 import Data.Aeson (Value, decode, encode, object, (.=))
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as BLC
@@ -44,10 +44,15 @@ withScratch act = bracket acquire release act
     acquire = do
       tmp <- getTemporaryDirectory
       let dir = tmp </> root
-      removePathForcibly dir
+      -- Windows 上删不掉仍被占用的旧目录；忽略，后面照样建新的。
+      _ <- try (removePathForcibly dir) :: IO (Either IOException ())
       createDirectoryIfMissing True dir
       pure dir
-    release dir = removePathForcibly dir
+    -- Windows 不允许删除仍被打开的文件（POSIX 允许），清理因此可能
+    -- PermissionDenied。临时目录由系统回收，这里不把清理失败当判负理由。
+    release dir = do
+      _ <- try (removePathForcibly dir) :: IO (Either IOException ())
+      pure ()
 
 sessionPersistSpec :: Spec
 sessionPersistSpec = do

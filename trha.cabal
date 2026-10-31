@@ -346,15 +346,18 @@ test-suite trha-sandbox-test
   main-is:          SandboxSpecMain.hs
   hs-source-dirs:   test-sandbox test
   other-modules:    SandboxSpec
-                  , SandboxLinuxSpec
+                  , AuditSpec
+                  , ExperimentSpec
+                  , ConfigSpec
+  -- Linux / macOS / BSD 专用 spec：它们 import System.Posix.* 或 Linux cgroup
+  -- API，在 Windows 上无法编译（不是"跳过用例"，而是整个模块不参与构建）。
+  if !os(windows)
+    other-modules:  SandboxLinuxSpec
                   , SandboxMacSpec
                   , SandboxRunnerSpec
                   , SandboxCgroupSpec
                   , SandboxBsdSpec
                   , SandboxLandlockSpec
-                  , AuditSpec
-                  , ExperimentSpec
-                  , ConfigSpec
   build-depends:    base ^>=4.22
                   , directory
                   , filepath
@@ -389,11 +392,14 @@ test-suite trha-test
                   , SecuritySpec
                   , SessionTruthSpec
                   , SandboxSpec
-                  , SandboxLinuxSpec
-                  , SandboxRunnerSpec
                   , AuditSpec
                   , ExperimentSpec
                   , ConfigSpec
+  -- Linux 专用 spec：import System.Posix.*（或 Linux cgroup API），
+  -- Windows 上整个模块不参与构建。
+  if !os(windows)
+    other-modules:  SandboxLinuxSpec
+                  , SandboxRunnerSpec
   hs-source-dirs:   test
   build-depends:    base ^>=4.22
                   , directory

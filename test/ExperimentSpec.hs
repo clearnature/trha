@@ -10,6 +10,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Either (isLeft)
 import Infrastructure.Sandbox.Experiment
+import System.FilePath ((</>))
 import Infrastructure.Sandbox.Policy
 import Infrastructure.Sandbox.Scope
 import Test.Hspec
@@ -31,9 +32,13 @@ experimentSpec = describe "experiment batch (T2.7/T2.8)" $ do
         scParent scope `shouldBe` Just (ScopeId "b1")
         case scPolicy scope of
           WorkspaceWrite wr -> do
-            unAbsolutePath (wrRoot wr) `shouldBe` "/ws/experiments/b1/no-landlock/1"
+            -- ebRoot 本身是硬编码的 "/ws/experiments/b1"，variantDir 用 </> 往后拼；
+            -- Windows 的 </> 只在新拼接处插入 \，所以期望值必须照同样的方式拼，
+            -- 不能把整条路径交给 </>（否则会得到全 \ 的形式，与实现不符）。
+            let wantRoot = "/ws/experiments/b1" </> "no-landlock" </> "1"
+            unAbsolutePath (wrRoot wr) `shouldBe` wantRoot
             unAbsolutePath (unExclusivePath (wrScratch wr))
-              `shouldBe` "/ws/experiments/b1/no-landlock/1/work"
+              `shouldBe` (wantRoot </> "work")
             unAbsolutePath (ebBaseline batch) `elem`
               map unAbsolutePath (wrReadOnly wr) `shouldBe` True
           other -> expectationFailure ("expected workspace-write, got " ++ show other)

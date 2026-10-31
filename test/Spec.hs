@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 import Test.Hspec
@@ -74,8 +75,10 @@ import ServerBindSpec (serverBindSpec)
 import SecuritySpec (securitySpec)
 import SessionTruthSpec (sessionTruthSpec)
 import SandboxSpec (sandboxSpec)
+#ifndef mingw32_HOST_OS
 import SandboxLinuxSpec (sandboxLinuxSpec)
 import SandboxRunnerSpec (sandboxRunnerSpec)
+#endif
 import AuditSpec (auditSpec)
 import ExperimentSpec (experimentSpec)
 import ConfigSpec (configSpec)
@@ -115,8 +118,10 @@ main = hspec $ do
   serverBindSpec
   securitySpec
   sandboxSpec
+#ifndef mingw32_HOST_OS
   sandboxLinuxSpec
   sandboxRunnerSpec
+#endif
   auditSpec
   experimentSpec
   configSpec

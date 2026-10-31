@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | sandbox.yaml write side (T2.7/T1.8 wiring): enabled/scratch round-trip.
@@ -97,6 +98,7 @@ sandboxGuestSpec = describe "insideSandbox (fail-open guard)" $ do
     guestByUidMap "      1000          0          1\n" `shouldBe` True
     guestByUidMap "" `shouldBe` False
 
+#ifndef mingw32_HOST_OS
   -- Deliberately environment-agnostic: this suite also runs *inside* the
   -- sandbox, where a host-only constant would fail for the wrong reason.
   it "agrees with the signals it can actually read" $ do
@@ -116,3 +118,4 @@ sandboxGuestSpec = describe "insideSandbox (fail-open guard)" $ do
       Just h -> setEnv "HOME" h
       Nothing -> unsetEnv "HOME"
     guest `shouldBe` True
+#endif
