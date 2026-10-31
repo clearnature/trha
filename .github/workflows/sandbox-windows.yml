@@ -1,0 +1,105 @@
+name: sandbox-windows
+
+# Windows 沙箱的独立 workflow（与 sandbox-macos.yml 对齐）。
+#
+# 此前它只是 ci.yml 里的一个 job：无法单独触发、无法按路径过滤，
+# 每次改动都必须等整条 CI 跑完，调试成本高。
+
+on:
+  push:
+    paths:
+      - 'src/infra/Infrastructure/Sandbox/**'
+      - 'test/manual/AppContainerIsolation.hs'
+      - 'trha.cabal'
+      - 'cabal.project.ci'
+      - '.github/workflows/sandbox-windows.yml'
+  pull_request:
+    paths:
+      - 'src/infra/Infrastructure/Sandbox/**'
+      - 'test/manual/AppContainerIsolation.hs'
+      - 'trha.cabal'
+      - 'cabal.project.ci'
+      - '.github/workflows/sandbox-windows.yml'
+  workflow_dispatch:
+
+# 同一 ref 只保留最新一次运行。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: checkout sov-math (kernel math dependency)
+      uses: actions/checkout@v4
+      with:
+        repository: triqchem-lab/math
+        path: .ci/math
+        sparse-checkout: |
+          hs/sov-math
+
+    # 与 ci.yml 的 haskell job 保持同一种安装方式（ghcup 脚本）。
+    # haskell-actions/setup@v2 在 windows-latest 上装 GHC 9.14.1 会直接失败；
+    # 且 ghcup 的 Windows 资产名是 x86_64-mingw64-*（不是 x86_64-windows-*）。
+    - name: Install ghcup-hs + GHC 9.14.1 + cabal 3.16.1.0
+      shell: bash
+      run: |
+        curl -sSLo "$RUNNER_TEMP/ghcup.exe" https://github.com/haskell/ghcup-hs/releases/download/v0.2.6.2/x86_64-mingw64-ghcup-0.2.6.2.exe
+        "$RUNNER_TEMP/ghcup.exe" --version
+        "$RUNNER_TEMP/ghcup.exe" install ghc 9.14.1
+        "$RUNNER_TEMP/ghcup.exe" install cabal 3.16.1.0
+        "$RUNNER_TEMP/ghcup.exe" set ghc 9.14.1
+        "$RUNNER_TEMP/ghcup.exe" set cabal 3.16.1.0
+        echo "$HOME/.ghcup/bin" >> "$GITHUB_PATH"
+
+    # WebGPU 组件需要 libwgpu_native 所在目录参与链接。
+    - name: Provide wgpu-native lib dir
+      shell: bash
+      run: |
+        cat > cabal.project.ci.local <<EOF
+        package trha
+          extra-lib-dirs: $GITHUB_WORKSPACE/3rdparty/wgpu-native/lib
+        EOF
+
+    # Windows runner 上 cabal 的包索引是空的（"package list does not exist"），
+    # 不 update 就找不到 vty-crossplatform 这类依赖，直接 Cabal-7107。
+    - name: cabal update
+      shell: bash
+      run: |
+        set -o pipefail
+        cabal update 2>&1 | tee win-cabal-update.log
+
+    - name: Build trha-infra
+      shell: bash
+      run: |
+        set -o pipefail
+        cabal build --project-file=cabal.project.ci trha:trha-infra 2>&1 | tee win-build.log
+
+    - name: Run AppContainer isolation probes
+      shell: bash
+      run: |
+        WS="$RUNNER_TEMP/trha-probe-ws"
+        rm -rf "$WS"; mkdir -p "$WS"
+        export TRHA_PROBE_WS="$WS"
+        ghc -isrc/infra -outputdir "$RUNNER_TEMP/probe-obj" \
+            -optl-luserenv -optl-ladvapi32 \
+            -o "$RUNNER_TEMP/acprobe.exe" test/manual/AppContainerIsolation.hs
+        "$RUNNER_TEMP/acprobe.exe" | tee "$RUNNER_TEMP/probe.log"
+        grep -Eq 'write workspace.*-> 0'  "$RUNNER_TEMP/probe.log"
+        grep -Eq 'write C:/Windows.*-> 1' "$RUNNER_TEMP/probe.log"
+        grep -Eq 'rmdir workspace.*-> 1'  "$RUNNER_TEMP/probe.log"
+
+    # job 日志走 Azure Blob（本机代理连不上），artifact 走 api.github.com（可下载）。
+    - name: Upload windows sandbox logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-sandbox-logs
+        path: |
+          win-cabal-update.log
+          win-build.log
+        if-no-files-found: warn
