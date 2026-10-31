@@ -1272,14 +1272,11 @@ const workflowTool = defineTool<WorkflowResult>({
   presentCall: args => ({ card: 'generic', title: `workflow ${oneLine(args.name ?? args.steps)}` }),
   // The tool returns a JSON array of step outcomes; the distilled fact is how
   // many steps ran.
-  presentResult: (_args, result) => {
-    // The canonical value: no JSON re-parse, no failed parse on a truncated clip.
-    const v = result as WorkflowResult;
-    return {
-      card: 'generic' as const,
-      title: v?.steps ? `${v.steps} steps` : 'workflow done',
-    };
-  },
+  // Copied from `deepseek-harness/packages/workflow/tool-workflow/src/index.ts`
+  // (`presentWorkflowResult`): the workflow card is intentionally generic — the
+  // step outcomes are model-facing text, and upstream deliberately adds no
+  // result-state title.
+  presentResult: () => ({ card: 'generic' as const }),
   output: {
     schema: {
       type: 'object',
