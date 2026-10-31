@@ -97,7 +97,13 @@ library trha-api
   -- 类型唯一性回归见 docs/plans/improvement-plan-2026-10-27.md P-01。
   hs-source-dirs:   src/api
   extra-libraries:         wgpu_native
-  extra-lib-dirs-static:   3rdparty/wgpu-native/lib
+  -- Windows 用 GNU/MinGW 构建（libwgpu_native.dll.a + wgpu_native.dll）；
+  -- 必须用 extra-lib-dirs-static：ghc-pkg 拒绝注册含相对路径的 library-dirs。
+  -- 该目录里的 libwgpu_native.dll.a（import lib）会被 -lwgpu_native 命中。
+  if os(windows)
+    extra-lib-dirs-static: 3rdparty/wgpu-native/lib/windows
+  else
+    extra-lib-dirs-static: 3rdparty/wgpu-native/lib
   build-depends:    base ^>=4.22
                   , trha:trha-core
                   , trha:trha-llm
@@ -212,7 +218,10 @@ library trha-webgpu
   extra-libraries:         wgpu_native
   -- 库目录用 extra-lib-dirs-static（Cabal 规范 3.8+：接受相对路径，适合仓库内 3rdparty/）。
   -- 运行时查找 .so 由 LD_LIBRARY_PATH 或 rpath 负责，见 webgpu-wiring-plan.md 的 W4/W6。
-  extra-lib-dirs-static:   3rdparty/wgpu-native/lib
+  if os(windows)
+    extra-lib-dirs-static: 3rdparty/wgpu-native/lib/windows
+  else
+    extra-lib-dirs-static: 3rdparty/wgpu-native/lib
   build-depends:    base ^>=4.22
                   , text
                   , bytestring
