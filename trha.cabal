@@ -453,6 +453,7 @@ executable mac-isolation-probe
                   , text
                   , process
                   , directory
+                  , filepath
   default-language: Haskell2010
 
 -- WebGPU 计算的功能性验证：真实 GPU 上跑 WGSL compute kernel，与 CPU 逐元素
