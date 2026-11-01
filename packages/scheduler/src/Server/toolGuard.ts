@@ -15,30 +15,34 @@ export const MAX_TOOL_OUTPUT = 64 * 1024; // 64 KiB
  * returns the canonical target path, or `null` when the path escapes.
  */
 export async function confineWritePath(root: string, target: string, extraRoots: string[] = []): Promise<string | null> {
-  const absRoot = path.resolve(root) + path.sep;
+  // Windows 的 NTFS 大小写不敏感，而 realpath 返回磁盘上的真实大小写
+  //（C:\Windows\Temp vs 环境变量里的 TEMP）——前缀比较必须不区分大小写，
+  // 否则合法的 workspace 内路径被误判越界（mkdtemp(os.tmpdir()) 即触发）。
+  const normCase = (p: string): string => (process.platform === 'win32' ? p.toLowerCase() : p);
+  const absRoot = normCase(path.resolve(root) + path.sep);
   const resolved = path.resolve(target);
   // 额外可信写目录（沙箱设置页配置）：目标落在任一目录内即为合法
   for (const er of extraRoots) {
-    const abs = path.resolve(er) + path.sep;
-    if ((resolved + '').startsWith(abs) || (resolved + '') === path.resolve(er)) {
+    const abs = normCase(path.resolve(er) + path.sep);
+    if (normCase(resolved + '').startsWith(abs) || normCase(resolved + '') === normCase(path.resolve(er))) {
       const eParent = path.dirname(resolved);
       await mkdir(eParent, { recursive: true }).catch(() => {});
       try {
         const realExtra = await realpath(eParent);
-        if ((realExtra + path.sep).startsWith(abs) || (realExtra + '') === path.resolve(er)) {
+        if ((realExtra + path.sep).startsWith(abs) || normCase(realExtra + '') === normCase(path.resolve(er))) {
           return path.join(realExtra, path.basename(resolved));
         }
       } catch { return resolved; }
     }
   }
-  if (!(resolved + '').startsWith(absRoot)) {
+  if (!normCase(resolved + '').startsWith(absRoot)) {
     return null;
   }
   try {
     const parent = path.dirname(resolved);
     await mkdir(parent, { recursive: true });
     const realParent = await realpath(parent);
-    if (!(realParent + path.sep).startsWith(absRoot)) {
+    if (!normCase(realParent + path.sep).startsWith(absRoot)) {
       return null; // a symlinked parent escapes the workspace
     }
     return path.join(realParent, path.basename(resolved));
