@@ -24,14 +24,13 @@ module Infrastructure.Sandbox.Win32.Process
 
 import Data.Bits ((.|.))
 import Data.Char (toUpper)
-import Data.List (intercalate, sortOn)
+import Data.List (intercalate, isPrefixOf, sortOn)
 import Data.Word (Word8, Word16, Word32, Word64)
 import Foreign
-import Foreign.C.String (CWString, withCWString, withCWStringLen)
+import Foreign.C.String (CWString, peekCWString, withCWString, withCWStringLen)
 import Foreign.C.Types (CInt(..))
 import Infrastructure.Sandbox.Win32.AppContainer (ContainerSid, containerSidRaw)
 import Infrastructure.Sandbox.Win32.Token (RestrictedToken, tokenHandle)
-import System.Environment (getEnvironment)
 
 type Handle = Ptr ()
 type Dword  = Word32
@@ -222,6 +221,12 @@ foreign import ccall unsafe "TerminateProcess"
 
 foreign import ccall unsafe "CloseHandle"
   c_CloseHandle :: Handle -> IO Bool32
+
+foreign import ccall unsafe "GetEnvironmentStringsW"
+  c_GetEnvironmentStringsW :: IO (Ptr Word16)
+
+foreign import ccall unsafe "FreeEnvironmentStringsW"
+  c_FreeEnvironmentStringsW :: Ptr Word16 -> IO Bool32
 
 foreign import ccall unsafe "InitializeProcThreadAttributeList"
   c_InitializeProcThreadAttributeList :: Ptr () -> Dword -> Dword -> Ptr Word64 -> IO Bool32
@@ -499,20 +504,55 @@ spawnAppContainer container exe args cwd =
 -- In particular, never pass arbitrary parent variables that may contain secrets.
 appContainerEnvironment :: IO (Either ProcessError String)
 appContainerEnvironment = do
-  parent <- getEnvironment
-  let allowed = ["COMSPEC", "PATH", "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE", "WINDIR"]
-      selected =
-        [ (name, value)
-        | (name, value) <- parent
-        , map toUpper name `elem` allowed
-        ]
-      hasSystemRoot = any ((== "SYSTEMROOT") . map toUpper . fst) selected
-  if hasSystemRoot
-    then
-      let sorted = sortOn (map toUpper . fst) selected
-          entries = [name <> "=" <> value | (name, value) <- sorted]
-       in pure (Right (intercalate "\0" entries <> "\0"))
-    else pure (Left (ProcessError "SystemRoot" 203))
+  parent <- c_GetEnvironmentStringsW
+  if parent == nullPtr
+    then Left <$> mkErr "GetEnvironmentStringsW"
+    else do
+      entries <- readEnvironmentBlock parent
+      _ <- c_FreeEnvironmentStringsW parent
+      let selected = filter keepEnvironmentEntry entries
+          hasSystemRoot = any (("SYSTEMROOT" ==) . map toUpper . environmentName) selected
+      if hasSystemRoot
+        then
+          let sorted = sortOn (map toUpper . environmentName) selected
+           in pure (Right (intercalate "\0" sorted <> "\0"))
+        else pure (Left (ProcessError "SystemRoot" 203))
+  where
+    allowed =
+      [ "ALLUSERSPROFILE", "APPDATA", "COMSPEC", "HOMEDRIVE", "HOMEPATH"
+      , "LOCALAPPDATA", "PATH", "PATHEXT", "PROGRAMDATA", "PROGRAMFILES"
+      , "PROGRAMFILES(X86)", "PUBLIC", "SYSTEMDRIVE", "SYSTEMROOT", "TEMP"
+      , "TMP", "USERPROFILE", "WINDIR"
+      ]
+    keepEnvironmentEntry entry =
+      let name = environmentName entry
+          upperName = map toUpper name
+       in upperName `elem` allowed || driveCurrentDirectory name
+    driveCurrentDirectory name =
+      case name of
+        '=' : drive : ':' : [] -> drive `elem` ['A' .. 'Z'] || drive `elem` ['a' .. 'z']
+        _ -> False
+    environmentName entry
+      | "=" `isPrefixOf` entry =
+          case break (== '=') (drop 1 entry) of
+            (driveName, _) -> '=' : driveName
+      | otherwise = takeWhile (/= '=') entry
+
+readEnvironmentBlock :: Ptr Word16 -> IO [String]
+readEnvironmentBlock block = go 0
+  where
+    go offset = do
+      first <- peekElemOff block offset
+      if first == 0
+        then pure []
+        else do
+          entry <- peekCWString (castPtr (block `plusPtr` (offset * sizeOf first)))
+          width <- countWideChars offset
+          rest <- go (offset + width)
+          pure (entry : rest)
+    countWideChars offset = do
+      char <- peekElemOff block offset
+      if char == 0 then pure 1 else (1 +) <$> countWideChars (offset + 1)
 
 -- ── 管道与进程操作 ────────────────────────────────────────────────────────
 
