@@ -23,9 +23,11 @@ module Infrastructure.Sandbox.Win32.Process
   ) where
 
 import Data.Bits ((.|.))
+import Data.Char (toUpper)
+import Data.List (intercalate, isPrefixOf, sortOn)
 import Data.Word (Word8, Word16, Word32, Word64)
 import Foreign
-import Foreign.C.String (CWString, withCWString)
+import Foreign.C.String (CWString, peekCWString, withCWString)
 import Foreign.C.Types (CInt(..))
 import Infrastructure.Sandbox.Win32.AppContainer (ContainerSid, containerSidRaw)
 import Infrastructure.Sandbox.Win32.Token (RestrictedToken, tokenHandle)
@@ -219,6 +221,12 @@ foreign import ccall unsafe "TerminateProcess"
 
 foreign import ccall unsafe "CloseHandle"
   c_CloseHandle :: Handle -> IO Bool32
+
+foreign import ccall unsafe "GetEnvironmentStringsW"
+  c_GetEnvironmentStringsW :: IO (Ptr Word16)
+
+foreign import ccall unsafe "FreeEnvironmentStringsW"
+  c_FreeEnvironmentStringsW :: Ptr Word16 -> IO Bool32
 
 foreign import ccall unsafe "InitializeProcThreadAttributeList"
   c_InitializeProcThreadAttributeList :: Ptr () -> Dword -> Dword -> Ptr Word64 -> IO Bool32
@@ -451,33 +459,34 @@ spawnAppContainer container exe args cwd =
                                       , siexStdError = errWrite
                                       , siexAttributeList = listPtr
                                       }
-                                    -- 空环境块（只有两个 UTF-16 NUL）：子进程不继承
-                                    -- 父进程环境变量，凭据不会随执行泄露。
-                                    allocaArray 2 $ \envPtr -> do
-                                      pokeArray envPtr [0, 0 :: Word16]
-                                      ok <- c_CreateProcessW
-                                        nullPtr
-                                        wideCmd
-                                        nullPtr nullPtr
-                                        1                               -- bInheritHandles
-                                        ( extendedStartupInfoPresent
-                                            .|. createSuspended
-                                            .|. createNoWindow
-                                            .|. createUnicodeEnvironment )
-                                        (castPtr envPtr) wideCwd
-                                        (castPtr siExPtr)
-                                        piPtr
-                                      if ok == 0
-                                        then Left <$> mkErr "CreateProcessW"
-                                        else do
-                                          pi' <- peek piPtr
-                                          pure (Right SpawnedProcess
-                                            { spProcess = piProcess pi'
-                                            , spThread = piThread pi'
-                                            , spPid = piPid pi'
-                                            , spStdout = outRead
-                                            , spStderr = errRead
-                                            })
+                                    env <- appContainerEnvironment
+                                    case env of
+                                      Left e -> pure (Left e)
+                                      Right envBlock ->
+                                        withCWString envBlock $ \envPtr -> do
+                                          ok <- c_CreateProcessW
+                                            nullPtr
+                                            wideCmd
+                                            nullPtr nullPtr
+                                            1                               -- bInheritHandles
+                                            ( extendedStartupInfoPresent
+                                                .|. createSuspended
+                                                .|. createNoWindow
+                                                .|. createUnicodeEnvironment )
+                                            (castPtr envPtr) wideCwd
+                                            (castPtr siExPtr)
+                                            piPtr
+                                          if ok == 0
+                                            then Left <$> mkErr "CreateProcessW"
+                                            else do
+                                              pi' <- peek piPtr
+                                              pure (Right SpawnedProcess
+                                                { spProcess = piProcess pi'
+                                                , spThread = piThread pi'
+                                                , spPid = piPid pi'
+                                                , spStdout = outRead
+                                                , spStderr = errRead
+                                                })
                                   c_DeleteProcThreadAttributeList listPtr
                                   pure r
                     -- 3. 父进程关掉写端，否则读端永远等不到 EOF
@@ -489,6 +498,63 @@ spawnAppContainer container exe args cwd =
                         _ <- c_CloseHandle errRead
                         pure (Left e)
                       Right sp -> pure (Right sp)
+
+-- Keep the child environment small and deterministic while retaining the
+-- Windows variables used to initialize the process and resolve system tools.
+-- In particular, never pass arbitrary parent variables that may contain secrets.
+-- The block is NUL-separated and must end with a double NUL; the final entry
+-- terminator comes from here and withCWString supplies the extra one.
+appContainerEnvironment :: IO (Either ProcessError String)
+appContainerEnvironment = do
+  parent <- c_GetEnvironmentStringsW
+  if parent == nullPtr
+    then Left <$> mkErr "GetEnvironmentStringsW"
+    else do
+      entries <- readEnvironmentBlock parent
+      _ <- c_FreeEnvironmentStringsW parent
+      let selected = filter keepEnvironmentEntry entries
+          hasSystemRoot = any (("SYSTEMROOT" ==) . map toUpper . environmentName) selected
+      if hasSystemRoot
+        then
+          let sorted = sortOn (map toUpper . environmentName) selected
+           in pure (Right (intercalate "\0" sorted <> "\0"))
+        else pure (Left (ProcessError "SystemRoot" 203))
+  where
+    allowed =
+      [ "ALLUSERSPROFILE", "APPDATA", "COMSPEC", "HOMEDRIVE", "HOMEPATH"
+      , "LOCALAPPDATA", "PATH", "PATHEXT", "PROGRAMDATA", "PROGRAMFILES"
+      , "PROGRAMFILES(X86)", "PUBLIC", "SYSTEMDRIVE", "SYSTEMROOT", "TEMP"
+      , "TMP", "USERPROFILE", "WINDIR"
+      ]
+    keepEnvironmentEntry entry =
+      let name = environmentName entry
+          upperName = map toUpper name
+       in upperName `elem` allowed || driveCurrentDirectory name
+    driveCurrentDirectory name =
+      case name of
+        '=' : drive : ':' : [] -> drive `elem` ['A' .. 'Z'] || drive `elem` ['a' .. 'z']
+        _ -> False
+    environmentName entry
+      | "=" `isPrefixOf` entry =
+          case break (== '=') (drop 1 entry) of
+            (driveName, _) -> '=' : driveName
+      | otherwise = takeWhile (/= '=') entry
+
+readEnvironmentBlock :: Ptr Word16 -> IO [String]
+readEnvironmentBlock block = go 0
+  where
+    go offset = do
+      first <- peekElemOff block offset
+      if first == 0
+        then pure []
+        else do
+          entry <- peekCWString (castPtr (block `plusPtr` (offset * sizeOf first)))
+          width <- countWideChars offset
+          rest <- go (offset + width)
+          pure (entry : rest)
+    countWideChars offset = do
+      char <- peekElemOff block offset
+      if char == 0 then pure 1 else (1 +) <$> countWideChars (offset + 1)
 
 -- ── 管道与进程操作 ────────────────────────────────────────────────────────
 

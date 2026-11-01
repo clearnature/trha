@@ -21,6 +21,7 @@ module Infrastructure.Sandbox.Win32.AppContainer
   , containerSidRaw
   , AppContainerError(..)
   , deriveContainerSid
+  , ensureContainerProfile
   , containerSidText
   , freeContainerSid
   ) where
@@ -52,6 +53,10 @@ data AppContainerError = AppContainerError
 foreign import ccall unsafe "DeriveAppContainerSidFromAppContainerName"
   c_DeriveAppContainerSid :: CWString -> Ptr (Ptr ()) -> IO CLong
 
+foreign import ccall unsafe "CreateAppContainerProfile"
+  c_CreateAppContainerProfile
+    :: CWString -> CWString -> CWString -> Ptr () -> Word32 -> Ptr (Ptr ()) -> IO CLong
+
 foreign import ccall unsafe "ConvertSidToStringSidW"
   c_ConvertSidToStringSidW :: Ptr () -> Ptr (Ptr CWchar) -> IO CInt
 
@@ -76,6 +81,28 @@ deriveContainerSid name =
           if sid == nullPtr
             then pure (Left (AppContainerError "DeriveAppContainerSidFromAppContainerName" 0))
             else pure (Right (ContainerSid sid))
+
+-- | 确保容器 profile 存在（幂等，免特权）。
+--
+-- SID 派生本身不需要 profile，但 @CreateProcess@ 会为 AppContainer 进程准备
+-- 容器目录与环境；profile 不存在时在 CI runner 上 @CreateProcessW@ 返回
+-- ERROR_FILE_NOT_FOUND(2)。已存在（@HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)@）
+-- 视为成功。
+ensureContainerProfile :: String -> IO (Either AppContainerError ())
+ensureContainerProfile name =
+  withCWString name $ \wideName ->
+    alloca $ \sidOut -> do
+      poke sidOut nullPtr
+      hr <- c_CreateAppContainerProfile wideName wideName wideName nullPtr 0 sidOut
+      let code = fromIntegral hr :: Word32
+      if code == 0
+        then do
+          sid <- peek sidOut
+          if sid == nullPtr then pure () else () <$ c_FreeSid sid
+          pure (Right ())
+        else if code == 0x800700B7
+          then pure (Right ())
+          else pure (Left (AppContainerError "CreateAppContainerProfile" code))
 
 -- | SID 转字符串（用于 icacls 授权与日志）。
 containerSidText :: ContainerSid -> IO (Either AppContainerError String)
