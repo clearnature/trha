@@ -32,6 +32,7 @@ import qualified UI.IndexCacheSpec
 import qualified UI.CustomCommandsSpec
 import qualified UI.Render.ToolCardSpec
 import qualified UI.Render.ToolSummarySpec
+import qualified UI.Render.FilePartSpec
 import qualified UI.Render.MessageSpec
 import qualified BridgeDeltaSpec
 import qualified UI.EventSpec
@@ -85,6 +86,7 @@ main = hspec $ do
   UI.CustomCommandsSpec.spec
   UI.Render.ToolCardSpec.spec
   UI.Render.ToolSummarySpec.spec
+  UI.Render.FilePartSpec.spec
   UI.Render.MessageSpec.spec
   BridgeDeltaSpec.spec
   UI.EventSpec.spec

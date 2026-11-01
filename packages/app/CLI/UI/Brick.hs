@@ -108,7 +108,8 @@ import UI.Render.Picker (PickerItem(..), filterItems, maxVisible, moveSelection,
 import UI.ProviderPresets (Preset(..), presets, prePopular)
 import Core.EffortContract (levelsFor)
 import UI.Render.ToolCard (ToolStatus(..), ToolCard(..), ToolFold(..), toggleFold, toolCardWithStatus, toolStatusLine, cardWidth)
-import UI.Render.ToolSummary (toolHeadline, toolDetailLines, presentCard)
+import UI.Render.ToolSummary (toolHeadline, toolDetailLines, presentCard, shouldHideTool)
+import UI.Render.FilePart (filePartsOf, stripFileTokens, filePartLine)
 import UI.Render.Message (classifyError, errorLabel, errorHint, metaLine)
 import qualified UI.TextWidth as TW
 import UI.Theme
@@ -822,10 +823,15 @@ drawMessages st =
     borderWithLabel (withAttr (attrName "title") $ str " trha — agent harness · Messages ") $
       viewport MessageArea Vertical $
         vBox $
-          case (appMessages st, appPending st) of
-            ([], Nothing) ->
+          case (appMessages st, visible, appPending st) of
+            ([], _, Nothing) ->
               [ padAll 1 $ withAttr (attrName "timestamp") $
                   strWrap "No messages yet. Type something and press Enter, or /help for commands." ]
+            (_, [], Nothing) ->
+              -- Everything on screen was a quiet tool card (M6-7); say so
+              -- instead of drawing an empty viewport.
+              [ padAll 1 $ withAttr (attrName "timestamp") $
+                  strWrap "All tool cards are hidden (quiet read/search). /verbose shows them." ]
             _ -> [ let focused = appCardFocus st == Just (msgId m)
                        fold = foldOf m
                        sel = inSel st (msgId m)
@@ -834,13 +840,23 @@ drawMessages st =
                    -- Retained per-message render (the ported TranscriptScrolling
                    -- contract): scrolling and typing redraw only what changed.
                    in cached (MsgCache (msgId m) (fold == FoldExpanded) focused sel) widget
-                 | m <- appMessages st ]
+                 | m <- visible ]
                    ++ maybe [] (pure . drawPending cfg) (appPending st)
   where
     cfg = appEffCfg st
+    visible = filter (not . cardHidden st) (appMessages st)
     foldOf m
       | appVerbose st = FoldExpanded
       | otherwise = fromMaybe FoldCollapsed (Map.lookup (msgId m) (appFolds st))
+
+-- | Whether a finished tool message is omitted from the stream (M6-7).
+-- Low-noise lookups vanish once complete, but an explicitly expanded card
+-- (the user asked to see it) and @/verbose@ both keep it.
+cardHidden :: AppState -> ChatMessage -> Bool
+cardHidden st m
+  | appVerbose st = False
+  | Map.lookup (msgId m) (appFolds st) == Just FoldExpanded = False
+  | otherwise = maybe False shouldHideTool (msgTool m)
 
 -- | Display style for a message role: (attribute, bracket label).  Errors are
 -- classified so a rate limit reads as such instead of a generic failure
@@ -932,7 +948,16 @@ messageBody md role content tool fold
                       str "run /approve or /deny"
                   ]
       | otherwise ->
-          padLeft (Pad 2) $ strWrap (T.unpack content)
+          case filePartsOf content of
+            [] -> padLeft (Pad 2) $ strWrap (T.unpack content)
+            refs ->
+              -- Attachment tokens became file parts (M5-7): the prose keeps
+              -- wrapping, each path gets its own row.
+              let prose = stripFileTokens content
+              in padLeft (Pad 2) $ vBox $
+                   [ strWrap (T.unpack prose) | not (T.null prose) ]
+                     ++ [ withAttr (attrName "timestamp") (str (T.unpack (filePartLine r)))
+                        | r <- refs ]
 
 -- | One tool card.  Collapsed: a family-specific headline (shell command,
 -- path, pattern, task…).  Expanded: family detail lines, then the diff or
@@ -2419,9 +2444,10 @@ refreshMode :: SchedulerBridge -> SessionId -> BChan AppEvent -> IO ()
 refreshMode bridge sid chan =
   void $ async $ fetchSessionMode bridge sid >>= writeBChan chan . EvMode
 
--- | Tool-card ids in display order.
+-- | Tool-card ids in display order (hidden cards excluded, so focus never
+-- lands on something the viewport does not draw).
 toolCardIds :: AppState -> [Int]
-toolCardIds st = [ msgId m | m <- appMessages st, isJust (msgTool m) ]
+toolCardIds st = [ msgId m | m <- appMessages st, isJust (msgTool m), not (cardHidden st m) ]
 
 -- | Move the tool-card focus (alt+↑/↓), clamped to the newest/oldest card.
 moveCardFocus :: Int -> EventM ResourceName AppState ()

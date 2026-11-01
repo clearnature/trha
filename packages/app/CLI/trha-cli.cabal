@@ -65,6 +65,7 @@ executable trha
     UI.Render.Picker
     UI.Render.ToolCard
     UI.Render.ToolSummary
+    UI.Render.FilePart
     UI.Render.Message
     UI.Theme
     UI.Setup
@@ -150,6 +151,8 @@ test-suite trha-cli-test
     UI.Render.ToolCardSpec
     UI.Render.ToolSummary
     UI.Render.ToolSummarySpec
+    UI.Render.FilePart
+    UI.Render.FilePartSpec
     UI.Render.Message
     UI.Render.MessageSpec
     UI.Theme

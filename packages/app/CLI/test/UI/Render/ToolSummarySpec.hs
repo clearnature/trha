@@ -81,3 +81,25 @@ spec = do
     it "counts added/removed lines and ignores file headers" $
       outputStats ["--- a", "+++ b", "+x", "-y", " ctx"]
         `shouldBe` (1, 1)
+
+  describe "shouldHideTool" $ do
+    it "hides a short successful read" $
+      shouldHideTool (card "read" ["path=a.txt"] (Just ToolSucceeded) Nothing ["one", "two"])
+        `shouldBe` True
+
+    it "hides a short successful search" $
+      shouldHideTool (card "grep" ["pattern=x"] (Just ToolSucceeded) Nothing ["a.txt:1:x"])
+        `shouldBe` True
+
+    it "keeps a lookup whose output is long" $
+      shouldHideTool (card "read" ["path=big.txt"] (Just ToolSucceeded) Nothing (replicate 40 "line"))
+        `shouldBe` False
+
+    it "keeps failures and still-running calls" $ do
+      shouldHideTool (card "read" ["path=a.txt"] (Just (ToolFailed "exit 1")) Nothing ["err"])
+        `shouldBe` False
+      shouldHideTool (card "read" ["path=a.txt"] Nothing Nothing []) `shouldBe` False
+
+    it "never hides a tool that writes" $
+      shouldHideTool (card "edit" ["path=a.txt"] (Just ToolSucceeded) Nothing ["ok"])
+        `shouldBe` False

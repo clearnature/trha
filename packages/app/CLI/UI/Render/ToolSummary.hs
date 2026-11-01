@@ -16,6 +16,7 @@ module UI.Render.ToolSummary
   , toolDetailLines
   , presentCard
   , outputStats
+  , shouldHideTool
   ) where
 
 import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
@@ -156,6 +157,22 @@ salient kind card = case kind of
 
 agentTask :: ToolCard -> Maybe Text
 agentTask card = listToMaybe (mapMaybe (`argOf` tcArgs card) ["task", "description", "prompt"])
+
+-- | A completed call that carries nothing the user acts on.  This is MiMo's
+-- @shouldHideTool@: a successful @read@/@glob@/@grep@ with a short result
+-- disappears from the stream once it finishes — the headline would only add
+-- noise.  Failures and anything long (say a 200-line file the user wants to
+-- read in the transcript) stay visible; @/verbose@ restores everything.
+shouldHideTool :: ToolCard -> Bool
+shouldHideTool card = case tcStatus card of
+  Just ToolSucceeded -> quiet && length (tcOutput card) <= quietOutputLines
+  _                  -> False
+  where
+    quiet = toolKindOf (T.pack (tcName card)) `elem` [KRead, KSearch]
+
+-- | Output size up to which a quiet lookup counts as noise.
+quietOutputLines :: Int
+quietOutputLines = 12
 
 oneLine :: Text -> Text
 oneLine = T.unwords . T.words
