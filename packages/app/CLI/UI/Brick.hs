@@ -1687,32 +1687,9 @@ handleDialogKey (EvKey (KChar c) [])
         Just (DialogProviders ps sel) | c == 'r'
           , (p : _) <- drop sel ps -> refreshProviderEfforts p
         Just (DialogProviders ps sel) | c == 'd'
-          , (p : _) <- drop sel ps -> do
-            -- 删除确认（tui-port L290：对照 MiMo 的 remove-confirmation）
-            st <- get
-            modify $ \s -> s
-              { appPendingProviderRemove = Just (piName p)
-              , appDialogs = stackPush
-                  (DialogConfirm (T.pack ("Remove provider " <> T.unpack (piName p) <> "?")) 1)
-                  (appDialogs st) }
+          , (p : _) <- drop sel ps -> startProviderRemove p
         Just (DialogProviders ps sel) | c == 't'
-          , (p : _) <- drop sel ps -> do
-            -- 思考开关（tui-port L290：对照 MiMo 的 thinking toggle）——
-            -- 翻转 piThinking（yes↔no）并经 saveProvider 持久化。
-            st <- get
-            let bridge = appBridge st
-                chan   = appChan st
-                next   = if piThinking p == "yes" then "no" else "yes"
-            modify $ \s -> s { appStatus = tr (appLang s) "Saving thinking toggle..." }
-            void $ liftIO $ async $ do
-              r <- saveProvider bridge (piName p) (piKind p) (piBaseUrl p) ""
-                     (piModels p) (piDefault p) (piAuthHeader p) (piNoProxy p)
-                     (piEffort p) (piVision p) (piEfforts p)
-                     (piHeaders p) (piExtraBody p) next (piResponsesMode p)
-                     (piContextWindow p)
-              writeBChan chan (case r of
-                Right _  -> EvToast (T.pack "thinking: " <> next)
-                Left e   -> EvToast (T.pack ("Error: " <> show e)))
+          , (p : _) <- drop sel ps -> toggleProviderThinking p
         _ -> withCommands (dialogAppend c) >> scrollBottom
 handleDialogKey _ = return ()
 
@@ -2120,6 +2097,36 @@ startWizardPreset p = do
 
 -- | Re-probe a saved provider and write its effort ladder back (a relay may
 -- have gained or lost a model's depth levels since it was saved).
+-- | 思考开关（tui-port L290）：翻转 piThinking（yes↔no）并经 saveProvider
+-- 持久化。DialogProviders 的 't' 与 settings 的 Providers 页签共用。
+toggleProviderThinking :: ProviderInfo -> EventM ResourceName AppState ()
+toggleProviderThinking p = do
+  st <- get
+  let bridge = appBridge st
+      chan   = appChan st
+      next   = if piThinking p == "yes" then "no" else "yes"
+  modify $ \s -> s { appStatus = tr (appLang st) "Saving thinking toggle..." }
+  void $ liftIO $ async $ do
+    r <- saveProvider bridge (piName p) (piKind p) (piBaseUrl p) ""
+           (piModels p) (piDefault p) (piAuthHeader p) (piNoProxy p)
+           (piEffort p) (piVision p) (piEfforts p)
+           (piHeaders p) (piExtraBody p) next (piResponsesMode p)
+           (piContextWindow p)
+    writeBChan chan (case r of
+      Right _  -> EvToast (T.pack "thinking: " <> next)
+      Left e   -> EvToast (T.pack ("Error: " <> show e)))
+
+-- | 删除确认入口（tui-port L290）：pending 标记 + DialogConfirm（默认取消）。
+-- 确认后的实际删除在 DialogConfirm 分发（appPendingProviderRemove）。
+startProviderRemove :: ProviderInfo -> EventM ResourceName AppState ()
+startProviderRemove p = do
+  st <- get
+  modify $ \s -> s
+    { appPendingProviderRemove = Just (piName p)
+    , appDialogs = stackPush
+        (DialogConfirm (T.pack ("Remove provider " <> T.unpack (piName p) <> "?")) 1)
+        (appDialogs st) }
+
 refreshProviderEfforts :: ProviderInfo -> EventM ResourceName AppState ()
 refreshProviderEfforts p = do
   st <- get
@@ -3696,6 +3703,9 @@ handleSettingsKey (EvKey KEnter []) = do
     Just p -> case (spTab p, spFocus p) of
       (TabStatus, _)  -> return ()  -- read-only content
       (TabStats, _)   -> return ()
+      (TabProviders, FocusList) -> case drop (spSel p) (appProviders st) of
+        (p2 : _) -> chooseProvider p2
+        []       -> return ()
       (TabSettings, FocusTabs) ->
         modify $ \s -> s { appSettings = Just p { spFocus = FocusSearch } }
       (TabSettings, FocusSearch) ->
@@ -3718,6 +3728,13 @@ handleSettingsKey (EvKey (KChar c) []) = do
       modify $ \s -> s { appSettings = Just p { spQuery = queryAppend (spQuery p) c, spSel = 0 } }
     Just p | spTab p == TabSettings && spFocus p == FocusList, o >= 32 && o < 127 ->
       modify $ \s -> s { appSettings = Just p { spQuery = queryAppend (spQuery p) c, spSel = 0 } }
+    Just p | spTab p == TabProviders && spFocus p == FocusList, o >= 32 && o < 127 ->
+      -- Providers 页签的动作键（tui-port L290）：t=思考开关、d=删除确认
+      --（复用 DialogProviders 的同款逻辑）。
+      case (c, drop (spSel p) (appProviders st)) of
+        ('t', (p2 : _)) -> toggleProviderThinking p2
+        ('d', (p2 : _)) -> startProviderRemove p2
+        _               -> return ()
     _ -> return ()
 handleSettingsKey (EvKey KBS []) = do
   st <- get
@@ -3745,7 +3762,9 @@ moveTabBy d = modify $ \s -> s { appSettings = (\p -> p { spTab = moveTab d (spT
 moveListSel :: Int -> EventM ResourceName AppState ()
 moveListSel d = do
   st <- get
-  let n = length (visibleRows st)
+  let n = case appSettings st of
+        Just p | spTab p == TabProviders -> length (appProviders st)
+        _                                -> length (visibleRows st)
   modify $ \s -> s { appSettings = (\p -> p { spSel = if n <= 0 then 0 else mod (spSel p + d + n) n }) <$> appSettings s }
 -- | Initial edit buffer: current value, except secrets which start empty.
 seedEdit :: SettingsEntry -> Text
@@ -3788,7 +3807,28 @@ drawSettingsPanel st =
       TabSettings -> settingsListRows
       TabStatus   -> [fullRowAny (renderStatusRows lang (appSysRows st))]
       TabStats    -> [fullRowAny (vLimit 22 (renderStatsBlocks lang (computeStatsBlocks st)))]
+      TabProviders -> providerListRows
     settingsListRows = fullRow (searchRow st p) : map fullRow rowsShown ++ [fullRow descRow, fullRow statusRow]
+    -- Providers 页签（tui-port L290）：registry 一览；选中行支持
+    -- Enter=选为当前 provider、t=思考开关、d=删除确认。
+    providerListRows =
+      let ps = appProviders st
+      in if null ps
+           then [fullRow (padLeftRight 1 (str " no providers"))]
+           else map fullRowAny [rowForProvider idx p2 | (idx, p2) <- zip [0 ..] ps]
+    rowForProvider idx p2 =
+      let body = hBox
+            [ withAttr (attrName "title") (str (T.unpack (T.take 22 (piName p2))))
+            , str "  "
+            , str (T.unpack (T.take 10 (piKind p2)))
+            , str "  "
+            , str (T.unpack (T.take 18 (piDefault p2)))
+            , str "  "
+            , str (T.unpack (piEffort p2 <> "/" <> piThinking p2))
+            ]
+      in if idx == sel
+           then withAttr (attrName "selection") body
+           else withAttr (attrName "timestamp") body
     searchRow st2 sp =
       let q = spQuery sp
           n = length (filterEntries q (settingsRows st2))

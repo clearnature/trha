@@ -293,7 +293,12 @@
 - [x] **思考开关（对照 MiMo 的 thinking toggle）**：providers 对话框 `t` 键
   翻转 `piThinking`（yes↔no）并经 `saveProvider` 持久化，toast 回显新档位
   （2026-11-01，编译 63/63 通过）。
-- [ ] **仍未做（对照 MiMo）**：设置面板里的独立 Provider 页签。
+- [x] **独立 Provider 页签（对照 MiMo）**：/settings 全屏面板加 `TabProviders`
+  页（SettingsTab 尾部追加，tabList/moveTab 的 maxBound 循环自动覆盖）：
+  列表渲染 name/kind/默认模型/effort·thinking 四列；FocusList 下
+  Enter=chooseProvider、t=思考开关、d=删除确认——与 /providers 弹层共用
+  `toggleProviderThinking`/`startProviderRemove` 共享函数（2026-11-01，
+  编译 63/63 通过）。**L290 三项全部收口。**
 
 
 

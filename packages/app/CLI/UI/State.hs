@@ -246,6 +246,7 @@ data SettingsTab
   = TabSettings
   | TabStatus
   | TabStats
+  | TabProviders
   deriving (Show, Eq, Enum, Bounded)
 
 data SettingsFocus
@@ -271,4 +272,5 @@ tabLabel :: Lang -> SettingsTab -> Text
 tabLabel lang t = tr lang (case t of
   TabSettings -> "Settings"
   TabStatus   -> "Status"
-  TabStats    -> "Stats")
+  TabStats    -> "Stats"
+  TabProviders -> "Providers")
