@@ -1535,7 +1535,7 @@ const readTool = defineTool<string>({
     const base = host.sessionCwd ?? host.workspace;
     const target = resolveReadPath(args.path, base);
     if (!target) throw new Error('missing/invalid path argument');
-    const text = await readFile(target, 'utf8');
+    const text = decodeTextFile(await readFile(target));
     const lines = text.split('\n');
     const offset = Number(args.offset);
     const limit = Number(args.limit);
@@ -1545,6 +1545,35 @@ const readTool = defineTool<string>({
     return limitOutput(slice.map((l, i) => `${start + i + 1}\t${l}`).join('\n'));
   },
 });
+
+// 编码检测级联（学 DeepSeek-Reasonix internal/base/fileutil/encoding）：
+// BOM（UTF-8/UTF-16LE/BE）→ 无 BOM UTF-16（NUL 字节模式启发式）→
+// 严格 UTF-8 → GB18030 回退（Node 内置 ICU）→ latin1 透传。
+// 用户的文件不一定按 UTF-8 保存（GBK 源文件在中文环境常见）。
+function decodeTextFile(buf: Buffer): string {
+  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf)
+    return new TextDecoder('utf-8').decode(buf.subarray(3));
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe)
+    return new TextDecoder('utf-16le').decode(buf.subarray(2));
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff)
+    return new TextDecoder('utf-16be').decode(buf.subarray(2));
+  let oddZero = 0;
+  let evenZero = 0;
+  const sample = Math.min(buf.length, 64);
+  for (let i = 0; i < sample; i++) {
+    if (buf[i] === 0x00) { if (i % 2 === 1) oddZero++; else evenZero++; }
+  }
+  if (sample >= 8 && oddZero >= sample / 4)
+    return new TextDecoder('utf-16le').decode(buf);
+  if (sample >= 8 && evenZero >= sample / 4)
+    return new TextDecoder('utf-16be').decode(buf);
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    try { return new TextDecoder('gb18030').decode(buf); }
+    catch { return buf.toString('latin1'); }
+  }
+}
 
 registerTool(toolSpecFrom(readTool, { plane: 'agent' }));
 
