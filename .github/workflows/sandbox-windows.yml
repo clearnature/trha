@@ -56,13 +56,20 @@ jobs:
         cabal-version: 'latest'
         cabal-update: false
 
-    # WebGPU 组件需要 libwgpu_native 所在目录参与链接。
-    - name: Provide wgpu-native lib dir
+    # WebGPU 静态链接方案：Windows 的 libwgpu_native.a（36MB）不入库，
+    # 由 fetch-windows.sh 从 wgpu-native release 下载到 lib/windows/。
+    # git 里只有 Linux 的 .so——所以这一步在 Windows job 上是必需的。
+    - name: Fetch wgpu-native (Windows static + dll)
+      shell: bash
+      run: sh 3rdparty/wgpu-native/fetch-windows.sh
+
+    - name: Provide wgpu-native lib dir (Windows static lib)
       shell: bash
       run: |
+        ls -la 3rdparty/wgpu-native/lib/windows/
         cat > cabal.project.ci.local <<EOF
         package trha
-          extra-lib-dirs: $GITHUB_WORKSPACE/3rdparty/wgpu-native/lib
+          extra-lib-dirs: $GITHUB_WORKSPACE/3rdparty/wgpu-native/lib/windows
         EOF
 
     # Windows runner 上 cabal 的包索引是空的（"package list does not exist"），
