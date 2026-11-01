@@ -26,7 +26,7 @@ import Control.Monad.IO.Class (liftIO)
 import System.Timeout (timeout)
 import Core.Clipboard (saveClipboardImage)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.RunState (stopAll, stopResultText)
 import Core.Export (exportMarkdown, exportJson, defaultExportName)
@@ -195,6 +195,7 @@ initialState bridge chan cfg = AppState
   , appAskTool   = Nothing
   , appPendingDelete = Nothing
   , appPendingStop   = False
+  , appPendingProviderRemove = Nothing
   , appUsage     = Nothing
   , appCtxSize   = configCtxSize cfg
   , appSidebar   = SidebarAuto
@@ -1685,6 +1686,15 @@ handleDialogKey (EvKey (KChar c) [])
           , (p : _) <- drop sel ps -> startWizard (Just p)
         Just (DialogProviders ps sel) | c == 'r'
           , (p : _) <- drop sel ps -> refreshProviderEfforts p
+        Just (DialogProviders ps sel) | c == 'd'
+          , (p : _) <- drop sel ps -> do
+            -- 删除确认（tui-port L290：对照 MiMo 的 remove-confirmation）
+            st <- get
+            modify $ \s -> s
+              { appPendingProviderRemove = Just (piName p)
+              , appDialogs = stackPush
+                  (DialogConfirm (T.pack ("Remove provider " <> T.unpack (piName p) <> "?")) 1)
+                  (appDialogs st) }
         _ -> withCommands (dialogAppend c) >> scrollBottom
 handleDialogKey _ = return ()
 
@@ -1796,8 +1806,19 @@ dialogActivate = do
             st2 <- get
             if appPendingStop st2
               then stopServicesAndHalt
-              else case appPendingDelete st2 of
-                Just sid -> do
+              else case (appPendingProviderRemove st2, appPendingDelete st2) of
+                (Just pname, _) -> do
+                  modify $ \s -> s { appDialogs = stackPop (appDialogs s)
+                                   , appPendingProviderRemove = Nothing
+                                   , appStatus = tr (appLang s) "Removing..." }
+                  let bridge = appBridge st2
+                      chan   = appChan st2
+                  void $ liftIO $ async $ do
+                    r <- removeProvider bridge pname
+                    writeBChan chan (case r of
+                      Right ps -> EvProviders (Right ps)   -- registry refresh
+                      Left e   -> EvToast (T.pack ("Error: " <> show e)))
+                (Nothing, Just sid) -> do
                   modify $ \s -> s { appDialogs = stackPop (appDialogs s)
                                    , appPendingDelete = Nothing
                                    , appStatus = tr (appLang s) "Deleting..." }
@@ -1808,7 +1829,7 @@ dialogActivate = do
                     writeBChan chan (EvToast (case r of
                       Right () -> "Session deleted: " <> T.pack sid
                       Left e   -> "Error: " <> T.pack (show e)))
-                Nothing -> do  -- persist the rule, then approve once
+                (Nothing, Nothing) -> do  -- persist the rule, then approve once
                   modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
                   let (name, args) = fromMaybe ("", []) (appAskTool st2)
                       bridge = appBridge st2
@@ -1827,7 +1848,7 @@ dialogActivate = do
             if appPendingStop st2
               then modify $ \s -> s { appPendingStop = False }
               else do
-                modify $ \s -> s { appPendingDelete = Nothing }
+                modify $ \s -> s { appPendingDelete = Nothing, appPendingProviderRemove = Nothing }
                 st3 <- get
                 case (appApproval st3, appAskTool st3) of
                   (Just msg, Just (name, args)) ->

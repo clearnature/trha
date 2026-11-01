@@ -193,6 +193,7 @@ data AppState = AppState
   , appAskTool    :: Maybe (String, [Text])  -- ^ tool identity captured from the ask event
   , appPendingDelete :: Maybe String        -- ^ session id awaiting delete confirmation
   , appPendingStop   :: Bool                -- ^ Ctrl+Alt+Q confirmation is open (service stop)
+  , appPendingProviderRemove :: Maybe Text  -- ^ provider name awaiting remove confirmation (tui-port L290)
   , appUsage      :: Maybe Usage        -- ^ real usage echo of the last turn
   , appCtxSize    :: Maybe Int          -- ^ context size of the active model
   , appSidebar    :: SidebarState       -- ^ sidebar open/closed/auto (M4-1)

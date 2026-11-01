@@ -287,7 +287,10 @@
   - 验证：pty 实测新增向导保存出 `zz-test`、编辑向导预填、选中后 footer 显示
     `deepseek/deepseek-flash` 且 settings 落盘 `configProvider: deepseek`；
     (测试 provider 已通过 `/providers/remove` 清理)。
-- [ ] **仍未做（对照 MiMo）**：设置面板里的独立 Provider 页签、删除确认、模型能力/
+- [x] **删除确认（对照 MiMo 的 remove-confirmation）**：providers 对话框 `d` 键 →
+  `DialogConfirm`（"Remove provider X?"，默认选中取消）→ 确认调 `removeProvider`
+  并以 `EvProviders` 刷新注册表；取消即清 pending（2026-11-01，编译 63/63 通过）。
+- [ ] **仍未做（对照 MiMo）**：设置面板里的独立 Provider 页签、模型能力/
   思考开关。
 
 
