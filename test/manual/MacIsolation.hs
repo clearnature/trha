@@ -19,6 +19,7 @@ module Main where
 import qualified Data.Text as T
 import Infrastructure.Sandbox.Backend.Mac (sbplProfile)
 import Infrastructure.Sandbox.Policy (NetworkPolicy(..))
+import System.Directory (createDirectoryIfMissing)
 import System.Exit (ExitCode(..), exitFailure)
 import System.Process (readProcessWithExitCode)
 
@@ -42,6 +43,7 @@ main = do
         , Probe "write-outside"   "echo probe > \"$HOME/trha-escape-probe\"" WantFailure
         , Probe "network-off"     "curl -m 3 -sS https://example.com -o /dev/null" WantFailure
         ]
+  createDirectoryIfMissing True ws
   results <- mapM (runProbe runCmd) probes
   mapM_ print results
   if all prOk results
