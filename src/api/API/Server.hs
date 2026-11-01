@@ -33,6 +33,7 @@ import Data.ByteString (ByteString)
 import Data.Tagged (Tagged(..))
 import Data.String (fromString)
 import Network.Wai (Application, responseLBS, responseStream, strictRequestBody)
+import System.Info (os)
 import Network.Wai.Handler.Warp
     ( Settings, defaultSettings, runSettings, setHost, setPort )
 import Network.HTTP.Types (ResponseHeaders, status200, status400)
@@ -1739,13 +1740,22 @@ stubStream msgs specs _gp onEvent = do
       onEvent (LLM.ChunkDone (maybe (LLM.mkUsage 0 0 0) id (LLM.ctUsage turn)))
   pure turn
 
+-- | The probe path the stub asks the model to read.  按平台选一个必然存在的
+-- 文件：Windows 上 /etc/hostname 会被解析成 D:\etc\hostname → ENOENT
+-- （端到端实测），POSIX 用 /etc/hostname。正斜杠避免 JSON 反斜杠转义。
+stubProbePath :: String
+-- 运行时判断（避免给这个大文件开 CPP）：GHC 在 Windows 上 os = "mingw32"。
+stubProbePath =
+  if System.Info.os == "mingw32" then "C:/Windows/win.ini" else "/etc/hostname"
+
 -- | The stub's tool-calling answer, shared by both call paths.
 stubTools :: [LLM.ChatMessage] -> [LLM.ToolSpec] -> IO LLM.ChatTurn
 stubTools msgs _specs = do
   let toolResults = [ r | LLM.ChatTool _ r <- msgs ]
   if null toolResults
     then return $ LLM.ChatTurn ""
-             [ LLM.ToolCall "call-stub" "read_file" "{\"path\":\"/etc/hostname\"}" ]
+             [ LLM.ToolCall "call-stub" "read_file"
+                 ("{\"path\":\"" <> T.pack stubProbePath <> "\"}") ]
              (Just (LLM.mkUsage 1 1 2)) Nothing Nothing Nothing
     else return $ LLM.ChatTurn ("[stub] tool said: " <> last toolResults)
              [] (Just (LLM.mkUsage 1 1 2)) Nothing Nothing Nothing
