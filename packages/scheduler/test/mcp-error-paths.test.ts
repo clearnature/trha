@@ -13,7 +13,9 @@ import {
   mcpStatus,
 } from '../src/Server/mcp.js';
 
-const FAKE = path.resolve('test/helpers/fake-mcp.mjs');
+// bash -c 里反斜杠是转义符（\w/\f 被吃掉 → node 找不到文件 → MCP 提前退出）：
+// fake server 的路径统一正斜杠（bash 与 node 双向兼容）。
+const FAKE = path.resolve('test/helpers/fake-mcp.mjs').replace(/\\/g, '/');
 let dir = '';
 
 beforeEach(async () => {
