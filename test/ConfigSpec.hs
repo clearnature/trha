@@ -4,7 +4,7 @@
 -- | sandbox.yaml write side (T2.7/T1.8 wiring): enabled/scratch round-trip.
 module ConfigSpec (configSpec, sandboxGuestSpec) where
 
-import Control.Exception (SomeException, try)
+import Control.Exception (IOException, try)
 import Data.List (isSuffixOf)
 import qualified Data.Text as T
 import Infrastructure.Sandbox.Config
@@ -108,8 +108,8 @@ sandboxGuestSpec = describe "insideSandbox (fail-open guard)" $ do
     -- macOS 没有 procfs（/proc/self/uid_map 不存在）：读不到时传空串，
     -- guestByUidMap "" 已在上面断言为 False（视为 host 映射），公式里的
     -- guestEnv / HOME 后缀两个信号在 macOS 上仍然有效。
-    uidMap <- either (\(_ :: SomeException) -> "") id
-                <$> try (readFile "/proc/self/uid_map")
+    uidMap <- either (const "") id
+              <$> (try (readFile "/proc/self/uid_map") :: IO (Either IOException String))
     guest <- insideSandbox
     let inScratch = "sandbox-scratch" `isSuffixOf` home
         expected = guestEnv == Just "1" || inScratch || guestByUidMap (T.pack uidMap)
