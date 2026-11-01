@@ -19,8 +19,9 @@ module Main where
 import qualified Data.Text as T
 import Infrastructure.Sandbox.Backend.Mac (sbplProfile)
 import Infrastructure.Sandbox.Policy (NetworkPolicy(..))
-import System.Directory (createDirectoryIfMissing)
+import System.Directory (createDirectoryIfMissing, getHomeDirectory, removeDirectoryRecursive)
 import System.Exit (ExitCode(..), exitFailure)
+import System.FilePath ((</>))
 import System.Process (readProcessWithExitCode)
 
 data Expect = WantSuccess | WantFailure deriving (Eq, Show)
@@ -33,7 +34,8 @@ data Probe = Probe
 
 main :: IO ()
 main = do
-  let ws = "/tmp/trha-mac-probe-ws"
+  home <- getHomeDirectory
+  let ws = home </> ".trha-sandbox-mac-probe"
       -- WorkspaceWrite(wrRoot=ws)：allow ws 子路径 + /tmp + /dev/null，
       -- 其余写 deny；网络关（探针 3 的前提）。
       profile = T.unpack (sbplProfile [(ws, True)] [] NetworkOff)
@@ -45,6 +47,7 @@ main = do
         ]
   createDirectoryIfMissing True ws
   results <- mapM (runProbe runCmd) probes
+  removeDirectoryRecursive ws
   mapM_ print results
   if all prOk results
     then putStrLn "MAC-ISOLATION: PASS"
