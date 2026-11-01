@@ -841,7 +841,9 @@ export function policyCanonicalText(root: string, baseline: string): string {
   return [
     'workspace-write',
     q(root),
-    q(path.join(root, '.batch-work')),
+    // canonical text 是跨语言契约（与 Haskell canonicalPolicyText 逐字节差分）：
+    // 路径一律 POSIX 斜杠——path.join 在 Windows 会掺入 \，差分即红。
+    q(`${root.replace(/[\\/]+$/, '')}/.batch-work`),
     list([baseline]),
     'off',
     SHIPPED_LIMITS,

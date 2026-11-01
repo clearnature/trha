@@ -68,7 +68,7 @@ describe('sandboxedSpawn (off)', () => {
   });
 });
 
-describe('sandboxedSpawn (on, mock runner)', () => {
+describe.skipIf(process.platform === 'win32')('sandboxedSpawn (on, mock runner)', () => {
   it('speaks NDJSON and returns the runner result', async () => {
     chmodSync(fixture, 0o755);
     const previousSandbox = process.env.TRHA_SANDBOX;
@@ -100,7 +100,7 @@ async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
   throw new Error('timed out waiting for frames');
 }
 
-describe('sandboxedInteractive (on, mock runner)', () => {
+describe.skipIf(process.platform === 'win32')('sandboxedInteractive (on, mock runner)', () => {
   it('keeps a session open and routes stdin frames', async () => {
     chmodSync(fixture, 0o755);
     const previousSandbox = process.env.TRHA_SANDBOX;
@@ -144,7 +144,7 @@ describe('sandboxedInteractive (on, mock runner)', () => {
   });
 });
 
-describe('sandboxStatus (on, mock runner)', () => {  it('asks the runner for the real backend', async () => {
+describe.skipIf(process.platform === 'win32')('sandboxStatus (on, mock runner)', () => {  it('asks the runner for the real backend', async () => {
     chmodSync(fixture, 0o755);
     const previousSandbox = process.env.TRHA_SANDBOX;
     const previousRunner = process.env.TRHA_SANDBOX_RUNNER;
@@ -164,7 +164,7 @@ describe('sandboxStatus (on, mock runner)', () => {  it('asks the runner for the
   });
 });
 
-describe('runExperiment (on, mock runner)', () => {
+describe.skipIf(process.platform === 'win32')('runExperiment (on, mock runner)', () => {
   it('runs the variant x seed matrix and writes repro.json', async () => {
     chmodSync(fixture, 0o755);
     const previousSandbox = process.env.TRHA_SANDBOX;
@@ -234,7 +234,7 @@ describe('policyCanonicalText (cross-language differential)', () => {
   });
 });
 
-describe('writeSandboxConfig (on, mock runner)', () => {
+describe.skipIf(process.platform === 'win32')('writeSandboxConfig (on, mock runner)', () => {
   it('persists through the runner and flips the runtime switch', async () => {
     chmodSync(fixture, 0o755);
     const previousSandbox = process.env.TRHA_SANDBOX;
@@ -313,7 +313,7 @@ describe('defaultSandboxScope (network)', () => {
 });
 
 
-describe('config defaults and patches (mock runner)', () => {
+describe.skipIf(process.platform === 'win32')('config defaults and patches (mock runner)', () => {
   it('falls back to defaults when the CLI returns an empty object', async () => {
     chmodSync(fixture, 0o755);
     const prev = process.env.MOCK_SANDBOX_EMPTY;
@@ -347,7 +347,7 @@ describe('config defaults and patches (mock runner)', () => {
   });
 });
 
-describe('sandboxedSpawn branches', () => {
+describe.skipIf(process.platform === 'win32')('sandboxedSpawn branches', () => {
   it('rejects danger-full-access without spawning', async () => {
     process.env.TRHA_SANDBOX = 'on';
     const danger: SandboxScope = {
@@ -429,7 +429,7 @@ describe('defaultSandboxScope network edge cases', () => {
 });
 
 
-describe('runner edge frames (mock runner)', () => {
+describe.skipIf(process.platform === 'win32')('runner edge frames (mock runner)', () => {
   it('propagates an error frame', async () => {
     chmodSync(fixture, 0o755);
     process.env.TRHA_SANDBOX = 'on';
@@ -472,7 +472,7 @@ describe('runner edge frames (mock runner)', () => {
 });
 
 
-describe('coverage edges (mock runner)', () => {
+describe.skipIf(process.platform === 'win32')('coverage edges (mock runner)', () => {
   it('drops empty allow entries', () => {
     setSandboxConfigRuntime({
       enabled: true, policy: 'workspace-write', network: 'allow:a.com,,b.com', scratch: '/tmp/x',
