@@ -25,10 +25,11 @@ module Infrastructure.Sandbox.Win32.Process
 import Data.Bits ((.|.))
 import Data.Word (Word8, Word16, Word32, Word64)
 import Foreign
-import Foreign.C.String (CWString, withCWString)
+import Foreign.C.String (CWString, withCWString, withCWStringLen)
 import Foreign.C.Types (CInt(..))
 import Infrastructure.Sandbox.Win32.AppContainer (ContainerSid, containerSidRaw)
 import Infrastructure.Sandbox.Win32.Token (RestrictedToken, tokenHandle)
+import System.Environment (lookupEnv)
 
 type Handle = Ptr ()
 type Dword  = Word32
@@ -451,33 +452,39 @@ spawnAppContainer container exe args cwd =
                                       , siexStdError = errWrite
                                       , siexAttributeList = listPtr
                                       }
-                                    -- 空环境块（只有两个 UTF-16 NUL）：子进程不继承
-                                    -- 父进程环境变量，凭据不会随执行泄露。
-                                    allocaArray 2 $ \envPtr -> do
-                                      pokeArray envPtr [0, 0 :: Word16]
-                                      ok <- c_CreateProcessW
-                                        nullPtr
-                                        wideCmd
-                                        nullPtr nullPtr
-                                        1                               -- bInheritHandles
-                                        ( extendedStartupInfoPresent
-                                            .|. createSuspended
-                                            .|. createNoWindow
-                                            .|. createUnicodeEnvironment )
-                                        (castPtr envPtr) wideCwd
-                                        (castPtr siExPtr)
-                                        piPtr
-                                      if ok == 0
-                                        then Left <$> mkErr "CreateProcessW"
-                                        else do
-                                          pi' <- peek piPtr
-                                          pure (Right SpawnedProcess
-                                            { spProcess = piProcess pi'
-                                            , spThread = piThread pi'
-                                            , spPid = piPid pi'
-                                            , spStdout = outRead
-                                            , spStderr = errRead
-                                            })
+                                    -- Pass only SystemRoot: the child needs it to initialize
+                                    -- Windows, but must not inherit parent credentials or secrets.
+                                    systemRoot <- lookupEnv "SystemRoot"
+                                    case systemRoot of
+                                      Nothing -> pure (Left (ProcessError "SystemRoot" 203))
+                                      Just root ->
+                                        withCWStringLen ("SystemRoot=" <> root) $ \(envEntry, envLen) ->
+                                          allocaArray (envLen + 2) $ \envPtr -> do
+                                            copyArray envPtr envEntry (envLen + 1)
+                                            pokeElemOff envPtr (envLen + 1) 0
+                                            ok <- c_CreateProcessW
+                                              nullPtr
+                                              wideCmd
+                                              nullPtr nullPtr
+                                              1                               -- bInheritHandles
+                                              ( extendedStartupInfoPresent
+                                                  .|. createSuspended
+                                                  .|. createNoWindow
+                                                  .|. createUnicodeEnvironment )
+                                              (castPtr envPtr) wideCwd
+                                              (castPtr siExPtr)
+                                              piPtr
+                                            if ok == 0
+                                              then Left <$> mkErr "CreateProcessW"
+                                              else do
+                                                pi' <- peek piPtr
+                                                pure (Right SpawnedProcess
+                                                  { spProcess = piProcess pi'
+                                                  , spThread = piThread pi'
+                                                  , spPid = piPid pi'
+                                                  , spStdout = outRead
+                                                  , spStderr = errRead
+                                                  })
                                   c_DeleteProcThreadAttributeList listPtr
                                   pure r
                     -- 3. 父进程关掉写端，否则读端永远等不到 EOF
