@@ -16,6 +16,7 @@ import Kernel.Carrier
 import qualified Sov.Math.Trit as MT
 import Sov.Math.Eis (eisOne, eisZero)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
+import System.IO (hSetEncoding, stdout, stderr, utf8)
 import Data.Maybe (fromMaybe, isJust)
 import System.Directory (doesFileExist)
 import Core.Session.Types
@@ -101,8 +102,18 @@ tailCycle frames = listToMaybe [ d | d <- [1 .. 120], d < n, holdsFor d ]
     n = length frames
     holdsFor d = and [ frames !! i == frames !! (i - d) | i <- [n - d .. n - 1] ]
 
+-- | Windows 控制台默认代码页（如 936）编码不了 ↔ 之类符号，Hspec 打印测试名
+-- 时会在 commitBuffer 抛异常，把整轮测试判成 FAIL。统一按 UTF-8 输出。
+ensureUtf8Output :: IO ()
+ensureUtf8Output = do
+  hSetEncoding stdout utf8
+  hSetEncoding stderr utf8
+
 main :: IO ()
-main = hspec $ do
+main = ensureUtf8Output >> hspec testSuite
+
+testSuite :: Spec
+testSuite = do
   coreContractSpec
   sessionPersistSpec
   approvalSpec

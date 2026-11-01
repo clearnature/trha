@@ -1,6 +1,7 @@
 module Main (main) where
 
 import Test.Hspec
+import System.IO (hSetEncoding, stdout, stderr, utf8)
 import qualified Config.SettingsSpec
 import qualified Config.HomeSpec
 import qualified Core.ArgsSpec
@@ -53,8 +54,18 @@ import qualified UI.ModelPrefsSpec
 import qualified UI.Render.DiffSpec
 import qualified UI.Render.SidebarSpec
 
+-- | Windows 控制台默认代码页（如 936）编码不了 ↔ 之类符号，Hspec 打印测试名
+-- 时会在 commitBuffer 抛异常，把整轮测试判成 FAIL。统一按 UTF-8 输出。
+ensureUtf8Output :: IO ()
+ensureUtf8Output = do
+  hSetEncoding stdout utf8
+  hSetEncoding stderr utf8
+
 main :: IO ()
-main = hspec $ do
+main = ensureUtf8Output >> hspec testSuite
+
+testSuite :: Spec
+testSuite = do
   Core.ArgsSpec.spec
   Core.HTTPSpec.spec
   Config.SettingsSpec.spec
