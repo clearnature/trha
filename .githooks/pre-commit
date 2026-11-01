@@ -38,12 +38,18 @@ need_docs=0
 md_changed=$(printf '%s\n' "$changed" | grep -E '\.md$' || true)
 if [ -n "$md_changed" ]; then need_docs=1; fi
 
-# Shared config affects every TypeScript project.
+# Shared config affects every TypeScript project.  Only the *root* manifests
+# are shared: a subpackage's own package.json is covered by the path rules
+# below, and a non-TS package (e.g. packages/app/CLI-npm) must not drag the
+# whole TS matrix in.
 case "$changed" in
-  *tsconfig.base.json*|*package.json*|*package-lock.json*)
+  *tsconfig.base.json*)
     need_scheduler=1; need_web=1; need_desktop=1
     ;;
 esac
+if printf '%s\n' "$changed" | grep -qxE 'package(-lock)?\.json'; then
+  need_scheduler=1; need_web=1; need_desktop=1
+fi
 
 case "$changed" in *packages/scheduler/*) need_scheduler=1 ;; esac
 case "$changed" in *packages/app/Web/*) need_web=1 ;; esac
