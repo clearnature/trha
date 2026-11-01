@@ -35,7 +35,10 @@ beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), 'trha-extra-'));
   host = makeHost();
 });
-afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+afterEach(async () => { // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+ try {
+   await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+ } catch { /* EBUSY: 延迟释放，非测试失败 */ } });
 
 describe('editor + working directory', () => {
   it('creates, views, replaces and inserts', async () => {
@@ -347,7 +350,8 @@ describe('remaining branches', () => {
     const git = async (cmd: string): Promise<void> => {
       const { execFile } = await import('node:child_process');
       await new Promise<void>((resolve, reject) => {
-        execFile('bash', ['-lc', `cd ${repo} && ${cmd}`], err => (err ? reject(err) : resolve()));
+        // bash 里反斜杠是转义符：Windows 路径换正斜杠并加引号，防 cd 被吃。
+        execFile('bash', ['-lc', `cd "${repo.replace(/\\/g, '/')}" && ${cmd}`], err => (err ? reject(err) : resolve()));
       });
     };
     await git('git init -q && git config user.email t@e.x && git config user.name t && touch f && git add f && git commit -qm init');
