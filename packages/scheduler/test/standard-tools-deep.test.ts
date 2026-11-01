@@ -153,7 +153,12 @@ describe('standardTools 深分支（状态机 + handler 变体）', () => {
 
   it('run_code：bash 真跑 / 未知语言 / 空 code / 缺 code', async () => {
     const h = host();
-    expect(await run('run_code', { language: 'bash', code: 'echo rc-hello' }, h)).toContain('rc-hello');
+    if (process.platform === 'win32') {
+      // Windows 侧 run_code 只接 pwsh（实现有平台分支），bash 真跑用例归 POSIX：
+      expect(await run('run_code', { language: 'bash', code: 'echo rc-hello' }, h)).toContain('bash is not available on this platform');
+    } else {
+      expect(await run('run_code', { language: 'bash', code: 'echo rc-hello' }, h)).toContain('rc-hello');
+    }
     expect(await run('run_code', { language: 'cobol', code: 'x' }, h)).toContain('unsupported language');
     expect(await run('run_code', { language: 'python', code: '  ' }, h)).toContain('code is required');
   });

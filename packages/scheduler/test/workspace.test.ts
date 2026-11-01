@@ -23,7 +23,7 @@ describe('resolveWorkspace', () => {
   it('prefers the explicit env override, resolved against the cwd', async () => {
     const cwd = await tempDir();
     expect(resolveWorkspace({ env: 'sub/project', cwd })).toBe(path.resolve(cwd, 'sub/project'));
-    expect(resolveWorkspace({ env: '/abs/place', cwd })).toBe('/abs/place');
+    expect(resolveWorkspace({ env: '/abs/place', cwd })).toBe(path.resolve(cwd, '/abs/place'));
   });
 
   it('defaults to the directory the shell was in', async () => {
@@ -43,7 +43,7 @@ describe('resolveWorkspace', () => {
     const home = await tempDir();
     await mkdir(path.join(home, '.trha'), { recursive: true });
     await writeFile(path.join(home, '.trha', 'workspace'), '/srv/app');
-    expect(resolveWorkspace({ cwd, home })).toBe('/srv/app');
+    expect(resolveWorkspace({ cwd, home })).toBe(path.resolve(home, '/srv/app'));
   });
 
   it('ignores an empty marker and keeps looking', async () => {
@@ -119,6 +119,6 @@ describe('resolveWorkspace', () => {
     await mkdir(path.join(cwd, '.git'), { recursive: true });
     await mkdir(path.join(home, '.trha'), { recursive: true });
     await writeFile(path.join(home, '.trha', 'workspace'), '/srv/app');
-    expect(resolveWorkspace({ cwd, home })).toBe('/srv/app');
+    expect(resolveWorkspace({ cwd, home })).toBe(path.resolve(home, '/srv/app'));
   });
 });
