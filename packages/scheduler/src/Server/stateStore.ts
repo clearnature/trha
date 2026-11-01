@@ -62,6 +62,23 @@ function fileFor(dir: string, sessionId: string): string {
 /** Persist one session atomically. */
 let saveSeq = 0;
 
+// Windows: 杀软/索引器会短暂锁住刚写的 .tmp 或目标 json，rename 报
+// EPERM/EBUSY/EACCES——退避重试通常立即成功（SessionPersistSpec 的先例）。
+async function renameWithRetry(from: string, to: string): Promise<void> {
+  const backoff = [25, 50, 100];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (e: unknown) {
+      const code = (e as { code?: string }).code;
+      const transient = code === 'EPERM' || code === 'EBUSY' || code === 'EACCES';
+      if (attempt >= backoff.length || !transient) throw e;
+      await new Promise(r => setTimeout(r, backoff[attempt]));
+    }
+  }
+}
+
 export async function saveSession(
   dir: string,
   session: {
@@ -103,7 +120,7 @@ export async function saveSession(
   // fail with ENOENT after the other consumed the file.
   const tmp = `${target}.${process.pid}.${++saveSeq}.tmp`;
   await writeFile(tmp, JSON.stringify(record), 'utf8');
-  await rename(tmp, target);
+  await renameWithRetry(tmp, target);
 }
 
 /** Load every persisted session (skipping unparseable files). */
