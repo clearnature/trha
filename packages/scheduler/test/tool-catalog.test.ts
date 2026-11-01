@@ -127,7 +127,10 @@ describe('toolCatalog', () => {
     });
     expect(specs[1]).toMatchObject({ name: 'read', parameters: { type: 'object' } });
     expect(specs.map(s => Object.keys(s).sort())).toEqual(
-      specs.map(() => ['description', 'name', 'parameters']),
+      specs.map(s => [
+        'description', 'name', 'parameters',
+        ...(s.deferLoading === true ? ['deferLoading'] : []),
+      ].sort()),
     );
   });
 });

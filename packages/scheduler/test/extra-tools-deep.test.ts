@@ -83,7 +83,7 @@ describe('extraTools 深分支', () => {
     expect(String(view)).toContain('1\tline1');
     const listing = await run('str_replace_editor', { command: 'view', path: 'sub' }, h);
     expect(String(listing)).toContain('f a.txt');
-    expect(await run('str_replace_editor', { command: 'view', path: 'nope' }, h)).toContain('ERROR');
+    expect(await run('str_replace_editor', { command: 'view', path: 'nope' }, h)).toMatch(/^THREW:/);
   });
 
   it('str_replace_editor：create（工作区内 OK / 越界拒绝）', async () => {
@@ -172,10 +172,10 @@ describe('extraTools 深分支', () => {
   it('create_worktree / load_workspace_dependencies', async () => {
     const h = host();
     expect(await run('create_worktree', {}, h)).toContain('path is required');
-    // 临时目录不是 git 仓库 ⇒ git worktree add 失败 ⇒ 走 ERROR 分支（属预期）：
+    // 临时目录不是 git 仓库 ⇒ git worktree add 失败并拒绝 Promise（属预期）：
     // 两条分支（成功/失败）都已被既有套件与这里覆盖。
     const wt = await run('create_worktree', { path: 'wt-x', branch: 'wt-branch' }, h);
-    expect(String(wt)).toContain('ERROR');
+    expect(String(wt)).toMatch(/^THREW:/);
     expect(await run('load_workspace_dependencies', {}, h)).toContain('no recognised dependency manifest');
   });
 

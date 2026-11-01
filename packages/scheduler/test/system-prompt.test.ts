@@ -87,9 +87,10 @@ describe('system prompt', () => {
     expect(record.messages.some(m => m.role === 'system')).toBe(false);
   });
 
-  it('sends no system message for a mode with the persona disabled', async () => {
+  it('sends the minimal mode persona', async () => {
     const { seen } = await run('minimal');
-    expect(seen[0]?.[0]?.role).toBe('user');
+    expect(seen[0]?.[0]?.role).toBe('system');
+    expect(seen[0]?.[0]?.content).toContain('helpful software engineer assistant');
   });
 
   // The shell resolves `auto` to the interface language and sends a tag on

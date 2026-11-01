@@ -158,7 +158,7 @@ describe('standard tools (dsh port)', () => {
     ], { workspace: dir });
     expect(r[0]).toContain('lean');
     expect(r[1]).toContain('Use core tactics');
-    expect(r[2]).toMatch(/^ERROR: no skill/);
+    expect(r[2]).toMatch(/^ERROR: (?:Error: )?no skill/);
   });
 
   it('web_fetch returns stripped text from a live server', async () => {

@@ -89,11 +89,13 @@ describe('concurrent HTTP steps on one session', () => {
     dir = await mkdtemp(path.join(tmpdir(), 'trha-lock-'));
     process.env.TRHA_WORKSPACE = dir;
     process.env.TRHA_SCHEDULE_TICK_MS = '0';
+    process.env.TRHA_TIME_CONTEXT_MS = '0';
     resetSessionLocks();
   });
   afterEach(async () => {
     delete process.env.TRHA_WORKSPACE;
     delete process.env.TRHA_SCHEDULE_TICK_MS;
+    delete process.env.TRHA_TIME_CONTEXT_MS;
     await rm(dir, { recursive: true, force: true });
   });
 

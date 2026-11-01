@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createServer } from '../src/Server/index.js';
@@ -13,8 +13,11 @@ let stateDir: string;
 
 beforeEach(async () => {
   stateDir = await mkdtemp(path.join(tmpdir(), 'trha-studio-'));
+  const studioDir = path.join(stateDir, 'studio');
+  await mkdir(studioDir, { recursive: true });
+  await writeFile(path.join(studioDir, 'index.html'), '<div id="root"></div>', 'utf8');
   const { app } = createServer({
-    port: 0, token: 'secret-token', haskellHost: 'localhost', haskellPort: 1, stateDir,
+    port: 0, token: 'secret-token', haskellHost: 'localhost', haskellPort: 1, stateDir, studioDir,
   });
   await new Promise<void>(resolve => {
     srv = app.listen(0, '127.0.0.1', () => resolve());

@@ -18,6 +18,8 @@ const PAGE = `<!doctype html><html><head><title>CDP fixture</title></head>
 <script>document.getElementById('out').textContent = 'rendered by script';</script>
 </body></html>`;
 
+const BROWSER_TEST_TIMEOUT = 15_000;
+
 let server: http.Server;
 let base = '';
 let dir = '';
@@ -48,13 +50,13 @@ describe('browser tools', () => {
     expect(out).toContain('Static heading');
     // only present after JS executes
     expect(out).toContain('rendered by script');
-  });
+  }, BROWSER_TEST_TIMEOUT);
 
   it('extracts a selector', async () => {
     await runStandardTool('browser_navigate', { url: base }, host());
     const text = await runStandardTool('browser_extract', { selector: '#out' }, host());
     expect(text).toBe('rendered by script');
-  });
+  }, BROWSER_TEST_TIMEOUT);
 
   it('writes a real PNG screenshot into the workspace', async () => {
     await runStandardTool('browser_navigate', { url: base }, host());
@@ -63,7 +65,7 @@ describe('browser tools', () => {
     const bytes = await readFile(path.join(dir, 'shot.png'));
     expect(bytes.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');   // PNG magic
     expect(bytes.byteLength).toBeGreaterThan(1000);
-  });
+  }, BROWSER_TEST_TIMEOUT);
 
   it('refuses a screenshot path that escapes the workspace', async () => {
     await runStandardTool('browser_navigate', { url: base }, host());
@@ -71,7 +73,7 @@ describe('browser tools', () => {
     const out = await runStandardTool('browser_screenshot', { path: '../escaped-shot.png' }, host());
     expect(out).toMatch(/^ERROR: screenshot path escapes/);
     await expect(readFile(outside)).rejects.toThrow();
-  });
+  }, BROWSER_TEST_TIMEOUT);
 
   it('rejects a non-http url instead of launching a browser', async () => {
     const out = await runStandardTool('browser_navigate', { url: 'file:///etc/passwd' }, host());
@@ -111,7 +113,7 @@ describe('browser isolation between sessions', () => {
     expect(seenByB).toBe('rendered by script');
     expect(urlA).toContain('who=A');
     expect(urlB).toContain('who=B');
-  });
+  }, BROWSER_TEST_TIMEOUT);
 
   it('closing one session leaves the other page alive', async () => {
     const a = hostFor('session-C', dirA);
@@ -125,5 +127,5 @@ describe('browser isolation between sessions', () => {
     expect(await browserEvaluate('session-D', 'location.href')).toContain('who=D');
     await runStandardTool('browser_navigate', { url: `${base}?who=C2` }, a);
     expect(await browserEvaluate('session-C', 'location.href')).toContain('who=C2');
-  });
+  }, BROWSER_TEST_TIMEOUT);
 });

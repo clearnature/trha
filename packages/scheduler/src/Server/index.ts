@@ -1528,7 +1528,11 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // A tool that cannot produce a meaningful label must fall back to the
     // generic row: `oneLine('')` yields '', so `title: `present ${...}`` could
     // render as `present ` — worse than the plain tool name.
-    const usableView = view !== undefined && view.title.trim() !== '' ? view : undefined;
+    const usableView = view !== undefined
+      && typeof view.title === 'string'
+      && view.title.trim() !== ''
+      ? view
+      : undefined;
     const ev: ToolEvent = {
       callId,
       phase: status === 'running' ? 'start' : 'end',
@@ -1643,7 +1647,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // below stays as the fallback for everything not migrated yet.
     {
       const registeredCore = resolveTool(name);
-      if (registeredCore?.handler) {
+      if (registeredCore?.handler && !isExtraTool(name)) {
         const session = sessionId ? sessions.get(sessionId) : undefined;
         if (!session) return `ERROR: ${name} needs a live session`;
         const rendered = await renderToolValue(registeredCore, argsObj, {
