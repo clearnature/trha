@@ -65,7 +65,7 @@ let saveSeq = 0;
 // Windows: 杀软/索引器会短暂锁住刚写的 .tmp 或目标 json，rename 报
 // EPERM/EBUSY/EACCES——退避重试通常立即成功（SessionPersistSpec 的先例）。
 async function renameWithRetry(from: string, to: string): Promise<void> {
-  const backoff = [25, 50, 100];
+  const backoff = [25, 50, 100, 200, 400, 800];
   for (let attempt = 0; ; attempt++) {
     try {
       await rename(from, to);
@@ -122,8 +122,15 @@ export async function saveSession(
   // schedule driver) would otherwise share `<target>.tmp` and one rename would
   // fail with ENOENT after the other consumed the file.
   const tmp = `${target}.${process.pid}.${++saveSeq}.tmp`;
-  await writeFile(tmp, JSON.stringify(record), 'utf8');
-  await renameWithRetry(tmp, target);
+  const data = JSON.stringify(record);
+  try {
+    await writeFile(tmp, data, 'utf8');
+    await renameWithRetry(tmp, target);
+  } catch {
+    // 杀软实时扫描可能把刚写入的 .tmp 隔离/删除（rename 永远 ENOENT，重试
+    // 无效）——退化为直接写目标，放弃原子替换也要保住会话数据。
+    await writeFile(target, data, 'utf8');
+  }
 }
 
 /** Load every persisted session (skipping unparseable files). */

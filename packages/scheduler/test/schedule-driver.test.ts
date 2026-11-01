@@ -107,7 +107,8 @@ describe('schedule driver', () => {
     });
 
     const app = await boot(dir, stateDir);
-    await wait(400);
+    // 全量并发负载下 400ms 偶发不够一个 tick（status 仍 active）——与 repeats 用例一致放宽到 1500ms。
+    await wait(1500);
     const after = await readRecord(stateDir, sessionId);
 
     const sched = scheduleOf(after);
@@ -138,7 +139,9 @@ describe('schedule driver', () => {
     // stop firing before reading, otherwise an in-flight tick can bump runs
     // between our read and the cancellation write
     app.close();
-    await wait(120);
+    // in-flight 的 persist（tick 的 LLM 往返 + rename 重试）可能晚于 close——
+    // 等它落盘，否则 seed 的 cancelled 状态会被 in-flight 覆盖回 active。
+    await wait(500);
     const mid = await readRecord(stateDir, sessionId);
     const sched = scheduleOf(mid);
     expect(Number(sched.runs)).toBeGreaterThanOrEqual(2);

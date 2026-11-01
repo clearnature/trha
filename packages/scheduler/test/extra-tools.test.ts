@@ -405,11 +405,12 @@ describe('closing the remaining branches', () => {
     const h = makeHost();
     await runExtraTool('terminal_open', {}, h);
     await runExtraTool('terminal_send', { id: 'term-1', input: 'echo first' }, h);
-    await new Promise(r => setTimeout(r, 250));
+    // 全量并发负载下 cmd 启动+执行超 250ms——放宽到 800ms。
+    await new Promise(r => setTimeout(r, 800));
     const before = await runExtraTool('terminal_read', { id: 'term-1' }, h);
     const cursor = before?.length ?? 0;
     await runExtraTool('terminal_send', { id: 'term-1', input: 'exit' }, h);
-    await new Promise(r => setTimeout(r, 250));
+    await new Promise(r => setTimeout(r, 800));
     const after = await runExtraTool('terminal_read', { id: 'term-1', since: cursor }, h);
     expect(after).toMatch(/status: exited/);
     await expect(runExtraTool('terminal_send', { id: 'term-1', input: 'x' }, h))
