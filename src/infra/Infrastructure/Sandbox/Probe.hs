@@ -28,7 +28,7 @@ import Infrastructure.Sandbox.Plan
 import Infrastructure.Sandbox.Policy
 import Infrastructure.Sandbox.Scope
 import System.Exit (ExitCode(..))
-import System.Process (readProcessWithExitCode)
+import System.Process (CreateProcess(..), proc, readCreateProcessWithExitCode, readProcessWithExitCode)
 #ifdef mingw32_HOST_OS
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Foreign (castPtr)
@@ -130,9 +130,9 @@ runProbe backend caps scope probe =
 #ifdef mingw32_HOST_OS
         if bcPlatform caps == Windows
           then runProbeWindows scope probe cmd args
-          else runProbePosix probe cmd args
+          else runProbePosix (workspaceOf (scPolicy scope)) probe cmd args
 #else
-        runProbePosix probe cmd args
+        runProbePosix (workspaceOf (scPolicy scope)) probe cmd args
 #endif
   where
     request = LaunchRequest
@@ -146,9 +146,11 @@ runProbe backend caps scope probe =
       }
 
 -- | POSIX / macOS：argv 里已经带了 bwrap / sandbox-exec 包装，直接执行即可。
-runProbePosix :: Probe -> Text -> [Text] -> IO ProbeResult
-runProbePosix probe cmd args = do
-  attempted <- try (readProcessWithExitCode (T.unpack cmd) (map T.unpack args) "")
+runProbePosix :: AbsolutePath -> Probe -> Text -> [Text] -> IO ProbeResult
+runProbePosix cwd probe cmd args = do
+  let process = (proc (T.unpack cmd) (map T.unpack args))
+        { cwd = Just (unAbsolutePath cwd) }
+  attempted <- try (readCreateProcessWithExitCode process "")
   pure $ case attempted of
     Left (e :: SomeException) -> mkResult probe False (T.pack (show e))
     Right (code, out, err) ->

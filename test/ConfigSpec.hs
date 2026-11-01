@@ -4,10 +4,11 @@
 -- | sandbox.yaml write side (T2.7/T1.8 wiring): enabled/scratch round-trip.
 module ConfigSpec (configSpec, sandboxGuestSpec) where
 
-import Infrastructure.Sandbox.Config
-import Infrastructure.Sandbox.Policy (NetworkPolicy(..))
+import Control.Exception (IOException, try)
 import Data.List (isSuffixOf)
 import qualified Data.Text as T
+import Infrastructure.Sandbox.Config
+import Infrastructure.Sandbox.Policy (NetworkPolicy(..))
 import System.Directory
   ( doesFileExist, getHomeDirectory, getTemporaryDirectory, removeFile )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
@@ -104,10 +105,11 @@ sandboxGuestSpec = describe "insideSandbox (fail-open guard)" $ do
   it "agrees with the signals it can actually read" $ do
     home <- getHomeDirectory
     guestEnv <- lookupEnv "TRHA_SANDBOX_GUEST"
-    uidMap <- readFile "/proc/self/uid_map"
+    uidMap <- try (readFile "/proc/self/uid_map") :: IO (Either IOException String)
     guest <- insideSandbox
     let inScratch = "sandbox-scratch" `isSuffixOf` home
-        expected = guestEnv == Just "1" || inScratch || guestByUidMap (T.pack uidMap)
+        uidMapGuest = either (const False) (guestByUidMap . T.pack) uidMap
+        expected = guestEnv == Just "1" || inScratch || uidMapGuest
     guest `shouldBe` expected
 
   it "detects a guest by HOME ending in sandbox-scratch" $ do

@@ -23,13 +23,15 @@ module Infrastructure.Sandbox.Win32.Process
   ) where
 
 import Data.Bits ((.|.))
+import Data.Char (toUpper)
+import Data.List (intercalate, sortOn)
 import Data.Word (Word8, Word16, Word32, Word64)
 import Foreign
 import Foreign.C.String (CWString, withCWString, withCWStringLen)
 import Foreign.C.Types (CInt(..))
 import Infrastructure.Sandbox.Win32.AppContainer (ContainerSid, containerSidRaw)
 import Infrastructure.Sandbox.Win32.Token (RestrictedToken, tokenHandle)
-import System.Environment (lookupEnv)
+import System.Environment (getEnvironment)
 
 type Handle = Ptr ()
 type Dword  = Word32
@@ -452,39 +454,34 @@ spawnAppContainer container exe args cwd =
                                       , siexStdError = errWrite
                                       , siexAttributeList = listPtr
                                       }
-                                    -- Pass only SystemRoot: the child needs it to initialize
-                                    -- Windows, but must not inherit parent credentials or secrets.
-                                    systemRoot <- lookupEnv "SystemRoot"
-                                    case systemRoot of
-                                      Nothing -> pure (Left (ProcessError "SystemRoot" 203))
-                                      Just root ->
-                                        withCWStringLen ("SystemRoot=" <> root) $ \(envEntry, envLen) ->
-                                          allocaArray (envLen + 2) $ \envPtr -> do
-                                            copyArray envPtr envEntry (envLen + 1)
-                                            pokeElemOff envPtr (envLen + 1) 0
-                                            ok <- c_CreateProcessW
-                                              nullPtr
-                                              wideCmd
-                                              nullPtr nullPtr
-                                              1                               -- bInheritHandles
-                                              ( extendedStartupInfoPresent
-                                                  .|. createSuspended
-                                                  .|. createNoWindow
-                                                  .|. createUnicodeEnvironment )
-                                              (castPtr envPtr) wideCwd
-                                              (castPtr siExPtr)
-                                              piPtr
-                                            if ok == 0
-                                              then Left <$> mkErr "CreateProcessW"
-                                              else do
-                                                pi' <- peek piPtr
-                                                pure (Right SpawnedProcess
-                                                  { spProcess = piProcess pi'
-                                                  , spThread = piThread pi'
-                                                  , spPid = piPid pi'
-                                                  , spStdout = outRead
-                                                  , spStderr = errRead
-                                                  })
+                                    env <- appContainerEnvironment
+                                    case env of
+                                      Left e -> pure (Left e)
+                                      Right envBlock ->
+                                        withCWStringLen envBlock $ \(envPtr, _) -> do
+                                          ok <- c_CreateProcessW
+                                            wideExe
+                                            wideCmd
+                                            nullPtr nullPtr
+                                            1                               -- bInheritHandles
+                                            ( extendedStartupInfoPresent
+                                                .|. createSuspended
+                                                .|. createNoWindow
+                                                .|. createUnicodeEnvironment )
+                                            (castPtr envPtr) wideCwd
+                                            (castPtr siExPtr)
+                                            piPtr
+                                          if ok == 0
+                                            then Left <$> mkErr "CreateProcessW"
+                                            else do
+                                              pi' <- peek piPtr
+                                              pure (Right SpawnedProcess
+                                                { spProcess = piProcess pi'
+                                                , spThread = piThread pi'
+                                                , spPid = piPid pi'
+                                                , spStdout = outRead
+                                                , spStderr = errRead
+                                                })
                                   c_DeleteProcThreadAttributeList listPtr
                                   pure r
                     -- 3. 父进程关掉写端，否则读端永远等不到 EOF
@@ -496,6 +493,26 @@ spawnAppContainer container exe args cwd =
                         _ <- c_CloseHandle errRead
                         pure (Left e)
                       Right sp -> pure (Right sp)
+
+-- Keep the child environment small and deterministic while retaining the
+-- Windows variables used to initialize the process and resolve system tools.
+-- In particular, never pass arbitrary parent variables that may contain secrets.
+appContainerEnvironment :: IO (Either ProcessError String)
+appContainerEnvironment = do
+  parent <- getEnvironment
+  let allowed = ["COMSPEC", "PATH", "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE", "WINDIR"]
+      selected =
+        [ (name, value)
+        | (name, value) <- parent
+        , map toUpper name `elem` allowed
+        ]
+      hasSystemRoot = any ((== "SYSTEMROOT") . map toUpper . fst) selected
+  if hasSystemRoot
+    then
+      let sorted = sortOn (map toUpper . fst) selected
+          entries = [name <> "=" <> value | (name, value) <- sorted]
+       in pure (Right (intercalate "\0" entries <> "\0"))
+    else pure (Left (ProcessError "SystemRoot" 203))
 
 -- ── 管道与进程操作 ────────────────────────────────────────────────────────
 
