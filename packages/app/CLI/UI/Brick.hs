@@ -2333,14 +2333,26 @@ editExternally = do
       v <- lookupEnv "EDITOR"
       case v of
         Just e' | not (null e') -> pure e'
-        _ -> fromMaybe "vi" <$> lookupEnv "VISUAL"
+        _ -> do
+          v2 <- lookupEnv "VISUAL"
+          case v2 of
+            Just e2 | not (null e2) -> pure e2
+            -- Windows 原生环境无 vi（tui-port L80 同款死角）：否则
+            -- readProcess 抛 IOException 且 putMVar 不执行，takeMVar
+            -- 永久阻塞把 TUI 挂死。
+            _ -> do
+              mSpec <- lookupEnv "ComSpec"
+              pure (maybe "vi" (const "notepad") mSpec)
     pure (path, e)
   resultVar <- liftIO newEmptyMVar
   suspendAndResume $ do
-    r <- readProcessWithExitCode ed [path] ""
-    putMVar resultVar r
+    -- editor 缺失/异常也要 putMVar，否则 takeMVar 阻塞挂死 TUI。
+    r <- try (readProcessWithExitCode ed [path] "")
+    putMVar resultVar $ case (r :: Either IOException (ExitCode, String, String)) of
+      Right (code, _, _) -> code
+      Left _ex           -> ExitFailure 127  -- command-not-found 惯例
     pure st
-  (code, _, _) <- liftIO (takeMVar resultVar)
+  code <- liftIO (takeMVar resultVar)
   body <- liftIO $ TIO.readFile path `catch` \(_ :: IOException) -> pure text
   liftIO $ removeFile path `catch` \(_ :: IOException) -> pure ()
   case code of
