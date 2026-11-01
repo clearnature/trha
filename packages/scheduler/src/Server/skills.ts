@@ -34,7 +34,9 @@ export function skillDirs(
     path.join(home, '.trha', 'skills'),
   ];
   if (extra) dirs.push(extra);
-  return dirs;
+  // 统一为 / 分隔（node fs 在 Windows 上双向兼容；调用方与测试按 POSIX
+  // 风格断言，混入 \ 会让目录顺序对比失真）。
+  return dirs.map(p => p.split(path.sep).join('/'));
 }
 
 /** Parse one skill file; the name falls back to the directory (or file) name. */
