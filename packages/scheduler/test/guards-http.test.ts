@@ -15,7 +15,9 @@ describe('toolGuard.confineWritePath（符号链接 / 越界 / 额外根）', ()
     const ws = await mkdtemp(path.join(tmpdir(), 'guard-'));
     const r = await confineWritePath(ws, path.join(ws, 'sub', 'a.txt'));
     expect(r).toContain(path.join('sub', 'a.txt'));
-    expect(r?.startsWith(path.resolve(ws))).toBe(true);
+    // realpath 返回磁盘上的真实大小写（Temp vs 环境变量的 TEMP）——
+    // NTFS 大小写不敏感，前缀比较也必须不区分大小写。
+    expect(r?.toLowerCase().startsWith(path.resolve(ws).toLowerCase())).toBe(true);
   });
 
   it('工作区外路径 → null', async () => {
@@ -31,7 +33,9 @@ describe('toolGuard.confineWritePath（符号链接 / 越界 / 额外根）', ()
     expect(r).toContain('a.txt');
   });
 
-  it('symlink 父目录逃逸 → null（先建真实文件再链接）', async () => {
+  // Windows 上 symlink() 需要管理员/开发者模式特权——无特权直接 EPERM，
+  // 该逃逸场景在 POSIX 跑（学 Reasonix 的平台+能力双条件 Skip）。
+  it.skipIf(process.platform === 'win32')('symlink 父目录逃逸 → null（先建真实文件再链接）', async () => {
     const ws = await mkdtemp(path.join(tmpdir(), 'guard-'));
     const outside = await mkdtemp(path.join(tmpdir(), 'outside-'));
     await writeFile(path.join(outside, 'secret.txt'), 'x');
@@ -61,7 +65,8 @@ describe('shell', () => {
   });
 
   it('resolveShell：POSIX 走 bash -lc；win32 走 cmd.exe 且保留 verbatim', () => {
-    const posix = resolveShell('echo hi');
+    // 显式传平台：默认跟随 process.platform（win32 上 POSIX 分支不可达）
+    const posix = resolveShell('echo hi', 'linux');
     expect(posix.cmd).toBe('bash');
     expect(posix.args).toEqual(['-lc', 'echo hi']);
     const win = resolveShell('echo hi', 'win32');
