@@ -1695,6 +1695,24 @@ handleDialogKey (EvKey (KChar c) [])
               , appDialogs = stackPush
                   (DialogConfirm (T.pack ("Remove provider " <> T.unpack (piName p) <> "?")) 1)
                   (appDialogs st) }
+        Just (DialogProviders ps sel) | c == 't'
+          , (p : _) <- drop sel ps -> do
+            -- 思考开关（tui-port L290：对照 MiMo 的 thinking toggle）——
+            -- 翻转 piThinking（yes↔no）并经 saveProvider 持久化。
+            st <- get
+            let bridge = appBridge st
+                chan   = appChan st
+                next   = if piThinking p == "yes" then "no" else "yes"
+            modify $ \s -> s { appStatus = tr (appLang s) "Saving thinking toggle..." }
+            void $ liftIO $ async $ do
+              r <- saveProvider bridge (piName p) (piKind p) (piBaseUrl p) ""
+                     (piModels p) (piDefault p) (piAuthHeader p) (piNoProxy p)
+                     (piEffort p) (piVision p) (piEfforts p)
+                     (piHeaders p) (piExtraBody p) next (piResponsesMode p)
+                     (piContextWindow p)
+              writeBChan chan (case r of
+                Right _  -> EvToast (T.pack "thinking: " <> next)
+                Left e   -> EvToast (T.pack ("Error: " <> show e)))
         _ -> withCommands (dialogAppend c) >> scrollBottom
 handleDialogKey _ = return ()
 
