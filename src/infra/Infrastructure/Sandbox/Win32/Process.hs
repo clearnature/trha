@@ -465,7 +465,7 @@ spawnAppContainer container exe args cwd =
                                       Right envBlock ->
                                         withCWStringLen envBlock $ \(envPtr, _) -> do
                                           ok <- c_CreateProcessW
-                                            wideExe
+                                            nullPtr
                                             wideCmd
                                             nullPtr nullPtr
                                             1                               -- bInheritHandles
