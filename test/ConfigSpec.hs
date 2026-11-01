@@ -6,6 +6,7 @@ module ConfigSpec (configSpec, sandboxGuestSpec) where
 
 import Infrastructure.Sandbox.Config
 import Infrastructure.Sandbox.Policy (NetworkPolicy(..))
+import Control.Exception (SomeException, try)
 import Data.List (isSuffixOf)
 import qualified Data.Text as T
 import System.Directory
@@ -104,7 +105,11 @@ sandboxGuestSpec = describe "insideSandbox (fail-open guard)" $ do
   it "agrees with the signals it can actually read" $ do
     home <- getHomeDirectory
     guestEnv <- lookupEnv "TRHA_SANDBOX_GUEST"
-    uidMap <- readFile "/proc/self/uid_map"
+    -- macOS 没有 procfs（/proc/self/uid_map 不存在）：读不到时传空串，
+    -- guestByUidMap "" 已在上面断言为 False（视为 host 映射），公式里的
+    -- guestEnv / HOME 后缀两个信号在 macOS 上仍然有效。
+    uidMap <- either (\(_ :: SomeException) -> "") id
+                <$> try (readFile "/proc/self/uid_map")
     guest <- insideSandbox
     let inScratch = "sandbox-scratch" `isSuffixOf` home
         expected = guestEnv == Just "1" || inScratch || guestByUidMap (T.pack uidMap)

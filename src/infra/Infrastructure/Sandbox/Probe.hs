@@ -28,7 +28,7 @@ import Infrastructure.Sandbox.Plan
 import Infrastructure.Sandbox.Policy
 import Infrastructure.Sandbox.Scope
 import System.Exit (ExitCode(..))
-import System.Process (readProcessWithExitCode)
+import System.Process (cwd, proc, readCreateProcessWithExitCode)
 #ifdef mingw32_HOST_OS
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Foreign (castPtr)
@@ -130,9 +130,9 @@ runProbe backend caps scope probe =
 #ifdef mingw32_HOST_OS
         if bcPlatform caps == Windows
           then runProbeWindows scope probe cmd args
-          else runProbePosix probe cmd args
+          else runProbePosix probe cmd args (unAbsolutePath (workspaceOf (scPolicy scope)))
 #else
-        runProbePosix probe cmd args
+        runProbePosix probe cmd args (unAbsolutePath (workspaceOf (scPolicy scope)))
 #endif
   where
     request = LaunchRequest
@@ -146,9 +146,13 @@ runProbe backend caps scope probe =
       }
 
 -- | POSIX / macOS：argv 里已经带了 bwrap / sandbox-exec 包装，直接执行即可。
-runProbePosix :: Probe -> Text -> [Text] -> IO ProbeResult
-runProbePosix probe cmd args = do
-  attempted <- try (readProcessWithExitCode (T.unpack cmd) (map T.unpack args) "")
+-- cwd 必须是 workspace：探针命令用相对路径（@echo ok>.trha-probe@），继承的
+-- runner cwd 会把写入落到 CI checkout 目录——Seatbelt 只授权了 workspace，
+-- 写入自然失败（macOS runner 实测）。
+runProbePosix :: Probe -> Text -> [Text] -> FilePath -> IO ProbeResult
+runProbePosix probe cmd args cwd = do
+  attempted <- try (readCreateProcessWithExitCode
+                      (proc (T.unpack cmd) (map T.unpack args)) { cwd = Just cwd } "")
   pure $ case attempted of
     Left (e :: SomeException) -> mkResult probe False (T.pack (show e))
     Right (code, out, err) ->

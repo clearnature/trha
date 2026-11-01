@@ -51,6 +51,9 @@ jobs:
       with:
         ghc-version: '9.14.1'
         cabal-version: 'latest'
+        # action 的隐式 cabal update 读根目录 cabal.project（../math 不存在），
+        # 直接失败；本 workflow 后面有显式 update（走 cabal.project.ci + .ci/math）。
+        cabal-update: false
 
     # WebGPU 组件需要 libwgpu_native.so 所在目录参与链接与运行时查找。
     - name: Provide wgpu-native lib dir
