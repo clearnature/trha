@@ -54,7 +54,10 @@ describe('Core/KernelToken', () => {
   beforeEach(async () => {
     oldHome = process.env.HOME;
     home = await mkdtemp(path.join(tmpdir(), 'ktok-'));
+    // os.homedir() 在 Windows 读 USERPROFILE——只设 HOME 时 mock 无效，
+    // KernelToken 会读到真实 ~/.trha/kernel-token（实测 dc9b… ≠ null）。
     process.env.HOME = home;
+    process.env.USERPROFILE = home;
     delete process.env.TRHA_KERNEL_TOKEN;
   });
 

@@ -16,13 +16,19 @@ const ENTRY = { host: '127.0.0.1', port: 3000, pid: process.pid, token: 'tok' };
 beforeEach(async () => {
   oldHome = process.env.HOME;
   home = await mkdtemp(path.join(tmpdir(), 'runpid-'));
+  // os.homedir() 在 POSIX 读 $HOME、在 Windows 读 USERPROFILE——双设才能
+  // 两平台都把 RunPid 的 ~/.trha 隔离到临时目录（Windows 实测缺失即翻车）。
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   await mkdir(path.join(home, '.trha', 'run'), { recursive: true });
 });
 
 afterEach(async () => {
   process.env.HOME = oldHome;
-  await rm(home, { recursive: true, force: true });
+  // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+  try {
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch { /* EBUSY: 延迟释放，非测试失败 */ }
 });
 
 const runtimeFile = (): string => path.join(home, '.trha', 'runtime.json');
