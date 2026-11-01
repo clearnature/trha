@@ -72,7 +72,10 @@ async function renameWithRetry(from: string, to: string): Promise<void> {
       return;
     } catch (e: unknown) {
       const code = (e as { code?: string }).code;
-      const transient = code === 'EPERM' || code === 'EBUSY' || code === 'EACCES';
+      // Windows 的目录项竞态（杀软扫描/句柄延迟）三种码都会出现：
+      // rename 报 ENOENT 时 tmp 文件其实存在（writeFile 已 await 成功），
+      // 重试通常立即成功。
+      const transient = code === 'EPERM' || code === 'EBUSY' || code === 'EACCES' || code === 'ENOENT';
       if (attempt >= backoff.length || !transient) throw e;
       await new Promise(r => setTimeout(r, backoff[attempt]));
     }
