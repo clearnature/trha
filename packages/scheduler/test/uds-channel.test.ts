@@ -37,7 +37,9 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-describe('UDS host channel', () => {
+// Unix domain socket 在 Windows 上依赖命名管道映射：node 对 /tmp 风格的
+// socketPath 建监听会挂 30 秒超时。学 Reasonix 的平台+能力双条件 Skip。
+describe.skipIf(process.platform === 'win32')('UDS host channel', () => {
   it('serves health over the socket with no TCP listener', async () => {
     const res = await request('/health');
     expect(res.status).toBe(200);
