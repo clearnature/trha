@@ -2949,11 +2949,22 @@ runShellCommand :: Text -> EventM ResourceName AppState ()
 runShellCommand cmd = do
   t <- liftIO now
   appendMsg (mkMsg "shell" ("$ " <> cmd) t)
-  r <- liftIO $ timeout 120000000
-         (readProcessWithExitCode "bash" ["-lc", T.unpack cmd] "")
+  r <- liftIO $ timeout 120000000 $ do
+    -- Windows 原生环境没有 bash（实测 `where bash` 无结果）：有 ComSpec 走
+    -- cmd /c，否则按 POSIX 用 bash -lc。shell 缺失时以卡片报错而不是让
+    -- IOException 逃出 EventM（tui-port L80：shell mode 的真实接点）。
+    mSpec <- lookupEnv "ComSpec"
+    let (sh, shArgs) = case mSpec of
+          Just spec -> (spec, ["/c", T.unpack cmd])
+          Nothing   -> ("bash", ["-lc", T.unpack cmd])
+    er <- try (readProcessWithExitCode sh shArgs "")
+    return $ case er of
+      Right (code, out, err) -> Right (code, out, err)
+      Left e                 -> Left (show (e :: IOException))
   case r of
     Nothing -> appendMsg (mkMsg "error" "shell: timed out after 120s" t)
-    Just (code, out, err) -> do
+    Just (Left e) -> appendMsg (mkMsg "error" ("shell: " <> T.pack e) t)
+    Just (Right (code, out, err)) -> do
       let body = T.take 20000 (T.pack (out <> err))
           suffix = case code of
             ExitSuccess -> ""
