@@ -117,7 +117,10 @@ windowsProbes =
 --     「不是内部或外部命令」）。@/s@ 让 cmd 先剥掉最外层引号再按普通规则
 --     解析，重定向与内建命令因此才生效。
 shellWrap :: Platform -> Text -> [Text]
-shellWrap Windows cmd = ["C:\\Windows\\System32\\cmd.exe", "/s", "/c", cmd]
+-- 学 dsh 的 spawn 层预防（workspace-controller 对 PS 注入 OutputEncoding）：
+-- cmd 子进程先切 UTF-8 代码页，其输出（含重定向文件内容）统一为 UTF-8，
+-- 与 Haskell 侧的 utf8 读取一致；/s 的引号剥除规则不受影响。
+shellWrap Windows cmd = ["C:\\Windows\\System32\\cmd.exe", "/s", "/c", "chcp 65001>nul & " <> cmd]
 shellWrap _ cmd = ["bash", "-lc", cmd]
 
 runProbe :: Backend -> BackendCapabilities -> Scope -> Probe -> IO ProbeResult
