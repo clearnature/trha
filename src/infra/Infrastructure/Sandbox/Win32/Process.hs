@@ -463,7 +463,7 @@ spawnAppContainer container exe args cwd =
                                     case env of
                                       Left e -> pure (Left e)
                                       Right envBlock ->
-                                        withCWStringLen envBlock $ \(envPtr, _) -> do
+                                        withCWString envBlock $ \envPtr -> do
                                           ok <- c_CreateProcessW
                                             nullPtr
                                             wideCmd
@@ -502,6 +502,8 @@ spawnAppContainer container exe args cwd =
 -- Keep the child environment small and deterministic while retaining the
 -- Windows variables used to initialize the process and resolve system tools.
 -- In particular, never pass arbitrary parent variables that may contain secrets.
+-- The block is NUL-separated and must end with a double NUL; the final entry
+-- terminator comes from here and withCWString supplies the extra one.
 appContainerEnvironment :: IO (Either ProcessError String)
 appContainerEnvironment = do
   parent <- c_GetEnvironmentStringsW
