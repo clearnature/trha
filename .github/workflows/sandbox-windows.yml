@@ -54,6 +54,7 @@ jobs:
       with:
         ghc-version: '9.14.1'
         cabal-version: 'latest'
+        cabal-update: false
 
     # WebGPU 组件需要 libwgpu_native 所在目录参与链接。
     - name: Provide wgpu-native lib dir
@@ -70,7 +71,7 @@ jobs:
       shell: bash
       run: |
         set -o pipefail
-        cabal update 2>&1 | tee win-cabal-update.log
+        cabal update --project-file=cabal.project.ci 2>&1 | tee win-cabal-update.log
 
     - name: Build trha-infra
       shell: bash
