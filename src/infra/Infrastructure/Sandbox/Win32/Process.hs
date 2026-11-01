@@ -27,7 +27,7 @@ import Data.Char (toUpper)
 import Data.List (intercalate, isPrefixOf, sortOn)
 import Data.Word (Word8, Word16, Word32, Word64)
 import Foreign
-import Foreign.C.String (CWString, peekCWString, withCWString, withCWStringLen)
+import Foreign.C.String (CWString, peekCWString, withCWString)
 import Foreign.C.Types (CInt(..))
 import Infrastructure.Sandbox.Win32.AppContainer (ContainerSid, containerSidRaw)
 import Infrastructure.Sandbox.Win32.Token (RestrictedToken, tokenHandle)
