@@ -79,7 +79,7 @@ import Numeric (showFFloat)
 import Text.Read (readMaybe)
 import System.Environment (getEnvironment, lookupEnv)
 import System.IO (hFlush, hPutStr, stdout, openTempFile, hClose)
-import System.Process (readProcessWithExitCode)
+import System.Process (readProcessWithExitCode, readCreateProcessWithExitCode, proc, env)
 import System.Exit (ExitCode(..))
 import Control.Exception (IOException, catch, try)
 import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
@@ -2976,7 +2976,16 @@ runShellCommand cmd = do
     let (sh, shArgs) = case mSpec of
           Just spec -> (spec, ["/c", T.unpack cmd])
           Nothing   -> ("bash", ["-lc", T.unpack cmd])
-    er <- try (readProcessWithExitCode sh shArgs "")
+    -- dsh 的 ENV_OVERRIDES：抑制颜色/分页器/交互特性，避免 garble 卡片输出
+    --（same set Codex hardcodes；信任调用者自己的条目仍以父 env 为准——
+    -- 这里父 env 先列，覆盖值后列，readCreateProcess 语义为后者胜）。
+    baseEnv <- getEnvironment
+    let overrides = [("NO_COLOR", "1"), ("TERM", "dumb")
+                    , ("PAGER", "cat"), ("GIT_PAGER", "cat")]
+        childEnv  = [kv | kv <- baseEnv
+                    , fst kv `notElem` map fst overrides] ++ overrides
+        cp = (proc sh shArgs) { env = Just childEnv }
+    er <- try (readCreateProcessWithExitCode cp "")
     return $ case er of
       Right (code, out, err) -> Right (code, out, err)
       Left e                 -> Left (show (e :: IOException))
@@ -3016,6 +3025,11 @@ handleSlash input = do
                { appDialogs = stackPush (DialogConfirm ("Delete session " <> sid <> "?") 1) (appDialogs s)
                , appPendingDelete = Just (T.unpack sid) }
 
+    _ | cmd == "/shell" || "/shell " `T.isPrefixOf` cmd -> do
+      let arg = T.strip (T.drop (T.length "/shell") input)
+      if T.null arg
+        then appendMsg (mkMsg "error" (tr (appLang st) "Usage: /shell <cmd>") t)
+        else runShellCommand arg
     _ | cmd == "/language" || "/language " `T.isPrefixOf` cmd -> do
       cfg <- liftIO (resolveConfig defaultCLIConfig)
       let raw = T.strip (T.drop (T.length "/language") input)

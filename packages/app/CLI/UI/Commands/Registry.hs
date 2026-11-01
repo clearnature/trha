@@ -177,6 +177,7 @@ slashRegistry =
   , SlashCommand "/doctor"   False True  "Check scheduler, provider, fonts and settings"
   , SlashCommand "/memory"   False True  "Show remembered notes (~/.trha/memories)"
   , SlashCommand "/remember" True  True  "Append a note to memory (usage: /remember <text>)"
+  , SlashCommand "/shell"    True  True  "Run a local shell command (usage: /shell <cmd>)"
   , SlashCommand "/stats"    False True  "Show transcript statistics for this session"
   , SlashCommand "/usage"    False True  "Show account balance and the active model"
   , SlashCommand "/compact"  True  True  "Compact the conversation history (usage: /compact [focus])"
@@ -272,7 +273,7 @@ groupMembers =
   , (GModel,   [ "/model", "/models", "/provider", "/switch", "/fav", "/preset" ])
   , (GContext, [ "/context", "/usage", "/memory", "/remember", "/btw", "/workspace"
                , "/recap", "/retry", "/diff" ])
-  , (GTools,   [ "/mcp", "/lsp", "/hooks", "/plugins", "/skills", "/doctor"
+  , (GTools,   [ "/shell", "/mcp", "/lsp", "/hooks", "/plugins", "/skills", "/doctor"
                , "/currency" ])
   , (GInput,   [ "/attachments", "/clear-attachments", "/paste", "/vim", "/copy" ])
   , (GAppearance, [ "/theme", "/language", "/reasoning-language"
