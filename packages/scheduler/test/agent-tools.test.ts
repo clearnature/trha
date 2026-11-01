@@ -71,7 +71,11 @@ describe('agent orchestration tools', () => {
     delete process.env.TRHA_WORKSPACE;
     delete process.env.TRHA_SCHEDULE_TICK_MS;
     delete process.env.TRHA_MAX_SUBAGENT_DEPTH;
-    await rm(dir, { recursive: true, force: true });
+    // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——maxRetries 覆盖大部分，
+    // 仍失败则忽略（SessionPersistSpec 先例：清理失败不判负，目录留给系统临时目录清理）。
+    try {
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch { /* EBUSY: 延迟释放，非测试失败 */ }
   });
 
   async function run(script: Step[]) {
