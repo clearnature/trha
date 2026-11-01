@@ -89,6 +89,15 @@ jobs:
       - name: sandbox tests (Linux-only cases pending on macOS)
         run: cabal test --project-file=cabal.project.ci trha-sandbox-test
 
+      # Seatbelt 真机探针（T3.x 验收）：写 workspace 放行 / 写 $HOME 拒收 /
+      # 网络拒绝。profile 由 sbplProfile 按 WorkspaceWrite 策略生成。
+      - name: Seatbelt isolation probes
+        run: |
+          ghc -isrc/infra -outputdir "$RUNNER_TEMP/mac-probe-obj" \
+            -o "$RUNNER_TEMP/macprobe.exe" test/manual/MacIsolation.hs
+          "$RUNNER_TEMP/macprobe.exe" | tee "$RUNNER_TEMP/mac-probe.log"
+          grep -q 'MAC-ISOLATION: PASS' "$RUNNER_TEMP/mac-probe.log"
+
       - name: Save Haskell dependencies
         if: always() && steps.haskell-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4

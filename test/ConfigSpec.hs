@@ -4,7 +4,7 @@
 -- | sandbox.yaml write side (T2.7/T1.8 wiring): enabled/scratch round-trip.
 module ConfigSpec (configSpec, sandboxGuestSpec) where
 
-import Control.Exception (IOException, try)
+import Control.Exception (SomeException, try)
 import Data.List (isSuffixOf)
 import qualified Data.Text as T
 import Infrastructure.Sandbox.Config
@@ -105,11 +105,14 @@ sandboxGuestSpec = describe "insideSandbox (fail-open guard)" $ do
   it "agrees with the signals it can actually read" $ do
     home <- getHomeDirectory
     guestEnv <- lookupEnv "TRHA_SANDBOX_GUEST"
-    uidMap <- try (readFile "/proc/self/uid_map") :: IO (Either IOException String)
+    -- macOS 没有 procfs（/proc/self/uid_map 不存在）：读不到时传空串，
+    -- guestByUidMap "" 已在上面断言为 False（视为 host 映射），公式里的
+    -- guestEnv / HOME 后缀两个信号在 macOS 上仍然有效。
+    uidMap <- either (\(_ :: SomeException) -> "") id
+                <$> try (readFile "/proc/self/uid_map")
     guest <- insideSandbox
     let inScratch = "sandbox-scratch" `isSuffixOf` home
-        uidMapGuest = either (const False) (guestByUidMap . T.pack) uidMap
-        expected = guestEnv == Just "1" || inScratch || uidMapGuest
+        expected = guestEnv == Just "1" || inScratch || guestByUidMap (T.pack uidMap)
     guest `shouldBe` expected
 
   it "detects a guest by HOME ending in sandbox-scratch" $ do
