@@ -27,7 +27,9 @@ async function listen(app: Express): Promise<{ base: string; server: Server }> {
 
 const json = { Authorization: 'Bearer dev-token', 'Content-Type': 'application/json' } as Record<string, string>;
 
-describe('POST /api/sandbox/experiment', () => {
+// 沙箱矩阵的 runner（TRHA_SANDBOX_RUNNER=fixture .mjs）依赖 POSIX 执行模型：
+// Windows spawn 无 shebang 关联的脚本报 EFTYPE（学 Reasonix 的 runner 依赖标注）。
+describe.skipIf(process.platform === 'win32')('POST /api/sandbox/experiment', () => {
   it('refuses while the sandbox seam is off', async () => {
     const { app } = createServer({ port: 0, token: 'dev-token' });
     const { base, server } = await listen(app);
