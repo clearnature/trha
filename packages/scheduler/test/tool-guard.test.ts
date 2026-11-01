@@ -13,13 +13,18 @@ beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), 'trha-guard-'));
 });
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true });
+  // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+  try {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch { /* EBUSY: 延迟释放，非测试失败 */ }
 });
 
 describe('confineWritePath', () => {
   it('accepts a normal nested target and creates the parent', async () => {
     const target = await confineWritePath(root, path.join(root, 'sub', 'f.txt'));
-    expect(target).toBe(path.join(root, 'sub', 'f.txt'));
+    // realpath 返回磁盘上的真实大小写（Temp vs 环境变量的 TEMP）——
+    // NTFS 大小写不敏感，断言也不区分。
+    expect(target?.toLowerCase()).toBe(path.join(root, 'sub', 'f.txt').toLowerCase());
     // parent was created by the guard
     await expect(writeFile(path.join(root, 'sub', 'x'), 'x')).resolves.toBeUndefined();
   });
@@ -28,7 +33,8 @@ describe('confineWritePath', () => {
     await expect(confineWritePath(root, '/etc/passwd')).resolves.toBeNull();
   });
 
-  it('refuses a symlinked parent that escapes the workspace', async () => {
+  // Windows 上 symlink() 无特权直接 EPERM（学 Reasonix 的平台 Skip）。
+  it.skipIf(process.platform === 'win32')('refuses a symlinked parent that escapes the workspace', async () => {
     await symlink('/etc', path.join(root, 'evil'));
     await expect(confineWritePath(root, path.join(root, 'evil', 'passwd')))
       .resolves.toBeNull();

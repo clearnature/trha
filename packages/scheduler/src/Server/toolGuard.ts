@@ -29,7 +29,7 @@ export async function confineWritePath(root: string, target: string, extraRoots:
       await mkdir(eParent, { recursive: true }).catch(() => {});
       try {
         const realExtra = await realpath(eParent);
-        if ((realExtra + path.sep).startsWith(abs) || normCase(realExtra + '') === normCase(path.resolve(er))) {
+        if (normCase(realExtra + path.sep).startsWith(abs) || normCase(realExtra + '') === normCase(path.resolve(er))) {
           return path.join(realExtra, path.basename(resolved));
         }
       } catch { return resolved; }
