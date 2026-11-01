@@ -92,7 +92,10 @@ describe('schedule driver', () => {
     delete process.env.TRHA_WORKSPACE;
     delete process.env.TRHA_SCHEDULE_TICK_MS;
     delete process.env.TRHA_SCHEDULE_GRACE_MS;
-    await rm(dir, { recursive: true, force: true });
+    // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+    try {
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch { /* EBUSY: 延迟释放，非测试失败 */ }
   });
 
   it('fires a one-shot schedule as a real turn and records it as fired', async () => {
@@ -129,7 +132,9 @@ describe('schedule driver', () => {
     });
 
     const app = await boot(dir, stateDir);
-    await wait(450);
+    // 全量并发负载下 450ms 只够 1 个 tick（实测 runs=1）——放宽到 1500ms
+    // 保证 repeatMs=80 的调度至少完整走 2 个触发周期。
+    await wait(1500);
     // stop firing before reading, otherwise an in-flight tick can bump runs
     // between our read and the cancellation write
     app.close();
@@ -158,7 +163,8 @@ describe('schedule driver', () => {
     });
 
     const app = await boot(dir, stateDir);
-    await wait(150);
+    // 全量并发负载下 150ms 偶发不够（schedule tick 与 LLM 往返的时序）——放宽到 500ms。
+    await wait(500);
     const after = await readRecord(stateDir, sessionId);
     expect(scheduleOf(after).status).toBe('missed');
     expect(app.kernelCalls()).toBe(0);

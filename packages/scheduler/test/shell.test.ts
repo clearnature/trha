@@ -45,8 +45,10 @@ describe('interactiveShell', () => {
     expect(interactiveShell('linux')).toEqual({ cmd: 'bash', args: ['-l'] });
   });
 
-  it('uses Windows PowerShell on win32 (PS1 has no meaning there)', () => {
-    expect(interactiveShell('win32')).toEqual({ cmd: 'powershell.exe', args: ['-NoLogo'] });
+  it('uses cmd on win32 (PS 5.1 does not read piped stdin)', () => {
+    const win = interactiveShell('win32');
+    expect(win.cmd).toMatch(/cmd\.exe$/i);
+    expect(win.args).toEqual([]);
   });
 });
 

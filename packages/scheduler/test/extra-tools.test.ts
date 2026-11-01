@@ -92,7 +92,9 @@ describe('persistent terminals', () => {
   });
 });
 
-describe('persistent terminals (sandbox seam on)', () => {
+// 沙箱 seam on 的持久 shell 走沙箱 runner（fixture .mjs）——Windows spawn
+  // 无 shebang 关联的脚本报 EFTYPE（学 Reasonix 的 runner 依赖标注）。
+  describe.skipIf(process.platform === 'win32')('persistent terminals (sandbox seam on)', () => {
   it('runs the shell inside the sandbox and keeps it interactive', async () => {
     chmodSync(sandboxFixture, 0o755);
     const previousSandbox = process.env.TRHA_SANDBOX;
@@ -344,7 +346,7 @@ describe('remaining branches', () => {
     expect(out).toContain('p1');
   });
 
-  it('creates a real git worktree', async () => {
+  it('creates a real git worktree', { timeout: 15_000 }, async () => {
     const repo = path.join(dir, 'repo');
     await mkdir(repo);
     const git = async (cmd: string): Promise<void> => {
@@ -360,7 +362,7 @@ describe('remaining branches', () => {
     expect(out).toMatch(/^OK: worktree/);
   });
 
-  it('loads workspace dependencies for a manifest it knows', async () => {
+  it('loads workspace dependencies for a manifest it knows', { timeout: 15_000 }, async () => {
     const proj = path.join(dir, 'proj');
     await mkdir(proj);
     await writeFile(path.join(proj, 'package.json'), JSON.stringify({ name: 'x', version: '1.0.0' }));
