@@ -37,6 +37,7 @@ import Data.Maybe (fromMaybe)
 import Control.Applicative ((<|>))
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode(ExitFailure), exitFailure, exitWith)
+import GHC.IO.Encoding (setLocaleEncoding)
 import System.IO
   ( BufferMode(LineBuffering), hFlush, hIsTerminalDevice, hPutStrLn, hSetBuffering
   , hSetEncoding, stderr, stdin, stdout, utf8 )
@@ -260,6 +261,12 @@ runSetupMode nonInteractive config = do
 -- | Main entry point
 main :: IO ()
 main = do
+  -- Windows 控制台编码兜底：无论 chcp/终端如何，程序内部一律按 UTF-8
+  -- 处理输出与文件路径。cabal run 的输出转发层按 locale 转码是显示乱码
+  -- 的另一层——遇到乱码优先直接跑 exe 绕过转发层。
+  hSetEncoding stdout utf8
+  hSetEncoding stderr utf8
+  setLocaleEncoding utf8
   (opts, mcmd) <- execParser cliParserInfo
   config <- buildConfig opts
   case resolveCommand mcmd of
