@@ -86,6 +86,17 @@ cd packages/app/CLI
 cabal build
 ```
 
+也可以经仓库内的 npm 包装包启动（`packages/app/CLI-npm`），不必先把 `trha` 放进 PATH：
+
+```bash
+# pnpm 12 的 dlx 只接受绝对路径的本地包目录（相对路径会 ERR_PNPM_CLI_DLX_READ_MANIFEST）
+pnpx "<仓库绝对路径>/packages/app/CLI-npm" --help
+pnpx "<仓库绝对路径>/packages/app/CLI-npm"        # 进 TUI，需要交互终端
+```
+
+包装包按 `$TRHA_BIN` → `<包>/vendor/trha[.exe]` → `$TRHA_CABAL_BIN` → `cabal list-bin trha`
+依次查找二进制，详见 [`packages/app/CLI-npm/README.md`](packages/app/CLI-npm/README.md)。
+
 运行方式（`trha` 无子命令直接进 TUI）：
 
 ```bash

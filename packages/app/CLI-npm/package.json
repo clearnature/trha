@@ -1,0 +1,17 @@
+{
+  "name": "@trha/cli",
+  "version": "0.1.0",
+  "description": "trha agent harness — TUI/REPL launcher (npm wrapper around the Haskell executable)",
+  "bin": {
+    "trha": "bin/trha.js"
+  },
+  "type": "module",
+  "files": [
+    "bin",
+    "vendor"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

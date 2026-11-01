@@ -328,7 +328,7 @@
 > **进度（2026-10-25 第一批）**：M5-5 错误分类 ✅、M5-6 patch 卡 ✅（edit 结果现在附
 > unified diff，展开态走 `diffWidget`，折叠态显示 `+N/−M`）、M5-8 present/structured
 > 卡 ✅、M5-9 消息 footer ✅（model + in/out）。M5-1/2/3/4（reasoning / step /
-> compaction / retry）**需 scheduler 事件**，未做；M5-7 file part 后置（与 M9 附件同批）。
+> compaction / retry）**需 scheduler 事件**，未做；M5-7 file part ✅（2026-11-02，见下表）。
 
 | # | 原子 | MiMo 对照 | 现状 | 依赖 |
 |---|---|---|---|---|
@@ -338,7 +338,7 @@
 | M5-4 | retry 卡（失败原因/退避） | `RetryPart` | 无 | B：scheduler 重试路径 |
 | M5-5 | 错误分类卡（rate-limit vs 普通 error） | `errorKind()` | 只有 `error` 角色 | A |
 | M5-6 | patch 卡（edit/write 的 diff 结果） | `PatchPart` + `<diff>` | `UI.Render.Diff` 已能渲染 diff | A |
-| M5-7 | file part（附件/图片引用） | `FilePart` + `source` | 无 | A（粘贴图片另见 M9） |
+| M5-7 | file part（附件/图片引用） | `FilePart` + `source` | ✅ 已落地：`UI.Render.FilePart` 解析 `[image: …]` / `[voice: …]` / `[file: …]`，正文剥离 token、每个引用单独一行 `▣ image  <path>`；Windows 盘符冒号不误切、保序去重、无 token 时正文原样（spec 8 例） | A（粘贴图片另见 M9） |
 | M5-8 | structured output 折叠卡 | `StructuredOutput` | 无 | A |
 | M5-9 | 消息级 footer（时间/agent/model/queued 标记） | message footer | 时间有 | A |
 
@@ -348,7 +348,7 @@
 > search/edit/write/net/agent/ask/skill/present/plan 十一类，折叠态家族化摘要、展开态
 > 详情行、present 卡跳过原始载荷）；M6-8 ✅ 逐卡折叠（`appCardFocus` + `alt+↑/↓` 移动 +
 > `ctrl+o`/空输入 Enter 切换，纯函数 `nextCardFocus` 有 spec）。M6-7 的
-> `shouldHideTool`（完成后隐藏低噪音工具）未做。
+> `shouldHideTool`（完成后隐藏低噪音工具）✅ 已落地（2026-11-02）。
 
 MiMo 的 17 个 `Match`（`routes/session/index.tsx:2278-2326`）在 trha 的对应工具名：
 
@@ -360,7 +360,7 @@ MiMo 的 17 个 `Match`（`routes/session/index.tsx:2278-2326`）在 trha 的对
 | M6-4 | 网络卡（状态码/域名/字符数） | `webfetch`/`websearch` | `web_fetch`/`web_search` | 摘要行 |
 | M6-5 | 子智能体卡（任务树、跳转子会话） | `task`/`actor`/`workflow` | `subagent`/`workflow`/`team_task_*` | 摘要 + 会话 id |
 | M6-6 | 提问/技能/计划卡 | `question`/`skill`/`exit_plan_mode` | `ask_user_question`/`skill`/`exit_plan_mode` | 复用现有卡 |
-| M6-7 | 通用兜底 + `shouldHideTool`（完成后可隐藏） | `GenericTool` | 现有通用卡 | 保留为默认 |
+| M6-7 | 通用兜底 + `shouldHideTool`（完成后可隐藏） | `GenericTool` | ✅ 已落地：`ToolSummary.shouldHideTool` —— 成功的 read/glob/grep 且输出 ≤12 行时隐藏；失败、运行中、写入类与长输出照常；展开过的卡与 `/verbose` 可找回，卡片焦点跳过隐藏项（spec 5 例） | 保留为默认 |
 | M6-8 | **逐卡折叠**（卡片焦点/命中测试，替代"最近一张"） | 卡片焦点模型 | `toggleRecentFold` | `appFolds :: Map Int ToolFold` 已就位，补焦点与键位 |
 
 ### M7 外壳结构（A；rename/tag 为 B）
