@@ -1,6 +1,6 @@
 # 沙箱架构（第一版设计基线）
 
-> 状态（**2026-10-29 建档**）：**设计基线，尚未实现**。本仓当前没有任何 OS 级沙箱；本文定义目标、类型、协议、判据与阶段计划，作为实现前的评审基线。
+> 状态（**2026-11-01 更新**）：**已实现并真机验证**。Linux（bwrap + Landlock/seccomp）、Windows（AppContainer + capability SID ACL + Job Object，纯 Haskell FFI 全程免特权）、macOS（Seatbelt，CI 真机 `94516ed` success）三平台探针全绿。本文的类型/协议/判据即实现基线；实现详情见 `sandbox-handoff.md` 与 `src/infra/Infrastructure/Sandbox/Backend/{Linux,Windows,Mac}.hs`。
 > 结构事实以 `../QWEN.md` 与 `../architecture/architecture.md` 为准；本文只描述**沙箱**这一能力缝。
 > 参考实现的证据路径见 §9，所有结论均可复核。
 > **引用约定**：正文中的 `[R1]…[R11]` / `[D1]…[D4]` 是参考代码索引（§9），每条技术判断都能追到具体仓库、文件与符号/行号；行号漂移时以符号名为准。

@@ -1,6 +1,6 @@
 # 沙箱交付计划（WBS · 里程碑 · 质量门禁）
 
-> 状态（**2026-10-30 更新**）：M0–M2 已交付，M3/M4/M5 实现完成但缺真机验证；逐项实况见 §2 的进度行与 `sandbox-handoff.md`（本目录）。
+> 状态（**2026-11-01 更新**）：M0–M5 **全部交付并真机验证**。此前标注的「缺真机验证」已补齐：Windows AppContainer 三探针（写 workspace=0 / 写 C:\Windows=1 / 删 workspace 根=1）全绿、macOS CI 真机 success（`94516ed`）、Linux CI 绿。实现从受限令牌转向 **AppContainer（纯 Haskell FFI，无 Rust helper）**，路径规范化（junction/ADS）与探针套件一并落地；逐项实况见 §2 与 `sandbox-handoff.md`。
 > 本文件保留 **WBS、判据与门禁**；判据发生变化的条目在行内标注「修订 2026-10-30」。设计依据是 [`sandbox-architecture.md`](./sandbox-architecture.md)（接口在 P0 冻结，§5.7）。
 > 本文只回答三件事：**拆成什么任务、什么时候交付、什么算完成**。设计问题回架构文档，代码索引见其 §9。
 
