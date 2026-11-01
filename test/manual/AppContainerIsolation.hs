@@ -12,6 +12,7 @@
 -- 目录）；缺省 @D:/tmp/ac3-ws@ 是本机手工验证用的路径。
 module Main (main) where
 
+import Infrastructure.Sandbox.Win32.Acl (grantWriteAccess, renderAclError)
 import Infrastructure.Sandbox.Win32.AppContainer
 import Infrastructure.Sandbox.Win32.Process
 import System.Environment (lookupEnv)
@@ -31,14 +32,22 @@ main :: IO ()
 main = do
   ws <- maybe "D:/tmp/ac3-ws" id <$> lookupEnv "TRHA_PROBE_WS"
   putStrLn ("workspace: " <> ws)
+  profR <- ensureContainerProfile "trha-sandbox-test"
+  either (\e -> putStrLn ("profile FAIL: " <> show e)) pure profR
   sidR <- deriveContainerSid "trha-sandbox-test"
   case sidR of
     Left e -> putStrLn ("sid FAIL: " <> show e)
     Right sid -> do
-      r1 <- runCmd sid ("echo ok > " <> ws <> "/out.txt")
-      putStrLn ("[1] write workspace  -> " <> r1)
-      r2 <- runCmd sid "echo x > C:/Windows/appcontainer-test.txt"
-      putStrLn ("[2] write C:/Windows -> " <> r2)
-      r3 <- runCmd sid ("rmdir /s /q " <> ws)
-      putStrLn ("[3] rmdir workspace  -> " <> r3)
+      sidTextR <- containerSidText sid
+      case sidTextR of
+        Left e -> putStrLn ("sid text FAIL: " <> show e)
+        Right sidText -> do
+          g <- grantWriteAccess ws sidText
+          putStrLn ("grant workspace -> " <> either renderAclError (const "ok") g)
+          r1 <- runCmd sid ("echo ok > " <> ws <> "/out.txt")
+          putStrLn ("[1] write workspace  -> " <> r1)
+          r2 <- runCmd sid "echo x > C:/Windows/appcontainer-test.txt"
+          putStrLn ("[2] write C:/Windows -> " <> r2)
+          r3 <- runCmd sid ("rmdir /s /q " <> ws)
+          putStrLn ("[3] rmdir workspace  -> " <> r3)
       freeContainerSid sid
