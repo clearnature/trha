@@ -93,9 +93,8 @@ jobs:
       # 网络拒绝。profile 由 sbplProfile 按 WorkspaceWrite 策略生成。
       - name: Seatbelt isolation probes
         run: |
-          ghc -isrc/infra -outputdir "$RUNNER_TEMP/mac-probe-obj" \
-            -o "$RUNNER_TEMP/macprobe.exe" test/manual/MacIsolation.hs
-          "$RUNNER_TEMP/macprobe.exe" | tee "$RUNNER_TEMP/mac-probe.log"
+          cabal run --project-file=cabal.project.ci exe:mac-isolation-probe \
+            | tee "$RUNNER_TEMP/mac-probe.log"
           grep -q 'MAC-ISOLATION: PASS' "$RUNNER_TEMP/mac-probe.log"
 
       - name: Save Haskell dependencies
