@@ -39,7 +39,10 @@ export function resolveShell(command: string, platform: NodeJS.Platform = proces
 
 /** The interactive persistent shell (terminal_open). PowerShell has no PS1. */
 export function interactiveShell(platform: NodeJS.Platform = process.platform): ShellSpec {
-  if (platform === 'win32') return { cmd: 'powershell.exe', args: ['-NoLogo'] };
+  // PS 5.1 的交互输入走 Console API 而非 stdin 管道——persistent terminal
+  // 往 stdin 写的命令 PS 根本不读（实测 status 恒 running、无输出）。
+  // cmd 的 stdin 管道模式可靠（逐条读命令），echo 输出为 ASCII 无编码歧义。
+  if (platform === 'win32') return { cmd: process.env.ComSpec ?? 'cmd.exe', args: [] };
   return { cmd: 'bash', args: ['-l'] };
 }
 
