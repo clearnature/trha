@@ -309,7 +309,7 @@ deepSeekTools apiKey model manager msgs specs gp = do
 deepSeekStream :: Text -> Text -> [ChatMessage] -> [ToolSpec] -> GenParams -> (StreamChunk -> IO ()) -> IO ChatTurn
 deepSeekStream apiKey model msgs specs _gp onEvent = do
   body <- applyEffortEnv (buildDeepSeekChatRequest model msgs specs Nothing)
-  LStream.openAICompatStreamCall
+  LStream.openAICompatStreamCall False
     "https://api.deepseek.com/v1/chat/completions"
     [("Authorization", "Bearer " <> TE.encodeUtf8 apiKey) | not (T.null (T.strip apiKey))]
     (withUsageFlag (withStreamFlag body))

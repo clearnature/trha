@@ -135,7 +135,7 @@ createOpenAIProvider apiKey = do
 -- (@unsupportedTools@): streaming must not quietly claim more than blocking.
 openAIStream :: Text -> [ChatMessage] -> [ToolSpec] -> GenParams -> (StreamChunk -> IO ()) -> IO ChatTurn
 openAIStream apiKey msgs _specs _gp onEvent =
-  LStream.openAICompatStreamCall
+  LStream.openAICompatStreamCall False
     "https://api.openai.com/v1/chat/completions"
     [("Authorization", "Bearer " <> TE.encodeUtf8 apiKey) | not (T.null (T.strip apiKey))]
     (object [ "model"    .= ("gpt-4" :: Text)

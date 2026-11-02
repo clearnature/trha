@@ -59,10 +59,11 @@ data StreamEvent
   deriving (Show, Eq)
 
 data StreamConfig = StreamConfig
-  { scUrl    :: String
-  , scApiKey :: String
-  , scBody   :: BSL.ByteString
-  , scFormat :: StreamFormat
+  { scUrl     :: String
+  , scApiKey  :: String
+  , scBody    :: BSL.ByteString
+  , scFormat  :: StreamFormat
+  , scNoProxy :: Bool   -- ^ bypass the environment proxy for this endpoint
   }
 
 data StreamFormat = SSEFormat | NDJSONFormat
@@ -73,7 +74,9 @@ streamChatCompletion :: StreamConfig -> (StreamEvent -> IO ()) -> IO (Either Str
 streamChatCompletion cfg onEvent = do
   idleMs <- streamTimeoutMs
   firstMs <- streamFirstByteTimeoutMs
-  mgr <- newManager =<< proxyAwareSettings (scUrl cfg) tlsManagerSettings
+  mgr <- if scNoProxy cfg
+           then newManager (managerSetProxy noProxy tlsManagerSettings)
+           else newManager =<< proxyAwareSettings (scUrl cfg) tlsManagerSettings
   initialRequest <- parseRequest (scUrl cfg)
   let request = initialRequest
         { method = "POST"
@@ -164,10 +167,11 @@ streamDeepSeek apiKey model messages onEvent = do
         , "stream"   .= True
         ]
   streamChatCompletion StreamConfig
-    { scUrl    = "https://api.deepseek.com/v1/chat/completions"
-    , scApiKey = apiKey
-    , scBody   = encode body
-    , scFormat = SSEFormat
+    { scUrl     = "https://api.deepseek.com/v1/chat/completions"
+    , scApiKey  = apiKey
+    , scBody    = encode body
+    , scFormat  = SSEFormat
+    , scNoProxy = False
     } onEvent
 
 -- | OpenAI streaming (SSE)
@@ -179,10 +183,11 @@ streamOpenAI apiKey model messages onEvent = do
         , "stream"   .= True
         ]
   streamChatCompletion StreamConfig
-    { scUrl    = "https://api.openai.com/v1/chat/completions"
-    , scApiKey = apiKey
-    , scBody   = encode body
-    , scFormat = SSEFormat
+    { scUrl     = "https://api.openai.com/v1/chat/completions"
+    , scApiKey  = apiKey
+    , scBody    = encode body
+    , scFormat  = SSEFormat
+    , scNoProxy = False
     } onEvent
 
 -- | Anthropic streaming (NDJSON)
@@ -195,10 +200,11 @@ streamAnthropic apiKey model messages onEvent = do
         , "stream"     .= True
         ]
   streamChatCompletion StreamConfig
-    { scUrl    = "https://api.anthropic.com/v1/messages"
-    , scApiKey = apiKey
-    , scBody   = encode body
-    , scFormat = NDJSONFormat
+    { scUrl     = "https://api.anthropic.com/v1/messages"
+    , scApiKey  = apiKey
+    , scBody    = encode body
+    , scFormat  = NDJSONFormat
+    , scNoProxy = False
     } onEvent
   where
     toAnthropicMsg m = object
@@ -366,15 +372,18 @@ textOf _                 = ""
 -- | POST a JSON body to an SSE endpoint and hand each @data:@ payload to the
 -- callback the moment it arrives.  Never throws: failure comes back as @Left@.
 streamPostSse
-  :: String                            -- ^ endpoint URL
+  :: Bool                              -- ^ bypass the environment proxy
+  -> String                            -- ^ endpoint URL
   -> [(HeaderName, BS.ByteString)]     -- ^ extra headers (auth, version, …)
   -> Value                             -- ^ request body
   -> (Value -> IO ())                  -- ^ per-frame callback
   -> IO (Either Text ())
-streamPostSse url headers body onFrame = do
+streamPostSse bypassProxy url headers body onFrame = do
   idleMs <- streamTimeoutMs
   firstMs <- streamFirstByteTimeoutMs
-  mgr <- newManager =<< proxyAwareSettings url tlsManagerSettings
+  mgr <- if bypassProxy
+           then newManager (managerSetProxy noProxy tlsManagerSettings)
+           else newManager =<< proxyAwareSettings url tlsManagerSettings
   req0 <- parseRequest url
   let req = req0
         { method = "POST"
@@ -437,16 +446,17 @@ streamPostSse url headers body onFrame = do
 -- aggregated per index and emitted once complete, so the returned @ChatTurn@
 -- matches what the blocking call would have produced.
 openAICompatStreamCall
-  :: String                          -- ^ full endpoint URL
-  -> [Header]                        -- ^ request headers (Authorization included by caller)
-  -> Value                           -- ^ request body (caller sets @stream@)
+  :: Bool                             -- ^ bypass the environment proxy
+  -> String                           -- ^ full endpoint URL
+  -> [Header]                         -- ^ request headers (Authorization included by caller)
+  -> Value                            -- ^ request body (caller sets @stream@)
   -> (StreamChunk -> IO ()) -> IO ChatTurn
-openAICompatStreamCall url headers body onEvent = do
+openAICompatStreamCall bypassProxy url headers body onEvent = do
   acc <- newIORef ([] :: [(Int, Text, Text, Text)])
   textRef <- newIORef []
   reasonRef <- newIORef []
   usageRef <- newIORef Nothing
-  result <- streamPostSse url headers body $ \v -> do
+  result <- streamPostSse bypassProxy url headers body $ \v -> do
     case openAICompatDelta v of
       Just txt | not (T.null txt) -> do
         modifyIORef' textRef (txt :)

@@ -116,12 +116,12 @@ adapterFor entry key = do
 
 buildAdapter :: ProviderEntry -> Text -> IO (Either Text LLMAdapter)
 buildAdapter entry key = case peKind entry of
-  "openai"    -> Right <$> openAICompatAdapter (peBaseUrl entry) key (peDefault entry)
+  "openai"    -> Right <$> openAICompatAdapter (peNoProxy entry) (peBaseUrl entry) key (peDefault entry)
                        (extraHeaders (peHeaders entry)) (peExtraBody entry)
                        (effortOf entry)
-  "anthropic" -> Right <$> anthropicAdapter (peBaseUrl entry) key (peDefault entry)
+  "anthropic" -> Right <$> anthropicAdapter (peNoProxy entry) (peBaseUrl entry) key (peDefault entry)
                        (extraHeaders (peHeaders entry)) (thinkingField (peThinking entry))
-  "responses" -> Right <$> responsesAdapter (peBaseUrl entry) key (peDefault entry)
+  "responses" -> Right <$> responsesAdapter (peNoProxy entry) (peBaseUrl entry) key (peDefault entry)
                        (extraHeaders (peHeaders entry)) (peExtraBody entry)
                        (peResponsesMode entry)
   other       -> pure (Left ("provider kind not implemented yet: " <> other))
@@ -252,14 +252,14 @@ providerStream entry key = do
 
 buildStream :: ProviderEntry -> Text -> IO StreamCall
 buildStream entry key = case peKind entry of
-  "openai"    -> openAICompatStream (peBaseUrl entry) key (peDefault entry)
+  "openai"    -> openAICompatStream (peNoProxy entry) (peBaseUrl entry) key (peDefault entry)
                        (extraHeaders (peHeaders entry)) (peExtraBody entry)
                        (effortOf entry)
-  "anthropic" -> anthropicStream (peBaseUrl entry) key (peDefault entry)
+  "anthropic" -> anthropicStream (peNoProxy entry) (peBaseUrl entry) key (peDefault entry)
                        (extraHeaders (peHeaders entry)) (thinkingField (peThinking entry))
   "responses" -> do
     ridRef <- newIORef (Map.empty :: Map.Map Text Text)
-    responsesStream (peBaseUrl entry) key (peDefault entry)
+    responsesStream (peNoProxy entry) (peBaseUrl entry) key (peDefault entry)
       (extraHeaders (peHeaders entry)) (peExtraBody entry)
       (effortOf entry) (peResponsesMode entry) ridRef
   _        -> do
@@ -281,8 +281,8 @@ buildStream entry key = case peKind entry of
 -- | An OpenAI-compatible streaming caller.  The SSE transport and the
 -- tool-call aggregation live in LLM.Stream, so every OpenAI-compatible wire —
 -- saved providers and the DeepSeek/OpenAI adapters alike — shares one engine.
-openAICompatStream :: Text -> Text -> Text -> [Header] -> Maybe Value -> Maybe Text -> IO StreamCall
-openAICompatStream baseUrl apiKey model extraHs extraBody meffort =
+openAICompatStream :: Bool -> Text -> Text -> Text -> [Header] -> Maybe Value -> Maybe Text -> IO StreamCall
+openAICompatStream bypassProxy baseUrl apiKey model extraHs extraBody meffort =
   pure $ \msgs specs gp onEvent -> do
     let eff = case gpEffort gp of
                 Just e | T.toLower (T.strip e) /= "auto" -> Just e
@@ -293,7 +293,7 @@ openAICompatStream baseUrl apiKey model extraHs extraBody meffort =
           Object o -> Object (KM.insert "stream" (Bool True) o)
           other    -> other
         headers = ("Content-Type", "application/json") : (bearer apiKey ++ extraHs)
-    LStream.openAICompatStreamCall
+    LStream.openAICompatStreamCall bypassProxy
       (T.unpack (T.dropWhileEnd (== '/') (T.strip baseUrl)) ++ "/chat/completions")
       headers body onEvent
 
@@ -355,8 +355,8 @@ anthropicHeaders apiKey extraHs specs =
   ++ [ ("anthropic-beta", toolChangesBeta) | any tsDeferLoading specs ]
   ++ extraHs
 
-anthropicStream :: Text -> Text -> Text -> [Header] -> Maybe Text -> IO StreamCall
-anthropicStream baseUrl apiKey model extraHs mthinking = do
+anthropicStream :: Bool -> Text -> Text -> Text -> [Header] -> Maybe Text -> IO StreamCall
+anthropicStream bypassProxy baseUrl apiKey model extraHs mthinking = do
   let url = T.unpack (rootOf baseUrl) ++ "/v1/messages"
       headers = ([ ("Content-Type", "application/json")
                  , ("anthropic-version", "2023-06-01") ]
@@ -380,7 +380,7 @@ anthropicStream baseUrl apiKey model extraHs mthinking = do
         <> " beta=" <> show (lookup "anthropic-beta" hdrs)
     when (dbg == Just "full") $
       hPutStrLn stderr $ "[anthropic] body=" <> take 4000 (BLC.unpack (encode reqBody))
-    result <- LStream.streamPostSse url (anthropicHeaders apiKey extraHs specs)
+    result <- LStream.streamPostSse bypassProxy url (anthropicHeaders apiKey extraHs specs)
       reqBody $ \v -> do
       case anthropicEvent v of
         Just (Left txt) -> onEvent (ChunkDelta txt)
@@ -439,8 +439,8 @@ anthropicEvent v = case v of
   _ -> Nothing
 
 -- | The Responses API streaming caller.
-responsesStream :: Text -> Text -> Text -> [Header] -> Maybe Value -> Maybe Text -> Text -> IORef (Map.Map Text Text) -> IO StreamCall
-responsesStream baseUrl apiKey model extraHs extraBody meffort mode ridRef = do
+responsesStream :: Bool -> Text -> Text -> Text -> [Header] -> Maybe Value -> Maybe Text -> Text -> IORef (Map.Map Text Text) -> IO StreamCall
+responsesStream bypassProxy baseUrl apiKey model extraHs extraBody meffort mode ridRef = do
   let url = responsesUrl baseUrl
       headers = ("Content-Type", "application/json") : (bearer apiKey ++ extraHs)
   pure $ \msgs specs gp onEvent -> do
@@ -467,7 +467,7 @@ responsesStream baseUrl apiKey model extraHs extraBody meffort mode ridRef = do
           mapM_ (\(idx, cid, nm, args) -> onEvent (ChunkToolCallAt idx cid nm args)) done
         attempt p = do
           writeIORef pending Nothing
-          LStream.streamPostSse url headers
+          LStream.streamPostSse bypassProxy url headers
             (withResponseEffort eff (mergeExtraBody extraBody (responsesRequestBody model msgs specs True p))) onFrame
     first <- attempt prev
     -- A rejected continuation (typically HTTP 400) is recoverable: retry with
@@ -568,14 +568,16 @@ jsonInt k o = case field k o of
 -- OpenAI-compatible wire
 --------------------------------------------------------------------------------
 
-openAICompatAdapter :: Text -> Text -> Text -> [Header] -> Maybe Value -> Maybe Text -> IO LLMAdapter
-openAICompatAdapter baseUrl apiKey model extraHs extraBody meffort = do
-  manager <- newManager tlsManagerSettings
+openAICompatAdapter :: Bool -> Text -> Text -> Text -> [Header] -> Maybe Value -> Maybe Text -> IO LLMAdapter
+openAICompatAdapter bypassProxy baseUrl apiKey model extraHs extraBody meffort = do
+  manager <- if bypassProxy
+               then newManager (managerSetProxy noProxy tlsManagerSettings)
+               else newManager tlsManagerSettings
   let url = T.unpack (T.dropWhileEnd (== '/') (T.strip baseUrl)) ++ "/chat/completions"
       headers = ("Content-Type", "application/json") : (bearer apiKey ++ extraHs)
       call msgs specs = postJson manager url headers
         (withEffort meffort (mergeExtraBody extraBody (buildDeepSeekChatRequest model msgs specs Nothing)))
-  stream <- openAICompatStream baseUrl apiKey model extraHs extraBody meffort
+  stream <- openAICompatStream bypassProxy baseUrl apiKey model extraHs extraBody meffort
   pure LLMAdapter
     { llmChat = \msgs -> do
         (code, body, ok) <- call (map toChat msgs) []
@@ -614,9 +616,11 @@ openAICompatAdapter baseUrl apiKey model extraHs extraBody meffort = do
 -- | Anthropic's Messages API: @x-api-key@ (not Bearer) plus a version header,
 -- a required @max_tokens@, a top-level @system@, and tool calls as
 -- @tool_use@ / @tool_result@ content blocks.
-anthropicAdapter :: Text -> Text -> Text -> [Header] -> Maybe Text -> IO LLMAdapter
-anthropicAdapter baseUrl apiKey model extraHs mthinking = do
-  manager <- newManager tlsManagerSettings
+anthropicAdapter :: Bool -> Text -> Text -> Text -> [Header] -> Maybe Text -> IO LLMAdapter
+anthropicAdapter bypassProxy baseUrl apiKey model extraHs mthinking = do
+  manager <- if bypassProxy
+               then newManager (managerSetProxy noProxy tlsManagerSettings)
+               else newManager tlsManagerSettings
   let url = T.unpack (rootOf baseUrl) ++ "/v1/messages"
       headers = ([ ("Content-Type", "application/json")
                  , ("anthropic-version", "2023-06-01") ]
@@ -624,7 +628,7 @@ anthropicAdapter baseUrl apiKey model extraHs mthinking = do
                 ++ extraHs
       call msgs specs = postJson manager url headers
         (anthropicRequestBody model msgs specs False mthinking)
-  stream <- anthropicStream baseUrl apiKey model extraHs mthinking
+  stream <- anthropicStream bypassProxy baseUrl apiKey model extraHs mthinking
   pure LLMAdapter
     { llmChat = \msgs -> do
         (code, body, ok) <- call (map toChat msgs) []
@@ -779,9 +783,11 @@ parseAnthropicTurn v = case v of
 -- | The Responses API: @input@ items rather than chat messages, tool calls as
 -- @function_call@ / @function_call_output@ items, and the system prompt in
 -- @instructions@.
-responsesAdapter :: Text -> Text -> Text -> [Header] -> Maybe Value -> Text -> IO LLMAdapter
-responsesAdapter baseUrl apiKey model extraHs extraBody mode = do
-  manager <- newManager tlsManagerSettings
+responsesAdapter :: Bool -> Text -> Text -> Text -> [Header] -> Maybe Value -> Text -> IO LLMAdapter
+responsesAdapter bypassProxy baseUrl apiKey model extraHs extraBody mode = do
+  manager <- if bypassProxy
+               then newManager (managerSetProxy noProxy tlsManagerSettings)
+               else newManager tlsManagerSettings
   ridRef <- newIORef (Map.empty :: Map.Map Text Text)
   let url = responsesUrl baseUrl
       headers = ("Content-Type", "application/json") : (bearer apiKey ++ extraHs)
@@ -807,7 +813,7 @@ responsesAdapter baseUrl apiKey model extraHs extraBody mode = do
                 modifyIORef' ridRef (Map.insert skey rid)
               _ -> pure ()
             pure (code, body, ok)
-  stream <- responsesStream baseUrl apiKey model extraHs extraBody Nothing mode ridRef
+  stream <- responsesStream bypassProxy baseUrl apiKey model extraHs extraBody Nothing mode ridRef
   pure LLMAdapter
     { llmChat = \msgs -> do
         (code, body, ok) <- call "" (map toChat msgs) []
