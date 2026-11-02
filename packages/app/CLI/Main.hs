@@ -37,7 +37,7 @@ import System.Console.Haskeline
 import System.Directory (getCurrentDirectory)
 import Data.Maybe (fromMaybe)
 import Control.Applicative ((<|>))
-import System.Environment (lookupEnv)
+import System.Environment (lookupEnv, setEnv)
 import System.Exit (ExitCode(ExitFailure), exitFailure, exitWith)
 import GHC.IO.Encoding (setLocaleEncoding)
 import System.IO
@@ -164,11 +164,17 @@ runCLIMode config = do
 -- session persistence without repeating the path. Absent both, the kernel is
 -- in-memory only (and says so).
 runServeMode :: Int -> Maybe FilePath -> CLIConfig -> IO ()
-runServeMode kernelPort cliStateDir _config = do
+runServeMode kernelPort cliStateDir config = do
   -- stdout is a file when launched as a service: without LineBuffering the
   -- "Starting API server" line (and any later diagnostics) sits in an 8 KiB
   -- block buffer and never reaches ~/.trha/logs/kernel.log.
   hSetBuffering stdout LineBuffering
+  -- 代理策略的单一来源：settings.yaml 的 configProxy 同时决定 Core.HTTP 与
+  -- LLM.Stream 的 manager——后者只读 TRHA_PROXY。不统一的话，`configProxy:
+  -- none` 只管住前半条链路，上游流式仍然走继承来的环境代理（本地代理一旦
+  -- 不可用就把每个请求变成超时）。
+  let proxy = T.strip (configProxy config)
+  when (not (T.null proxy)) $ setEnv "TRHA_PROXY" (T.unpack proxy)
   envStateDir <- lookupEnv "TRHA_STATE_DIR"
   let stateDir = cliStateDir <|> envStateDir
   outcome <- writePid Kernel
