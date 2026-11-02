@@ -4,6 +4,7 @@ module UI.SkillsSpec (spec) where
 
 import Test.Hspec
 import qualified Data.Text as T
+import System.FilePath ((</>))
 import UI.Skills
 
 sample :: String
@@ -47,13 +48,15 @@ spec = do
   describe "skillDirList" $ do
     it "puts project .agents first and an explicit dir last" $ do
       skillDirList "/proj" "/home/u" (Just "/extra")
-        `shouldBe` [ "/proj/.agents/skills", "/proj/.trha/skills"
-                   , "/home/u/.agents/skills", "/home/u/.trha/skills"
+        `shouldBe` [ "/proj" </> ".agents" </> "skills"
+                   , "/proj" </> ".trha" </> "skills"
+                   , "/home/u" </> ".agents" </> "skills"
+                   , "/home/u" </> ".trha" </> "skills"
                    , "/extra" ]
 
     it "includes the open-standard .agents tree by default" $ do
       skillDirList "/proj" "/home/u" Nothing
-        `shouldSatisfy` elem "/home/u/.agents/skills"
+        `shouldSatisfy` elem ("/home/u" </> ".agents" </> "skills")
 
   describe "parseSkillInvocation" $ do
     it "recognises a bare trigger" $

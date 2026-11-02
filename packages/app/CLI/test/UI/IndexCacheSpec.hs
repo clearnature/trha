@@ -2,14 +2,12 @@
 
 module UI.IndexCacheSpec (spec) where
 
-import Control.Exception (bracket)
 import Data.Time.Clock (addUTCTime, getCurrentTime)
 import System.Directory
-    ( createDirectoryIfMissing, getTemporaryDirectory, listDirectory
-    , removePathForcibly )
-import System.Environment (lookupEnv, setEnv, unsetEnv)
+    ( createDirectoryIfMissing, listDirectory )
 import System.FilePath ((</>))
 import Test.Hspec
+import TestHome (withTempHome)
 
 import UI.Completion (Completion(..), defaultIndexOptions)
 import UI.IndexCache
@@ -47,20 +45,4 @@ spec = do
         second <- scanProjectCached defaultIndexOptions root
         second `shouldBe` first
 
--- | Point @HOME@ at a scratch directory for one test, then put it back.
-withTempHome :: (FilePath -> IO a) -> IO a
-withTempHome action = bracket acquire release (\(dir, _) -> action dir)
-  where
-    acquire = do
-      base <- getTemporaryDirectory
-      let dir = base </> "trha-indexcache-spec"
-      removePathForcibly dir
-      createDirectoryIfMissing True dir
-      saved <- lookupEnv "HOME"
-      setEnv "HOME" dir
-      pure (dir, saved)
-    release (dir, saved) = do
-      case saved of
-        Just home -> setEnv "HOME" home
-        Nothing   -> unsetEnv "HOME"
-      removePathForcibly dir
+

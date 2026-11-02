@@ -2,13 +2,11 @@
 
 module Core.StatePathsSpec (spec) where
 
-import Control.Exception (bracket)
 import System.Directory
-    ( createDirectoryIfMissing, doesDirectoryExist, doesFileExist
-    , getTemporaryDirectory, removePathForcibly )
-import System.Environment (lookupEnv, setEnv, unsetEnv)
+    ( createDirectoryIfMissing, doesDirectoryExist, doesFileExist )
 import System.FilePath ((</>))
 import Test.Hspec
+import TestHome (withTempHome)
 
 import Core.StatePaths (migrateLegacy, stateReadPath, stateWritePath)
 
@@ -51,20 +49,4 @@ spec = describe "state paths" $ do
       path <- stateReadPath "stash.jsonl"
       path `shouldBe` home </> ".trha" </> "state" </> "stash.jsonl"
 
--- | Point @HOME@ at a scratch directory for one test, then put it back.
-withTempHome :: (FilePath -> IO a) -> IO a
-withTempHome action = bracket acquire release (\(dir, _) -> action dir)
-  where
-    acquire = do
-      base <- getTemporaryDirectory
-      let dir = base </> "trha-statepaths-spec"
-      removePathForcibly dir
-      createDirectoryIfMissing True dir
-      saved <- lookupEnv "HOME"
-      setEnv "HOME" dir
-      pure (dir, saved)
-    release (dir, saved) = do
-      case saved of
-        Just home -> setEnv "HOME" home
-        Nothing   -> unsetEnv "HOME"
-      removePathForcibly dir
+

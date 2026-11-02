@@ -7,36 +7,18 @@
 -- read @模型：@ with nothing after it and requests carried @model: ""@.
 module Config.SettingsSpec (spec) where
 
-import Control.Exception (bracket)
 import Data.Text (Text)
 import qualified Data.Text as T
 import System.Directory
-    ( createDirectoryIfMissing, getTemporaryDirectory, listDirectory
-    , removePathForcibly )
-import System.Environment (lookupEnv, setEnv, unsetEnv)
+    ( createDirectoryIfMissing, listDirectory )
 import System.FilePath ((</>), takeDirectory)
 import Test.Hspec
+import TestHome (withTempHome)
 
 import Config.Settings (backupKeep, getHomeConfigPath, resolveConfig, saveConfig)
 import Core.Types (CLIConfig(..), defaultCLIConfig)
 
--- | Point @HOME@ at a scratch directory for one test, then put it back.
-withTempHome :: (FilePath -> IO a) -> IO a
-withTempHome action = bracket acquire release (\(dir, _) -> action dir)
-  where
-    acquire = do
-      base <- getTemporaryDirectory
-      let dir = base </> "trha-settings-spec"
-      removePathForcibly dir
-      createDirectoryIfMissing True dir
-      saved <- lookupEnv "HOME"
-      setEnv "HOME" dir
-      pure (dir, saved)
-    release (dir, saved) = do
-      case saved of
-        Just home -> setEnv "HOME" home
-        Nothing   -> unsetEnv "HOME"
-      removePathForcibly dir
+
 
 spec :: Spec
 spec = describe "settings resolution" $ do

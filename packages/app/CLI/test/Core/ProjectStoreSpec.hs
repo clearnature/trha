@@ -2,14 +2,13 @@
 
 module Core.ProjectStoreSpec (spec) where
 
-import Control.Exception (bracket)
 import qualified Data.Text as T
 import System.Directory
-    ( createDirectoryIfMissing, doesDirectoryExist, doesFileExist
-    , getHomeDirectory, getTemporaryDirectory, removePathForcibly )
-import System.Environment (lookupEnv, setEnv, unsetEnv)
+    ( createDirectoryIfMissing, doesDirectoryExist, doesFileExist )
 import System.FilePath ((</>))
 import Test.Hspec
+import TestHome (withTempHome)
+import Config.Settings (getConfigDir)
 
 import Core.ProjectStore
     ( ProjectSession(..), ensureProject, projectDir, projectSessions
@@ -38,8 +37,11 @@ spec = do
   describe "recordProjectSession" $ do
     it "indexes a session and updates a renamed one in place" $
       withTempHome $ \home -> do
-        actualHome <- getHomeDirectory
-        actualHome `shouldBe` home
+        -- Isolation means the data directory, not environment variables:
+        -- Windows resolves getHomeDirectory through Win32, so HOME is not the
+        -- contract getConfigDir honours.
+        cfgDir <- getConfigDir
+        cfgDir `shouldBe` (home </> ".trha")
         let root = home </> "proj"
         recordProjectSession root (summary "s1" "First")
         recordProjectSession root (summary "s2" "Second")
@@ -59,19 +61,4 @@ spec = do
         map psId <$> projectSessions b `shouldReturn` ["sb"]
 
 -- | Point @HOME@ at a scratch directory for one test, then put it back.
-withTempHome :: (FilePath -> IO a) -> IO a
-withTempHome action = bracket acquire release (\(dir, _) -> action dir)
-  where
-    acquire = do
-      base <- getTemporaryDirectory
-      let dir = base </> "trha-projectstore-spec"
-      removePathForcibly dir
-      createDirectoryIfMissing True dir
-      saved <- lookupEnv "HOME"
-      setEnv "HOME" dir
-      pure (dir, saved)
-    release (dir, saved) = do
-      case saved of
-        Just home -> setEnv "HOME" home
-        Nothing   -> unsetEnv "HOME"
-      removePathForcibly dir
+

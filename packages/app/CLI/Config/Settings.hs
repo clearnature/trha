@@ -51,6 +51,7 @@ import System.Directory
     , renameFile
     )
 import System.FilePath ((</>))
+import System.Environment (lookupEnv)
 import Infrastructure.Platform.FileMode (setFileMode)
 
 --------------------------------------------------------------------------------
@@ -120,10 +121,20 @@ pruneBackups bdir = do
     removeFile (bdir </> n)
 
 -- | @~/.trha@ (user data directory)
+--
+-- @TRHA_CONFIG_DIR@ overrides it outright -- the same escape hatch the other
+-- @TRHA_*@ variables provide, and the only way to redirect the data directory
+-- on Windows: there 'getHomeDirectory' asks Win32 for the profile folder and
+-- ignores @HOME@, so a spec cannot fake a home by setting environment
+-- variables.
 getConfigDir :: IO FilePath
 getConfigDir = do
-  home <- getHomeDirectory
-  return $ home </> ".trha"
+  override <- lookupEnv "TRHA_CONFIG_DIR"
+  case override of
+    Just dir | not (null dir) -> pure dir
+    _ -> do
+      home <- getHomeDirectory
+      return $ home </> ".trha"
 
 -- | @~/.trha/settings.yaml@
 getHomeConfigPath :: IO FilePath

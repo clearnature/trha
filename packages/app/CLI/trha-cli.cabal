@@ -195,6 +195,7 @@ test-suite trha-cli-test
     UI.Render.DiffSpec
     UI.Render.Sidebar
     UI.Render.SidebarSpec
+    TestHome
   build-depends:    base ^>=4.22
                   , process
                   , trha:trha-infra
