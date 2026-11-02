@@ -88,6 +88,10 @@ runTUIMode config = do
       putStrLn (T.unpack (tr lang "Press Ctrl+Q to quit"))
       putStrLn (T.unpack (tr lang "Press Ctrl+Alt+Q to stop the kernel and scheduler"))
       logLine ("start tui model=" <> configModel config)
+      -- 首次启动要拉 kernel + scheduler，Windows 上可能等十几秒；静默等待
+      -- 看起来就像卡死，先说清在等什么。
+      putStrLn (T.unpack (tr lang "Checking kernel and scheduler..."))
+      hFlush stdout
       announceBackend =<< ensureBackend config
       bridge <- createSchedulerBridge config
       runTUI bridge config

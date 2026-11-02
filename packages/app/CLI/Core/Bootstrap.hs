@@ -144,7 +144,13 @@ spawnDetached name extraEnv cmd args mcwd = do
       , create_group = True
       }
     hClose h                  -- the child keeps its own copy of the handle
-    _ <- waitForProcess ph    -- reap the short-lived setsid wrapper
+    -- Only the @setsid -f@ wrapper is short-lived and needs reaping. A direct
+    -- spawn (Windows has no setsid) *is* the long-running service, so waiting
+    -- here would block the caller forever -- that is exactly why the TUI
+    -- stopped at "Starting TUI mode..." on Windows.
+    case hasSetsid of
+      Just _  -> void (waitForProcess ph)
+      Nothing -> pure ()
     pure ()) :: IO (Either SomeException ())
   pure ()
 

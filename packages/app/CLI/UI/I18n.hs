@@ -326,6 +326,7 @@ zhDict = M.fromList
   , ("Resumed ", "已恢复 ")
   , (" turn(s)", " 轮")
   , ("Starting TUI mode...", "正在启动 TUI 界面...")
+  , ("Checking kernel and scheduler...", "正在检查内核与调度器...")
   , ("Starting CLI mode...", "正在启动 CLI 命令行...")
   -- Additional command feedback (UI.Commands / UI.Brick)
   , ("none", "无")
