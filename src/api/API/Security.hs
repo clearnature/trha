@@ -205,7 +205,12 @@ tokenPresented expected (Just raw) =
          (scheme, rest)
            | BC.map toLower scheme == "bearer" ->
                constantTimeEq expected (BC.strip rest)
-         _ -> False
+         -- Anthropic clients (Claude Code and the SDKs) send the key bare in
+         -- @x-api-key@, with no scheme: accept it verbatim so those clients can
+         -- point at the kernel without a proxy shim.  The request still has to
+         -- pass the loopback/Host/Origin gates, and the comparison stays
+         -- constant-time.
+         _ -> constantTimeEq expected (BC.strip raw)
 
 -- | Compare without leaking the length of the common prefix through timing.
 constantTimeEq :: ByteString -> ByteString -> Bool
@@ -225,7 +230,9 @@ factsOf req = RequestFacts
   , rfHost        = lookup "Host" hdrs
   , rfOrigin      = lookup "Origin" hdrs
   , rfContentType = lookup "Content-Type" hdrs
-  , rfAuth        = lookup "Authorization" hdrs
+  , rfAuth        = case lookup "Authorization" hdrs of
+                      Just a  -> Just a
+                      Nothing -> lookup "x-api-key" hdrs
   }
   where
     hdrs = requestHeaders req
