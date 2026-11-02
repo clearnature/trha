@@ -32,6 +32,7 @@ spec = do
                                     , "/stash", "/fav", "/skills", "/theme", "/mode", "/copy", "/verbose"
                                     , "/mouse", "/language", "/diff", "/context"
                                     , "/doctor", "/memory", "/remember", "/stats", "/usage", "/compact"
+                                    , "/shell"
                                     , "/attachments", "/clear-attachments", "/mcp", "/lsp"
                                     , "/preset", "/hooks", "/paste", "/vim", "/output-style"
                                     , "/session-info", "/transcript", "/retry", "/btw", "/workspace", "/recap", "/queue", "/steer"

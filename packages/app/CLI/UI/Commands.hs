@@ -11,6 +11,8 @@ module UI.Commands
   , executeCommand
     -- * Shared settings runner (REPL + TUI)
   , runSettingsCommand
+    -- * Shared local-shell runner (REPL + TUI)
+  , runLocalShell
   ) where
 
 import Data.Aeson (object, (.=))
@@ -33,13 +35,14 @@ import Data.List (partition)
 import Data.Text (Text)
 import qualified Data.Text as T
 import System.IO (hClose, hFlush, hPutStr, openTempFile, stdout)
-import System.Environment (lookupEnv)
+import System.Environment (lookupEnv, getEnvironment)
 import Data.Maybe (fromMaybe)
 import Core.Clipboard (saveClipboardImage)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getHomeDirectory, getTemporaryDirectory, listDirectory, removeFile)
 import System.FilePath ((</>))
 import System.Exit (ExitCode(..))
-import System.Process (readProcessWithExitCode)
+import System.Process (readProcessWithExitCode, readCreateProcessWithExitCode, proc, env)
+import System.Timeout (timeout)
 import qualified Data.Text.IO as TIO
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.LocalTime (getCurrentTimeZone, utcToZonedTime)
@@ -80,6 +83,33 @@ runSettingsCommand lang arg =
           return $ Just (tr lang "Setting updated: " <> key)
 
 -- | Execute a command
+-- | Run one local shell command, shared by the REPL (@/shell@) and the TUI
+-- card renderer (@UI.Brick@).
+--
+-- A native Windows console has no @bash@, so @ComSpec@ runs the command via
+-- @/c@; everywhere else uses @bash -lc@.  The dsh/Codex ENV_OVERRIDES keep
+-- colour, pagers and interactive features from garbling captured output.  The
+-- run is capped at 120 s so a hung command cannot wedge the shell.
+runLocalShell :: Text -> IO (Either Text (ExitCode, String, String))
+runLocalShell cmd = do
+  r <- timeout 120000000 $ do
+    mSpec <- lookupEnv "ComSpec"
+    let (sh, shArgs) = case mSpec of
+          Just spec -> (spec, ["/c", T.unpack cmd])
+          Nothing   -> ("bash", ["-lc", T.unpack cmd])
+    baseEnv <- getEnvironment
+    let overrides = [("NO_COLOR", "1"), ("TERM", "dumb")
+                    , ("PAGER", "cat"), ("GIT_PAGER", "cat")]
+        childEnv  = [kv | kv <- baseEnv
+                    , fst kv `notElem` map fst overrides] ++ overrides
+        cp = (proc sh shArgs) { env = Just childEnv }
+    try (readCreateProcessWithExitCode cp "")
+      :: IO (Either IOException (ExitCode, String, String))
+  return $ case r of
+    Nothing         -> Left "shell: timed out after 120s"
+    Just (Left e)   -> Left ("shell: " <> T.pack (show e))
+    Just (Right ok) -> Right ok
+
 executeCommand :: Lang -> SchedulerBridge -> IORef (Maybe SessionId) -> IORef Text -> Command -> IO (Maybe Text)
 -- | Parse a loop interval: @30s@, @5m@, @1h@, or plain seconds.
 parseInterval :: Text -> Maybe Int
@@ -302,6 +332,19 @@ executeCommand lang bridge sessionRef _ (Mode arg) = do
       return $ Just $ case r of
         Right m  -> tr lang "Mode: " <> smLabel m
         Left e   -> T.pack (show e)
+
+executeCommand _ _ _ _ (RunShell cmd)
+  | T.null (T.strip cmd) = return $ Just "Usage: /shell <cmd>"
+  | otherwise = do
+      r <- runLocalShell cmd
+      return $ Just $ case r of
+        Left e -> e
+        Right (code, out, err) ->
+          let body   = T.take 20000 (T.pack (out <> err))
+              suffix = case code of
+                ExitSuccess   -> ""
+                ExitFailure n -> "\n(exit " <> T.pack (show n) <> ")"
+          in "$ " <> cmd <> "\n" <> body <> suffix
 
 executeCommand _ _ _ _ Home =
   return $ Just "Home is the TUI launch screen (run: trha tui)"

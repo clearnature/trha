@@ -43,7 +43,7 @@ import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import Core.PlanStore (savePlanSnapshot)
 import Core.ProjectStore (ensureProject, recordProjectSession)
 import Core.Transcript (listLocalSessions, listLocalSessionsIn, loadTranscript, recordChunk, recordSession, recordToolEvent, recordUser)
-import UI.Commands (executeCommand, runSettingsCommand)
+import UI.Commands (executeCommand, runSettingsCommand, runLocalShell)
 import UI.Commands.Registry
     ( Command(..), parseCommandWith, pickerItems, pickerItemsGrouped
     , groupKey, groupTitle, registryHelp )
@@ -79,7 +79,7 @@ import Numeric (showFFloat)
 import Text.Read (readMaybe)
 import System.Environment (getEnvironment, lookupEnv)
 import System.IO (hFlush, hPutStr, stdout, openTempFile, hClose)
-import System.Process (readProcessWithExitCode, readCreateProcessWithExitCode, proc, env)
+import System.Process (readProcessWithExitCode)
 import System.Exit (ExitCode(..))
 import Control.Exception (IOException, catch, try)
 import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
@@ -2988,37 +2988,17 @@ handleSubmit input
                    stackPush (DialogCommands (allPickerItems st) input 0) (appDialogs s) }
         else handleChat input
 
--- | Run one local shell command (POSIX @bash -lc@) and show its output as a
--- card.  120s cap, 20k character cap; the exit code is appended when non-zero.
+-- | Run one local shell command and show its output as a card.  120s cap, 20k
+-- character cap; the exit code is appended when non-zero.  The execution
+-- contract lives in 'runLocalShell' so the REPL's @/shell@ behaves identically.
 runShellCommand :: Text -> EventM ResourceName AppState ()
 runShellCommand cmd = do
   t <- liftIO now
   appendMsg (mkMsg "shell" ("$ " <> cmd) t)
-  r <- liftIO $ timeout 120000000 $ do
-    -- Windows 原生环境没有 bash（实测 `where bash` 无结果）：有 ComSpec 走
-    -- cmd /c，否则按 POSIX 用 bash -lc。shell 缺失时以卡片报错而不是让
-    -- IOException 逃出 EventM（tui-port L80：shell mode 的真实接点）。
-    mSpec <- lookupEnv "ComSpec"
-    let (sh, shArgs) = case mSpec of
-          Just spec -> (spec, ["/c", T.unpack cmd])
-          Nothing   -> ("bash", ["-lc", T.unpack cmd])
-    -- dsh 的 ENV_OVERRIDES：抑制颜色/分页器/交互特性，避免 garble 卡片输出
-    --（same set Codex hardcodes；信任调用者自己的条目仍以父 env 为准——
-    -- 这里父 env 先列，覆盖值后列，readCreateProcess 语义为后者胜）。
-    baseEnv <- getEnvironment
-    let overrides = [("NO_COLOR", "1"), ("TERM", "dumb")
-                    , ("PAGER", "cat"), ("GIT_PAGER", "cat")]
-        childEnv  = [kv | kv <- baseEnv
-                    , fst kv `notElem` map fst overrides] ++ overrides
-        cp = (proc sh shArgs) { env = Just childEnv }
-    er <- try (readCreateProcessWithExitCode cp "")
-    return $ case er of
-      Right (code, out, err) -> Right (code, out, err)
-      Left e                 -> Left (show (e :: IOException))
+  r <- liftIO (runLocalShell cmd)
   case r of
-    Nothing -> appendMsg (mkMsg "error" "shell: timed out after 120s" t)
-    Just (Left e) -> appendMsg (mkMsg "error" ("shell: " <> T.pack e) t)
-    Just (Right (code, out, err)) -> do
+    Left e -> appendMsg (mkMsg "error" e t)
+    Right (code, out, err) -> do
       let body = T.take 20000 (T.pack (out <> err))
           suffix = case code of
             ExitSuccess -> ""

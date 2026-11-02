@@ -217,6 +217,7 @@ layerTable =
   , ("/export", CmdState)
   , ("/remember", CmdState)
   , ("/clear-attachments", CmdState)
+  , ("/shell", CmdState)
   , ("/paste", CmdState)
   , ("/output-style", CmdState)
   , ("/cls", CmdState)

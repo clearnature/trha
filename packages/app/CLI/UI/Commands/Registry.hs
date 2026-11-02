@@ -132,6 +132,7 @@ data Command
   | Rename Text
   | Tag Text
   | Home
+  | RunShell Text        -- ^ @/shell <cmd>@: run a local command, like @!cmd@
   | Unknown Text
   | RunCustom Text Text   -- ^ user command name + arguments (~/.trha/commands)
   deriving (Show, Eq)
@@ -302,6 +303,11 @@ parseCommandWith custom input =
     _ -> parseCommandBase input
 
 parseCommandBase :: Text -> Command
+-- @/shell@ keeps the raw argument text: re-splitting it with 'T.words' would
+-- collapse the spaces inside quotes (e.g. @/shell echo "a  b"@).
+parseCommandBase input
+  | Just rest <- T.stripPrefix "/shell" (T.strip input)
+  , T.null rest || " " `T.isPrefixOf` rest = RunShell (T.strip rest)
 parseCommandBase input = case T.words (T.strip input) of
   []             -> SendMessage input
   ("/help" : _)  -> Help
