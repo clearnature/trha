@@ -55,7 +55,7 @@ experimentSpec = describe "experiment batch (T2.7/T2.8)" $ do
   it "writes reproducibility metadata" $ do
     let json = BLC.unpack (Aeson.encode
           (reproJson (Just "cold") (Just "probe-user") batch
-                     [("ghc", "9.14.1"), ("node", "26.12.1")]))
+                     [("ghc", "9.14.1"), ("node", "26.13.0")]))
     json `shouldSatisfy` contains "\"batch\":\"b1\""
     json `shouldSatisfy` contains "\"seeds\":[1,2]"
     json `shouldSatisfy` contains "\"ghc\":\"9.14.1\""

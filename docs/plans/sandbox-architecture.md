@@ -358,7 +358,7 @@ scope-root（主会话）
 {
   "batch": "ablation-20261029",
   "baseline": { "commit": "<sha>", "treeHash": "<hash>" },
-  "toolchain": { "ghc": "9.14.1", "node": "26.12.1" },
+  "toolchain": { "ghc": "9.14.1", "node": "26.13.0" },
   "policyHash": "<hash>",
   "variants": [{ "id": "no-landlock", "policy": "workspace-write", "network": "off" }],
   "seeds": [1, 2, 3],
