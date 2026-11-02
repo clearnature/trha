@@ -27,8 +27,9 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Char (isSpace, toLower)
 import Data.List (isPrefixOf)
-import Control.Monad (forM_, when)
-import Control.Exception (finally)
+import Control.Concurrent.Async (async)
+import Control.Monad (forM_, void, when)
+import Control.Exception (SomeException, finally, try)
 import Control.Monad.IO.Class (liftIO)
 import Options.Applicative
 import System.Console.ANSI
@@ -88,11 +89,16 @@ runTUIMode config = do
       putStrLn (T.unpack (tr lang "Press Ctrl+Q to quit"))
       putStrLn (T.unpack (tr lang "Press Ctrl+Alt+Q to stop the kernel and scheduler"))
       logLine ("start tui model=" <> configModel config)
-      -- 首次启动要拉 kernel + scheduler，Windows 上可能等十几秒；静默等待
-      -- 看起来就像卡死，先说清在等什么。
-      putStrLn (T.unpack (tr lang "Checking kernel and scheduler..."))
-      hFlush stdout
-      announceBackend =<< ensureBackend config
+      -- 后端启动不能挡在界面之前：brick 必须先接管终端，服务在后台拉起。
+      -- 同步等待会让 TUI 停在「正在检查内核与调度器」——Windows 上 spawn 一个
+      -- 常驻服务再逐轮做健康检查，最坏要几十秒。结果只写日志：brick 已经接管
+      -- stdout，任何 putStrLn 都会破坏画面。
+      void $ async $ do
+        r <- try (ensureBackend config) :: IO (Either SomeException [Text])
+        case r of
+          Left e -> logLine ("backend start failed: " <> T.pack (show e))
+          Right started ->
+            logLine ("backend started: " <> T.intercalate "+" started)
       bridge <- createSchedulerBridge config
       runTUI bridge config
       logLine "exit tui"
