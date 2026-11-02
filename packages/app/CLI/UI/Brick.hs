@@ -78,10 +78,11 @@ import System.FilePath ((</>), takeDirectory, takeFileName)
 import Numeric (showFFloat)
 import Text.Read (readMaybe)
 import System.Environment (getEnvironment, lookupEnv)
-import System.IO (hFlush, hPutStr, stdout, openTempFile, hClose)
+import System.IO (hFlush, hPutStr, stdout, stderr, openTempFile, hClose, hIsTerminalDevice)
 import System.Process (readProcessWithExitCode)
 import System.Exit (ExitCode(..))
-import Control.Exception (IOException, catch, try)
+import Control.Exception (IOException, SomeException, catch, try)
+import Core.RunLog (logLine)
 import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
 import UI.Dialog
 import UI.Render.Diff
@@ -286,10 +287,17 @@ vtyFg c = fg $ case c of
 -- | Run the TUI with the named theme (unknown names fall back to default).
 runTUI :: SchedulerBridge -> CLIConfig -> IO ()
 runTUI bridge cfg = do
+  tStart <- getCurrentTime
+  -- 启动探针：只写日志（brick 之后会接管终端，届时 putStrLn 会撕坏画面）。
+  -- 排查「界面出不来」时，~/.trha/logs/trha-<date>.log 里的 probe 行就是时间线。
+  outTty <- hIsTerminalDevice stdout
+  errTty <- hIsTerminalDevice stderr
+  logLine (T.concat [ "probe tui.start stdout_tty=", boolText outTty
+                    , " stderr_tty=", boolText errTty ])
   chan <- newBChan 20
   -- static footer metrics are sampled once (workspace path, git branch);
   -- the active model's context size is fetched for the occupancy segment
-  _ <- async $ do
+  _ <- async $ (do
     ws <- getCurrentDirectory
     -- Per-project index (~/.trha/projects/<slug>/) — creates it on first use.
     ensureProject ws
@@ -315,11 +323,16 @@ runTUI bridge cfg = do
     writeBChan chan (EvRecent recent)
     -- Sidebar: cwd, a few files, and which instruction files exist.
     instrs <- filterM (doesFileExist . (ws </>)) ["AGENTS.md", "REASONIX.md", "QWEN.md", "CLAUDE.md"]
-    writeBChan chan (EvSidebarInfo (Just (T.pack ws)) (take 5 (map compPath index)) (map T.pack instrs))
+    writeBChan chan (EvSidebarInfo (Just (T.pack ws)) (take 5 (map compPath index)) (map T.pack instrs)))
+    `catch` \(e :: SomeException) ->
+      logLine ("probe startup-data failed: " <> T.pack (show e))
   env <- getEnvironment
   let theme = themeFor (configTheme cfg) (supportsTrueColor env)
       mkVty' = mkVty defaultConfig
   vty <- mkVty'
+  tVty <- getCurrentTime
+  logLine (T.pack ("probe vty.ready ms="
+                   <> show (round (diffUTCTime tVty tStart * 1000) :: Int)))
   hist <- loadHistory
   stash <- loadStash
   frec <- loadFrecency
@@ -332,6 +345,13 @@ runTUI bridge cfg = do
                                        , appFrecency = frec, appModelPrefs = prefs
                                        , appCustomCmds = customCmds
                                        , appTheme = theme, appNow = Just t0, appTz = Just tz0 }
+  tEnd <- getCurrentTime
+  logLine (T.pack ("probe brick.exit ms="
+                   <> show (round (diffUTCTime tEnd tStart * 1000) :: Int)))
+
+boolText :: Bool -> T.Text
+boolText True  = "True"
+boolText False = "False"
 
 --------------------------------------------------------------------------------
 -- Drawing

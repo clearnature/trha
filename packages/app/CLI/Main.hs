@@ -51,6 +51,17 @@ import Foreign.C.Types (CUInt(..))
 -- page to 65001 makes @cabal run@ and the bare exe agree.
 foreign import ccall unsafe "SetConsoleOutputCP"
   c_SetConsoleOutputCP :: CUInt -> IO CUInt
+
+foreign import ccall unsafe "GetConsoleOutputCP"
+  c_GetConsoleOutputCP :: IO CUInt
+#endif
+
+-- | The console's output code page; 0 when there is no console or not Windows.
+consoleOutCodePage :: IO Int
+#if defined(mingw32_HOST_OS)
+consoleOutCodePage = fromIntegral <$> c_GetConsoleOutputCP
+#else
+consoleOutCodePage = pure 0
 #endif
 
 -- | Build CLIConfig from global options.
@@ -85,6 +96,13 @@ runTUIMode config = do
       exitWith (ExitFailure 2)
     else do
       let lang = parseLang (configLang config)
+      -- 探针：记录 shell 是否真的是终端、控制台代码页是多少。
+      outTty <- hIsTerminalDevice stdout
+      errTty <- hIsTerminalDevice stderr
+      cp <- consoleOutCodePage
+      logLine (T.concat [ "probe env stdin_tty=True stdout_tty=", T.pack (show outTty)
+                        , " stderr_tty=", T.pack (show errTty)
+                        , " output_cp=", T.pack (show cp) ])
       putStrLn (T.unpack (tr lang "Starting TUI mode..."))
       putStrLn (T.unpack (tr lang "Press Ctrl+Q to quit"))
       putStrLn (T.unpack (tr lang "Press Ctrl+Alt+Q to stop the kernel and scheduler"))
