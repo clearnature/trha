@@ -643,9 +643,31 @@ agentStepHandler adapter sessionsVar stateDir req = do
 openaiModelsHandler :: LLMAdapter -> Handler Value
 openaiModelsHandler adapter = do
   modelList <- liftIO $ llmModels adapter
+  store <- liftIO P.loadProviderStore
+  -- Clients enumerate models before calling (OpenAI SDK's models.list() does).
+  -- The adapter's own list is the stub's single entry, so report what
+  -- providers.json actually offers; same-named models across providers
+  -- (deepseek-chat appears on all three wires) collapse to one entry.
+  let -- The in-use provider is written last: Map.fromList keeps the last
+      -- entry for a duplicate key, so a shared model name reports the provider
+      -- the user actually selected instead of whichever came last.
+      ordered = [ e | e <- psProviders store, not (peInUse e) ]
+             ++ [ e | e <- psProviders store, peInUse e ]
+      configured =
+        [ ( m
+          , object
+              [ "id"           .= m
+              , "object"       .= ("model" :: Text)
+              , "created"      .= (0 :: Int)
+              , "owned_by"     .= peName e
+              , "description"  .= ("provider " <> peName e)
+              , "context_size" .= maybe (0 :: Int) id (peContextWindow e)
+              ] )
+        | e <- ordered, m <- peModels e ]
+      fromProviders = Map.elems (Map.fromList configured)
   return $ object
     [ "object" .= ("list" :: Text)
-    , "data"   .= map toOpenAIModel modelList
+    , "data"   .= (if null fromProviders then map toOpenAIModel modelList else fromProviders)
     ]
   where
     toOpenAIModel m = object
