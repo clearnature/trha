@@ -129,7 +129,10 @@ describe('MCP client', () => {
   afterEach(async () => {
     shutdownMcp();
     delete process.env.TRHA_MCP_CONFIG;
-    await rm(dir, { recursive: true, force: true });
+    // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+    try {
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch { /* EBUSY: 延迟释放，非测试失败 */ }
   });
 
   it('lists resources, templates and reads one by uri', async () => {
@@ -166,7 +169,10 @@ describe('LSP client', () => {
     shutdownLsp();
     delete process.env.TRHA_LSP_COMMAND;
     delete process.env.TRHA_LSP_ROOT;
-    await rm(dir, { recursive: true, force: true });
+    // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+    try {
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch { /* EBUSY: 延迟释放，非测试失败 */ }
   });
 
   it('answers hover, definition, references and symbols', async () => {
@@ -236,7 +242,10 @@ describe('LSP parity with MiMo (workspace symbols, implementation, call hierarch
       shutdownLsp();
       delete process.env.TRHA_LSP_COMMAND;
       delete process.env.TRHA_LSP_ROOT;
-      await rm(dir, { recursive: true, force: true });
+      // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+      try {
+        await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch { /* EBUSY: 延迟释放，非测试失败 */ }
     }
   });
 });

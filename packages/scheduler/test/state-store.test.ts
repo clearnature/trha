@@ -17,7 +17,10 @@ beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), 'trha-state-'));
 });
 afterEach(async () => {
-  await rm(dir, { recursive: true, force: true });
+  // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+  try {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch { /* EBUSY: 延迟释放，非测试失败 */ }
 });
 
 const session = (id: string, messages: unknown[]) => ({
@@ -90,7 +93,10 @@ describe('saveSession under concurrency', () => {
       const leftovers = (await readdir(dir)).filter(f => f.endsWith('.tmp'));
       expect(leftovers).toEqual([]);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+      try {
+        await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch { /* EBUSY: 延迟释放，非测试失败 */ }
     }
   });
 });

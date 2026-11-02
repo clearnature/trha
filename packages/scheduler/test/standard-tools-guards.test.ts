@@ -29,7 +29,10 @@ describe('standard tool guards', () => {
       },
     };
   });
-  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+  afterEach(async () => { // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+ try {
+   await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+ } catch { /* EBUSY: 延迟释放，非测试失败 */ } });
 
   const run = (name: string, args: Record<string, unknown> = {}) => runStandardTool(name, args, host);
 
@@ -114,7 +117,10 @@ describe('todo_write is idempotent', () => {
     dir = await mkdtemp(path.join(tmpdir(), 'trha-todo-'));
     host = { workspace: dir, state: {}, jobs: new Map(), sessionId: 's' };
   });
-  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+  afterEach(async () => { // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+ try {
+   await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+ } catch { /* EBUSY: 延迟释放，非测试失败 */ } });
 
   const list = (statuses: string[]): Array<{ text: string; status: string }> =>
     statuses.map((s, i) => ({ text: `task ${i + 1}`, status: s }));

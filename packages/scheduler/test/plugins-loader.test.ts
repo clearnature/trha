@@ -49,7 +49,10 @@ describe('plugin loader (Phase 3 A1)', () => {
       const plugins = await loadPluginsFrom(dir);
       expect(plugins.map(p => p.name)).toEqual(['disk-plugin']);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+      try {
+        await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch { /* EBUSY: 延迟释放，非测试失败 */ }
     }
   });
 
@@ -73,7 +76,10 @@ describe('plugin loader (Phase 3 A1)', () => {
 
       server.close();
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+      try {
+        await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch { /* EBUSY: 延迟释放，非测试失败 */ }
     }
   });
 });
@@ -91,7 +97,10 @@ describe('DSH-shaped tool plugins', () => {
       expect(plugins.map(p => p.name)).toEqual(['dsh-tool-demo']);
       expect(typeof plugins[0]?.apply).toBe('function');
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+      try {
+        await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch { /* EBUSY: 延迟释放，非测试失败 */ }
     }
   });
 

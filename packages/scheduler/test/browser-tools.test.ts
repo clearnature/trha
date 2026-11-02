@@ -40,7 +40,10 @@ afterAll(() => { server.close(); });
 beforeEach(async () => { dir = await mkdtemp(path.join(tmpdir(), 'trha-browser-')); });
 afterEach(async () => {
   await browserCloseAll();
-  await rm(dir, { recursive: true, force: true });
+  // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+  try {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch { /* EBUSY: 延迟释放，非测试失败 */ }
 });
 
 describe('browser tools', () => {
@@ -93,8 +96,14 @@ describe('browser isolation between sessions', () => {
   });
   afterAll(async () => {
     await browserCloseAll();
-    await rm(dirA, { recursive: true, force: true });
-    await rm(dirB, { recursive: true, force: true });
+    // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+    try {
+      await rm(dirA, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch { /* EBUSY: 延迟释放，非测试失败 */ }
+    // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+    try {
+      await rm(dirB, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch { /* EBUSY: 延迟释放，非测试失败 */ }
   });
 
   it('gives each session its own tab, so a navigate in one cannot change the other', async () => {

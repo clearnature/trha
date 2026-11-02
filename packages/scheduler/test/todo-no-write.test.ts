@@ -35,7 +35,10 @@ const wait = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
 describe('UNCHANGED todo does not rewrite the session', () => {
   let dir: string;
   beforeEach(async () => { dir = await mkdtemp(path.join(tmpdir(), 'trha-nowrite-')); });
-  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+  afterEach(async () => { // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+ try {
+   await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+ } catch { /* EBUSY: 延迟释放，非测试失败 */ } });
 
   it('leaves the file untouched for an identical rewrite', async () => {
     const stateDir = path.join(dir, 'state');

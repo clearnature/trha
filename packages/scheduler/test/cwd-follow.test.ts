@@ -64,7 +64,10 @@ describe('working_directory applies to the other tools', () => {
   afterEach(async () => {
     delete process.env.TRHA_WORKSPACE;
     delete process.env.TRHA_SCHEDULE_TICK_MS;
-    await rm(dir, { recursive: true, force: true });
+    // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
+    try {
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch { /* EBUSY: 延迟释放，非测试失败 */ }
   });
 
   it('read and bash resolve against the session cwd, not the workspace root', async () => {
@@ -95,8 +98,14 @@ describe('working_directory applies to the other tools', () => {
     // the file inside sub/, not the one at the root with the same name
     expect(toolResults[1]).toContain('inner-file');
     expect(toolResults[1]).not.toContain('outer-file');
-    // bash runs where the session says it runs
-    expect(toolResults[2]).toContain(path.join(realpathOr(dir), 'sub'));
+    // bash runs where the session says it runs. Git Bash 的 login shell 把
+    // 系统 TEMP 显示为 MSYS 风格 /tmp/<name>/sub（/tmp → C:\Windows\TEMP
+    // 的映射），与 node 层的 Windows 原生路径语义等价——两形态都接受。
+    const nativeSub = path.join(realpathOr(dir), 'sub');
+    const msysSub = `/tmp/${path.basename(dir)}/sub`;
+    expect(
+      toolResults[2].includes(nativeSub) || toolResults[2].includes(msysSub),
+    ).toBe(true);
 
     stop(); kernelServer.server.close(); schedulerServer.server.close();
   });
