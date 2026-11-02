@@ -239,3 +239,6 @@ packages/sandbox-bsd-launcher/trha-sandbox-*
 # WebGPU 原生库为预编译二进制，不入库；用 3rdparty/wgpu-native/fetch-windows.sh 获取
 3rdparty/wgpu-native/lib/windows/*.a
 3rdparty/wgpu-native/lib/windows/*.dll
+
+# npm 分发包的 vendored Haskell 二进制（~94MB，不进 git）
+packages/app/CLI-npm/vendor/
