@@ -32,11 +32,12 @@ import API.Security (guardKernel, removeKernelRuntime, resolveKernelToken, write
 import Data.ByteString (ByteString)
 import Data.Tagged (Tagged(..))
 import Data.String (fromString)
-import Network.Wai (Application, responseLBS, responseStream, strictRequestBody)
+import Network.Wai (Application, Response, Request, requestBody, responseLBS, responseStream, strictRequestBody)
+import Servant.Server.Internal (runHandler)
 import System.Info (os)
 import Network.Wai.Handler.Warp
     ( Settings, defaultSettings, runSettings, setHost, setPort )
-import Network.HTTP.Types (ResponseHeaders, status200, status400)
+import Network.HTTP.Types (ResponseHeaders, mkStatus, status200, status400)
 import qualified Data.ByteString.Builder as Builder
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (check)
@@ -116,17 +117,13 @@ type API =
   :<|> "providers" :> "websearch" :> ReqBody '[JSON] Value :> Post '[JSON] Value
   :<|> "providers" :> "thinking" :> ReqBody '[JSON] Value :> Post '[JSON] Value
   :<|> "providers" :> "in-use" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-  -- OpenAI compatible (non-stream)
+  -- OpenAI compatible model list.
   :<|> "v1" :> "models" :> Get '[JSON] Value
-  :<|> "v1" :> "chat" :> "completions" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-  -- Anthropic compatible (non-stream)
-  :<|> "v1" :> "messages" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-  -- Responses API (non-stream)
-  :<|> "v1" :> "responses" :> ReqBody '[JSON] Value :> Post '[JSON] Value
-  -- Streaming endpoints: real SSE, written to the socket as it arrives.
-  :<|> "v1" :> "chat" :> "completions" :> "stream" :> Raw
-  :<|> "v1" :> "messages" :> "stream" :> Raw
-  :<|> "v1" :> "responses" :> "stream" :> Raw
+  -- OpenAI / Anthropic / Responses compatible: one path each, JSON or SSE
+  -- depending on the body's @stream@ flag (official SDKs stream in place).
+  :<|> "v1" :> "chat" :> "completions" :> Raw
+  :<|> "v1" :> "messages" :> Raw
+  :<|> "v1" :> "responses" :> Raw
 
 -- Request types
 --
@@ -230,12 +227,9 @@ server adapter sessions stateDir =
   :<|> P.setThinkingHandler
   :<|> P.setInUseHandler
   :<|> openaiModelsHandler adapter
-  :<|> openaiChatHandler adapter sessions stateDir
-  :<|> anthropicMessagesHandler adapter
-  :<|> responsesHandler adapter
-  :<|> openaiStreamApp adapter
-  :<|> anthropicStreamApp adapter
-  :<|> responsesStreamApp adapter
+  :<|> streamAwareApp (openaiStreamApp adapter) (openaiChatHandler adapter sessions stateDir)
+  :<|> streamAwareApp (anthropicStreamApp adapter) (anthropicMessagesHandler adapter)
+  :<|> streamAwareApp (responsesStreamApp adapter) (responsesHandler adapter)
 
 -- Health check
 healthHandler :: Handler Value
@@ -1055,6 +1049,48 @@ parseResponses val = parseMaybe parser val
 --------------------------------------------------------------------------------
 -- 7. Streaming endpoints (SSE)
 --------------------------------------------------------------------------------
+
+-- | Official SDKs stream on the *same* path by sending @stream: true@ in the
+-- body (OpenAI and Anthropic both work that way).  The dedicated @…/stream@
+-- routes predate that and stay for clients written against them.
+wantsStream :: Value -> Bool
+wantsStream v = case v of
+  Object o -> KM.lookup "stream" o == Just (Bool True)
+  _        -> False
+
+-- | A 'Handler' result rendered as a plain WAI response (for Raw routes).
+handlerToResponse :: Handler Value -> IO Response
+handlerToResponse h = do
+  r <- runHandler h
+  pure $ case r of
+    Left err  -> responseLBS (mkStatus (errHTTPCode err) "") (errHeaders err) (errBody err)
+    Right val -> responseLBS status200 [("Content-Type", "application/json")] (encode val)
+
+-- | One path, two wire formats: SSE when the body asks for it, JSON otherwise.
+-- The SSE branch re-wraps the already-consumed body, so the existing streaming
+-- applications are reused unchanged instead of duplicated.
+streamAwareApp :: Tagged Handler Application -> (Value -> Handler Value)
+               -> Tagged Handler Application
+streamAwareApp (Tagged streamApp) handler = Tagged $ \req respond -> do
+  raw <- strictRequestBody req
+  -- @…/stream@ sub-paths keep working: a Raw route captures the whole suffix,
+  -- so the older path arrives here too and only the path tells us apart.
+  let onStreamPath = case reverse (pathInfo req) of
+                       ("stream" : _) -> True
+                       _              -> False
+  case decode raw of
+    Nothing -> respond (responseLBS status400 [] "Invalid request")
+    Just v
+      | onStreamPath || wantsStream v -> do
+          -- The body is only readable once, and the SSE applications read it
+          -- themselves.  Hand them a one-shot reader: a reader that keeps
+          -- returning the same bytes makes strictRequestBody loop forever.
+          pending <- newIORef (Just (BL.toStrict raw))
+          let readOnce = atomicModifyIORef' pending (\cur -> case cur of
+                Just bs -> (Nothing, bs)
+                Nothing -> (Nothing, mempty))
+          streamApp (req { requestBody = readOnce }) respond
+      | otherwise -> handlerToResponse (handler v) >>= respond
 
 -- | Where a streaming request should go: the provider it names, if any.
 streamingTarget :: Value -> IO (Maybe (ProviderEntry, Text))
