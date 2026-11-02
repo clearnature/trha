@@ -3,9 +3,11 @@
 -- shell under packages/app/CLI (own trha-cli.cabal, brick TUI/REPL) are
 -- both part of this project so builds work from either directory.
 --
--- 2026-10-27：构建产物放在隐藏目录 `.dist-newstyle`（不是源码，不进 git）。
--- 若本机已有旧的 `dist-newstyle`，先 `mv dist-newstyle .dist-newstyle` 再构建。
-builddir: .dist-newstyle
+-- 构建产物落在 cabal 默认的 `dist-newstyle/`（已在 .gitignore）。
+-- 注意：`builddir:` 不是 cabal.project 的合法字段——cabal 3.16 会打印
+-- 「The builddir option is not supported」（被忽略），并且每次都让配置比对
+-- 结果失配，于是 `cabal run` 反复全量重编。要改产物位置请用命令行
+-- `cabal build --builddir=...`。
 packages:
   .
   packages/app/CLI
