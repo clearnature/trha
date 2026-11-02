@@ -1016,8 +1016,19 @@ parseResponses val = parseMaybe parser val
         Array arr -> mapM parseItem (V.toList arr)
         _         -> fail "input must be string or array"
       return (model, instr, msgs)
-    parseItem = withObject "InputItem" $ \m ->
-      (,) <$> m .:? "role" .!= "user" <*> m .: "content"
+    -- The wire allows @content@ to be a plain string or an array of parts
+    -- (@[{"type":"input_text","text":…}]@).  Only text parts are turned into
+    -- the conversation; image parts are ignored rather than failing the call.
+    parseItem = withObject "InputItem" $ \m -> do
+      role <- m .:? "role" .!= "user"
+      c <- m .: "content"
+      txt <- case c of
+        String s -> pure s
+        Array parts -> pure $ T.concat
+          [ t | Object p <- V.toList parts
+              , Just (String t) <- [KM.lookup "text" p] ]
+        _ -> fail "content must be string or array"
+      pure (role, txt)
 
 --------------------------------------------------------------------------------
 -- 7. Streaming endpoints (SSE)
@@ -1376,8 +1387,12 @@ responsesStreamApp adapter = Tagged $ \req respond -> do
       Just (model, instr, inputMsgs) -> do
         effAdapter <- resolveAdapterIO adapter v
         -- Faithful items: function_call_output must survive as a tool turn.
-        let convo = maybe id (\x m -> ChatSystem x : m) instr
-                      (mapMaybe responsesChatMsg (rawArray "input" v))
+        -- @input@ may also be a plain string (see parseResponses), in which
+        -- case there are no items to map and the parsed turns are the whole
+        -- conversation — without this the upstream got an empty input array.
+        let items = mapMaybe responsesChatMsg (rawArray "input" v)
+            turns = if null items then toChatMessages inputMsgs else items
+            convo = maybe id (\x m -> ChatSystem x : m) instr turns
             tools = responsesToolSpecs v
             gp    = genParamsOfBody v
         respond $ responseStream status200 sseHeaders $ \write flush -> do
