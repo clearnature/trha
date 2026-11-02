@@ -127,15 +127,17 @@ data ProxyChoice
 --
 -- Remote targets follow @configProxy@:
 --
---   * @\"\"@    — default: honour the environment (@ProxyFromEnv@);
---   * @none@   — never proxy (@ProxyDirect@);
+--   * @""@    — default: contact the target directly (never a proxy);
+--   * @env@   — honour @http_proxy@/@https_proxy@ from the environment;
+--   * @none@  — never proxy (@ProxyDirect@);
 --   * a URL (@http://host:port@ or @host:port@) — force that proxy.
 resolveProxy :: Text -> Text -> ProxyChoice
 resolveProxy host cfg
   | isLoopbackHost host = ProxyDirect
   | cfg' == "none"      = ProxyDirect
+  | cfg' == "env"       = ProxyFromEnv
   | Just (h, p) <- parseProxyUrl cfg' = ProxyForced h p
-  | otherwise           = ProxyFromEnv
+  | otherwise           = ProxyDirect
   where cfg' = T.strip cfg
 
 -- | Hosts that must never be proxied.

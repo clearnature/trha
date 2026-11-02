@@ -40,9 +40,11 @@ spec = describe "Core.HTTPProxy" $ do
       resolveProxyChoice True Nothing `shouldBe` ProxyDirect
 
     it "follows TRHA_PROXY for remote targets" $ do
-      resolveProxyChoice False Nothing `shouldBe` ProxyFromEnv
+      -- unset means direct: an inherited http_proxy is opt-in (env or URL)
+      resolveProxyChoice False Nothing `shouldBe` ProxyDirect
       resolveProxyChoice False (Just "none") `shouldBe` ProxyDirect
+      resolveProxyChoice False (Just "env") `shouldBe` ProxyFromEnv
       resolveProxyChoice False (Just "http://p.local:10808")
         `shouldBe` ProxyForced "p.local" 10808
-      -- an unparsable spec degrades to the environment default, not to direct
-      resolveProxyChoice False (Just "garbage") `shouldBe` ProxyFromEnv
+      -- an unparsable spec degrades to direct, not to the environment
+      resolveProxyChoice False (Just "garbage") `shouldBe` ProxyDirect

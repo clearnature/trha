@@ -60,8 +60,11 @@ resolveProxyChoice loopback spec
   | loopback  = ProxyDirect
   | otherwise = case spec of
       Just "none" -> ProxyDirect
+      Just "env"  -> ProxyFromEnv
       Just u | Just (h, p) <- parseProxySpec u -> ProxyForced h p
-      _           -> ProxyFromEnv
+      -- Unset or unparsable means direct: an inherited http_proxy is only
+      -- used when the policy says so (@env@ or an explicit URL).
+      _           -> ProxyDirect
 
 -- | Manager settings honouring the proxy policy for one target URL.
 proxyAwareSettings :: String -> ManagerSettings -> IO ManagerSettings

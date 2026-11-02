@@ -47,8 +47,10 @@ spec = describe "HTTP errors" $ do
       resolveProxy "127.9.9.9" "http://proxy:8080" `shouldBe` ProxyDirect
 
     it "sends remote targets through the configured policy" $ do
-      resolveProxy "api.deepseek.com" "" `shouldBe` ProxyFromEnv
+      -- default (empty) is direct: an inherited http_proxy is opt-in
+      resolveProxy "api.deepseek.com" "" `shouldBe` ProxyDirect
       resolveProxy "api.deepseek.com" "none" `shouldBe` ProxyDirect
+      resolveProxy "api.deepseek.com" "env" `shouldBe` ProxyFromEnv
       resolveProxy "api.deepseek.com" "http://p.local:10808" `shouldBe` ProxyForced "p.local" 10808
 
     it "parses proxy URLs with and without the scheme" $ do
