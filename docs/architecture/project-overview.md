@@ -53,7 +53,7 @@ grep -nE "^(library|executable|test-suite)" trha.cabal
 | `library trha-api` | `src/api` | `API.*` + `Core.Provider.Types`；`visibility: public` |
 | `library trha-webgpu` | `src/webgpu` | `Infrastructure.WebGPU.*`；依赖 `3rdparty/wgpu-native/` |
 | `library trha-gpu-infer` | `src/gpu-infer` | **独立目录**（避免共享 `src/` 重编导致的双类型）——GPU 推理桥接层：`initGpuForward`（5GB 权重常驻）+ `gpuForwardFull`（60 层 GPU + CPU 尾巴）+ `gpuForwardFactory`（Int 编码函数句柄跨库）；依赖 trha-llm + trha-webgpu；2026-09-19 新增 |
-| `executable trha`（CLI/服务） | `packages/app/CLI` | 另有同名 `executable trha` 在 `trha-cli.cabal` |
+| `executable trha`（CLI/服务） | `packages/app/CLI` | 唯一入口；`trha-cli.cabal` 只提供 `trha-cli-test`（原同名 exe 副本已删） |
 | `executable trha-kernel-stub` | `packages/kernel-stub` | 无 key 的两轮工具循环桩 |
 | 5 个 `trha-webgpu-*` 探针 | `benchmarks/webgpu` | hello / compute / errorprobe / gf27 / gf27matmul |
 | `executable trha-cpu-gf27simd` | `benchmarks/cpu` | AVX2 对拍 |
