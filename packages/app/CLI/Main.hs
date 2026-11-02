@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main where
@@ -41,6 +42,15 @@ import GHC.IO.Encoding (setLocaleEncoding)
 import System.IO
   ( BufferMode(LineBuffering), hFlush, hIsTerminalDevice, hPutStrLn, hSetBuffering
   , hSetEncoding, stderr, stdin, stdout, utf8 )
+#if defined(mingw32_HOST_OS)
+import Foreign.C.Types (CUInt(..))
+
+-- | Windows hands the console code page 936 (GBK) while the program writes
+-- UTF-8, so Chinese output renders as 「姝ｅ湪…」.  Switching the output code
+-- page to 65001 makes @cabal run@ and the bare exe agree.
+foreign import ccall unsafe "SetConsoleOutputCP"
+  c_SetConsoleOutputCP :: CUInt -> IO CUInt
+#endif
 
 -- | Build CLIConfig from global options.
 -- Ensures ~/.trha/settings.yaml exists (first run writes the default),
@@ -261,6 +271,10 @@ runSetupMode nonInteractive config = do
 -- | Main entry point
 main :: IO ()
 main = do
+#if defined(mingw32_HOST_OS)
+  -- 默认代码页是 936(GBK)，UTF-8 的中文会被显示成乱码，先切到 65001。
+  _ <- c_SetConsoleOutputCP 65001
+#endif
   -- Windows 控制台编码兜底：无论 chcp/终端如何，程序内部一律按 UTF-8
   -- 处理输出与文件路径。cabal run 的输出转发层按 locale 转码是显示乱码
   -- 的另一层——遇到乱码优先直接跑 exe 绕过转发层。
