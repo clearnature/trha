@@ -137,6 +137,19 @@ rootOf u =
   let t = T.dropWhileEnd (== '/') (T.strip u)
   in if "/v1" `T.isSuffixOf` t then T.dropEnd 3 t else t
 
+-- | The Responses endpoint for a configured base URL.
+--
+-- DeepSeek documents the endpoint itself (@https://api.deepseek.com/responses@),
+-- so a base URL that already ends in @/responses@ is used verbatim; anything
+-- else gets the OpenAI-compatible path appended to its root (so both
+-- @https://api.openai.com@ and @…/v1@ keep working).
+responsesUrl :: Text -> String
+responsesUrl baseUrl =
+  let t = T.dropWhileEnd (== '/') (T.strip baseUrl)
+  in T.unpack $ if "/responses" `T.isSuffixOf` t
+                  then t
+                  else rootOf t <> "/v1/responses"
+
 -- | Render a JSON value back to the text form tool arguments travel in.
 jsonText :: Value -> Text
 jsonText v = TE.decodeUtf8 (BL.toStrict (encode v))
@@ -428,7 +441,7 @@ anthropicEvent v = case v of
 -- | The Responses API streaming caller.
 responsesStream :: Text -> Text -> Text -> [Header] -> Maybe Value -> Maybe Text -> Text -> IORef (Map.Map Text Text) -> IO StreamCall
 responsesStream baseUrl apiKey model extraHs extraBody meffort mode ridRef = do
-  let url = T.unpack (rootOf baseUrl) ++ "/v1/responses"
+  let url = responsesUrl baseUrl
       headers = ("Content-Type", "application/json") : (bearer apiKey ++ extraHs)
   pure $ \msgs specs gp onEvent -> do
     pending <- newIORef (Nothing :: Maybe (Int, Text, Text, Text))
@@ -770,7 +783,7 @@ responsesAdapter :: Text -> Text -> Text -> [Header] -> Maybe Value -> Text -> I
 responsesAdapter baseUrl apiKey model extraHs extraBody mode = do
   manager <- newManager tlsManagerSettings
   ridRef <- newIORef (Map.empty :: Map.Map Text Text)
-  let url = T.unpack (rootOf baseUrl) ++ "/v1/responses"
+  let url = responsesUrl baseUrl
       headers = ("Content-Type", "application/json") : (bearer apiKey ++ extraHs)
       call skey msgs specs = do
         prev <- if mode == "stateful"
