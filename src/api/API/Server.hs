@@ -914,9 +914,14 @@ anthropicMessagesHandler adapter body =
   case parseAnthropic body of
     Nothing -> throwError err400 { errBody = "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\"}}" }
     Just (model, sys, msgs) -> do
+      -- 这里的 adapter 是启动时注入的默认实现（无 key 时是 stub）；请求点名
+      -- provider 或 providers.json 里有 inUse 时必须以那个为准，否则协议之
+      -- 间会出现"openai 走真实上游、anthropic 走桩"的分裂。
+      effAdapter <- liftIO (resolveAdapterIO adapter body)
+      effective <- either (throwError . adapterRefusal) pure effAdapter
       let hsMsgs = maybe id (\s ms -> LLM.Message LLM.System s : ms) sys
                    $ map (\(r, c) -> LLM.Message (toRole r) c) msgs
-      chunks <- liftIO $ llmChat adapter hsMsgs
+      chunks <- liftIO $ llmChat effective hsMsgs
       let content = T.concat [t | LLM.ChunkDelta t <- chunks]
       -- C5(D-1) 裁定③：草稿（本地）输出与外部输出走**同一条**判定入口。
       -- C5(D-1)：约束的**作用点 = 响应侧的采纳判定**。
@@ -962,9 +967,13 @@ responsesHandler adapter body =
   case parseResponses body of
     Nothing -> throwError err400 { errBody = "{\"error\":{\"message\":\"input is required\"}}" }
     Just (model, instr, inputMsgs) -> do
+      -- 与 anthropic / openai 两条一致：按请求点名的 provider 或 inUse 解析，
+      -- 而不是无条件用默认（stub）adapter。
+      effAdapter <- liftIO (resolveAdapterIO adapter body)
+      effective <- either (throwError . adapterRefusal) pure effAdapter
       let hsMsgs = maybe id (\i ms -> LLM.Message LLM.System i : ms) instr
                    $ map (\(r, c) -> LLM.Message (toRole r) c) inputMsgs
-      chunks <- liftIO $ llmChat adapter hsMsgs
+      chunks <- liftIO $ llmChat effective hsMsgs
       let content = T.concat [t | LLM.ChunkDelta t <- chunks]
       -- C5(D-1) 裁定③：草稿（本地）输出与外部输出走**同一条**判定入口。
       -- C5(D-1)：约束的**作用点 = 响应侧的采纳判定**。
