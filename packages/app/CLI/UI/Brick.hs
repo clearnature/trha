@@ -862,7 +862,9 @@ drawMessages st =
               -- instead of drawing an empty viewport.
               [ padAll 1 $ withAttr (attrName "timestamp") $
                   strWrap "All tool cards are hidden (quiet read/search). /verbose shows them." ]
-            _ -> [ let focused = appCardFocus st == Just (msgId m)
+            _ -> [ let -- 焦点标记只属于工具卡：之前只看 id 相等，焦点落到
+                       -- 同号的 user 消息上时，「▶」会画在用户消息前面。
+                       focused = isJust (msgTool m) && appCardFocus st == Just (msgId m)
                        fold = foldOf m
                        sel = inSel st (msgId m)
                        draw = drawMessage cfg focused fold m
