@@ -339,6 +339,7 @@ zhDict = M.fromList
   , (" has an empty transcript.", " 的记录为空。")
   , ("This session is live on the scheduler — keep going.", "该会话在调度层仍然存在，可以直接继续。")
   , ("This session is not live on the scheduler; /new starts a fresh one.", "调度层没有这个会话；用 /new 新建一个继续。")
+  , ("The scheduler stopped and has been restarted; resend to continue.", "调度层已停止并重新启动；重新发送即可继续。")
   , ("Resumed ", "已恢复 ")
   , (" turn(s)", " 轮")
   , ("Starting TUI mode...", "正在启动 TUI 界面...")

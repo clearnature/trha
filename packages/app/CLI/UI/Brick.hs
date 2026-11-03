@@ -26,6 +26,7 @@ import Control.Monad.IO.Class (liftIO)
 import System.Timeout (timeout)
 import Core.Clipboard (saveClipboardImage)
 import Core.Types
+import Core.Bootstrap (ensureBackend)
 import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.RunState (stopAll, stopResultText)
@@ -3612,7 +3613,18 @@ handleChatWith display sendText = do
             -- Always finalize: a missing usage echo must not leave the
             -- spinner running.
             writeBChan chan (EvResponse (Right (ChunkDone (fromMaybe zero musage))))
-          Left err -> writeBChan chan (EvResponse (Left err))
+          Left err -> do
+            -- 调度层崩了会让长任务直接断掉：这里尝试拉起一次。会话与
+            -- 历史由 scheduler 从 stateDir 恢复，用户重发即可继续。
+            case err of
+              ConnectionError _ -> do
+                started <- ensureBackend (appEffCfg st)
+                writeBChan chan . EvResponse . Left $
+                  if null started
+                    then err
+                    else ServerError (tr (appLang st)
+                           "The scheduler stopped and has been restarted; resend to continue.")
+              _ -> writeBChan chan (EvResponse (Left err))
         refreshSidebar bridge chan sid
       zero = mkUsage 0 0 0
   void $ liftIO $ async $ case appSessionId st of
