@@ -72,6 +72,7 @@ import Graphics.Vty.CrossPlatform (mkVty)
 import Graphics.Vty.Input.Events
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
+import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar, sidebarDataFor)
 import UI.Brick.Draw.Status
   ( modelLabel, pricesOf, statusLine
   , statusSandboxTag, statusClock, statusModelLine, statusGitLine, statusStatsLine )
@@ -478,19 +479,8 @@ drawHome st =
 --
 -- The bottom line names the two shortcuts a first-time user needs: hiding
 -- the sidebar and leaving the TUI.
-drawSidebar :: AppState -> Int -> Widget ResourceName
-drawSidebar st sw =
-  withAttr (attrName "border") $
-    hLimit sw $
-      borderWithLabel (withAttr (attrName "title") $ str " Sidebar ") $
-        -- `fill` makes the border stretch to the full column height (MiMo's
-        -- sidebar is a full-height panel, not a box that ends with its text).
-        vBox ( [ withAttr (attrName (slAttr l)) $ str (T.unpack (slText l))
-               | l <- sidebarLines (max 1 (sw - 2)) (sidebarDataFor st) ]
-               ++ [ fill ' ' ]
-               ++ [ withAttr (attrName "timestamp")
-                      (str (T.unpack (truncateTo (max 1 (sw - 2))
-                                       (sidebarHint (appLang st))))) ] )
+-- | drawSidebar 见 UI.Brick.Draw.Sidebar。
+
 
 -- | Inline slash-command palette, anchored at the input's left edge (the
 -- MiMo form: a list above the prompt, filtered as you type — not a centred
@@ -548,41 +538,15 @@ wizardSummary w = T.intercalate "  ·  "
   where shown t = if T.null (T.strip t) then "—" else T.strip t
 
 -- | The @-file popup shown above the input (up to eight candidates).
-drawCompletion :: AppState -> CompletionState -> Widget ResourceName
-drawCompletion _ cs =
-  withAttr (attrName "tool") $
-    hLimit 60 $
-      borderWithLabel (withAttr (attrName "title") $ str " @ files ") $
-        vBox
-          [ let selected = idx == csSel cs
-                marker = if selected then "▸ " else "  "
-                attr = if selected then "tool" else "timestamp"
-            in padLeftRight 1 $ hBox
-                 [ withAttr (attrName attr) $ str marker
-                 , withAttr (attrName "title") $ str (T.unpack (compPath c)) ]
-          | (idx, c) <- zip [0 ..] (take 8 (csItems cs)) ]
+-- | drawCompletion 见 UI.Brick.Draw.Sidebar。
+
 
 -- | Display form of the active target: @provider/model@ once a provider is
 -- selected, otherwise the bare model name (kernel chooses the provider).
 -- | modelLabel 见 UI.Brick.Draw.Status（随状态栏文本层一起迁出）。
 
--- | Sidebar content assembled from the live state.
-sidebarDataFor :: AppState -> SidebarData
-sidebarDataFor st = SidebarData
-  { sdUsage     = appUsage st
-  , sdCtxSize   = appCtxSize st
-  , sdTodos     = appTodos st
-  , sdSessionId = T.pack <$> appSessionId st
-  , sdTitle     = appSessionTitle st
-  , sdModel     = modelLabel st
-  , sdCwd       = appCwd st
-  , sdFiles     = appFiles st
-  , sdGoal      = appGoal st
-  , sdInstructions = appInstructions st
-  , sdAgents    = appAgents st
-  , sdLsp       = appLsp st
-  , sdMcp       = appMcp st
-  }
+-- | sidebarDataFor 见 UI.Brick.Draw.Sidebar。
+
 
 -- | One dialog as a centered bordered card (the top of the dialog stack).
 drawDialog :: AppState -> Dialog -> Widget ResourceName

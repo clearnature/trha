@@ -302,6 +302,7 @@ executable trha
     UI.Render.ToolCard
     UI.Render.Spans
     UI.Brick.Draw.Status
+    UI.Brick.Draw.Sidebar
     UI.Render.ToolSummary
     UI.Render.Message
     UI.Render.FilePart
