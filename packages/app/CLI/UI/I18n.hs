@@ -349,6 +349,8 @@ zhDict = M.fromList
   , ("  Ctrl+Enter        Steer the running turn with the draft", "  Ctrl+Enter        把草稿转向当前回合")
   , ("  Ctrl+L            Clear the transcript view (history kept)", "  Ctrl+L            清空转写视图（历史保留）")
   , ("  Alt+V             Paste clipboard text", "  Alt+V             粘贴剪贴板文本")
+  , ("↑/↓ · Tab move · Enter choose · Esc close", "↑/↓ · Tab 移动 · Enter 选择 · Esc 关闭")
+  , ("↑/↓ · Tab move · Enter open · Esc close", "↑/↓ · Tab 移动 · Enter 打开 · Esc 关闭")
   , ("Resumed ", "已恢复 ")
   , (" turn(s)", " 轮")
   , ("Starting TUI mode...", "正在启动 TUI 界面...")

@@ -577,7 +577,7 @@ drawDialog :: AppState -> Dialog -> Widget ResourceName
 drawDialog st d =
   withAttr (attrName "border") $
     borderWithLabel (withAttr (attrName "title") $ str (T.unpack title)) $
-      vBox (rows ++ [queryRow | isEditable])
+      vBox (rows ++ [queryRow])
   where
     lang = appLang st
     isEditable = case d of DialogCommands{} -> True; DialogSkills{} -> True; _ -> False
@@ -723,7 +723,20 @@ drawDialog st d =
         [ withAttr (attrName "input") $ str ("> " ++ T.unpack q)
         , withAttr (attrName "status") $ str (T.unpack (tr lang "   ↑/↓ move · Enter open · Esc close"))
         ]
+      -- 其余对话框没有查询行，但操作提示同样要可见：审批/确认是
+      -- 「选择」，模型/会话/主题等是「打开」。
+      DialogApproval{}  -> hintRow "↑/↓ · Tab move · Enter choose · Esc close"
+      DialogConfirm{}   -> hintRow "↑/↓ · Tab move · Enter choose · Esc close"
+      DialogModels{}    -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
+      DialogSessions{}  -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
+      DialogThemes{}    -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
+      DialogLanguages{} -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
+      DialogAgents{}    -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
+      DialogPresets{}   -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
+      DialogProviders{} -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
+      DialogSandbox{}   -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
       _ -> emptyWidget
+    hintRow t = padLeftRight 1 $ withAttr (attrName "status") $ str (T.unpack (tr lang t))
 
 statusLine :: AppState -> Text
 statusLine st = T.unlines
