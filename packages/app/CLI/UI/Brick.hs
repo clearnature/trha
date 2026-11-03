@@ -1548,9 +1548,10 @@ extendSel y = do
     Nothing -> return ()
     Just _  -> modify $ \s -> s { appSelEnd = Just (fromMaybe 0 (msgIndexAt rel s)) }
 
--- | 复制当前选区的文本并清空选区（Ctrl+C 与鼠标松开共用）。
-copySelectionText :: EventM ResourceName AppState ()
-copySelectionText = do
+-- | 复制当前选区的文本。@clearSel@ 决定复制后是否清空选区：
+-- 鼠标松开时保留高亮（用户还能接着调整，Ctrl+C 才清掉），Ctrl+C 复制后清空。
+copySelectionText :: Bool -> EventM ResourceName AppState ()
+copySelectionText clearSel = do
   st <- get
   case appSelStart st of
     Nothing -> pure ()
@@ -1563,7 +1564,8 @@ copySelectionText = do
       when (not (T.null (T.strip txt))) $ do
         ok <- liftIO (copyToClipboard txt)
         showToast (if ok then "Copied" else "Clipboard unavailable")
-      modify $ \s -> s { appSelStart = Nothing, appSelEnd = Nothing }
+      when clearSel $
+        modify $ \s -> s { appSelStart = Nothing, appSelEnd = Nothing }
 
 finishSel :: Int -> EventM ResourceName AppState ()
 finishSel y = do
@@ -1579,7 +1581,9 @@ finishSel y = do
         then modify $ \s -> s
                { appFolds = Map.alter (Just . toggleFold . fromMaybe FoldCollapsed) a0 (appFolds s)
                , appSelStart = Nothing, appSelEnd = Nothing }
-        else copySelectionText
+        -- 松开鼠标时复制但**保留**选区：高亮还在，Ctrl+C 仍可复制，
+        -- 也还能继续拖选调整。清空只发生在 Ctrl+C 之后。
+        else copySelectionText False
 
 scrollBottom :: EventM ResourceName AppState ()
 scrollBottom = vScrollToEnd (viewportScroll MessageArea)
@@ -1700,7 +1704,7 @@ handleCtrlCKey = do
   now <- liftIO getCurrentTime
   -- 有选区时 ctrl+c 先复制（Reasonix 的 copyIt），否则才走中断/清空/退出。
   case appSelStart st of
-    Just _  -> copySelectionText
+    Just _  -> copySelectionText True
     Nothing -> case decideCtrlC (appBusy st) (not (promptIsEmpty st)) (appQuitLast st) now of
       CtrlCInterrupt  -> requestInterrupt
       CtrlCClearInput -> modify $ \s -> s { appInput = editorText InputArea (Just 1) "" }
