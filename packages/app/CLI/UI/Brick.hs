@@ -3262,7 +3262,9 @@ handleSlash input = do
         then modify $ \s -> s { appDialogs =
                stackPush (DialogThemes themes 0) (appDialogs s) }
         else applyTheme arg
-    "/mode" -> do
+    _ | cmd == "/mode" || "/mode " `T.isPrefixOf` cmd -> do
+      -- 带参数的 /mode 也必须走 modeAction：兜底的 executeCommand 只改
+      -- scheduler 侧、不更新 appMode，状态栏会一直停在旧姿态。
       let arg = T.strip (T.drop 5 input)
       if T.null arg
         then modeAction (object ["action" .= ("cycle" :: Text)])
