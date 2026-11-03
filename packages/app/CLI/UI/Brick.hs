@@ -2608,6 +2608,7 @@ handleAppEvent (EvSession result) = do
       -- Auto-created sessions are recorded silently so that the system
       -- message does not interleave between the user message and the reply.
       modify $ \s -> s { appSessionId = Just sid, appStatus = tr (appLang s) "Ready"
+                       , appBusy = False
                        , appRoute = RouteSession
                        , appCacheNow = Nothing
                        , appCacheSum = (0, 0)
@@ -3012,8 +3013,8 @@ handleSubmit input
       st <- get
       if "/" `T.isPrefixOf` input
         then case filterItems input (allPickerItems st) of
-          []  -> handleSlash input  -- unknown or parameterised command typed in full
-          [_] -> handleSlash input  -- unique match: run it directly
+          []  -> handleSlash input
+          [_] -> handleSlash input
           _   -> modify $ \s -> s { appDialogs =
                    stackPush (DialogCommands (allPickerItems st) input 0) (appDialogs s) }
         else handleChat input
