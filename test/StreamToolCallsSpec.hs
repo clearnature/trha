@@ -79,6 +79,7 @@ streamToolCallsSpec = describe "parallel tool calls" $ do
     testWithApplication (pure (sseApp twoCallStream)) $ \port -> do
       events <- newIORef ([] :: [StreamChunk])
       turn <- Stream.openAICompatStreamCall
+        True
         ("http://127.0.0.1:" <> show port <> "/v1/chat/completions")
         [("Authorization", "Bearer test-key")]
         (object ["model" .= ("test" :: String), "stream" .= True])

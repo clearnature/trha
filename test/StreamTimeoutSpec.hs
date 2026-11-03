@@ -32,6 +32,7 @@ endpoint port = "http://127.0.0.1:" <> show port <> "/v1/chat/completions"
 
 call :: Int -> IO ChatTurn
 call port = Stream.openAICompatStreamCall
+  True
   (endpoint port)
   [("Authorization", "Bearer k")]
   (object ["model" .= ("test" :: String), "stream" .= True])
