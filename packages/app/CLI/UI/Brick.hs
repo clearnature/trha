@@ -1232,6 +1232,36 @@ drawPlanCard pv =
           here = if pvPending pv == Just (psvId st) then "  ←" else ""
       in T.pack (show (n :: Int)) <> ". " <> mark <> " " <> psvTitle st <> here
 
+-- | 状态栏第 1 行的沙箱徽标。
+statusSandboxTag :: AppState -> Text
+statusSandboxTag st =
+  "SandBox:" <> (if ssEnabled (appSandbox st) then "enabled" else "disabled")
+
+-- | 本地时钟；没有时间源时返回空串，状态栏就不渲染这一段。
+statusClock :: AppState -> Text
+statusClock st = case (appNow st, appTz st) of
+  (Just t, Just tz) -> clockWithZone tz t
+  _ -> ""
+
+-- | 模型名 + 推理强度。
+statusModelLine :: AppState -> Text
+statusModelLine st = "模型 " <> modelLabel st <> "   强度 " <> appEffort st
+
+-- | @目录@分支 [git 状态]@。
+statusGitLine :: AppState -> Text
+statusGitLine st =
+  let ws = fromMaybe "" (lookup "workspace" (appMetrics st))
+      dirName = T.pack (takeFileName (T.unpack ws))
+      branch = fromMaybe "?" (lookup "git" (appMetrics st))
+  in dirName <> "@" <> branch
+       <> (if T.null (appGitStat st) then "" else "  " <> appGitStat st)
+
+-- | 峰谷时段标签（DeepSeek 的低峰折扣）。
+statusPeak :: AppState -> Text
+statusPeak st = case appNow st of
+  Just t | isOffPeak t -> "低峰"
+  _ -> "高峰"
+
 drawStatus :: AppState -> Widget ResourceName
 drawStatus st = Widget Greedy Fixed $ do
   c <- getContext
@@ -1254,7 +1284,7 @@ drawStatus st = Widget Greedy Fixed $ do
                    (str (T.unpack (tr lang " · Shift+Tab read-only/ask/auto/YOLO/plan · Ctrl+Y YOLO")))
                , str "   "
                , withAttr (attrName (if ssEnabled (appSandbox st) then "status" else "error"))
-                   (str (T.unpack (sandboxTag st))) ]
+                   (str (T.unpack sandboxTag)) ]
           else []
       , [ padLeft Max (withAttr (attrName "timestamp") (str (T.unpack modelLine))) ]
       ])
@@ -1274,16 +1304,10 @@ drawStatus st = Widget Greedy Fixed $ do
         row r = padLeftRight 1 $ timestampWidget $ str (T.unpack r)
     timestampWidget = withAttr (attrName "timestamp")
     modeTag = maybe "Read only" smLabel (appMode st)
-    sandboxTag st' = "SandBox:" <> (if ssEnabled (appSandbox st') then "enabled" else "disabled")
-    clockNow = case (appNow st, appTz st) of
-      (Just t, Just tz) -> clockWithZone tz t
-      _ -> ""
-    modelLine = "模型 " <> modelLabel st <> "   强度 " <> appEffort st
-    ws = fromMaybe "" (lookup "workspace" (appMetrics st))
-    dirName = T.pack (takeFileName (T.unpack ws))
-    branch = fromMaybe "?" (lookup "git" (appMetrics st))
-    gitLine = dirName <> "@" <> branch
-                <> (if T.null (appGitStat st) then "" else "  " <> appGitStat st)
+    sandboxTag = statusSandboxTag st
+    clockNow = statusClock st
+    modelLine = statusModelLine st
+    gitLine = statusGitLine st
     cacheSeg = case (appCacheNow st, appCacheSum st) of
       (Just (h, m), (h0, m0)) | h + m > 0 && h0 + m0 > 0 ->
         "缓存 现在 " <> pct h m <> " · 累计 " <> pct h0 m0
@@ -1354,9 +1378,7 @@ drawStatus st = Widget Greedy Fixed $ do
     sessTokensSeg
       | appSessTokens st > 0 = "会话 " <> commas (appSessTokens st) <> " tok"
       | otherwise = ""
-    peak = case appNow st of
-      Just t | isOffPeak t -> "低峰"
-      _ -> "高峰"
+    peak = statusPeak st
     balanceSeg = case appBalance st of
       Just b -> "余额 " <> balanceCurrency b
                   <> T.pack (showFFloat (Just 2) (balanceTotal b) "")
