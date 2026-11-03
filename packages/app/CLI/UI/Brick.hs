@@ -1320,7 +1320,10 @@ drawStatus st = Widget Greedy Fixed $ do
     lang = appLang st
     line1 = padLeftRight 1 $ hBox (concat
       [ [ withAttr (attrName "error") (str (T.unpack modeTag))
-        , withAttr (attrName "status") (str (T.unpack (tr lang " · ready")))
+        -- 这里原来是常量 " · ready"：appStatus 被各处设置（工具状态、
+        -- 中断中、再按一次退出…）却从未真正显示出来。
+        , withAttr (attrName "status")
+            (str (T.unpack (" · " <> T.take 48 (appStatus st))))
         ]
       , [ withAttr (attrName "timestamp") (str (T.unpack (" · " <> clockNow)))
         | not (T.null clockNow) ]
