@@ -35,6 +35,8 @@ import Data.String (fromString)
 import Network.Wai (Application, Response, Request, requestBody, responseLBS, responseStream, strictRequestBody)
 import Servant.Server.Internal (runHandler)
 import System.Info (os)
+import System.IO (hPutStrLn, stderr)
+import System.Environment (lookupEnv)
 import Network.Wai.Handler.Warp
     ( Settings, defaultSettings, runSettings, setHost, setPort )
 import Network.HTTP.Types (ResponseHeaders, mkStatus, status200, status400)
@@ -1285,6 +1287,13 @@ openaiStreamApp adapter = Tagged $ \req respond -> do
         let msgs  = [ m | Just m <- map (parseMaybe parseJSON) (oaiMsgs oai) ]
             specs = [ sp | Just sp <- map (parseMaybe parseJSON) (oaiTools oai) ]
             gp    = genParamsFromValue (oaiGenParams oai)
+        -- 诊断：TRHA_DEBUG_STREAM=1 时打印线上消息数 vs 解析后的消息数。
+        debugStream <- liftIO (lookupEnv "TRHA_DEBUG_STREAM")
+        case debugStream of
+          Just _ -> liftIO $ hPutStrLn stderr
+            ("[stream] wire=" ++ show (length (oaiMsgs oai))
+              ++ " parsed=" ++ show (length msgs))
+          Nothing -> pure ()
         respond $ responseStream status200 sseHeaders $ \write flush -> do
           case effAdapter of
             Left why -> emitOpenAI write (ChunkError (adapterRefusalText why)) >> flush

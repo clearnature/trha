@@ -1920,6 +1920,11 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           target.reasoningLanguage,
           target.extraInstructions,
         );
+        if (process.env.TRHA_DEBUG_USAGE) {
+          console.error(
+            `request sessionMsgs=${session.messages.length} promptMsgs=${promptMessages.length}`
+            + ` (${session.id})`);
+        }
         const request = {
           messages: promptMessages,
           tools: toolsCfg,
@@ -1947,6 +1952,17 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         });
         if (response.constraint) stepConstraint = response.constraint;
         if (response.usage?.promptTokens !== undefined) {
+          // TRHA_DEBUG_USAGE=1：排查长会话的上下文压力（promptTokens 是
+          // govern 的输入；与 messages 数对不上时说明内容或口径有问题）。
+          if (process.env.TRHA_DEBUG_USAGE) {
+            console.error(
+              `usage prompt=${response.usage.promptTokens}`
+              + ` completion=${response.usage.completionTokens ?? '-'}`
+              + ` total=${response.usage.totalTokens ?? '-'}`
+              + ` cacheHit=${response.usage.cacheHitTokens ?? '-'}`
+              + ` cacheMiss=${response.usage.cacheMissTokens ?? '-'}`
+              + ` msgs=${session.messages.length} (${session.id})`);
+          }
           session.lastPromptTokens = response.usage.promptTokens;
           session.cacheHitTokens = (session.cacheHitTokens ?? 0) + (response.usage.cacheHitTokens ?? 0);
           session.cacheMissTokens = (session.cacheMissTokens ?? 0) + (response.usage.cacheMissTokens ?? 0);
