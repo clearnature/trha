@@ -196,6 +196,9 @@ data AppState = AppState
   -- 提交前展开（Reasonix 的 `[Pasted text #N · X lines]`）。
   , appPastes     :: [(Text, Text)]
   , appPasteSeq   :: Int
+  -- | 审批到达时间：用来显示「还剩 Ns」——后端超时（askTimeoutMs）会自动
+  -- 拒绝，界面上必须看得见这个倒计时。
+  , appAskAt      :: Maybe UTCTime
   , appPendingDelete :: Maybe String        -- ^ session id awaiting delete confirmation
   , appPendingStop   :: Bool                -- ^ Ctrl+Alt+Q confirmation is open (service stop)
   , appPendingProviderRemove :: Maybe Text  -- ^ provider name awaiting remove confirmation (tui-port L290)

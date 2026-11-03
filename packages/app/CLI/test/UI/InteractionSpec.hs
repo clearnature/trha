@@ -10,6 +10,7 @@ module UI.InteractionSpec (spec) where
 
 import Data.List (nub, sort)
 import qualified Data.Text as T
+import Data.Time.Clock (UTCTime, addUTCTime)
 import Test.Hspec
 
 import UI.Commands.Registry (slashRegistry, scCommand)
@@ -101,3 +102,16 @@ spec = describe "UI.Interaction" $ do
     it "does not let inline layers own keys directly" $
       filter (`elem` keyOwnerOrder) [LayerCompletion, LayerPalette]
         `shouldBe` []
+
+  describe "askCountdownText" $ do
+    let t0 = read "2026-01-01 00:00:00 UTC" :: UTCTime
+    it "counts down from the configured timeout" $
+      askCountdownText 300 (Just t0) (Just (addUTCTime 10 t0))
+        `shouldBe` Just "⏳ 还剩 290s · 超时自动拒绝"
+
+    it "clamps at zero once the deadline passed" $
+      askCountdownText 300 (Just t0) (Just (addUTCTime 400 t0))
+        `shouldBe` Just "⏳ 还剩 0s · 超时自动拒绝"
+
+    it "is silent without a pending ask" $
+      askCountdownText 300 Nothing (Just t0) `shouldBe` Nothing

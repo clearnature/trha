@@ -74,6 +74,7 @@ import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics, branchFromHead, statusFitsOneRow, wrapStatusLine)
 import UI.PasteFold (expandPastes, isLongPaste, pasteLabel)
+import UI.Interaction (askCountdownText)
 import UI.TimeStamp (clockWithZone)
 import UI.Render.Footer (footerHints)
 import System.Directory (getCurrentDirectory, createDirectoryIfMissing, getHomeDirectory, doesFileExist, getTemporaryDirectory, removeFile, getFileSize)
@@ -201,6 +202,7 @@ initialState bridge chan cfg = AppState
   , appAskTool   = Nothing
   , appPastes    = []
   , appPasteSeq  = 0
+  , appAskAt     = Nothing
   , appPendingDelete = Nothing
   , appPendingStop   = False
   , appPendingProviderRemove = Nothing
@@ -625,6 +627,9 @@ drawDialog st d =
            ] <>
            [ row idx sel' (str (T.unpack (tr lang (approvalOptionLabel opt)))) (str "")
            | (idx, opt) <- zip [0 ..] (approvalOptions name args) ]
+           <> [ padLeftRight 1 $ withAttr (attrName "status") $
+                  str (T.unpack (askCountdownLine st))
+              | not (T.null (askCountdownLine st)) ]
       DialogConfirm msg _ ->
         [ padLeftRight 1 $ strWrap (T.unpack msg) ] <>
         [ row idx sel (str (T.unpack (tr lang (confirmOption idx)))) (str "")
@@ -711,6 +716,11 @@ drawDialog st d =
                | otherwise  = "  "
         markerAttr | idx == cur = attrName "tool"
                    | otherwise  = attrName "timestamp"
+
+    -- 审批倒计时（纯逻辑在 UI.Interaction.askCountdownText）。
+    askCountdownLine st' =
+      fromMaybe ""
+        (askCountdownText (configAskTimeout (appEffCfg st')) (appAskAt st') (appNow st'))
 
     approvalOptionLabel :: ApprovalOption -> Text
     approvalOptionLabel opt = case opt of
@@ -2970,8 +2980,10 @@ handleAppEvent (EvTool result) = do
       -- approval dialog ("always" derives its rule pattern from it)
       when (case teStatus ev of
               ToolRunFailed err -> "REQUIRE_APPROVAL:" `T.isPrefixOf` err
-              _                 -> False) $
-        modify $ \st -> st { appAskTool = Just (teName ev, teArgs ev) }
+              _                 -> False) $ do
+        asked <- liftIO getCurrentTime
+        modify $ \st -> st { appAskTool = Just (teName ev, teArgs ev)
+                           , appAskAt = Just asked }
       case teStatus ev of
         ToolRunRunning -> do
           -- A long tool call used to be invisible until it finished: the card

@@ -28,11 +28,14 @@ module UI.Interaction
   , commandLayerOf
   , commandsInLayer
   , unknownLayerCommands
+    -- * Approval countdown
+  , askCountdownText
   ) where
 
 import Data.List (nub)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Clock (UTCTime, diffUTCTime)
 
 --------------------------------------------------------------------------------
 -- Layers
@@ -259,3 +262,18 @@ commandsInLayer c = [ n | (n, c') <- layerTable, c' == c ]
 -- | Registry names missing from the table (empty is the invariant).
 unknownLayerCommands :: [Text] -> [Text]
 unknownLayerCommands registered = nub [ n | n <- registered, commandLayerOf n == Nothing ]
+
+--------------------------------------------------------------------------------
+-- Approval countdown
+--------------------------------------------------------------------------------
+
+-- | 审批对话框的倒计时文本：@⏳ 还剩 Ns · 超时自动拒绝@。
+--
+-- 后端按 @askTimeoutMs@ 自动拒绝，界面必须能看见还剩多久；时间源是每秒的
+-- EvTick（appNow）与审批到达时刻（appAskAt）。没有审批在等时返回 'Nothing'。
+askCountdownText :: Int -> Maybe UTCTime -> Maybe UTCTime -> Maybe Text
+askCountdownText totalSec (Just askedAt) (Just nowAt) =
+  let elapsed = round (diffUTCTime nowAt askedAt) :: Int
+      left = max 0 (totalSec - elapsed)
+  in Just ("⏳ 还剩 " <> T.pack (show left) <> "s · 超时自动拒绝")
+askCountdownText _ _ _ = Nothing
