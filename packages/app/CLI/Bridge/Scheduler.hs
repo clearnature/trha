@@ -169,17 +169,22 @@ createSchedulerBridge config = do
 -- @cwd@ is the client's own directory: the scheduler serves every client
 -- (TUI/desktop/web), so the session — not the process — must say which
 -- project it belongs to.
-createSession :: SchedulerBridge -> IO (Either CLIError SessionId)
-createSession bridge = do
+-- | @permissionMode@ 是新会话的初始姿态（read-only/ask/auto/yolo/plan）。
+--
+-- 之前这里不传：TUI 的 Shift+Tab 只改本地标签，服务端却按缺省的
+-- read-only 建会话 —— 状态栏显示 YOLO，工具照样被拒。
+createSession :: SchedulerBridge -> Maybe Text -> IO (Either CLIError SessionId)
+createSession bridge permissionMode = do
   cfg <- resolveConfig defaultCLIConfig
   cwd <- getCurrentDirectory
   result <- httpPost (bridgeHTTP bridge) "/api/session/start"
-    (object [ "mode" .= ("standard" :: Text)
-            , "askTimeout" .= configAskTimeout cfg
-            -- The agent preset decides which tools the model is offered; without
-            -- it the scheduler falls back to `standard` (the full set).
-            , "agentPreset" .= configAgentPreset cfg
-            , "cwd" .= T.pack cwd ])
+    (object ([ "mode" .= ("standard" :: Text)
+             , "askTimeout" .= configAskTimeout cfg
+             -- The agent preset decides which tools the model is offered; without
+             -- it the scheduler falls back to `standard` (the full set).
+             , "agentPreset" .= configAgentPreset cfg
+             , "cwd" .= T.pack cwd ]
+             ++ [ "permissionMode" .= pm | Just pm <- [permissionMode] ]))
   return $ case result of
     Right (Object r) -> case parseMaybe (.: "sessionId") r of
       Just sessionId -> Right sessionId

@@ -54,7 +54,7 @@ runCLI client = do
       runCLI client
     _ -> do
       -- Create a new session for each message
-      sessionResult <- createSession client
+      sessionResult <- createSession client Nothing
       case sessionResult of
         Right sessionId -> do
           putStrLn $ "Created session: " ++ sessionId

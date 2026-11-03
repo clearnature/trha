@@ -30,7 +30,7 @@ listSessionsUI client = do
 -- | Create a new session
 createSessionUI :: CLIClient -> IO ()
 createSessionUI client = do
-  result <- createSession client
+  result <- createSession client Nothing
   case result of
     Right sessionId -> putStrLn $ "Created session: " ++ sessionId
     Left err -> putStrLn $ "Error: " ++ show err

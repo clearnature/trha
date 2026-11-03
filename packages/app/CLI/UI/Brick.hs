@@ -3397,9 +3397,13 @@ handleSlash input = do
       modify $ \s -> s { appMessages = [], appFolds = Map.empty, appCardFocus = Nothing }
       showToast (tr lang "Cleared")
     "/new" -> do
+      st0 <- get
+      -- 把当前姿态带进新会话：Shift+Tab/Ctrl+Y 选的是「待用姿态」，
+      -- 只有落到 createSession 才算真的切换（否则服务端仍是 read-only）。
+      let pm = smMode <$> appMode st0
       modify $ \s -> s { appBusy = True, appStatus = "Creating session..." }
       void $ liftIO $ async $
-        createSession bridge >>= writeBChan chan . EvSession
+        createSession bridge pm >>= writeBChan chan . EvSession
     "/settings"
       | T.null (T.strip (T.drop 9 input)) -> openSettingsPanel
       | otherwise -> do
@@ -3796,7 +3800,9 @@ handleChatWith display sendText = do
       recordUser sid display
       runStepWithTools sid
     Nothing -> do
-      sessResult <- createSession bridge
+      -- 首次发消息自动建会话时，同样要把当前姿态带上：否则服务端按缺省
+      -- read-only 建会话，界面显示 YOLO 但工具仍被拒。
+      sessResult <- createSession bridge (smMode <$> appMode st)
       writeBChan chan (EvSession sessResult)
       case sessResult of
         Right sid -> do

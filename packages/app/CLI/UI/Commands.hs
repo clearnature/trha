@@ -151,7 +151,7 @@ executeCommand lang bridge _ _ Sessions = do
     Left err -> tr lang "Error: " <> T.pack (show err)
 
 executeCommand lang bridge sessionRef modelRef CreateSession = do
-  result <- createSession bridge
+  result <- createSession bridge Nothing
   case result of
     Right sid -> do
       writeIORef sessionRef (Just sid)
