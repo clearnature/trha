@@ -24,7 +24,7 @@ import Control.Concurrent.Async (async)
 import Control.Monad (filterM, forM_, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import System.Timeout (timeout)
-import Core.Clipboard (saveClipboardImage)
+import Core.Clipboard (readClipboardText, saveClipboardImage)
 import Core.Types
 import Core.Bootstrap (ensureBackend)
 import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan)
@@ -1970,6 +1970,18 @@ handleChatKey (EvKey (KChar 'x') [MCtrl]) =
 -- | ctrl+p opens the interactive settings panel (MiMo's command_list is a
 -- wizard-style config surface, not the slash-command palette).
 handleChatKey (EvKey (KChar 'p') [MCtrl]) = openSettingsPanel
+-- | ctrl+l：清空视图（历史仍在 transcript 里）——Reasonix 的 clearDisplay。
+handleChatKey (EvKey (KChar 'l') [MCtrl]) = clearView
+-- | ctrl+s：提交（终端里 Enter 已提交，这里补齐习惯键位）。
+handleChatKey (EvKey (KChar 's') [MCtrl]) = do
+  st <- get
+  case appWizard st of
+    Just _ -> commitWizard
+    Nothing -> handleChatEnter st
+-- | ctrl+enter：把当前输入作为 steer 注入运行中的回合。
+handleChatKey (EvKey KEnter [MCtrl]) = steerDraft
+-- | alt+v：粘贴剪贴板文本（Reasonix 的 pasteClipboardText；ctrl+v 留给图片）。
+handleChatKey (EvKey (KChar 'v') [MAlt]) = pasteClipboardText
 handleChatKey (EvKey KHome [MCtrl]) =
   vScrollToBeginning (viewportScroll MessageArea)
 handleChatKey (EvKey KEnd [MCtrl]) =
@@ -2057,7 +2069,9 @@ handleChatEnter st
              _ ->
                if not (T.null input) && not (appBusy st)
                  then commitEditor input >> handleSubmit input
-                 else when (T.null input && not (appBusy st)) toggleFocusedCard
+                 -- 空输入回车 = 跟随尾部（Reasonix 的 followTail）；
+                 -- 折叠仍由 ctrl+o 负责，不再占用回车。
+                 else when (T.null input && not (appBusy st)) scrollBottom
 -- | Full editor text: lines joined with newlines (no trailing newline).
 editorValue :: AppState -> Text
 editorValue st = T.intercalate "\n" (getEditContents (appInput st))
@@ -3705,6 +3719,10 @@ helpTextFor lang = T.unlines $
        , tr lang "  Shift+Tab         Cycle permission posture"
        , tr lang "  Ctrl+Y            Toggle YOLO"
        , tr lang "  Esc Esc           Interrupt the running turn"
+       , tr lang "  Ctrl+S            Submit the draft (same as Enter)"
+       , tr lang "  Ctrl+Enter        Steer the running turn with the draft"
+       , tr lang "  Ctrl+L            Clear the transcript view (history kept)"
+       , tr lang "  Alt+V             Paste clipboard text"
        , tr lang "  Ctrl+B            Show / hide the sidebar"
        , tr lang "  Ctrl+X            Leader (b/p/m/s/,/?/i)"
        , tr lang "  Ctrl+Q            Quit"
@@ -4154,6 +4172,42 @@ pasteImage = do
         { appInput = editorText InputArea (Just 1)
             (editorValue s <> " [image: " <> T.pack path <> "]") }
       showToast (tr lang "Image saved: " <> T.pack path)
+
+-- | ctrl+l：清空消息视图；历史保留在 transcript 里（/resume 仍可回放）。
+clearView :: EventM ResourceName AppState ()
+clearView = do
+  modify $ \s -> s { appMessages = [], appFolds = Map.empty, appCardFocus = Nothing }
+  scrollBottom
+
+-- | ctrl+enter：把当前输入作为 steer 注入运行中的回合；空闲时忽略
+-- （空闲下这个键多半是想换行，不能悄悄发出去）。
+steerDraft :: EventM ResourceName AppState ()
+steerDraft = do
+  st <- get
+  let input = T.strip (editorValue st)
+  case appSessionId st of
+    Just sid | appBusy st && not (T.null input) -> do
+      t0 <- liftIO now
+      ref <- liftIO (newIORef (Just sid))
+      mref <- liftIO (newIORef (appModel st))
+      r <- liftIO (executeCommand (appLang st) (appBridge st) ref mref (Steer input))
+      forM_ r $ \out -> appendMsg (mkMsg "system" out t0)
+      modify $ \s -> s { appInput = editorText InputArea (Just 1) "" }
+      scrollBottom
+    _ -> pure ()
+
+-- | shift+insert：把剪贴板文本插到输入末尾。
+pasteClipboardText :: EventM ResourceName AppState ()
+pasteClipboardText = do
+  st <- get
+  mt <- liftIO readClipboardText
+  case mt of
+    Nothing -> showToast (tr (appLang st) "No text on the clipboard")
+    Just txt -> do
+      let cur = T.unlines (getEditContents (appInput st))
+      modify $ \s -> s { appInput = editorText InputArea (Just 1) (cur <> txt) }
+      refreshCompletion >> refreshPalette
+      scrollBottom
 
 -- | Ctrl+R: record a short voice note.  The recorder takes over the
 -- terminal (arecord needs a device handle), then the saved path is inserted

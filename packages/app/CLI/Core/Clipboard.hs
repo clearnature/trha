@@ -9,14 +9,38 @@
 -- file.  The path is what the composer attaches as @[image: …]@.
 module Core.Clipboard
   ( saveClipboardImage
+  , readClipboardText
   ) where
 
 import Control.Exception (IOException, catch, try)
 import System.Directory (createDirectoryIfMissing, getFileSize, getHomeDirectory)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
-import System.Process (readProcessWithExitCode)
+import System.Process (readCreateProcessWithExitCode, readProcessWithExitCode, shell)
+import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time.Clock.POSIX (getPOSIXTime)
+
+-- | 剪贴板里的**文本**（Shift+Insert）。没有 helper 时返回 'Nothing'。
+--
+-- 与图片分开：图片走文件字节，文本走 stdout；两者用不同的 helper 参数，
+-- 混用会把图片二进制当成文本塞进输入框。
+readClipboardText :: IO (Maybe Text)
+readClipboardText = go
+    [ "wl-paste -n -t text/plain"
+    , "xclip -selection clipboard -o"
+    , "xsel --clipboard --output"
+    , "pbpaste"
+    ]
+  where
+    go [] = pure Nothing
+    go (c : cs) = do
+      r <- try (readCreateProcessWithExitCode (shell c) "")
+             :: IO (Either IOException (ExitCode, String, String))
+      case r of
+        Right (ExitSuccess, out, _)
+          | not (T.null (T.strip (T.pack out))) -> pure (Just (T.pack out))
+        _ -> go cs
 
 -- | Save the clipboard image and return its path, or 'Nothing'.
 saveClipboardImage :: IO (Maybe FilePath)
