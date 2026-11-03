@@ -73,6 +73,9 @@ import Graphics.Vty.Input.Events
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics, branchFromHead, statusFitsOneRow, wrapStatusLine)
+import UI.Render.Spans
+  ( SpanTok(..), boolText, diffAttrOf, fillLines, isCompactionMark
+  , spanToks, splitAtWidth, spinnerFrame, truncLine )
 import UI.PasteFold (expandPastes, isLongPaste, pasteLabel)
 import UI.TextWidth (takeCells)
 import UI.Interaction (askCountdownText)
@@ -362,10 +365,6 @@ runTUI bridge cfg = do
   tEnd <- getCurrentTime
   logLine (T.pack ("probe brick.exit ms="
                    <> show (round (diffUTCTime tEnd tStart * 1000) :: Int)))
-
-boolText :: Bool -> T.Text
-boolText True  = "True"
-boolText False = "False"
 
 --------------------------------------------------------------------------------
 -- Drawing
@@ -779,10 +778,7 @@ statusLine st = T.unlines
 -- | Resume a local session: replay its transcript into the message area
 -- and make it the active session.
 -- | 调度层的压缩标记（govern 写入的一条 user 消息）。
-isCompactionMark :: Text -> Bool
-isCompactionMark c =
-  let s = T.strip c
-  in "[context compacted" `T.isPrefixOf` s || "[context folded" `T.isPrefixOf` s
+-- | 压缩标记判定见 UI.Render.Spans.isCompactionMark。
 
 resumeSession :: Text -> EventM ResourceName AppState ()
 resumeSession selText = do
@@ -1165,74 +1161,13 @@ diffWidget ls = Widget Greedy Fixed $ do
              | r <- rows ]
   return $ emptyResult & imageL .~ V.vertCat imgs
 
--- | Card lines are capped so a long tool output cannot push the layout.
-truncLine :: Text -> Text
-truncLine t
-  | TW.textWidth t <= cardWidth - 4 = t
-  | otherwise                   = T.take (cardWidth - 5) t <> "…"
+-- | SpanTok / spanToks / fillLines / splitAtWidth / truncLine / diffAttrOf 等
+-- 纯函数已抽到 UI.Render.Spans（见该模块），这里只保留渲染与交互。
 
--- | Attribute for one diff class (plain output keeps the tool attribute).
-diffAttrOf :: DiffClass -> AttrName
-diffAttrOf c = attrName $ case c of
-  CAdd   -> "diffAdd"
-  CDel   -> "diffRemove"
-  CHunk  -> "diffHunk"
-  CMeta  -> "diffMeta"
-  CPlain -> "tool"
+-- | Greedy word fill 见 UI.Render.Spans.fillLines。
 
--- | A word-wrapping token: one word or space-run, carrying the attribute-- name of the span it came from.
-data SpanTok = SpanTok { tokAttr :: String, tokText :: Text }
-
-spanToks :: MdSpan -> [SpanTok]
-spanToks (MdPlain t)   = spanToksWith "" t
-spanToks (MdBold t)    = spanToksWith "mdBold" t
-spanToks (MdCode t)    = spanToksWith "mdCode" t
-
-spanToksWith :: String -> Text -> [SpanTok]
-spanToksWith attr tt = [ SpanTok attr u | u <- runs tt ]
-  where
-    runs t
-      | T.null t = []
-      | otherwise =
-          let (gap, rest) = T.span (== ' ') t
-          in if T.null gap
-               then let (w, rest') = T.span (/= ' ') t
-                    in w : runs rest'
-               else gap : runs rest
-
--- | Greedy word fill at @width@ columns (measured the same way vty
--- measures: per-character wcwidth).  Space runs are held pending and only
--- committed when a word follows, so line breaks never carry trailing
--- spaces; words wider than a whole line are hard-split by character.
-fillLines :: Int -> [SpanTok] -> [[SpanTok]]
-fillLines width = go [] [] 0
-  where
-    tokW = V.wctwidth . tokText
-
-    go line pends used [] = [ reverse line | not (null line) ]
-    go line pends used (t : rest)
-      | T.all (== ' ') (tokText t) = go line (pends ++ [t]) used rest
-      | used + pendingW + tokW t <= width =
-          go (reverse pends ++ t : line) [] (used + pendingW + tokW t) rest
-      | null line && null pends && tokW t > width =
-          let (chunk, rest') = splitAtWidth width (tokText t)
-          in  [ t { tokText = chunk } ]
-                : fillLines width
-                    ([ t { tokText = rest' } | not (T.null rest') ] ++ rest)
-      | otherwise = go [] [] 0 (t : rest)
-      where pendingW = sum (map tokW pends)
-
--- | Split the longest prefix whose display width fits @w@ columns.  The
--- first character is always taken (degenerate 1-column terminals), so the
--- result always makes progress.
-splitAtWidth :: Int -> Text -> (Text, Text)
-splitAtWidth w = go 0 ""
-  where
-    go used acc tt = case T.uncons tt of
-      Nothing -> (T.reverse acc, "")
-      Just (ch, rest)
-        | used > 0 && used + V.safeWcwidth ch > w -> (T.reverse acc, tt)
-        | otherwise -> go (used + V.safeWcwidth ch) (T.cons ch acc) rest
+-- | Split the longest prefix whose display width fits @w@ columns.
+-- 实现见 UI.Render.Spans.splitAtWidth。
 
 -- | Render the assistant reply currently being accumulated.
 -- A blinking cursor suffix signals that the stream is still open.
@@ -1273,10 +1208,7 @@ drawInput st =
             Just pm -> " " <> T.unpack (spinnerFrame (T.length (pmContent pm))) <> " Streaming… "
             Nothing -> " ⏳ Thinking… "
 
--- | Braille spinner frames (10-step cycle). Pure so it is trivially testable.
-spinnerFrame :: Int -> Text
-spinnerFrame i = frames !! (i `mod` length frames)
-  where frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+-- | Braille spinner frames 见 UI.Render.Spans.spinnerFrame。
 
 -- | Live multi-step plan card: the kernel owns the plan, this only renders it.
 --

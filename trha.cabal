@@ -300,6 +300,7 @@ executable trha
     UI.Render.Sidebar
     UI.Render.Diff
     UI.Render.ToolCard
+    UI.Render.Spans
     UI.Render.ToolSummary
     UI.Render.Message
     UI.Render.FilePart
