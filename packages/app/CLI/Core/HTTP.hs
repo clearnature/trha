@@ -36,6 +36,7 @@ import Data.ByteString (ByteString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import qualified Data.Text.Encoding.Error as TEE
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Network.HTTP.Client
@@ -174,7 +175,10 @@ authHeader client = case httpClientToken client of
 buildUrl :: HTTPClient -> String -> String
 buildUrl client path = httpClientBase client ++ path
 
--- | Parse JSON response
+-- | Parse JSON response.
+--
+-- 失败时把响应体一起带进错误：只回 “HTTP error: 502” 时，界面无法区分
+-- 是内核拒绝、参数不对还是后端没起——排查只能靠抓包。
 parseResponse :: FromJSON a => Response BSL.ByteString -> Either CLIError a
 parseResponse response
   | statusIsSuccessful (responseStatus response) =
@@ -182,12 +186,17 @@ parseResponse response
         Just value -> Right value
         Nothing -> Left $ ValidationError "Failed to parse JSON response"
   | otherwise =
-      case statusCode (responseStatus response) of
-        401 -> Left $ AuthenticationError "Unauthorized"
-        403 -> Left $ AuthenticationError "Forbidden"
-        404 -> Left $ ServerError "Not found"
-        500 -> Left $ ServerError "Internal server error"
-        _   -> Left $ ServerError $ T.pack $ "HTTP error: " ++ show (statusCode (responseStatus response))
+      let code = statusCode (responseStatus response)
+          detail = T.strip
+            (TE.decodeUtf8With TEE.lenientDecode (BSL.toStrict (responseBody response)))
+          suffix
+            | T.null detail = ""
+            | T.length detail > 300 = ": " <> T.take 300 detail <> "…"
+            | otherwise = ": " <> detail
+      in case code of
+        401 -> Left $ AuthenticationError ("Unauthorized" <> suffix)
+        403 -> Left $ AuthenticationError ("Forbidden" <> suffix)
+        _   -> Left $ ServerError ("HTTP " <> T.pack (show code) <> suffix)
 
 -- | Where the caller pointed us, plus what to start when nothing answers.
 --

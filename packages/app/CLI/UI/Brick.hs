@@ -26,7 +26,7 @@ import Control.Monad.IO.Class (liftIO)
 import System.Timeout (timeout)
 import Core.Clipboard (saveClipboardImage)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.RunState (stopAll, stopResultText)
 import Core.Export (exportMarkdown, exportJson, defaultExportName)
@@ -3360,11 +3360,16 @@ handleSlash input = do
       case cur of
         Nothing -> appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
         Just sid -> do
-          void $ liftIO $ async $ do
-            r <- if T.null reason
-                   then denyPlan bridge sid
-                   else denyPlanWithReason bridge sid reason
-            writeBChan chan (EvVerdict r)
+          -- 有 planning 计划时拒绝待审批步骤；没有就直接说清楚，
+          -- 不要拿内核的 400 "No pending approval" 当反馈。
+          plan <- liftIO (fetchPlan bridge sid)
+          case plan of
+            Right pv | pvPhase pv == "planning" -> do
+              void $ liftIO $ async $ do
+                r <- decideStep bridge sid "reject"
+                writeBChan chan (EvPlanState (fmap ((, Nothing)) r))
+            _ -> appendMsg (mkMsg "system"
+                   (tr lang "Nothing to deny — no pending plan or approval.") t)
     "/plugins" -> do
       t <- liftIO now
       result <- liftIO (listPlugins bridge)
@@ -3448,11 +3453,17 @@ handleSlash input = do
             Nothing ->
               appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
             Just sid -> do
-              let action = T.drop 1 cmd
-              modify $ \s2 -> s2 { appBusy = True, appStatus = "Plan decision..." }
-              void $ liftIO $ async $ do
-                r <- decideStep bridge sid action
-                writeBChan chan (EvPlanState (fmap ((, Nothing)) r))
+              -- 没有待审批计划时先说清楚，不要拿一条内核 502 当反馈。
+              plan <- liftIO (fetchPlan bridge sid)
+              case plan of
+                Right pv | pvPhase pv == "planning" -> do
+                  let action = T.drop 1 cmd
+                  modify $ \s2 -> s2 { appBusy = True, appStatus = "Plan decision..." }
+                  void $ liftIO $ async $ do
+                    r <- decideStep bridge sid action
+                    writeBChan chan (EvPlanState (fmap ((, Nothing)) r))
+                _ -> appendMsg (mkMsg "system"
+                       (tr lang "No pending plan — submit one with /plan first.") t)
       | otherwise -> case parseCommandWith (map ccName (appCustomCmds st)) input of
           Unknown _ ->
             appendMsg (mkMsg "system" (tr lang "Unknown command: " <> input <> tr lang " — try /help") t)

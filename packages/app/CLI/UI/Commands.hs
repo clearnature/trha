@@ -1191,7 +1191,7 @@ executeCommand lang bridge sessionRef _ (DenyWith reason) = do
       return $ Just $ case result of
         Right PlanDenied -> tr lang "Plan denied."
         Right (PlanApproved _) -> tr lang "Plan was approved (unexpected)."
-        Left err -> T.pack (show err)
+        Left err -> friendlyDenyError lang err
 
 -- | Deny: on a plan that means rejecting the pending step.
 executeCommand lang bridge sessionRef _ Deny = do
@@ -1207,10 +1207,9 @@ executeCommand lang bridge sessionRef _ Deny = do
           return $ Just $ case result of
             Right PlanDenied -> tr lang "Plan denied."
             Right (PlanApproved _) -> tr lang "Plan was approved (unexpected)."
-            Left err -> tr lang "Error: " <> T.pack (show err)
+            Left err -> friendlyDenyError lang err
 
--- | List local sessions (from ~/.trha transcript index).  Sessions of the
--- current project come first, using the @~/.trha/projects/<slug>@ index.
+-- | List local sessions (from ~/.trha transcript index).
 executeCommand lang _ _ _ ResumeList = do
   cwd <- getCurrentDirectory
   -- Only this project's transcripts: another project's conversation resumed
@@ -1371,6 +1370,13 @@ readProviderKey name = do
 gitCount :: (ExitCode, String, String) -> Text
 gitCount (_, out, _) = T.strip (T.pack out)
 
+-- | @/deny@ 在没有待审批计划/审批时不该抛一段 JSON，直接说清楚。
+friendlyDenyError :: Lang -> CLIError -> Text
+friendlyDenyError lang (ServerError msg)
+  | "No pending approval" `T.isInfixOf` msg
+  = tr lang "Nothing to deny — no pending plan or approval."
+friendlyDenyError lang err = tr lang "Error: " <> T.pack (show err)
+
 -- | 取 JSON 对象的字符串字段（缺失时为空串）。
 jsonStr :: Text -> Object -> Text
 jsonStr k o = fromMaybe "" (jsonMaybeStr k o)
@@ -1413,10 +1419,19 @@ decidePlanStep lang bridge sessionRef action = do
   case session of
     Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
     Just sid -> do
-      result <- decideStep bridge sid action
-      return $ Just $ case result of
-        Right pv -> renderPlanBrief pv
-        Left err -> tr lang "Error: " <> T.pack (show err)
+      -- /skip /reject /abandon 在没有待审批计划时应当直接说清楚，而不是把
+      -- 请求打到内核换回一条 502。
+      plan <- fetchPlan bridge sid
+      case plan of
+        Right pv | pvPhase pv /= "planning" ->
+          return $ Just (tr lang "No pending plan — submit one with /plan first.")
+        Left _ ->
+          return $ Just (tr lang "No pending plan — submit one with /plan first.")
+        _ -> do
+          result <- decideStep bridge sid action
+          return $ Just $ case result of
+            Right pv -> renderPlanBrief pv
+            Left err -> tr lang "Error: " <> T.pack (show err)
 
 -- | Release the pending plan step, run it, and report back — the same shape the
 -- TUI and Desktop use, so all three shells tell the kernel the truth.

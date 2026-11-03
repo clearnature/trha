@@ -380,6 +380,23 @@ function reasoningLanguageName(tag: string): string {
   return REASONING_LANGUAGE_NAMES[tag.toLowerCase()] ?? tag;
 }
 
+/**
+ * A thrown value as readable text.
+ *
+ * `String(e)` on an Error yields `[object Object]`, which is what the CLI used
+ * to show for every kernel refusal — the actual reason was lost before it ever
+ * reached the user.
+ */
+function errorText(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
+}
+
 /** Upper bound for the rules text appended to the system prompt. */
 const RULES_MAX_BYTES = 65536;
 
@@ -2465,7 +2482,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         });
         return res.json({ ...answer, mode: session.mode });
       } catch (e) {
-        return res.status(502).json({ error: `kernel plan decision failed: ${String(e)}` });
+        return res.status(502).json({ error: `kernel plan decision failed: ${errorText(e)}` });
       }
     }
 
