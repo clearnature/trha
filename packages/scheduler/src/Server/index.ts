@@ -1880,6 +1880,10 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         // provider sees exactly what was measured.
         const governed = govern(session.messages, session.lastPromptTokens ?? 0, governanceConfig());
         if (governed.prefixChanged) {
+          // 折叠/压缩是静默发生的：留一行日志，出问题时能对上界面里
+          // 那条「context compacted」提示。
+          console.error(
+            `context ${governed.trigger}: saved ${governed.savedTokens} tokens (${session.id})`);
           session.messages = governed.messages;
           session.prefixResets = (session.prefixResets ?? 0) + 1;
           session.lastMaintenance = { trigger: governed.trigger, savedTokens: governed.savedTokens };
