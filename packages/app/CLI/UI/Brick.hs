@@ -1810,6 +1810,17 @@ handleDialogKey (EvKey (KChar 'n') [MCtrl]) = modifyTop (dialogMoveSel 1)
 handleDialogKey (EvKey (KChar '\t') []) = modifyTop (dialogMoveSel 1)
 handleDialogKey (EvKey KEnter []) = dialogActivate
 handleDialogKey (EvKey KBS [])    = withCommands dialogDelete >> scrollBottom
+-- | j/k：没有查询行的列表用 vim 风格上下移动（Reasonix 的 prompts.go）。
+-- 有查询行的列表（命令/技能/模型/会话）里 j/k 是普通字符，不抢导航。
+handleDialogKey (EvKey (KChar c) [])
+  | c == 'j' || c == 'k' = do
+      st <- get
+      case stackTop (appDialogs st) of
+        Just DialogCommands{} -> withCommands (dialogAppend c) >> scrollBottom
+        Just DialogSkills{}   -> withCommands (dialogAppend c) >> scrollBottom
+        Just DialogModels{}   -> withCommands (dialogAppend c) >> scrollBottom
+        Just DialogSessions{} -> withCommands (dialogAppend c) >> scrollBottom
+        _ -> modifyTop (dialogMoveSel (if c == 'j' then 1 else -1))
 handleDialogKey (EvKey (KChar c) [])
   | let o = fromEnum c in o >= 32 && o < 127 = do
       st <- get
