@@ -72,6 +72,7 @@ import Graphics.Vty.CrossPlatform (mkVty)
 import Graphics.Vty.Input.Events
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
+import UI.Brick.Draw.Status (modelLabel, pricesOf, statusLine)
 import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics, branchFromHead, statusFitsOneRow, wrapStatusLine)
 import UI.Render.Spans
   ( SpanTok(..), boolText, diffAttrOf, fillLines, isCompactionMark
@@ -561,9 +562,7 @@ drawCompletion _ cs =
 
 -- | Display form of the active target: @provider/model@ once a provider is
 -- selected, otherwise the bare model name (kernel chooses the provider).
-modelLabel :: AppState -> Text
-modelLabel st =
-  maybe (appModel st) (\p -> p <> "/" <> appModel st) (appProvider st)
+-- | modelLabel 见 UI.Brick.Draw.Status（随状态栏文本层一起迁出）。
 
 -- | Sidebar content assembled from the live state.
 sidebarDataFor :: AppState -> SidebarData
@@ -766,14 +765,7 @@ drawDialog st d =
       DialogSessions _ q _ -> q
       _ -> ""
 
-statusLine :: AppState -> Text
-statusLine st = T.unlines
-  [ tr lang "Status:"
-  , tr lang "  Session: " <> maybe (tr lang "none") T.pack (appSessionId st)
-  , tr lang "  Model: " <> modelLabel st
-  , "  " <> appStatus st
-  ]
-  where lang = appLang st
+-- | statusLine 见 UI.Brick.Draw.Status。
 
 -- | Resume a local session: replay its transcript into the message area
 -- and make it the active session.
@@ -856,12 +848,7 @@ setWindowTitle t = do
   hPutStr stdout ("\ESC]0;" <> T.unpack t <> "\BEL")
   hFlush stdout
 
--- | Prices from settings (all zero ⇒ the summary shows @≈¥—@).
--- | Settings prices win; otherwise the built-in table for the model.
-pricesOf :: Text -> CLIConfig -> Prices
-pricesOf model cfg =
-  let cfgPrices = Prices (configPriceInput cfg) (configPriceCached cfg) (configPriceOutput cfg)
-  in if hasPrices cfgPrices then cfgPrices else pricesForModel model
+-- | pricesOf 见 UI.Brick.Draw.Status。
 
 -- | Apply a named theme (switch at runtime + persist in settings).
 applyLanguage :: Lang -> EventM ResourceName AppState ()
