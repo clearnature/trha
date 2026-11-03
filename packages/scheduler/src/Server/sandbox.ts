@@ -134,8 +134,15 @@ export function setSandboxConfigRuntime(cfg: SandboxConfigView | undefined): voi
 /** Compatibility default: only an explicit on/true/1/enforce enables the seam. */
 export function sandboxEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   if (runtimeEnabled !== undefined) return runtimeEnabled;
-  const raw = (env.TRHA_SANDBOX ?? 'off').trim().toLowerCase();
-  return !(raw === '' || raw === 'off' || raw === 'false' || raw === '0' || raw === 'disabled');
+  const raw = (env.TRHA_SANDBOX ?? '').trim().toLowerCase();
+  // 显式环境变量优先（ADR：不设等于兼容默认 off）。
+  if (raw !== '') {
+    return !(raw === 'off' || raw === 'false' || raw === '0' || raw === 'disabled');
+  }
+  // env 没表态时看 ~/.trha/sandbox.yaml：`trha sandbox config --enabled on`
+  // 写的是这个文件，之前这里只认 env，于是 yaml 打开也不生效——状态栏显示
+  // SandBox:disabled，bash 仍走老路径。
+  return cachedConfig?.enabled ?? false;
 }
 
 function runnerCommand(): string {
