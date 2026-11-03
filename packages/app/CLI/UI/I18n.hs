@@ -197,6 +197,13 @@ zhDict = M.fromList
   , ("Write an AGENTS.md skeleton for this project", "为项目写一份 AGENTS.md 骨架")
   , ("Send the working-tree diff to the model for review (usage: /review [path])", "把工作区 diff 交给模型评审（用法：/review [路径]）")
   , ("Compress the conversation history (alias of /compact; usage: /compress [focus])", "压缩会话历史（/compact 的别名；用法：/compress [关注点]）")
+  , ("Change the session working directory (usage: /cd <path>)", "切换会话工作目录（用法：/cd <路径>）")
+  , ("List the scheduler's tools (usage: /tools [mode])", "列出调度器的工具（用法：/tools [模式]）")
+  , ("Show the permission rules", "显示权限规则")
+  , ("Show recent input history", "显示最近的输入历史")
+  , ("Version, workspace and runtime info", "版本、工作区与运行时信息")
+  , ("Summarize the conversation so far (alias of /recap)", "概括当前会话（/recap 的别名）")
+  , ("Delete remembered notes matching the text (usage: /forget <text>)", "删除匹配的备注（用法：/forget <文本>）")
   , ("Stop the kernel and scheduler? Every shell (TUI, Desktop, Web) disconnects.", "停止内核与调度器？所有外壳（TUI、Desktop、Web）都会断开。")
   , ("Stopping services...", "正在停止服务...")
   , ("This stops the kernel and scheduler and exits. Type /stop confirm to proceed."

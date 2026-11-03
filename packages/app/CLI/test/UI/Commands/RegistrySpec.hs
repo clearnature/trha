@@ -40,7 +40,8 @@ spec = do
                                     , "/cls", "/ask-timeout", "/reasoning-language"
                                     , "/todo", "/tree", "/agents", "/sandbox", "/rename", "/tag", "/quit", "/exit", "/stop"
                                     , "/rewind", "/restore", "/auth", "/update", "/reload-plugins"
-                                    , "/init", "/review", "/compress" ])
+                                    , "/init", "/review", "/compress"
+                                    , "/cd", "/tools", "/permissions", "/history", "/about", "/summary", "/forget" ])
 
   describe "pickerItems" $ do
     it "offers exactly the picker-enabled commands in registry order" $ do

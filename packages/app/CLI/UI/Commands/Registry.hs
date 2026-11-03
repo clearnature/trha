@@ -142,6 +142,12 @@ data Command
   | ReloadPlugins         -- ^ @/reload-plugins@: rescan user commands and report plugin hot-reload state
   | InitProject           -- ^ @/init@: write an AGENTS.md skeleton when the project has none
   | Review Text           -- ^ @/review [path]@: send the working-tree diff to the model for review
+  | ChangeDir Text        -- ^ @/cd <path>@: change the session working directory
+  | ShowTools Text        -- ^ @/tools [mode]@: list the scheduler's tools
+  | ShowPermissions       -- ^ @/permissions@: show the permission rules
+  | ShowHistory           -- ^ @/history@: recent input history
+  | About                 -- ^ @/about@: version, workspace and runtime info
+  | Forget Text           -- ^ @/forget <text>@: delete matching remembered notes
   deriving (Show, Eq)
 
 -- | A registered slash command.
@@ -238,6 +244,13 @@ slashRegistry =
   , SlashCommand "/init"     False True  "Write an AGENTS.md skeleton for this project"
   , SlashCommand "/review"   True  True  "Send the working-tree diff to the model for review (usage: /review [path])"
   , SlashCommand "/compress" True  True  "Compress the conversation history (alias of /compact; usage: /compress [focus])"
+  , SlashCommand "/cd"       True  True  "Change the session working directory (usage: /cd <path>)"
+  , SlashCommand "/tools"    True  True  "List the scheduler's tools (usage: /tools [mode])"
+  , SlashCommand "/permissions" False True "Show the permission rules"
+  , SlashCommand "/history"  False True  "Show recent input history"
+  , SlashCommand "/about"    False True  "Version, workspace and runtime info"
+  , SlashCommand "/summary"  False True  "Summarize the conversation so far (alias of /recap)"
+  , SlashCommand "/forget"   True  True  "Delete remembered notes matching the text (usage: /forget <text>)"
   ]
 
 -- | Parse a command from raw input.  Unknown slash commands become
@@ -281,23 +294,25 @@ groupMembers :: [(CommandGroup, [Text])]
 groupMembers =
   [ (GSession, [ "/new", "/sessions", "/status", "/home", "/resume"
                , "/rename", "/tag", "/delete", "/fork", "/branch"
-               , "/rewind", "/restore" ])
+               , "/rewind", "/restore", "/cd" ])
   , (GHistory, [ "/export", "/transcript", "/stats", "/compact", "/clear"
-               , "/cls", "/session-info", "/stash", "/compress" ])
+               , "/cls", "/session-info", "/stash", "/compress", "/history"
+               , "/summary" ])
   , (GPlan,    [ "/plan", "/approve", "/deny", "/skip", "/reject", "/abandon"
                , "/goal", "/todo", "/tree", "/agents", "/graph", "/workflow"
                , "/loop", "/queue", "/steer" ])
   , (GModel,   [ "/model", "/models", "/provider", "/switch", "/fav", "/preset"
                , "/auth" ])
   , (GContext, [ "/context", "/usage", "/memory", "/remember", "/btw", "/workspace"
-               , "/recap", "/retry", "/diff" ])
+               , "/recap", "/retry", "/diff", "/forget" ])
   , (GTools,   [ "/shell", "/mcp", "/lsp", "/hooks", "/plugins", "/skills", "/doctor"
-               , "/currency", "/update", "/reload-plugins", "/init", "/review" ])
+               , "/currency", "/update", "/reload-plugins", "/init", "/review"
+               , "/tools", "/permissions" ])
   , (GInput,   [ "/attachments", "/clear-attachments", "/paste", "/vim", "/copy" ])
   , (GAppearance, [ "/theme", "/language", "/reasoning-language"
                   , "/output-style", "/verbose" ])
   , (GSettings, [ "/mode", "/sandbox", "/ask-timeout", "/settings" ])
-  , (GHelp,    [ "/help", "/quit", "/exit", "/stop" ])
+  , (GHelp,    [ "/help", "/quit", "/exit", "/stop", "/about" ])
   ]
 
 -- | Group of a command; unknown names fall back to 'GSession'.
@@ -342,6 +357,13 @@ parseCommandBase input = case T.words (T.strip input) of
   ("/compress" : focus) -> Compact (T.unwords focus)
   ("/init" : _) -> InitProject
   ("/review" : args) -> Review (T.unwords args)
+  ("/cd" : args) -> ChangeDir (T.unwords args)
+  ("/tools" : args) -> ShowTools (T.unwords args)
+  ("/permissions" : _) -> ShowPermissions
+  ("/history" : _) -> ShowHistory
+  ("/about" : _) -> About
+  ("/summary" : _) -> Recap
+  ("/forget" : args) -> Forget (T.unwords args)
   ("/sessions" : _) -> Sessions
   ("/new" : _)   -> CreateSession
   ("/delete" : [])   -> DeleteSession ""

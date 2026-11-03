@@ -15,20 +15,20 @@ module UI.Commands
   , runLocalShell
   ) where
 
-import Data.Aeson (Value(..), decode, object, (.=))
+import Data.Aeson (Object, Value(..), decode, object, (.=))
 import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as BSL
 import Data.Char (isHexDigit)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, fetchUsageStats, UsageRow(..), compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setSessionCwd, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus, probeProvider)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, fetchUsageStats, UsageRow(..), compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setSessionCwd, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus, probeProvider, listTools, fetchPermissions)
 import UI.ProviderPresets (presets, preBaseUrl, preKind, preName)
 import Core.Currency (CurrencyTable(..), loadCurrency, saveCurrency)
 import Core.Replay (ReplayBlock(..), renderReplay, renderReplayText)
 import Core.Export (exportMarkdown, exportJson, defaultExportName)
 import Core.TurnStats (Prices(..), pricesForModel, turnSummary)
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
-import Core.Memory (allMemories, rememberText)
+import Core.Memory (allMemories, forgetText, rememberText)
 import Core.ProjectStore (ProjectSession(..), projectSessions)
 import Core.Transcript (listLocalSessions, listLocalSessionsIn, loadTranscript, recordChunk, recordModelRequest, recordSession, recordToolEvent, recordUser)
 import Control.Concurrent (threadDelay)
@@ -61,6 +61,7 @@ import UI.Commands.Registry
 import UI.Stash (Stash(..), stashPush, stashPop, stashEntries, loadStash, saveStash)
 import UI.ModelPrefs (loadModelPrefs, saveModelPrefs, toggleFavorite)
 import UI.Skills (Skill(..), scanSkills, skillDirs)
+import UI.InputHistory (HistState(..), loadHistory)
 import UI.CustomCommands (CustomCommand(..), loadCustomCommands, renderCustomCommand)
 import UI.Theme (Theme(..), themes, themeNames, resolveTheme)
 import UI.Render.Sidebar (agentTreeLines)
@@ -768,6 +769,68 @@ executeCommand lang _ _ _ (Update arg) = do
               , tr lang "Ahead of origin/main: " <> gitCount ahead
               , tr lang "Run /update pull to fast-forward." ]
 
+-- | @/cd <path>@：切换会话工作目录（与 /workspace 同一条后端路径）。
+executeCommand lang bridge sessionRef modelRef (ChangeDir dir)
+  | T.null (T.strip dir) = return $ Just (tr lang "Usage: /cd <path>")
+  | otherwise = executeCommand lang bridge sessionRef modelRef (Workspace (Just (T.strip dir)))
+
+-- | @/tools [mode]@：列出调度器的工具目录。
+executeCommand lang bridge _ _ (ShowTools arg) = do
+  let mmode = case T.words arg of
+        (m : _) -> Just m
+        _       -> Nothing
+  r <- listTools bridge mmode
+  return $ Just $ case r of
+    Left e -> tr lang "Error: " <> T.pack (show e)
+    Right defs
+      | null defs -> tr lang "No tools registered."
+      | otherwise -> T.unlines (tr lang "Tools:" : map renderTool defs)
+  where
+    renderTool (Object o) =
+      "  - " <> jsonStr "name" o
+        <> maybe "" (\d -> " — " <> d) (jsonMaybeStr "description" o)
+    renderTool v = "  - " <> T.pack (show v)
+
+-- | @/permissions@：权限规则的只读视图。
+executeCommand lang bridge _ _ ShowPermissions = do
+  r <- fetchPermissions bridge
+  return $ Just $ case r of
+    Left e -> tr lang "Error: " <> T.pack (show e)
+    Right rules
+      | null rules -> tr lang "No permission rules."
+      | otherwise -> T.unlines (tr lang "Permission rules:" : map renderRule rules)
+  where
+    renderRule (Object o) = "  - " <> jsonStr "kind" o <> ": " <> jsonStr "pattern" o
+    renderRule v = "  - " <> T.pack (show v)
+
+-- | @/history@：最近的输入历史（与 TUI 共用 @~/.trha/history@）。
+executeCommand lang _ _ _ ShowHistory = do
+  hs <- loadHistory
+  let entries = take 20 (hsHistory hs)
+  return $ Just $ if null entries
+    then tr lang "No input history yet."
+    else T.unlines (tr lang "Recent input:" : map ("  " <>) entries)
+
+-- | @/about@：版本、工作区与运行时信息。
+executeCommand lang bridge _ _ About = do
+  cwd <- getCurrentDirectory
+  home <- getHomeDirectory
+  (lspLines, mcpLines) <- fetchServiceStatus bridge
+  return $ Just $ T.unlines
+    [ "trha · " <> tr lang "agent harness"
+    , tr lang "Working directory: " <> T.pack cwd
+    , tr lang "Config: " <> T.pack (home </> ".trha")
+    , tr lang "LSP: " <> T.intercalate ", " lspLines
+    , tr lang "MCP: " <> T.intercalate ", " mcpLines
+    ]
+
+-- | @/forget <text>@：删除匹配的备注。
+executeCommand lang _ _ _ (Forget text)
+  | T.null (T.strip text) = return $ Just (tr lang "Usage: /forget <text>")
+  | otherwise = do
+      n <- forgetText (T.strip text)
+      return $ Just $ tr lang "Forgot " <> T.pack (show n) <> tr lang " note line(s)."
+
 -- | @/reload-plugins@：重扫用户命令；scheduler 的插件目录本来就有 watcher。
 executeCommand lang _ _ _ ReloadPlugins = do
   cmds <- loadCustomCommands
@@ -1308,8 +1371,17 @@ readProviderKey name = do
 gitCount :: (ExitCode, String, String) -> Text
 gitCount (_, out, _) = T.strip (T.pack out)
 
--- | @/init@ 写出的 AGENTS.md 骨架。
-initSkeleton :: Text
+-- | 取 JSON 对象的字符串字段（缺失时为空串）。
+jsonStr :: Text -> Object -> Text
+jsonStr k o = fromMaybe "" (jsonMaybeStr k o)
+
+-- | 取 JSON 对象的可选字符串字段。
+jsonMaybeStr :: Text -> Object -> Maybe Text
+jsonMaybeStr k o = case KeyMap.lookup (AesonKey.fromText k) o of
+  Just (String s) -> Just s
+  _               -> Nothing
+
+-- | @/init@ 写出的 AGENTS.md 骨架。initSkeleton :: Text
 initSkeleton = T.unlines
   [ "# AGENTS.md"
   , ""

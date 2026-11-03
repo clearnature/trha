@@ -336,6 +336,7 @@ executable trha
                   , time
                   , haskeline >= 0.8
                   , yaml
+                  , vector
   if !os(windows)
     build-depends: unix
   -- 注：`-Wnonportable-include-path`（clang 对 `C:\Windows\TEMP` 与磁盘上

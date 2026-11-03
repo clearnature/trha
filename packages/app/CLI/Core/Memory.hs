@@ -11,12 +11,13 @@ module Core.Memory
   ( memoryDir
   , defaultMemoryFile
   , rememberText
+  , forgetText
   , memoryFiles
   , allMemories
   ) where
 
 import Control.Exception (IOException, catch)
-import Data.List (sort)
+import Data.List (partition, sort)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -47,6 +48,32 @@ rememberText text = do
   -- Notes hold whatever the user asked to remember — treat them like
   -- settings.yaml and the run logs (0600), not like a world-readable file.
   chmodQuiet path 0o600
+
+-- | 删除含 @needle@ 的备注（@/forget@），返回删掉的行数。
+--
+-- 按行匹配、大小写不敏感；只改真正命中的文件，其余文件保持原样。
+forgetText :: Text -> IO Int
+forgetText needle = do
+  dir <- memoryDir
+  ok <- doesDirectoryExist dir
+  if not ok then pure 0 else do
+    names <- sort . filter (T.isSuffixOf ".md" . T.pack)
+           <$> (listDirectory dir `catch` \(_ :: IOException) -> pure [])
+    counts <- mapM (forgetIn dir) names
+    pure (sum counts)
+  where
+    needleL = T.toLower (T.strip needle)
+    matches line = not (T.null needleL) && needleL `T.isInfixOf` T.toLower line
+    forgetIn dir name = do
+      let path = dir </> name
+      body <- TIO.readFile path `catch` \(_ :: IOException) -> pure ""
+      let (gone, kept) = partition matches (T.lines body)
+      if null gone
+        then pure 0
+        else do
+          TIO.writeFile path (T.unlines kept)
+          chmodQuiet path 0o600
+          pure (length gone)
 
 -- | Every non-empty @*.md@ under a directory, sorted by file name.
 memoryFiles :: FilePath -> IO [(Text, Text)]

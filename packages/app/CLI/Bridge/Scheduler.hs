@@ -102,6 +102,8 @@ module Bridge.Scheduler
 
     -- * Plugins (Phase 3)
   , listPlugins
+  , listTools
+  , fetchPermissions
 
     -- * Health Check
   , healthCheck
@@ -124,6 +126,7 @@ import System.Directory (getCurrentDirectory)
 import System.Timeout (timeout)
 import Control.Exception (SomeAsyncException, SomeException, catch, fromException, throwIO)
 import Data.Text (Text)
+import qualified Data.Vector as V
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Network.HTTP.Client
@@ -1001,6 +1004,28 @@ listPlugins bridge = do
   return $ case result of
     Right ps -> Right ps
     Left err -> Left err
+
+-- | The scheduler's tool catalog (@GET /api/tools@), optionally filtered by
+-- preset mode (@standard|ptc|minimal|cordis@).
+listTools :: SchedulerBridge -> Maybe Text -> IO (Either CLIError [Value])
+listTools bridge mmode = do
+  r <- httpGet (bridgeHTTP bridge)
+         ("/api/tools" <> maybe "" (\m -> "?mode=" <> T.unpack m) mmode)
+  return $ case r of
+    Right (Array a) -> Right (V.toList a)
+    Right _ -> Left (ValidationError "Invalid tools response")
+    Left e -> Left e
+
+-- | The orchestration layer's permission rules (@GET /api/permissions@).
+fetchPermissions :: SchedulerBridge -> IO (Either CLIError [Value])
+fetchPermissions bridge = do
+  r <- httpGet (bridgeHTTP bridge) "/api/permissions"
+  return $ case r of
+    Right (Object o) -> case KM.lookup "rules" o of
+      Just (Array a) -> Right (V.toList a)
+      _ -> Left (ValidationError "Missing rules in permissions response")
+    Right _ -> Left (ValidationError "Invalid permissions response")
+    Left e -> Left e
 
 --------------------------------------------------------------------------------
 -- Health Check
