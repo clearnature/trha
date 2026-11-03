@@ -736,6 +736,12 @@ statusLine st = T.unlines
 
 -- | Resume a local session: replay its transcript into the message area
 -- and make it the active session.
+-- | 调度层的压缩标记（govern 写入的一条 user 消息）。
+isCompactionMark :: Text -> Bool
+isCompactionMark c =
+  let s = T.strip c
+  in "[context compacted" `T.isPrefixOf` s || "[context folded" `T.isPrefixOf` s
+
 resumeSession :: Text -> EventM ResourceName AppState ()
 resumeSession selText = do
   lang <- gets appLang
@@ -796,6 +802,12 @@ resumeSession selText = do
         (case live of
            Right _ -> tr lang "This session is live on the scheduler — keep going."
            Left _  -> tr lang "This session is not live on the scheduler; /new starts a fresh one.") t)
+      -- 压缩发生在调度层，本地 transcript 里没有那条标记：恢复时把它
+      -- 单独显示出来，否则用户看到的是一段"凭空变短"的历史。
+      remoteAll <- liftIO (resumeMessages bridge0 (ssId s))
+      case [ c | (_, c) <- remoteAll, isCompactionMark c ] of
+        (c : _) -> appendMsg (mkMsg "compact" c t)
+        []      -> pure ()
       st <- get
       void $ liftIO $ async $
         refreshSidebar (appBridge st) (appChan st) (ssId s)
