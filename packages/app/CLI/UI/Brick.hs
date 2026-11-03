@@ -103,6 +103,7 @@ import UI.Render.Diff
     , renderDiffRow, looksLikeDiff )
 import UI.Layout
     ( SidebarState(..), SidebarRender(..), sidebarRender, messageWidth, toggleSidebar )
+import UI.Render.Settings (computeStatsBlocks, renderStatsBlocks, renderStatusRows)
 import UI.Render.Sidebar
     ( SidebarData(..), SidebarLine(..), sidebarLines, sidebarHint, agentTreeLines
     , truncateTo )
@@ -3883,39 +3884,8 @@ clampSel n sel
   | otherwise = max 0 (min sel (n - 1))
 
 -- | Two-column rendering of the Status rows (label column padded).
-renderStatusRows :: Lang -> [StatusRow] -> Widget ResourceName
-renderStatusRows lang rows =
-  vLimit 20 $ vBox [ row r | r <- rows ]
-  where
-    w = 1 + maximum (map (TW.textWidth . tr lang . srLabel) rows)
-    padTo x = x <> T.replicate (max 0 (w - TW.textWidth x)) " "
-    row r = hBox
-      [ withAttr (attrName "timestamp") (str (T.unpack (padTo (tr lang (srLabel r)))))
-      , str (T.unpack (srValue r))
-      ]
+-- | renderStatusRows / computeStatsBlocks / renderStatsBlocks 见 UI.Render.Settings。
 
--- | Counters for the Stats tab, shaped by UI.StatsView.
-computeStatsBlocks :: AppState -> [StatsBlock]
-computeStatsBlocks st =
-  buildStatsBlocks sid total (u, a, tl, sy) (appLastUsage st) chars
-  where
-    roles = map msgRole (appMessages st)
-    total = length roles
-    u  = length (filter (== "user") roles)
-    a  = length (filter (== "assistant") roles)
-    tl = length (filter (== "tool") roles)
-    sy = total - u - a - tl
-    chars = sum (map (T.length . msgContent) (appMessages st))
-    sid = maybe "—" T.pack (appSessionId st)
-
--- | Render the three stats sections (title + two-column rows each).
-renderStatsBlocks :: Lang -> [StatsBlock] -> Widget ResourceName
-renderStatsBlocks lang blocks = vBox (concatMap one blocks)
-  where
-    one b = [ padLeftRight 1 $ withAttr (attrName "title") $ str (T.unpack (tr lang (sbTitleKey b)))
-            , renderStatusRows lang [ StatusRow k v | (k, v) <- sbRows b ]
-            , str " "
-            ]
 
 -- | Next element in a cycle (wraps to the head); falls back to the head
 -- when the current value is not one of the options.

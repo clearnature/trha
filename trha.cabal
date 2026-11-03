@@ -301,6 +301,7 @@ executable trha
     UI.Render.Diff
     UI.Render.ToolCard
     UI.Render.Spans
+    UI.Render.Settings
     UI.Brick.Draw.Status
     UI.Brick.Draw.Sidebar
     UI.Brick.Draw.Dialog
