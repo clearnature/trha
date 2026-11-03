@@ -1315,10 +1315,12 @@ drawPlanCard pv =
 drawStatus :: AppState -> Widget ResourceName
 drawStatus st = Widget Greedy Fixed $ do
   c <- getContext
-  render (vBox (line1 : secondRow (c ^. availWidthL)))
+  render (vBox (line1 (c ^. availWidthL) : secondRow (c ^. availWidthL)))
   where
     lang = appLang st
-    line1 = padLeftRight 1 $ hBox (concat
+    -- 窄终端先牺牲常驻帮助文本：模型名与沙箱徽标比「Shift+Tab …」这类
+    -- 看过就会的提示更值得占位（80 列下实测模型名会被整段挤掉）。
+    line1 avail = padLeftRight 1 $ hBox (concat
       [ [ withAttr (attrName "error") (str (T.unpack modeTag))
         -- 这里原来是常量 " · ready"：appStatus 被各处设置（工具状态、
         -- 中断中、再按一次退出…）却从未真正显示出来。
@@ -1327,13 +1329,14 @@ drawStatus st = Widget Greedy Fixed $ do
         ]
       , [ withAttr (attrName "timestamp") (str (T.unpack (" · " <> clockNow)))
         | not (T.null clockNow) ]
-      , [ withAttr (attrName "timestamp")
-            (str (T.unpack (tr lang " · Shift+Tab read-only/ask/auto/YOLO/plan · Ctrl+Y YOLO")))
-        , str "   "
-        , withAttr (attrName (if ssEnabled (appSandbox st) then "status" else "error"))
-            (str (T.unpack (sandboxTag st)))
-        , padLeft Max (withAttr (attrName "timestamp") (str (T.unpack modelLine)))
-        ]
+      , if avail >= 130
+          then [ withAttr (attrName "timestamp")
+                   (str (T.unpack (tr lang " · Shift+Tab read-only/ask/auto/YOLO/plan · Ctrl+Y YOLO")))
+               , str "   "
+               , withAttr (attrName (if ssEnabled (appSandbox st) then "status" else "error"))
+                   (str (T.unpack (sandboxTag st))) ]
+          else []
+      , [ padLeft Max (withAttr (attrName "timestamp") (str (T.unpack modelLine))) ]
       ])
     line2 = padLeftRight 1 $ hBox
       [ withAttr (attrName "timestamp") (str (T.unpack gitLine))
