@@ -2379,7 +2379,11 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       await bridge.queryModelStream(
         {
           messages: messages as Parameters<typeof bridge.queryModelStream>[0]['messages'],
-          genParams: { sessionId: session.id },
+          // 与普通对话走同一套字段：缺 model/provider 时 kernel 会退回默认
+          // provider，Anthropic 端点直接回 415（/recap 就是这么坏的）。
+          model,
+          provider: session.lastRequest?.provider,
+          sessionId: session.id,
         },
         d => { summary += d; },
       );
@@ -2404,7 +2408,13 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     let answer = '';
     try {
       await bridge.queryModelStream(
-        { messages: messages as Parameters<typeof bridge.queryModelStream>[0]['messages'], genParams: { sessionId: session.id } },
+        {
+          messages: messages as Parameters<typeof bridge.queryModelStream>[0]['messages'],
+          // 同 /recap：必须带上 model/provider，否则 kernel 退回默认 provider。
+          model,
+          provider: session.lastRequest?.provider,
+          sessionId: session.id,
+        },
         d => { answer += d; },
       );
       res.json({ answer });
