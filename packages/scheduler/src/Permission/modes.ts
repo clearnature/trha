@@ -48,6 +48,24 @@ export function isReadOnlyTool(name: string): boolean {
   return READ_ONLY_TOOLS.has(name);
 }
 
+/**
+ * 纯只读的 shell 命令：read-only 模式下同样放行。
+ *
+ * 没有这一条时，用户开局连 `ls -la` 都跑不了（"read-only mode: bash is not
+ * allowed"），必须先按 Shift+Tab 切模式——而 read-only 的语义本来就该允许
+ * 「看一眼」。判定故意保守：管道、重定向、命令替换、以及任何会改文件/进程
+ * 的命令一律不算只读；`curl`/`wget` 能外发数据，也不在白名单里。
+ */
+export function isReadOnlyShellCommand(command: string): boolean {
+  const cmd = command.trim();
+  if (cmd.length === 0) return false;
+  if (/[;>|]|&&|\|\||\$\(|`/.test(cmd)) return false;
+  if (/\b(rm|rmdir|mv|cp|chmod|chown|kill|pkill|tee|dd|sudo|su|mkdir|touch|truncate|install|ln|sed|awk|perl)\b/i.test(cmd)) {
+    return false;
+  }
+  return /^(ls|cat|head|tail|wc|pwd|date|whoami|uname|which|echo|printf|rg|grep|find|file|stat|du|df|env|printenv|git\s+(status|log|diff|show|branch|remote|rev-parse))\b/i.test(cmd);
+}
+
 /** The next mode in the Shift+Tab cycle. */
 export function nextMode(mode: PermissionMode): PermissionMode {
   const i = MODE_CYCLE.indexOf(mode);
@@ -84,14 +102,20 @@ export function applyPermissionMode(
   mode: PermissionMode,
   toolName: string,
   ruleVerdict: ModeVerdict,
+  command?: string,
 ): ModeVerdict {
   if (ruleVerdict.action === 'deny') return ruleVerdict;
   switch (mode) {
     case 'read-only':
-    case 'plan':
-      return isReadOnlyTool(toolName)
+    case 'plan': {
+      // 「看一眼」必须可行：只读工具照旧放行，纯只读的 shell 命令也放行，
+      // 否则 `ls -la` 都会被拒，用户得先 Shift+Tab 才能看到目录。
+      const allowed = isReadOnlyTool(toolName)
+        || (toolName === 'bash' && isReadOnlyShellCommand(command ?? ''));
+      return allowed
         ? { action: 'allow' }
         : { action: 'deny', reason: `${mode} mode: ${toolName} is not allowed (Shift+Tab to switch)` };
+    }
     case 'ask':
       return isReadOnlyTool(toolName)
         ? { action: 'allow' }

@@ -119,3 +119,32 @@ describe('session mode endpoint', () => {
     server.close();
   });
 });
+
+// read-only 模式必须能「看一眼」：ls/cat/git status 这类纯只读命令放行，
+// 写操作、管道与网络外发仍然拒绝。此前 bash 不在白名单，开局连 `ls -la`
+// 都跑不了（"read-only mode: bash is not allowed"）。
+describe('read-only mode and read-only shell commands', () => {
+  const allow = { action: 'allow' as const };
+
+  it('lets pure read commands through bash', () => {
+    for (const cmd of ['ls -la', 'cat AGENTS.md', 'git status', 'rg TODO src', 'wc -l a.txt']) {
+      expect(applyPermissionMode('read-only', 'bash', allow, cmd)).toEqual({ action: 'allow' });
+    }
+  });
+
+  it('still denies writes, pipes, and network egress', () => {
+    for (const cmd of ['rm -rf build', 'echo x > f', 'ls | wc -l', 'git commit -m x', 'curl http://example.com', 'sudo ls']) {
+      expect(applyPermissionMode('read-only', 'bash', allow, cmd).action).toBe('deny');
+    }
+  });
+
+  it('keeps the non-shell allow-list unchanged', () => {
+    expect(applyPermissionMode('read-only', 'read', allow).action).toBe('allow');
+    expect(applyPermissionMode('read-only', 'write', allow).action).toBe('deny');
+  });
+
+  it('applies the same rule in plan mode', () => {
+    expect(applyPermissionMode('plan', 'bash', allow, 'ls').action).toBe('allow');
+    expect(applyPermissionMode('plan', 'bash', allow, 'rm -rf x').action).toBe('deny');
+  });
+});

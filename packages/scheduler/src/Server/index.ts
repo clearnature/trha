@@ -1661,7 +1661,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       // No session (direct tool execution in tests / approval replay): keep
       // the old rule-engine behaviour instead of the session default.
       : (permSession?.permissionMode ?? 'auto');
-    const verdict = applyPermissionMode(posture, name, decidePermission(name, argsObj));
+    const verdict = applyPermissionMode(
+      posture, name, decidePermission(name, argsObj),
+      typeof argsObj.command === 'string' ? argsObj.command : undefined);
     if (verdict.action === 'deny') return `ERROR: ${verdict.reason}`;
     if (verdict.action === 'ask') {
       const cmd = typeof argsObj.command === 'string' ? argsObj.command.trim() : '';
