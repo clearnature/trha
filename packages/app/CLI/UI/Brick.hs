@@ -27,7 +27,7 @@ import System.Timeout (timeout)
 import Core.Clipboard (readClipboardText, saveClipboardImage)
 import Core.Types
 import Core.Bootstrap (ensureBackend)
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.RunState (stopAll, stopResultText)
 import Core.Export (exportMarkdown, exportJson, defaultExportName)
@@ -3511,6 +3511,21 @@ handleSlash input = do
       modify $ \s -> s { appDialogs = stackPush (DialogProviders [] 0) (appDialogs s) }
       void $ liftIO $ async $
         listProviders bridge >>= writeBChan chan . EvProviders
+    -- /switch 之前没有 TUI 分支，落到 executeCommand 的 SwitchProvider
+    -- 分支只打印一段带 `*` 的列表 —— 用户看到「列出来但选不中」。
+    -- 无参时和 /provider 走同一个可选中对话框；带参就直接切。
+    _ | cmd == "/switch" || "/switch " `T.isPrefixOf` cmd -> do
+      let arg = T.strip (T.drop (T.length "/switch") input)
+      if T.null arg
+        then do
+          modify $ \s -> s { appDialogs = stackPush (DialogProviders [] 0) (appDialogs s) }
+          void $ liftIO $ async $
+            listProviders bridge >>= writeBChan chan . EvProviders
+        else do
+          r <- liftIO $ setInUseProvider bridge arg
+          case r of
+            Right _ -> showToast (tr lang "Switched to " <> arg)
+            Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) t)
     "/quit" -> halt
     "/exit" -> halt
     "/status" ->
