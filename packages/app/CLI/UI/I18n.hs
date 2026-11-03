@@ -194,6 +194,9 @@ zhDict = M.fromList
   , ("Show provider key status (usage: /auth [check <name>])", "查看 provider 的 key 状态（用法：/auth [check <名称>]）")
   , ("Compare with origin/main (usage: /update [pull])", "与 origin/main 比对（用法：/update [pull]）")
   , ("Rescan user commands and plugins", "重扫用户命令与插件")
+  , ("Write an AGENTS.md skeleton for this project", "为项目写一份 AGENTS.md 骨架")
+  , ("Send the working-tree diff to the model for review (usage: /review [path])", "把工作区 diff 交给模型评审（用法：/review [路径]）")
+  , ("Compress the conversation history (alias of /compact; usage: /compress [focus])", "压缩会话历史（/compact 的别名；用法：/compress [关注点]）")
   , ("Stop the kernel and scheduler? Every shell (TUI, Desktop, Web) disconnects.", "停止内核与调度器？所有外壳（TUI、Desktop、Web）都会断开。")
   , ("Stopping services...", "正在停止服务...")
   , ("This stops the kernel and scheduler and exits. Type /stop confirm to proceed."

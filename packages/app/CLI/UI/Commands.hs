@@ -774,6 +774,39 @@ executeCommand lang _ _ _ ReloadPlugins = do
   return $ Just $ tr lang "Reloaded user commands: " <> T.pack (show (length cmds))
                    <> tr lang " (scheduler plugins hot-reload automatically)"
 
+-- | @/init@：项目里没有 AGENTS.md 时写一份骨架；已有就不动它。
+executeCommand lang _ _ _ InitProject = do
+  cwd <- getCurrentDirectory
+  let target = cwd </> "AGENTS.md"
+  exists <- doesFileExist target
+  if exists
+    then return $ Just $ tr lang "AGENTS.md already exists: " <> T.pack target
+    else do
+      TIO.writeFile target initSkeleton
+      return $ Just $ tr lang "Wrote " <> T.pack target
+                       <> tr lang " — fill in build, test and conventions."
+
+-- | @/review [path]@：把工作区（含已暂存）的 diff 交给模型评审。
+executeCommand lang bridge sessionRef modelRef (Review arg) = do
+  cwd <- getCurrentDirectory
+  let git xs = readCreateProcessWithExitCode (proc "git" ("-C" : cwd : xs)) ""
+      paths = map T.unpack (T.words arg)
+  (probeOut, _, _) <- git ["rev-parse", "--show-toplevel"]
+  case probeOut of
+    ExitFailure _ -> return $ Just $ tr lang "Not a git checkout: " <> T.pack cwd
+    ExitSuccess -> do
+      (_, unstaged, _) <- git (["diff"] <> paths)
+      (_, staged, _) <- git (["diff", "--cached"] <> paths)
+      let diffText = T.pack (unstaged <> staged)
+          clipped = if T.length diffText > 40000
+                      then T.take 40000 diffText <> "\n… (truncated)"
+                      else diffText
+      if T.null (T.strip diffText)
+        then return $ Just (tr lang "No uncommitted changes to review.")
+        else executeCommand lang bridge sessionRef modelRef
+               (SendMessage ("请审阅以下未提交的改动，指出问题与改进点：\n\n```diff\n"
+                             <> clipped <> "\n```"))
+
 executeCommand lang bridge sessionRef _ (Steer prompt)
   | T.null (T.strip prompt) = return $ Just (tr lang "Usage: /steer <prompt>")
   | otherwise = do
@@ -1274,6 +1307,25 @@ readProviderKey name = do
 -- | @git rev-list --count@ 的输出。
 gitCount :: (ExitCode, String, String) -> Text
 gitCount (_, out, _) = T.strip (T.pack out)
+
+-- | @/init@ 写出的 AGENTS.md 骨架。
+initSkeleton :: Text
+initSkeleton = T.unlines
+  [ "# AGENTS.md"
+  , ""
+  , "本文件是 agent 的入口。请按项目实际情况补充下面几节。"
+  , ""
+  , "## 项目概况"
+  , ""
+  , "## 构建与测试"
+  , ""
+  , "```bash"
+  , "# 构建命令"
+  , "```"
+  , ""
+  , "## 约定"
+  , ""
+  ]
 
 -- | Map the wire tool status to the card status type.
 toCardStatus :: ToolRunStatus -> ToolStatus

@@ -140,6 +140,8 @@ data Command
   | Auth Text             -- ^ @/auth [check <name>]@: provider key status
   | Update Text           -- ^ @/update [pull]@: compare with origin/main, optionally pull
   | ReloadPlugins         -- ^ @/reload-plugins@: rescan user commands and report plugin hot-reload state
+  | InitProject           -- ^ @/init@: write an AGENTS.md skeleton when the project has none
+  | Review Text           -- ^ @/review [path]@: send the working-tree diff to the model for review
   deriving (Show, Eq)
 
 -- | A registered slash command.
@@ -233,6 +235,9 @@ slashRegistry =
   , SlashCommand "/auth"     True  True  "Show provider key status (usage: /auth [check <name>])"
   , SlashCommand "/update"   True  True  "Compare with origin/main (usage: /update [pull])"
   , SlashCommand "/reload-plugins" False True "Rescan user commands and plugins"
+  , SlashCommand "/init"     False True  "Write an AGENTS.md skeleton for this project"
+  , SlashCommand "/review"   True  True  "Send the working-tree diff to the model for review (usage: /review [path])"
+  , SlashCommand "/compress" True  True  "Compress the conversation history (alias of /compact; usage: /compress [focus])"
   ]
 
 -- | Parse a command from raw input.  Unknown slash commands become
@@ -278,7 +283,7 @@ groupMembers =
                , "/rename", "/tag", "/delete", "/fork", "/branch"
                , "/rewind", "/restore" ])
   , (GHistory, [ "/export", "/transcript", "/stats", "/compact", "/clear"
-               , "/cls", "/session-info", "/stash" ])
+               , "/cls", "/session-info", "/stash", "/compress" ])
   , (GPlan,    [ "/plan", "/approve", "/deny", "/skip", "/reject", "/abandon"
                , "/goal", "/todo", "/tree", "/agents", "/graph", "/workflow"
                , "/loop", "/queue", "/steer" ])
@@ -287,7 +292,7 @@ groupMembers =
   , (GContext, [ "/context", "/usage", "/memory", "/remember", "/btw", "/workspace"
                , "/recap", "/retry", "/diff" ])
   , (GTools,   [ "/shell", "/mcp", "/lsp", "/hooks", "/plugins", "/skills", "/doctor"
-               , "/currency", "/update", "/reload-plugins" ])
+               , "/currency", "/update", "/reload-plugins", "/init", "/review" ])
   , (GInput,   [ "/attachments", "/clear-attachments", "/paste", "/vim", "/copy" ])
   , (GAppearance, [ "/theme", "/language", "/reasoning-language"
                   , "/output-style", "/verbose" ])
@@ -334,6 +339,9 @@ parseCommandBase input = case T.words (T.strip input) of
   ("/auth" : args) -> Auth (T.unwords args)
   ("/update" : args) -> Update (T.unwords args)
   ("/reload-plugins" : _) -> ReloadPlugins
+  ("/compress" : focus) -> Compact (T.unwords focus)
+  ("/init" : _) -> InitProject
+  ("/review" : args) -> Review (T.unwords args)
   ("/sessions" : _) -> Sessions
   ("/new" : _)   -> CreateSession
   ("/delete" : [])   -> DeleteSession ""
