@@ -72,7 +72,9 @@ import Graphics.Vty.CrossPlatform (mkVty)
 import Graphics.Vty.Input.Events
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
-import UI.Brick.Draw.Status (modelLabel, pricesOf, statusLine)
+import UI.Brick.Draw.Status
+  ( modelLabel, pricesOf, statusLine
+  , statusSandboxTag, statusClock, statusModelLine, statusGitLine, statusStatsLine )
 import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics, branchFromHead, statusFitsOneRow, wrapStatusLine)
 import UI.Render.Spans
   ( SpanTok(..), boolText, diffAttrOf, fillLines, isCompactionMark
@@ -1232,171 +1234,18 @@ drawPlanCard pv =
           here = if pvPending pv == Just (psvId st) then "  ←" else ""
       in T.pack (show (n :: Int)) <> ". " <> mark <> " " <> psvTitle st <> here
 
--- | 状态栏第 1 行的沙箱徽标。
-statusSandboxTag :: AppState -> Text
-statusSandboxTag st =
-  "SandBox:" <> (if ssEnabled (appSandbox st) then "enabled" else "disabled")
+-- | 状态栏的纯文本源（statusSandboxTag / statusClock / statusModelLine /
+-- statusGitLine / statusPeak / statusStatsLine …）已整体迁到
+-- UI.Brick.Draw.Status。本模块只保留 Widget 装配。
 
--- | 本地时钟；没有时间源时返回空串，状态栏就不渲染这一段。
-statusClock :: AppState -> Text
-statusClock st = case (appNow st, appTz st) of
-  (Just t, Just tz) -> clockWithZone tz t
-  _ -> ""
-
--- | 模型名 + 推理强度。
-statusModelLine :: AppState -> Text
-statusModelLine st = "模型 " <> modelLabel st <> "   强度 " <> appEffort st
-
--- | @目录@分支 [git 状态]@。
-statusGitLine :: AppState -> Text
-statusGitLine st =
-  let ws = fromMaybe "" (lookup "workspace" (appMetrics st))
-      dirName = T.pack (takeFileName (T.unpack ws))
-      branch = fromMaybe "?" (lookup "git" (appMetrics st))
-  in dirName <> "@" <> branch
-       <> (if T.null (appGitStat st) then "" else "  " <> appGitStat st)
-
--- | 峰谷时段标签（DeepSeek 的低峰折扣）。
-statusPeak :: AppState -> Text
-statusPeak st = case appNow st of
-  Just t | isOffPeak t -> "低峰"
-  _ -> "高峰"
-
--- | 千分位分隔（21,444 而不是 21.4K），与参考实现的脚注一致。
-statusCommas :: Int -> Text
-statusCommas n = T.pack (reverse (go (reverse (show n))))
-  where
-    go [] = []
-    go xs = let (a, b) = splitAt 3 xs in a ++ (if null b then [] else ',' : go b)
-
--- | 紧凑记法：≥1e6 用 M，≥1e3 用 K，各保留一位小数。
-statusShortK :: Int -> Text
-statusShortK n
-  | n >= 1000000 = T.pack (showFFloat (Just 1) (fromIntegral n / 1e6 :: Double) "") <> "M"
-  | n >= 1000    = T.pack (showFFloat (Just 1) (fromIntegral n / 1e3 :: Double) "") <> "K"
-  | otherwise    = T.pack (show n)
-
--- | @a/(a+b)@ 的百分比，两位小数（缓存命中率用）。
-statusPct :: Int -> Int -> Text
-statusPct a b =
-  T.pack (showFFloat (Just 2) (fromIntegral a * 100 / fromIntegral (a + b) :: Double) "") <> "%"
-
--- | 一位小数（吞吐用）。
-statusOneDec :: Double -> Text
-statusOneDec v = T.pack (showFFloat (Just 1) v "")
-
--- | 可用上下文 = 窗口的 80%（MiMo 的记账口径：预留 20% 给回复）。
-statusUsable :: Int -> Int
-statusUsable size = max 1 (size * 8 `div` 10)
-
--- | 上下文占用百分比（分母是可用窗口，不是原始窗口）。
-statusCtxPct :: Int -> Int -> Int
-statusCtxPct used size =
-  round (fromIntegral used / fromIntegral (statusUsable size) * 100 :: Double) :: Int
-
--- | 报过缓存数字的轮数后缀，让稳定的百分比可解释。
-statusTurnsSuffix :: Int -> Text
-statusTurnsSuffix n
-  | n > 0 = " · " <> T.pack (show n) <> " 轮"
-  | otherwise = ""
+-- | 统计工具（statusCommas / statusShortK / statusPct / statusOneDec /
+-- statusUsable / statusCtxPct / statusTurnsSuffix）见 UI.Brick.Draw.Status。
 
 -- | 状态栏第 2 行的统计段：缓存 / 上下文 / 压缩 / 吞吐 / token / 成本 / 余额 / 峰谷。
 --
 -- 段的选择与顺序由 @metrics@ 配置决定，但**配置只决定顺序**：未列出的段仍然
 -- 显示。历史坑：配置早于新键的用户只看到三段，就以为其余段坏了。
-statusStatsLine :: AppState -> Text
-statusStatsLine st = T.intercalate "  "
-  [ s | k <- statsKeys, s <- [segFor k], not (T.null s) ]
-  where
-    cacheSeg = case (appCacheNow st, appCacheSum st) of
-      (Just (h, m), (h0, m0)) | h + m > 0 && h0 + m0 > 0 ->
-        "缓存 现在 " <> statusPct h m <> " · 累计 " <> statusPct h0 m0
-          <> statusTurnsSuffix (appCacheTurns st)
-      _ -> ""
-    ctxSeg = case (appCtxUsed st, appCtxSize st) of
-      (Just used, Just size) | size > 0 ->
-        "上下文 " <> statusShortK used
-          <> " (" <> T.pack (show (statusCtxPct used size)) <> "%)"
-      -- 窗口未知时仍显示用了多少：完全隐藏（旧行为）会让段看起来是坏的。
-      (Just used, _) -> "上下文 " <> statusShortK used
-      _ -> ""
-    compactSeg = case (appCtxUsed st, appCtxSize st) of
-      (Just used, Just size) | size > 0 ->
-        "压缩 " <> T.pack (show (max 0 (100 - statusCtxPct used size))) <> "%"
-      _ -> ""
-    -- 两个速率同分子：端到端（从提交算）与纯解码（从首个 token 算）。
-    -- 供应商报后者，用户感觉前者，两者都有时都显示。
-    tpsSeg = case (appLastTps st, appLastDecodeTps st) of
-      (Just e2e, Just dec) | e2e > 0 && dec > 0 ->
-        "速度 " <> statusOneDec e2e <> " t/s（生成 " <> statusOneDec dec <> "）"
-      (Just e2e, _) | e2e > 0 -> "速度 " <> statusOneDec e2e <> " t/s"
-      (_, Just dec) | dec > 0 -> "生成 " <> statusOneDec dec <> " t/s"
-      _ -> ""
-    tokensSeg = case appLastUsage st of
-      Just n | n > 0 -> "本轮 " <> statusCommas n <> " tok"
-      _ -> ""
-    usageSeg = case appUsage st of
-      Just u | usageTotalTokens u > 0 ->
-        "in " <> statusShortK (usagePromptTokens u)
-          <> " / out " <> statusShortK (usageCompletionTokens u)
-          <> " / 合计 " <> statusShortK (usageTotalTokens u)
-      _ -> ""
-    prices = pricesOf (appModel st) (appEffCfg st)
-    costSessionSeg = if hasPrices prices
-                then "会话 ¥" <> T.pack (showFFloat (Just 4) (appCostSum st) "")
-                else "会话 ¥—"
-    costTurnSeg = if hasPrices prices && appLastCost st > 0
-                then "本次 ¥" <> T.pack (showFFloat (Just 4) (appLastCost st) "")
-                else ""
-    outSeg = case appUsage st of
-      Just u | usageCompletionTokens u > 0 ->
-        "输出 " <> statusCommas (usageCompletionTokens u)
-      _ -> ""
-    cacheTokensSeg = case appCacheNow st of
-      Just (hit, miss) | hit + miss > 0 ->
-        "命中 " <> statusCommas hit <> " | 未命中 " <> statusCommas miss
-      _ -> ""
-    sessTokensSeg
-      | appSessTokens st > 0 = "会话 " <> statusCommas (appSessTokens st) <> " tok"
-      | otherwise = ""
-    peak = statusPeak st
-    balanceSeg = case appBalance st of
-      Just b -> "余额 " <> balanceCurrency b
-                  <> T.pack (showFFloat (Just 2) (balanceTotal b) "")
-      Nothing -> "余额 —"
-    -- @model@/@git@/@workspace@/@session@ 在第 1 行，这里只放状态类键。
-    statusKeys :: [Text]
-    statusKeys = [ "cache", "ctx", "compact", "tps", "tokens", "out"
-                 , "cacheTokens", "sessTokens", "costTurn", "costSession"
-                 , "usage", "balance", "cost", "peak" ]
-    aliasKey "context" = "ctx"
-    aliasKey k = k
-    configuredKeys =
-      [ aliasKey k | k <- parseMetrics (configMetrics (appEffCfg st))
-                   , aliasKey k `elem` statusKeys ]
-    defaultStatsKeys = [ "cache", "ctx", "compact", "tps", "tokens", "out"
-                       , "cacheTokens", "sessTokens", "costTurn", "costSession"
-                       , "balance", "peak" ]
-    statsKeys = if null configuredKeys
-                  then defaultStatsKeys
-                  else configuredKeys
-                       ++ [ k | k <- defaultStatsKeys, k `notElem` configuredKeys ]
-    segFor k = case k of
-      "cache"   -> cacheSeg
-      "ctx"     -> ctxSeg
-      "compact" -> compactSeg
-      "tps"     -> tpsSeg
-      "tokens"  -> tokensSeg
-      "out"     -> outSeg
-      "cacheTokens" -> cacheTokensSeg
-      "sessTokens"  -> sessTokensSeg
-      "costTurn"    -> costTurnSeg
-      "costSession" -> costSessionSeg
-      "usage"   -> usageSeg
-      "balance" -> balanceSeg
-      "cost"    -> costSessionSeg
-      "peak"    -> peak
-      _         -> ""
+-- | 统计行（statusStatsLine）与全部 segment 已迁到 UI.Brick.Draw.Status。
 
 drawStatus :: AppState -> Widget ResourceName
 drawStatus st = Widget Greedy Fixed $ do
