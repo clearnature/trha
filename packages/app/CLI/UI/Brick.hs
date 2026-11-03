@@ -137,6 +137,7 @@ sandboxOn v = case fmap (T.toLower . T.strip . T.pack) v of
 initialState :: SchedulerBridge -> BChan AppEvent -> CLIConfig -> AppState
 initialState bridge chan cfg = AppState
   { appMessages  = []
+  , appNextMsgId = 0
   , appInput     = editorText InputArea (Just 1) ""
   , appSessionId = Nothing
   , appModel     = configModel cfg
@@ -760,6 +761,8 @@ resumeSession selText = do
       events <- liftIO (loadTranscript (ssId s))
       let msgs = blocksToMessages (renderReplay events)
       modify $ \st -> st { appMessages = msgs
+                         , appNextMsgId = length msgs
+                         , appCardFocus = Nothing
                          , appSessionId = Just (ssId s)
                          , appStatus = tr (appLang st) "Resumed " <> T.pack (ssId s)
                          , appBusy = False
@@ -1431,7 +1434,9 @@ now = do
 -- | Append a message, stamping it with the next position-based id.
 appendMsg :: ChatMessage -> EventM ResourceName AppState ()
 appendMsg msg = modify $ \st ->
-  st { appMessages = appMessages st ++ [msg { msgId = length (appMessages st) }] }
+  let i = appNextMsgId st
+  in st { appMessages = appMessages st ++ [msg { msgId = i }]
+        , appNextMsgId = i + 1 }
 
 -- | Message under a screen row (approximate: content lines + 2).
 msgIndexAt :: Int -> AppState -> Maybe Int
@@ -2561,7 +2566,7 @@ flushPendingAt musage t1 = do
     -- event): never leave the spinner running.
     Nothing -> modify $ \s -> s { appBusy = False }
     Just pm -> do
-      let base = length (appMessages st)
+      let base = appNextMsgId st
           stampedFrom base0 ms = zipWith (\i m -> m { msgId = base0 + i }) [0 ..] ms
           meta = metaLine (appModel st) musage
           withMeta m
@@ -2593,6 +2598,7 @@ flushPendingAt musage t1 = do
                                       ++ stampedFrom base thinkMsgs
                                       ++ stampedFrom (base + length thinkMsgs) toolMsgs
                                       ++ stampedFrom (base + length thinkMsgs + length toolMsgs) textMsgs
+                       , appNextMsgId = base + length thinkMsgs + length toolMsgs + length textMsgs
                        , appPending = Nothing
                        -- A finished turn is never busy: parked approvals
                        -- clear the spinner too, otherwise the input stays
@@ -3670,6 +3676,11 @@ helpTextFor lang = T.unlines $
        , tr lang "Keys:"
        , tr lang "  PgUp / PgDn       Scroll messages"
        , tr lang "  Ctrl+Home / End   Jump to top / bottom"
+       , tr lang "  Ctrl+O            Fold / expand thinking and tool cards"
+       , tr lang "  Alt+↑ / Alt+↓     Move the tool-card focus"
+       , tr lang "  Shift+Tab         Cycle permission posture"
+       , tr lang "  Ctrl+Y            Toggle YOLO"
+       , tr lang "  Esc Esc           Interrupt the running turn"
        , tr lang "  Ctrl+B            Show / hide the sidebar"
        , tr lang "  Ctrl+X            Leader (b/p/m/s/,/?/i)"
        , tr lang "  Ctrl+Q            Quit"

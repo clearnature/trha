@@ -129,6 +129,7 @@ wizardSet n v w = case n of
 -- | Application state
 data AppState = AppState
   { appMessages  :: [ChatMessage]
+  , appNextMsgId :: Int           -- ^ 单调递增的消息 id（'length' 在清空后会重复）
   , appInput     :: Editor Text ResourceName
   , appSessionId :: Maybe SessionId
   , appModel     :: Text
