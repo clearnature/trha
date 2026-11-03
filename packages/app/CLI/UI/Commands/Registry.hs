@@ -135,6 +135,11 @@ data Command
   | RunShell Text        -- ^ @/shell <cmd>@: run a local command, like @!cmd@
   | Unknown Text
   | RunCustom Text Text   -- ^ user command name + arguments (~/.trha/commands)
+  | Rewind Text           -- ^ @/rewind <n>@: fork back to turn @n@ and switch to it
+  | Restore Text          -- ^ @/restore [n]@: restore a pre-edit snapshot from ~/.trha/file-history
+  | Auth Text             -- ^ @/auth [check <name>]@: provider key status
+  | Update Text           -- ^ @/update [pull]@: compare with origin/main, optionally pull
+  | ReloadPlugins         -- ^ @/reload-plugins@: rescan user commands and report plugin hot-reload state
   deriving (Show, Eq)
 
 -- | A registered slash command.
@@ -223,6 +228,11 @@ slashRegistry =
   , SlashCommand "/quit"     False True  "Exit the application"
   , SlashCommand "/exit"     False True  "Exit the application (alias)"
   , SlashCommand "/stop"     True  False "Stop the kernel and scheduler (usage: /stop confirm)"
+  , SlashCommand "/rewind"   True  True  "Rewind to an earlier turn (usage: /rewind <n>)"
+  , SlashCommand "/restore"  True  True  "Restore a pre-edit snapshot (usage: /restore [n])"
+  , SlashCommand "/auth"     True  True  "Show provider key status (usage: /auth [check <name>])"
+  , SlashCommand "/update"   True  True  "Compare with origin/main (usage: /update [pull])"
+  , SlashCommand "/reload-plugins" False True "Rescan user commands and plugins"
   ]
 
 -- | Parse a command from raw input.  Unknown slash commands become
@@ -265,17 +275,19 @@ groupTitle lang g =
 groupMembers :: [(CommandGroup, [Text])]
 groupMembers =
   [ (GSession, [ "/new", "/sessions", "/status", "/home", "/resume"
-               , "/rename", "/tag", "/delete", "/fork", "/branch" ])
+               , "/rename", "/tag", "/delete", "/fork", "/branch"
+               , "/rewind", "/restore" ])
   , (GHistory, [ "/export", "/transcript", "/stats", "/compact", "/clear"
                , "/cls", "/session-info", "/stash" ])
   , (GPlan,    [ "/plan", "/approve", "/deny", "/skip", "/reject", "/abandon"
                , "/goal", "/todo", "/tree", "/agents", "/graph", "/workflow"
                , "/loop", "/queue", "/steer" ])
-  , (GModel,   [ "/model", "/models", "/provider", "/switch", "/fav", "/preset" ])
+  , (GModel,   [ "/model", "/models", "/provider", "/switch", "/fav", "/preset"
+               , "/auth" ])
   , (GContext, [ "/context", "/usage", "/memory", "/remember", "/btw", "/workspace"
                , "/recap", "/retry", "/diff" ])
   , (GTools,   [ "/shell", "/mcp", "/lsp", "/hooks", "/plugins", "/skills", "/doctor"
-               , "/currency" ])
+               , "/currency", "/update", "/reload-plugins" ])
   , (GInput,   [ "/attachments", "/clear-attachments", "/paste", "/vim", "/copy" ])
   , (GAppearance, [ "/theme", "/language", "/reasoning-language"
                   , "/output-style", "/verbose" ])
@@ -315,6 +327,13 @@ parseCommandBase input = case T.words (T.strip input) of
   ("/exit" : _)  -> Quit
   ("/stop" : "confirm" : _) -> StopConfirmed
   ("/stop" : _)  -> StopRequest
+  ("/rewind" : n : _) -> Rewind n
+  ("/rewind" : _) -> Rewind ""
+  ("/restore" : n : _) -> Restore n
+  ("/restore" : _) -> Restore ""
+  ("/auth" : args) -> Auth (T.unwords args)
+  ("/update" : args) -> Update (T.unwords args)
+  ("/reload-plugins" : _) -> ReloadPlugins
   ("/sessions" : _) -> Sessions
   ("/new" : _)   -> CreateSession
   ("/delete" : [])   -> DeleteSession ""

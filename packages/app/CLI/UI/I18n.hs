@@ -189,6 +189,11 @@ zhDict = M.fromList
   , ("Exit the application", "退出程序")
   , ("Exit the application (alias)", "退出程序（别名）")
   , ("Stop the kernel and scheduler (usage: /stop confirm)", "停止内核与调度器（用法：/stop confirm）")
+  , ("Rewind to an earlier turn (usage: /rewind <n>)", "回退到更早的一轮（用法：/rewind <n>）")
+  , ("Restore a pre-edit snapshot (usage: /restore [n])", "还原写前快照（用法：/restore [n]）")
+  , ("Show provider key status (usage: /auth [check <name>])", "查看 provider 的 key 状态（用法：/auth [check <名称>]）")
+  , ("Compare with origin/main (usage: /update [pull])", "与 origin/main 比对（用法：/update [pull]）")
+  , ("Rescan user commands and plugins", "重扫用户命令与插件")
   , ("Stop the kernel and scheduler? Every shell (TUI, Desktop, Web) disconnects.", "停止内核与调度器？所有外壳（TUI、Desktop、Web）都会断开。")
   , ("Stopping services...", "正在停止服务...")
   , ("This stops the kernel and scheduler and exits. Type /stop confirm to proceed."

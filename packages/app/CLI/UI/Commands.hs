@@ -15,9 +15,13 @@ module UI.Commands
   , runLocalShell
   ) where
 
-import Data.Aeson (object, (.=))
+import Data.Aeson (Value(..), decode, object, (.=))
+import qualified Data.Aeson.Key as AesonKey
+import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.ByteString.Lazy as BSL
+import Data.Char (isHexDigit)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, fetchUsageStats, UsageRow(..), compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setSessionCwd, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, fetchUsageStats, UsageRow(..), compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setSessionCwd, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus, probeProvider)
 import UI.ProviderPresets (presets, preBaseUrl, preKind, preName)
 import Core.Currency (CurrencyTable(..), loadCurrency, saveCurrency)
 import Core.Replay (ReplayBlock(..), renderReplay, renderReplayText)
@@ -31,7 +35,7 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, catch, try)
 import qualified Data.Map as Map
 import Data.IORef
-import Data.List (partition)
+import Data.List (partition, sort)
 import Data.Text (Text)
 import qualified Data.Text as T
 import System.IO (hClose, hFlush, hPutStr, openTempFile, stdout)
@@ -658,6 +662,118 @@ executeCommand lang bridge sessionRef _ Branch = do
           writeIORef sessionRef (Just newSid)
           return $ Just (tr lang "Branched: " <> T.pack newSid)
 
+-- | @/rewind <n>@：把会话回退到第 n 轮。fork 是无损的——新会话只带前 n 轮，
+-- 原会话原样留着，随时可以 @/resume@ 回去。
+executeCommand lang bridge sessionRef _ (Rewind arg) = do
+  cur <- readIORef sessionRef
+  case cur of
+    Nothing -> return $ Just (tr lang "No active session.")
+    Just sid -> case readMaybe (T.unpack (T.strip arg)) :: Maybe Int of
+      Just n | n > 0 -> do
+        r <- forkSession bridge sid (Just n)
+        case r of
+          Left e -> return $ Just (tr lang "Error: " <> T.pack (show e))
+          Right newSid -> do
+            writeIORef sessionRef (Just newSid)
+            return $ Just $ tr lang "Rewound to turn " <> T.pack (show n)
+                             <> tr lang ": " <> T.pack newSid
+      _ -> return $ Just (tr lang "Usage: /rewind <n> (turn number, 1 = first)")
+
+-- | @/restore [n]@：从 @~/.trha/file-history@ 还原一次写前快照。
+--
+-- 快照文件名是 @&lt;stamp&gt;-&lt;sha1(路径)前8位&gt;-&lt;basename&gt;@，没有完整路径，
+-- 所以在当前目录树里按 basename 回找，唯一命中才写回（多个命中就列出来让人选）。
+executeCommand lang _ _ _ (Restore arg) = do
+  home <- getHomeDirectory
+  let dir = home </> ".trha" </> "file-history"
+  present <- doesDirectoryExist dir
+  if not present
+    then return $ Just (tr lang "No file history yet (~/.trha/file-history).")
+    else do
+      names <- reverse . sort <$> listDirectory dir
+      case readMaybe (T.unpack (T.strip arg)) :: Maybe Int of
+        Just n | n >= 1 && n <= length names -> do
+          let snap = names !! (n - 1)
+          case snapshotBase snap of
+            Nothing -> return $ Just (tr lang "Unrecognised snapshot: " <> T.pack snap)
+            Just base -> do
+              cwd <- getCurrentDirectory
+              hits <- findFilesNamed cwd base
+              case hits of
+                [target] -> do
+                  body <- TIO.readFile (dir </> snap)
+                  TIO.writeFile target body
+                  return $ Just $ tr lang "Restored " <> T.pack snap
+                                   <> tr lang " -> " <> T.pack target
+                [] -> return $ Just $ tr lang "No file named " <> T.pack base
+                                   <> tr lang " under " <> T.pack cwd
+                many -> return $ Just $ T.unlines
+                  (tr lang "Several candidates — cd into the right tree and retry:"
+                   : map (T.pack . ("  - " <>)) many)
+        _ -> return $ Just $ T.unlines
+          (tr lang "Recent snapshots (newest first):"
+           : [ "  " <> T.pack (show i) <> ". " <> T.pack name
+             | (i, name) <- zip [1 :: Int ..] (take 20 names) ])
+          <> tr lang "Use /restore <n>."
+
+-- | @/auth@：provider 的 key 状态；@/auth check <name>@ 让内核探测一次端点。
+executeCommand lang bridge _ _ (Auth arg) = do
+  ps <- listProviders bridge
+  case ps of
+    Left e -> return $ Just (tr lang "Error: " <> T.pack (show e))
+    Right infos -> case T.words arg of
+      [] -> return $ Just $ T.unlines
+        (tr lang "Providers:"
+         : [ "  - " <> piName p <> " (" <> piKind p <> ")"
+             <> (if piHasKey p then " · key saved" else " · no key")
+             <> (if piInUse p then " · in use" else "")
+           | p <- infos ])
+      ("check" : name : _) -> case [ p | p <- infos, piName p == name ] of
+        [] -> return $ Just (tr lang "Unknown provider: " <> name)
+        (p : _) -> do
+          mkey <- readProviderKey (piName p)
+          case mkey of
+            Nothing -> return $ Just $ tr lang "No key saved for " <> name
+            Just key -> do
+              r <- probeProvider bridge (piBaseUrl p) key
+              return $ Just $ case r of
+                Left e -> tr lang "Probe failed: " <> T.pack (show e)
+                Right probed -> tr lang "Probe ok: " <> T.pack (show probed)
+      _ -> return $ Just (tr lang "Usage: /auth [check <name>]")
+
+-- | @/update@：本地源码部署下和 origin/main 比对；@/update pull@ 快进。
+executeCommand lang _ _ _ (Update arg) = do
+  cwd <- getCurrentDirectory
+  let git xs = readCreateProcessWithExitCode (proc "git" ("-C" : cwd : xs)) ""
+  top <- git ["rev-parse", "--show-toplevel"]
+  case top of
+    (ExitFailure _, _, _) -> return $ Just $ tr lang "Not a git checkout: " <> T.pack cwd
+    _ -> do
+      fetched <- timeout 60000000 (git ["fetch", "--quiet", "origin"])
+      case fetched of
+        Nothing -> return $ Just (tr lang "git fetch timed out.")
+        Just (ExitFailure _, _, err) ->
+          return $ Just $ tr lang "git fetch failed: " <> T.pack (take 300 err)
+        Just _ -> case T.strip arg of
+          "pull" -> do
+            pulled <- git ["pull", "--ff-only", "origin", "main"]
+            return $ Just $ case pulled of
+              (ExitSuccess, out, _) -> tr lang "Updated:\n" <> T.pack out
+              (ExitFailure _, _, err) -> tr lang "Pull failed: " <> T.pack err
+          _ -> do
+            behind <- git ["rev-list", "--count", "HEAD..origin/main"]
+            ahead  <- git ["rev-list", "--count", "origin/main..HEAD"]
+            return $ Just $ T.unlines
+              [ tr lang "Behind origin/main: " <> gitCount behind
+              , tr lang "Ahead of origin/main: " <> gitCount ahead
+              , tr lang "Run /update pull to fast-forward." ]
+
+-- | @/reload-plugins@：重扫用户命令；scheduler 的插件目录本来就有 watcher。
+executeCommand lang _ _ _ ReloadPlugins = do
+  cmds <- loadCustomCommands
+  return $ Just $ tr lang "Reloaded user commands: " <> T.pack (show (length cmds))
+                   <> tr lang " (scheduler plugins hot-reload automatically)"
+
 executeCommand lang bridge sessionRef _ (Steer prompt)
   | T.null (T.strip prompt) = return $ Just (tr lang "Usage: /steer <prompt>")
   | otherwise = do
@@ -1105,6 +1221,59 @@ executeCommand lang bridge sessionRef _ AbandonPlan = decidePlanStep lang bridge
 -- a non-exhaustive pattern match.
 executeCommand _ _ _ _ cmd =
   return $ Just ("Command not available in this front-end: " <> T.pack (show cmd))
+
+-- | 快照文件名 @&lt;stamp&gt;-&lt;sha1前8位&gt;-&lt;basename&gt;@ 里取 basename。
+-- stamp 自己也含 @-@，所以按「第一个 8 位十六进制段」定位分隔点。
+snapshotBase :: FilePath -> Maybe FilePath
+snapshotBase name =
+  let parts = T.splitOn "-" (T.pack name)
+      isDigest p = T.length p == 8 && T.all isHexDigit p
+  in case break isDigest parts of
+       (_, _ : rest@(_ : _)) -> Just (T.unpack (T.intercalate "-" rest))
+       _ -> Nothing
+
+-- | 在 root 下按文件名找文件（跳过 .git/依赖目录，深度上限 6）。
+findFilesNamed :: FilePath -> FilePath -> IO [FilePath]
+findFilesNamed root name = go root (0 :: Int)
+  where
+    skip = [".git", "node_modules", "dist-newstyle", ".dist-newstyle", "3rdparty", "archive"]
+    go d depth
+      | depth > 6 = return []
+      | otherwise = do
+          isDir <- doesDirectoryExist d
+          if not isDir
+            then return []
+            else do
+              entries <- listDirectory d
+              fmap concat (mapM (visit d depth) entries)
+    visit d depth e
+      | e == name = return [d </> e]
+      | e `elem` skip || take 1 e == "." = return []
+      | otherwise = do
+          isDir <- doesDirectoryExist (d </> e)
+          if isDir then go (d </> e) (depth + 1) else return []
+
+-- | 从 @~/.trha/provider-keys.json@ 读一个 provider 的 key（只在本机进程内用）。
+readProviderKey :: Text -> IO (Maybe Text)
+readProviderKey name = do
+  home <- getHomeDirectory
+  let path = home </> ".trha" </> "provider-keys.json"
+  ok <- doesFileExist path
+  if not ok
+    then return Nothing
+    else do
+      raw <- BSL.readFile path
+      return $ case decode raw of
+        Just (Object o) -> case KeyMap.lookup "keys" o of
+          Just (Object ks) -> case KeyMap.lookup (AesonKey.fromText name) ks of
+            Just (String k) -> Just k
+            _ -> Nothing
+          _ -> Nothing
+        _ -> Nothing
+
+-- | @git rev-list --count@ 的输出。
+gitCount :: (ExitCode, String, String) -> Text
+gitCount (_, out, _) = T.strip (T.pack out)
 
 -- | Map the wire tool status to the card status type.
 toCardStatus :: ToolRunStatus -> ToolStatus
