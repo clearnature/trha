@@ -37,6 +37,7 @@ module UI.Dialog
   , dialogCommandsQuery
   , dialogCommandsSelected
   , dialogCommandsItems
+  , dialogCommandsInitialSel
     -- * Escape hierarchy
   , EscFlags(..)
   , EscOutcome(..)
@@ -53,8 +54,8 @@ import UI.Skills (Skill(..))
 import UI.ProviderPresets (Preset(..))
 import UI.Theme (Theme(..))
 import UI.Render.Picker
-    ( PickerItem(..), filterItems, moveSelection, moveSelectionSkipping
-    , queryAppend, queryDelete )
+    ( PickerItem(..), filterItems, firstSelectable, moveSelection
+    , moveSelectionSkipping, queryAppend, queryDelete )
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -245,6 +246,14 @@ dialogCommandsSelected (DialogCommands _ _ s) = s
 -- | The filtered items of the command dialog.
 dialogCommandsItems :: Dialog -> [PickerItem]
 dialogCommandsItems (DialogCommands all0 q _) = filterItems q all0
+
+-- | 打开命令面板时该停在哪一项：过滤后列表的第一个可选条目。
+--
+-- 必须基于过滤后的列表计算。'dialogCommandsItems' 每次都用 query 重新过滤，
+-- 若按全量列表算索引，过滤到只剩一项时它会越界，回车落到空分支，
+-- 表现为「输入 /about 回车毫无反应」。
+dialogCommandsInitialSel :: [PickerItem] -> Text -> Int
+dialogCommandsInitialSel all0 q = firstSelectable (filterItems q all0)
 
 -- | Signals the escape key consults, in MiMo's priority order.
 data EscFlags = EscFlags

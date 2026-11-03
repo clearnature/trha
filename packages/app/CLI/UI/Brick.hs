@@ -2088,11 +2088,17 @@ refreshPalette = do
   let text = editorValue st
       single = not (T.any (== '\n') text)
       tokenOpen = not (T.any (== ' ') text)
+      query = T.drop 1 text
   modify $ \s ->
     if "/" `T.isPrefixOf` text && single && tokenOpen
       then s { appPalette =
              let items = paletteItemsFor s
-             in Just (DialogCommands items (T.drop 1 text) (firstSelectable items)) }
+                 -- 选中索引必须相对于*过滤后*的列表：'dialogCommandsItems'
+                 -- 每次都用 query 重新过滤，若这里按全量列表算，过滤到只剩
+                 -- 一项时索引会越界，回车便落到 'runPaletteItem' 的空分支上，
+                 -- 表现为「输入 /about 回车毫无反应」。
+             in Just (DialogCommands items query
+                        (dialogCommandsInitialSel items query)) }
       else s { appPalette = Nothing }
 
 -- | Move the palette selection (clamped by the shared dialog state machine).
@@ -2106,16 +2112,20 @@ runPaletteItem = do
   st <- get
   case appPalette st of
     Nothing -> return ()
-    Just d -> case drop (dialogCommandsSelected d) (dialogCommandsItems d) of
-      (item : _) | isSection item -> modify $ \s -> s { appPalette = Nothing }
-      (item : _) ->
-        if "/skill:" `T.isPrefixOf` piId item
-          then selectSkill (T.drop 7 (piId item))
-          else do
-            modify $ \s -> s { appInput = editorText InputArea (Just 1) ""
-                             , appPalette = Nothing }
-            handleSlash (piId item)
-      [] -> modify $ \s -> s { appPalette = Nothing }
+    Just d ->
+      let its = dialogCommandsItems d
+          -- 索引按过滤后的列表钳位：越界时退回最后一项，而不是静默关闭。
+          sel = max 0 (min (dialogCommandsSelected d) (length its - 1))
+      in case drop sel its of
+        (item : _) | isSection item -> modify $ \s -> s { appPalette = Nothing }
+        (item : _) ->
+          if "/skill:" `T.isPrefixOf` piId item
+            then selectSkill (T.drop 7 (piId item))
+            else do
+              modify $ \s -> s { appInput = editorText InputArea (Just 1) ""
+                               , appPalette = Nothing }
+              handleSlash (piId item)
+        [] -> modify $ \s -> s { appPalette = Nothing }
 
 -- | Persist the active provider/model so the next launch starts there.
 persistSelection :: Text -> Text -> EventM ResourceName AppState ()

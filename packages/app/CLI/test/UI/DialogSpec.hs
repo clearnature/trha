@@ -6,6 +6,7 @@ import Test.Hspec
 import Core.Types (ModelInfo(..), ProviderInfo(..))
 import Core.SessionSummary (SessionSummary(..))
 import UI.Dialog
+import UI.Render.Picker (PickerItem(..), sectionItem)
 
 sampleModels :: [ModelInfo]
 sampleModels = [ ModelInfo "a" "" 1000, ModelInfo "b" "" 2000 ]
@@ -15,6 +16,26 @@ sampleSessions = [ SessionSummary "s1" "t" 1 Nothing Nothing Nothing Nothing ]
 
 spec :: Spec
 spec = do
+  describe "command palette selection" $ do
+    -- 回归：/about 只匹配一项时，选中索引必须落在过滤后的列表内。
+    -- 曾按全量列表算索引（含 section 标题），过滤到一项后索引越界，
+    -- 回车静默关闭面板且不执行命令。
+    let items = [ sectionItem "recent" "recent"
+                , PickerItem "/sandbox" "/sandbox" "sandbox"
+                , sectionItem "session" "session"
+                , PickerItem "/about" "/about" "about"
+                , PickerItem "/cd" "/cd" "cd"
+                ]
+    it "lands on the first match after filtering" $ do
+      let d = DialogCommands items "about" (dialogCommandsInitialSel items "about")
+      map piId (dialogCommandsItems d) `shouldBe` ["/about"]
+      dialogCommandsSelected d `shouldBe` 0
+    it "never points past the filtered list" $ do
+      let d = DialogCommands items "about" (dialogCommandsInitialSel items "about")
+      dialogCommandsSelected d `shouldSatisfy` (< length (dialogCommandsItems d))
+    it "skips section headers when the query is empty" $ do
+      dialogCommandsInitialSel items "" `shouldBe` 1
+
   describe "stack" $ do
     it "push and pop round-trip" $ do
       let s0 = stackPush (DialogModels sampleModels 0) emptyStack
