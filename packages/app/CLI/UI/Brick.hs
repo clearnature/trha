@@ -1755,6 +1755,8 @@ handleDialogKey (EvKey KUp [])    = modifyTop (dialogMoveSel (-1))
 handleDialogKey (EvKey KDown [])  = modifyTop (dialogMoveSel 1)
 handleDialogKey (EvKey (KChar 'p') [MCtrl]) = modifyTop (dialogMoveSel (-1))
 handleDialogKey (EvKey (KChar 'n') [MCtrl]) = modifyTop (dialogMoveSel 1)
+-- | tab：列表前进（vty 把 Tab 报成 KChar '\t'）。
+handleDialogKey (EvKey (KChar '\t') []) = modifyTop (dialogMoveSel 1)
 handleDialogKey (EvKey KEnter []) = dialogActivate
 handleDialogKey (EvKey KBS [])    = withCommands dialogDelete >> scrollBottom
 handleDialogKey (EvKey (KChar c) [])
