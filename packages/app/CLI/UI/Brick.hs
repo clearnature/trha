@@ -3839,13 +3839,15 @@ helpTextFor lang = T.unlines $
        , tr lang "  Shift+Tab         Cycle permission posture"
        , tr lang "  Ctrl+Y            Toggle YOLO"
        , tr lang "  Esc Esc           Interrupt the running turn"
+       , tr lang "  Ctrl+C            Interrupt · copy selection · clear draft · quit"
        , tr lang "  Ctrl+S            Submit the draft (same as Enter)"
        , tr lang "  Ctrl+Enter        Steer the running turn with the draft"
        , tr lang "  Ctrl+L            Clear the transcript view (history kept)"
        , tr lang "  Alt+V             Paste clipboard text"
+       , tr lang "  Ctrl+G            Expand folded pastes"
        , tr lang "  Ctrl+B            Show / hide the sidebar"
        , tr lang "  Ctrl+X            Leader (b/p/m/s/,/?/i)"
-       , tr lang "  Ctrl+Q            Quit"
+       , tr lang "  Ctrl+Q / Ctrl+D   Quit"
        ]
 
 
