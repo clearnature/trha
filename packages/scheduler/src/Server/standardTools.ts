@@ -1875,6 +1875,10 @@ const bashTool = defineTool<BashResult>({
   // generic card with the raw output; a foreground run splits its trailing exit
   // marker into `exitCode`/`signal` so the card can show a pill.
   presentResult: (args, result) => {
+    // result 可能是 undefined：中断/错误路径下工具没有结果对象。
+    // 直接解引用会让整个 scheduler 进程退出（不是这一条命令失败，而是
+    // 之后所有请求都 ConnectionError）。
+    if (!result) return undefined;
     const r = result as ToolResult;
     // r.content 可能缺失：错误/中断路径下 result 只带 isError，没有 content。
     // 直接读 .length 会抛 TypeError，在 CI 里表现为 presentResult 崩溃、

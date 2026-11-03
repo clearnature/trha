@@ -7,6 +7,7 @@ import cors from 'cors';
 import { HaskellBridge } from '../Bridge/Haskell.js';
 import type { BridgeToolSpec, ToolCallData } from '../Bridge/Haskell.js';
 import { canonicalToolName, toolCatalog, toToolSpecs } from './toolCatalog.js';
+import type { ToolCallView, ToolResultView } from './toolSchema.js';
 import { decidePermission, setPermissionRules, compileRules, getPermissionRules } from '../Permission/permissionRules.js';
 import {
   applyPermissionMode, toggleYolo, modeLabel, MODE_CYCLE,
@@ -1537,11 +1538,20 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // already gone by this point. Tools that only need to summarise the result
     // (exit code, replacement count) are fine with that.
     const spec = resolveTool(name);
-    const view = status === 'running'
-      ? spec?.presentCall?.(input)
-      // `value` is what `execute` returned; `output` is only its rendering.
-      // Tools that switched to a structured return read their own fields here.
-      : spec?.presentResult?.(input, value ?? output);
+    // A presenter is display-only: if it throws, the turn must survive. It used
+    // to take the whole scheduler process down (the missing-result path in the
+    // bash card), so every later command reported ConnectionError.
+    let view: ToolCallView | ToolResultView | undefined;
+    try {
+      view = status === 'running'
+        ? spec?.presentCall?.(input)
+        // `value` is what `execute` returned; `output` is only its rendering.
+        // Tools that switched to a structured return read their own fields here.
+        : spec?.presentResult?.(input, value ?? output);
+    } catch (e) {
+      console.error(`tool presenter ${name} failed:`, errorText(e));
+      view = undefined;
+    }
     // A tool that cannot produce a meaningful label must fall back to the
     // generic row: `oneLine('')` yields '', so `title: `present ${...}`` could
     // render as `present ` — worse than the plain tool name.
