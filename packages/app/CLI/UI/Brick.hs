@@ -1262,6 +1262,44 @@ statusPeak st = case appNow st of
   Just t | isOffPeak t -> "低峰"
   _ -> "高峰"
 
+-- | 千分位分隔（21,444 而不是 21.4K），与参考实现的脚注一致。
+statusCommas :: Int -> Text
+statusCommas n = T.pack (reverse (go (reverse (show n))))
+  where
+    go [] = []
+    go xs = let (a, b) = splitAt 3 xs in a ++ (if null b then [] else ',' : go b)
+
+-- | 紧凑记法：≥1e6 用 M，≥1e3 用 K，各保留一位小数。
+statusShortK :: Int -> Text
+statusShortK n
+  | n >= 1000000 = T.pack (showFFloat (Just 1) (fromIntegral n / 1e6 :: Double) "") <> "M"
+  | n >= 1000    = T.pack (showFFloat (Just 1) (fromIntegral n / 1e3 :: Double) "") <> "K"
+  | otherwise    = T.pack (show n)
+
+-- | @a/(a+b)@ 的百分比，两位小数（缓存命中率用）。
+statusPct :: Int -> Int -> Text
+statusPct a b =
+  T.pack (showFFloat (Just 2) (fromIntegral a * 100 / fromIntegral (a + b) :: Double) "") <> "%"
+
+-- | 一位小数（吞吐用）。
+statusOneDec :: Double -> Text
+statusOneDec v = T.pack (showFFloat (Just 1) v "")
+
+-- | 可用上下文 = 窗口的 80%（MiMo 的记账口径：预留 20% 给回复）。
+statusUsable :: Int -> Int
+statusUsable size = max 1 (size * 8 `div` 10)
+
+-- | 上下文占用百分比（分母是可用窗口，不是原始窗口）。
+statusCtxPct :: Int -> Int -> Int
+statusCtxPct used size =
+  round (fromIntegral used / fromIntegral (statusUsable size) * 100 :: Double) :: Int
+
+-- | 报过缓存数字的轮数后缀，让稳定的百分比可解释。
+statusTurnsSuffix :: Int -> Text
+statusTurnsSuffix n
+  | n > 0 = " · " <> T.pack (show n) <> " 轮"
+  | otherwise = ""
+
 drawStatus :: AppState -> Widget ResourceName
 drawStatus st = Widget Greedy Fixed $ do
   c <- getContext
@@ -1314,16 +1352,10 @@ drawStatus st = Widget Greedy Fixed $ do
           <> turnsSuffix (appCacheTurns st)
       _ -> ""
     -- Turns that reported cache numbers, so a stable percentage is explainable.
-    turnsSuffix n
-      | n > 0 = " · " <> T.pack (show n) <> " 轮"
-      | otherwise = ""
-    pct a b =
-      T.pack (showFFloat (Just 2) (fromIntegral a * 100 / fromIntegral (a + b) :: Double) "") <> "%"
-    -- MiMo's accounting: the usable window reserves 20% for the reply, and
-    -- "used" is the whole turn (prompt + completion), not just the prompt.
-    usableOf size = max 1 (size * 8 `div` 10)
-    ctxPct used size =
-      round (fromIntegral used / fromIntegral (usableOf size) * 100 :: Double) :: Int
+    turnsSuffix = statusTurnsSuffix
+    pct = statusPct
+    ctxPct = statusCtxPct
+    oneDec = statusOneDec
     ctxSeg = case (appCtxUsed st, appCtxSize st) of
       (Just used, Just size) | size > 0 ->
         "上下文 " <> shortK used
@@ -1338,7 +1370,6 @@ drawStatus st = Widget Greedy Fixed $ do
         "压缩 " <> T.pack (show (max 0 (100 - ctxPct used size))) <> "%"
       _ -> ""
     -- Completion throughput of the last turn (computed when usage arrived).
-    oneDec v = T.pack (showFFloat (Just 1) v "")
     -- Two rates, same numerator: end-to-end (from submit) and pure decode
     -- (from the first token).  Providers quote the latter; users feel the
     -- former, so show both once we have them.
@@ -1423,16 +1454,8 @@ drawStatus st = Widget Greedy Fixed $ do
       _         -> ""
     statsLine = T.intercalate "  "
       [ s | k <- statsKeys, s <- [segFor k], not (T.null s) ]
-    -- Thousands separators, matching the reference status line (21,444 not 21.4K).
-    commas :: Int -> Text
-    commas n = T.pack (reverse (go (reverse (show n))))
-      where
-        go [] = []
-        go xs = let (a, b) = splitAt 3 xs in a ++ (if null b then [] else ',' : go b)
-    shortK n
-      | n >= 1000000 = T.pack (showFFloat (Just 1) (fromIntegral n / 1e6 :: Double) "") <> "M"
-      | n >= 1000    = T.pack (showFFloat (Just 1) (fromIntegral n / 1e3 :: Double) "") <> "K"
-      | otherwise    = T.pack (show n)
+    commas = statusCommas
+    shortK = statusShortK
 
 --------------------------------------------------------------------------------
 -- Event handling
