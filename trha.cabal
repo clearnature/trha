@@ -303,6 +303,7 @@ executable trha
     UI.Render.Spans
     UI.Brick.Draw.Status
     UI.Brick.Draw.Sidebar
+    UI.Brick.Draw.Dialog
     UI.Render.ToolSummary
     UI.Render.Message
     UI.Render.FilePart

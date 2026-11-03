@@ -72,6 +72,7 @@ import Graphics.Vty.CrossPlatform (mkVty)
 import Graphics.Vty.Input.Events
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
+import UI.Brick.Draw.Dialog (drawPalette, drawWizard, wizardSummary)
 import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar, sidebarDataFor)
 import UI.Brick.Draw.Status
   ( modelLabel, pricesOf, statusLine
@@ -485,57 +486,8 @@ drawHome st =
 -- | Inline slash-command palette, anchored at the input's left edge (the
 -- MiMo form: a list above the prompt, filtered as you type — not a centred
 -- modal that steals the editor).
-drawPalette :: Dialog -> Widget ResourceName
-drawPalette d =
-  withAttr (attrName "tool") $
-    hLimit 66 $
-      borderWithLabel (withAttr (attrName "title") $ str " Commands ") $
-        vBox $
-          if null items
-            then [ padLeftRight 1 $ withAttr (attrName "timestamp") $
-                     str " no matching command" ]
-            else [ let selected = idx == sel
-                       marker = if selected then "▸ " else "  "
-                       attr = if selected then "tool" else "timestamp"
-                   in if isSection it
-                        then padLeftRight 1 $ withAttr (attrName "timestamp") $
-                               str (" " <> T.unpack (piLabel it))
-                        else padLeftRight 1 $ hBox
-                        [ withAttr (attrName attr) $ str marker
-                        , withAttr (attrName "title") $ str (T.unpack (piId it))
-                        , withAttr (attrName "timestamp") $ str "  "
-                        , withAttr (attrName "timestamp") $
-                            str (T.unpack (takeCells 44 (piDesc it))) ]
-                 | (idx, it) <- zip [start ..]
-                                   (take (end + 1) (drop start items)) ]
-  where
-    items = dialogCommandsItems d
-    sel = dialogCommandsSelected d
-    -- 30 rows tall (user request); the visible window scrolls with the cursor.
-    (start, end) = windowRange (length items) sel 30
+-- | drawPalette / drawWizard / wizardSummary 见 UI.Brick.Draw.Dialog。
 
--- | Provider wizard card: progress, the current prompt and what is collected.
-drawWizard :: ProviderWizard -> Widget ResourceName
-drawWizard w =
-  withAttr (attrName "border") $
-    hLimit 72 $
-      borderWithLabel (withAttr (attrName "title") $
-        str (" Provider " <> show (pwStep w + 1) <> "/6 ")) $
-        vBox
-          [ padLeftRight 1 $ withAttr (attrName "title") $
-              str (T.unpack (wizardPrompts !! pwStep w))
-          , padLeftRight 1 $ withAttr (attrName "timestamp") $
-              str (T.unpack (wizardSummary w))
-          ]
-
-wizardSummary :: ProviderWizard -> Text
-wizardSummary w = T.intercalate "  ·  "
-  [ "name " <> shown (pwName w)
-  , "kind " <> shown (pwKind w)
-  , "url " <> shown (pwBaseUrl w)
-  , "models " <> shown (pwModels w)
-  ]
-  where shown t = if T.null (T.strip t) then "—" else T.strip t
 
 -- | The @-file popup shown above the input (up to eight candidates).
 -- | drawCompletion 见 UI.Brick.Draw.Sidebar。
