@@ -513,7 +513,7 @@ drawPalette d =
                         , withAttr (attrName "title") $ str (T.unpack (piId it))
                         , withAttr (attrName "timestamp") $ str "  "
                         , withAttr (attrName "timestamp") $
-                            str (T.unpack (T.take 44 (piDesc it))) ]
+                            str (T.unpack (takeCells 44 (piDesc it))) ]
                  | (idx, it) <- zip [start ..]
                                    (take (end + 1) (drop start items)) ]
   where
@@ -647,7 +647,7 @@ drawDialog st d =
         | (idx, it) <- zip [start ..] (drop start (take (end + 1) (dialogSessionsItems d))) ]
       DialogCommands{} ->
         [ row idx sel (str (T.unpack (piId it)))
-                      (str (T.unpack (T.take 44 (piDesc it))))
+                      (str (T.unpack (takeCells 44 (piDesc it))))
         | (idx, it) <- zip [start ..] (drop start (take (end + 1) (dialogCommandsItems d))) ]
       DialogPresets ps _ ->
         [ padLeftRight 1 $ withAttr (attrName "timestamp") $ str "Popular" ]
@@ -676,7 +676,7 @@ drawDialog st d =
           then [ padLeftRight 1 $ withAttr (attrName "timestamp") $
                    str " no skills (put SKILL.md under .agents/skills or .trha/skills)" ]
           else [ row idx sel (str (T.unpack (skName it)))
-                        (str (T.unpack (T.take 44 (skDescription it))))
+                        (str (T.unpack (takeCells 44 (skDescription it))))
                | (idx, it) <- zip [start ..] (drop start (take (end + 1) its)) ]
       DialogAgents as _ ->
         if null as
@@ -3819,7 +3819,7 @@ stashListing :: Lang -> [Text] -> Text
 stashListing lang [] = tr lang "stash is empty"
 stashListing _ entries =
   T.unlines
-    [ T.pack (show i) <> ". " <> T.take 60 (T.replace "\n" " " e)
+    [ T.pack (show i) <> ". " <> takeCells 60 (T.replace "\n" " " e)
     | (i, e) <- zip [(1 :: Int) ..] entries ]
 
 -- | Localised /help text (command list + picker/key hints).
@@ -4073,11 +4073,11 @@ drawSettingsPanel st =
            else map fullRowAny [rowForProvider idx p2 | (idx, p2) <- zip [0 ..] ps]
     rowForProvider idx p2 =
       let body = hBox
-            [ withAttr (attrName "title") (str (T.unpack (T.take 22 (piName p2))))
+            [ withAttr (attrName "title") (str (T.unpack (takeCells 22 (piName p2))))
             , str "  "
-            , str (T.unpack (T.take 10 (piKind p2)))
+            , str (T.unpack (takeCells 10 (piKind p2)))
             , str "  "
-            , str (T.unpack (T.take 18 (piDefault p2)))
+            , str (T.unpack (takeCells 18 (piDefault p2)))
             , str "  "
             , str (T.unpack (piEffort p2 <> "/" <> piThinking p2))
             ]
@@ -4114,9 +4114,9 @@ drawSettingsPanel st =
       [] -> emptyWidget
     -- qwen-style row: label left, fill, value pinned right; * = overridden
     rowBody e = hBox
-      [ withAttr (attrName "title") (str (T.unpack (T.take 30 (seLabel e))))
+      [ withAttr (attrName "title") (str (T.unpack (takeCells 30 (seLabel e))))
       , fill ' '
-      , str (T.unpack (T.take 30 valueText))
+      , str (T.unpack (takeCells 30 valueText))
       ]
       where
         valueText | seKey e == "token" = maskSecret (seVal e)
@@ -4125,7 +4125,7 @@ drawSettingsPanel st =
     -- qwen-style detail line: full description of the selected row
     descRow = case drop sel visible of
       e : _ | not editing && n > 0 ->
-        withAttr (attrName "timestamp") $ str (T.unpack (T.take 70 (seHint e)))
+        withAttr (attrName "timestamp") $ str (T.unpack (takeCells 70 (seHint e)))
       _ -> emptyWidget
     -- bottom help line
     statusRow = padLeftRight 1 $ withAttr (attrName "status") $ str (T.unpack helpText)
