@@ -1548,6 +1548,23 @@ extendSel y = do
     Nothing -> return ()
     Just _  -> modify $ \s -> s { appSelEnd = Just (fromMaybe 0 (msgIndexAt rel s)) }
 
+-- | 复制当前选区的文本并清空选区（Ctrl+C 与鼠标松开共用）。
+copySelectionText :: EventM ResourceName AppState ()
+copySelectionText = do
+  st <- get
+  case appSelStart st of
+    Nothing -> pure ()
+    Just a0 -> do
+      let b0 = fromMaybe a0 (appSelEnd st)
+          lo = min a0 b0
+          hi = max a0 b0
+          txt = T.intercalate "\n\n"
+                  [ msgContent m | m <- appMessages st, msgId m >= lo, msgId m <= hi ]
+      when (not (T.null (T.strip txt))) $ do
+        ok <- liftIO (copyToClipboard txt)
+        showToast (if ok then "Copied" else "Clipboard unavailable")
+      modify $ \s -> s { appSelStart = Nothing, appSelEnd = Nothing }
+
 finishSel :: Int -> EventM ResourceName AppState ()
 finishSel y = do
   st <- get
@@ -1562,13 +1579,7 @@ finishSel y = do
         then modify $ \s -> s
                { appFolds = Map.alter (Just . toggleFold . fromMaybe FoldCollapsed) a0 (appFolds s)
                , appSelStart = Nothing, appSelEnd = Nothing }
-        else do
-          let txt = T.intercalate "\n\n"
-                      [ msgContent m | m <- appMessages st, msgId m >= lo, msgId m <= hi ]
-          when (not (T.null (T.strip txt))) $ do
-            ok <- liftIO (copyToClipboard txt)
-            showToast (if ok then "Copied" else "Clipboard unavailable")
-          modify $ \s -> s { appSelStart = Nothing, appSelEnd = Nothing }
+        else copySelectionText
 
 scrollBottom :: EventM ResourceName AppState ()
 scrollBottom = vScrollToEnd (viewportScroll MessageArea)
@@ -1687,14 +1698,17 @@ handleCtrlCKey :: EventM ResourceName AppState ()
 handleCtrlCKey = do
   st <- get
   now <- liftIO getCurrentTime
-  case decideCtrlC (appBusy st) (not (promptIsEmpty st)) (appQuitLast st) now of
-    CtrlCInterrupt  -> requestInterrupt
-    CtrlCClearInput -> modify $ \s -> s { appInput = editorText InputArea (Just 1) "" }
-    CtrlCQuit       -> halt
-    CtrlCArmQuit    -> modify $ \s -> s
-      { appQuitLast = Just now
-      , appStatus = tr (appLang s) "Press Ctrl+C again to quit"
-      }
+  -- 有选区时 ctrl+c 先复制（Reasonix 的 copyIt），否则才走中断/清空/退出。
+  case appSelStart st of
+    Just _  -> copySelectionText
+    Nothing -> case decideCtrlC (appBusy st) (not (promptIsEmpty st)) (appQuitLast st) now of
+      CtrlCInterrupt  -> requestInterrupt
+      CtrlCClearInput -> modify $ \s -> s { appInput = editorText InputArea (Just 1) "" }
+      CtrlCQuit       -> halt
+      CtrlCArmQuit    -> modify $ \s -> s
+        { appQuitLast = Just now
+        , appStatus = tr (appLang s) "Press Ctrl+C again to quit"
+        }
 
 handleCtrlDKey :: EventM ResourceName AppState ()
 handleCtrlDKey = do
