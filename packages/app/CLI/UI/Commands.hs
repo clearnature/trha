@@ -13,6 +13,9 @@ module UI.Commands
   , runSettingsCommand
     -- * Shared local-shell runner (REPL + TUI)
   , runLocalShell
+    -- * Resume candidates (local transcripts ∪ scheduler sessions)
+  , resumeSessions
+  , resumeMessages
   ) where
 
 import Data.Aeson (Object, Value(..), decode, object, (.=))
@@ -21,7 +24,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as BSL
 import Data.Char (isHexDigit)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, fetchUsageStats, UsageRow(..), compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setSessionCwd, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus, probeProvider, listTools, fetchPermissions)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, fetchUsageStats, UsageRow(..), compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setSessionCwd, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus, probeProvider, listTools, fetchPermissions, getMessages)
 import UI.ProviderPresets (presets, preBaseUrl, preKind, preName)
 import Core.Currency (CurrencyTable(..), loadCurrency, saveCurrency)
 import Core.Replay (ReplayBlock(..), renderReplay, renderReplayText)
@@ -1234,12 +1237,19 @@ executeCommand lang _ _ _ ResumeList = do
 -- and set it as the active session (continuing works while the
 -- orchestration layer still holds it).
 executeCommand lang bridge sessionRef _ (ResumeSelect sel) = do
-  sessions <- listLocalSessions
+  sessions <- resumeSessions bridge
   case pickLocalSession sel sessions of
     Nothing -> return $ Just $ tr lang "No local session matches: " <> T.pack sel
     Just s -> do
       events <- loadTranscript (ssId s)
       let replay = renderReplayText (renderReplay events)
+      -- 本地没有 transcript 时从调度层拉历史。
+      remote <- if T.null (T.strip replay)
+        then resumeMessages bridge (ssId s)
+        else pure []
+      let body = if T.null (T.strip replay)
+                   then T.unlines [ role <> ": " <> content | (role, content) <- remote ]
+                   else replay
       writeIORef sessionRef (Just (ssId s))
       -- 调度层会从 stateDir 恢复会话，所以先问一句它是否真的在：在就能
       -- 直接接着聊；不在的话本地回放仍可看，但新消息会 404。
@@ -1248,9 +1258,9 @@ executeCommand lang bridge sessionRef _ (ResumeSelect sel) = do
             Right _ -> tr lang "This session is live on the scheduler — keep going."
             Left _  -> tr lang "This session is not live on the scheduler; /new starts a fresh one."
       return $ Just $
-        (if T.null replay
+        (if T.null (T.strip body)
            then tr lang "Resumed " <> T.pack (ssId s) <> tr lang " (empty transcript)"
-           else tr lang "Resumed " <> T.pack (ssId s) <> ":\n" <> replay)
+           else tr lang "Resumed " <> T.pack (ssId s) <> ":\n" <> body)
         <> "\n" <> note
 
 executeCommand lang bridge sessionRef modelRef (RunCustom name args) = do
@@ -1376,8 +1386,32 @@ readProviderKey name = do
 gitCount :: (ExitCode, String, String) -> Text
 gitCount (_, out, _) = T.strip (T.pack out)
 
--- | @/deny@ 在没有待审批计划/审批时不该抛一段 JSON，直接说清楚。
-friendlyDenyError :: Lang -> CLIError -> Text
+-- | 可恢复会话 = 本地 transcript ∪ 调度层（stateDir 恢复的）会话。
+--
+-- 本地有的带标题与轮次；只在调度层存在的补一条最小摘要——它没有本地
+-- transcript，历史由 'resumeMessages' 从调度层拉回来。
+resumeSessions :: SchedulerBridge -> IO [SessionSummary]
+resumeSessions bridge = do
+  cwd <- getCurrentDirectory
+  local <- listLocalSessionsIn cwd
+  remote <- listSessions bridge
+  let seen = map ssId local
+      extra = case remote of
+        Right ids -> [ SessionSummary sid (T.pack sid) 0 Nothing Nothing Nothing Nothing
+                     | sid <- ids, sid `notElem` seen ]
+        Left _ -> []
+  pure (local ++ extra)
+
+-- | 一条会话的 (role, content)：从调度层拉取（本地没有 transcript 时用）。
+resumeMessages :: SchedulerBridge -> SessionId -> IO [(Text, Text)]
+resumeMessages bridge sid = do
+  r <- getMessages bridge sid
+  pure $ case r of
+    Right ms -> [ (messageRole m, messageContent m)
+                | m <- ms, not (T.null (T.strip (messageContent m))) ]
+    Left _   -> []
+
+-- | @/deny@ 在没有待审批计划/审批时不该抛一段 JSON，直接说清楚。friendlyDenyError :: Lang -> CLIError -> Text
 friendlyDenyError lang (ServerError msg)
   | "No pending approval" `T.isInfixOf` msg
   = tr lang "Nothing to deny — no pending plan or approval."

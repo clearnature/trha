@@ -44,7 +44,7 @@ import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import Core.PlanStore (savePlanSnapshot)
 import Core.ProjectStore (ensureProject, recordProjectSession)
 import Core.Transcript (listLocalSessions, listLocalSessionsIn, loadTranscript, recordChunk, recordSession, recordToolEvent, recordUser)
-import UI.Commands (executeCommand, runSettingsCommand, runLocalShell)
+import UI.Commands (executeCommand, runSettingsCommand, runLocalShell, resumeSessions, resumeMessages)
 import UI.Commands.Registry
     ( Command(..), parseCommandWith, pickerItems, pickerItemsGrouped
     , groupKey, groupTitle, registryHelp )
@@ -745,7 +745,10 @@ resumeSession selText = do
   -- recorded their cwd: they are invisible to the per-project list but still
   -- resumable when asked for explicitly.
   let wantAll = T.strip selText == "--all"
-  local <- liftIO (if wantAll then listLocalSessions else listLocalSessionsIn cwd)
+  bridge0 <- gets appBridge
+  -- 候选 = 本地 transcript ∪ 调度层（stateDir 恢复的）会话：只存在于
+  -- 调度层的会话没有本地 transcript，但历史仍可拉回来继续。
+  local <- liftIO (if wantAll then listLocalSessions else resumeSessions bridge0)
   case pickLocalSession (T.unpack selText) local of
     Nothing -> do
       let recent = take 5 local
@@ -759,7 +762,14 @@ resumeSession selText = do
     Just s -> do
       liftIO $ setWindowTitle ("trha · " <> T.take 8 (T.pack (ssId s)))
       events <- liftIO (loadTranscript (ssId s))
-      let msgs = blocksToMessages (renderReplay events)
+      let localMsgs = blocksToMessages (renderReplay events)
+      -- 本地没有 transcript 时从调度层拉历史（stateDir 恢复的会话）。
+      remote <- if null localMsgs
+        then liftIO (resumeMessages bridge0 (ssId s))
+        else pure []
+      let msgs = if null localMsgs
+                   then [ mkMsg role content t | (role, content) <- remote ]
+                   else localMsgs
       modify $ \st -> st { appMessages = msgs
                          , appNextMsgId = length msgs
                          , appCardFocus = Nothing
