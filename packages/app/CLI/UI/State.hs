@@ -192,6 +192,10 @@ data AppState = AppState
   , appFirstToken :: Maybe UTCTime      -- ^ when this turn's first delta arrived
   , appApproval   :: Maybe Text         -- ^ parked tool-approval message (M3)
   , appAskTool    :: Maybe (String, [Text])  -- ^ tool identity captured from the ask event
+  -- | 长粘贴折叠：占位符文本 → 原文。粘贴超过阈值时输入框只放占位符，
+  -- 提交前展开（Reasonix 的 `[Pasted text #N · X lines]`）。
+  , appPastes     :: [(Text, Text)]
+  , appPasteSeq   :: Int
   , appPendingDelete :: Maybe String        -- ^ session id awaiting delete confirmation
   , appPendingStop   :: Bool                -- ^ Ctrl+Alt+Q confirmation is open (service stop)
   , appPendingProviderRemove :: Maybe Text  -- ^ provider name awaiting remove confirmation (tui-port L290)

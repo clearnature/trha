@@ -40,6 +40,7 @@ import qualified UI.EventSpec
 import qualified UI.ThemeSpec
 import qualified UI.InputHistorySpec
 import qualified UI.DialogSpec
+import qualified UI.PasteFoldSpec
 import qualified UI.InteractionSpec
 import qualified UI.LayoutSpec
 import qualified UI.CompletionSpec
@@ -104,6 +105,7 @@ testSuite = do
   UI.ThemeSpec.spec
   UI.InputHistorySpec.spec
   UI.DialogSpec.spec
+  UI.PasteFoldSpec.spec
   UI.InteractionSpec.spec
   UI.LayoutSpec.spec
   UI.CompletionSpec.spec

@@ -78,7 +78,9 @@ test-suite trha-cli-test
     UI.InputHistory
     UI.InputHistorySpec
     UI.Dialog
+    UI.PasteFold
     UI.DialogSpec
+    UI.PasteFoldSpec
     UI.Interaction
     UI.InteractionSpec
     UI.Layout

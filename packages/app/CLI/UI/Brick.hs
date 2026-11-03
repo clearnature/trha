@@ -40,6 +40,7 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Foldable as F
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text.Encoding as TE
+import qualified Data.Text.Encoding.Error as TEE
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import Core.PlanStore (savePlanSnapshot)
 import Core.ProjectStore (ensureProject, recordProjectSession)
@@ -72,6 +73,7 @@ import Graphics.Vty.Input.Events
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics, branchFromHead, statusFitsOneRow, wrapStatusLine)
+import UI.PasteFold (expandPastes, isLongPaste, pasteLabel)
 import UI.TimeStamp (clockWithZone)
 import UI.Render.Footer (footerHints)
 import System.Directory (getCurrentDirectory, createDirectoryIfMissing, getHomeDirectory, doesFileExist, getTemporaryDirectory, removeFile, getFileSize)
@@ -197,6 +199,8 @@ initialState bridge chan cfg = AppState
   , appFirstToken = Nothing
   , appApproval  = Nothing
   , appAskTool   = Nothing
+  , appPastes    = []
+  , appPasteSeq  = 0
   , appPendingDelete = Nothing
   , appPendingStop   = False
   , appPendingProviderRemove = Nothing
@@ -1606,6 +1610,16 @@ handleEvent (VtyEvent (EvMouseDown _ _ BScrollUp _)) =
   vScrollBy (viewportScroll MessageArea) (-3)
 handleEvent (VtyEvent (EvMouseDown _ _ BScrollDown _)) =
   vScrollBy (viewportScroll MessageArea) 3
+-- | 长粘贴折叠：原文存进 appPastes，输入框只放一个占位符
+-- （Reasonix 的 @[Pasted text #N · X lines]@）。短粘贴照常进编辑器。
+handleEvent (VtyEvent (EvPaste bs)) = do
+  let txt = TE.decodeUtf8With TEE.lenientDecode bs
+  if isLongPaste txt
+    then insertPaste txt
+    else do
+      editDefaultKey (EvPaste bs)
+      refreshCompletion >> refreshPalette
+
 -- A dialog is modal: while one is open the top dialog owns every key and
 -- the editor gets nothing until it closes.
 handleEvent (VtyEvent ev) = do
@@ -1985,6 +1999,18 @@ handleChatKey (EvKey (KChar 'x') [MCtrl]) =
 -- | ctrl+p opens the interactive settings panel (MiMo's command_list is a
 -- wizard-style config surface, not the slash-command palette).
 handleChatKey (EvKey (KChar 'p') [MCtrl]) = openSettingsPanel
+-- | ctrl+g：把折叠的粘贴展开回输入框（Reasonix 的 keepFoldedPastes）。
+handleChatKey (EvKey (KChar 'g') [MCtrl]) = do
+  st <- get
+  case appPastes st of
+    [] -> showToast (tr (appLang st) "Nothing to expand")
+    pastes -> do
+      let expanded = expandPastes pastes (editorValue st)
+      modify $ \s -> s
+        { appInput = editorText InputArea (Just 1) expanded
+        , appPastes = [], appPasteSeq = 0 }
+      refreshCompletion >> refreshPalette
+      scrollBottom
 -- | ctrl+l：清空视图（历史仍在 transcript 里）——Reasonix 的 clearDisplay。
 handleChatKey (EvKey (KChar 'l') [MCtrl]) = clearView
 -- | ctrl+s：提交（终端里 Enter 已提交，这里补齐习惯键位）。
@@ -3072,11 +3098,13 @@ toCardStatus s = case s of
 -- | Dispatch submitted input: open the quick picker when a slash prefix is
 -- ambiguous, otherwise run the command / send the chat message.
 handleSubmit :: Text -> EventM ResourceName AppState ()
-handleSubmit input
-  -- Shell mode (`!cmd`): run locally, never send the command to the model.
-  | Just cmd <- shellCommandOf input = runShellCommand cmd
-  | otherwise = do
-      st <- get
+handleSubmit rawInput = do
+  st <- get
+  -- 粘贴折叠的占位符在提交前换回原文：模型看到的必须是完整内容。
+  let input = expandPastes (appPastes st) rawInput
+  case shellCommandOf input of
+    Just cmd -> runShellCommand cmd
+    Nothing ->
       if "/" `T.isPrefixOf` input
         then case filterItems input (allPickerItems st) of
           []  -> handleSlash input
@@ -3084,6 +3112,8 @@ handleSubmit input
           _   -> modify $ \s -> s { appDialogs =
                    stackPush (DialogCommands (allPickerItems st) input 0) (appDialogs s) }
         else handleChat input
+
+-- | 粘贴折叠的纯逻辑（判定、占位符、展开）在 UI.PasteFold 里，可单测。
 
 -- | Run one local shell command and show its output as a card.  120s cap, 20k
 -- character cap; the exit code is appended when non-zero.  The execution
@@ -4212,17 +4242,30 @@ steerDraft = do
     _ -> pure ()
 
 -- | shift+insert：把剪贴板文本插到输入末尾。
+-- | 粘贴一段文本：长内容折叠成占位符，短内容直接进编辑器。
+-- 终端的 bracketed paste（EvPaste）与剪贴板粘贴（alt+v）共用这一条。
+insertPaste :: Text -> EventM ResourceName AppState ()
+insertPaste txt = do
+  st <- get
+  let n = appPasteSeq st + 1
+      nlines = T.count "\n" txt + 1
+      label = pasteLabel n nlines
+      folded = isLongPaste txt
+  modify $ \s -> s
+    { appPastes = if folded then appPastes s <> [(label, txt)] else appPastes s
+    , appPasteSeq = if folded then n else appPasteSeq s
+    , appInput = editorText InputArea (Just 1)
+        (editorValue s <> (if folded then label else txt)) }
+  refreshCompletion >> refreshPalette
+  scrollBottom
+
 pasteClipboardText :: EventM ResourceName AppState ()
 pasteClipboardText = do
   st <- get
   mt <- liftIO readClipboardText
   case mt of
     Nothing -> showToast (tr (appLang st) "No text on the clipboard")
-    Just txt -> do
-      let cur = T.unlines (getEditContents (appInput st))
-      modify $ \s -> s { appInput = editorText InputArea (Just 1) (cur <> txt) }
-      refreshCompletion >> refreshPalette
-      scrollBottom
+    Just txt -> insertPaste txt
 
 -- | Ctrl+R: record a short voice note.  The recorder takes over the
 -- terminal (arecord needs a device handle), then the saved path is inserted
