@@ -674,16 +674,23 @@ toAnthropicMessages msgs = (T.intercalate "\n\n" systems, go msgs)
       ChatAssistantThought t calls reasoning sig ->
         object [ "role" .= ("assistant" :: Text)
                , "content" .= assistantBlocks t calls (Just (reasoning, sig)) ] : go rest
-      ChatTool callId out ->
-        let content = if T.null (T.strip out) then "(no output)" else out
-        in object
-             [ "role" .= ("user" :: Text)
-             , "content" .= [ object
-                 [ "type" .= ("tool_result" :: Text)
-                 , "tool_use_id" .= callId
-                 , "content" .= content
-                 ] ]
-             ] : go rest
+      ChatTool{} ->
+        -- 并行工具的结果必须合并进*同一条* user 消息：Anthropic 要求每个
+        -- tool_use 紧跟的下一段消息里带齐所有 tool_result，拆成多条会被
+        -- 400 拒绝（"tool_use ids were found without tool_result blocks"）。
+        let (group, rest') = span isToolMsg (m : rest)
+        in toolResultTurn group : go rest'
+    isToolMsg ChatTool{} = True
+    isToolMsg _ = False
+    toolResultTurn group = object
+      [ "role" .= ("user" :: Text)
+      , "content" .= [ object
+          [ "type" .= ("tool_result" :: Text)
+          , "tool_use_id" .= callId
+          , "content" .= if T.null (T.strip out) then "(no output)" else out
+          ]
+        | ChatTool callId out <- group ]
+      ]
     assistantBlocks :: Text -> [ToolCall] -> Maybe (Text, Maybe Text) -> [Value]
     assistantBlocks t calls thinking =
       thinkingBlock thinking
