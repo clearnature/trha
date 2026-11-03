@@ -261,6 +261,7 @@ zhDict = M.fromList
   , ("Unknown skill: ", "未知技能：")
   , ("Cannot read skill file: ", "无法读取技能文件：")
   , ("Mode: ", "模式：")
+  , ("Mode switched", "已切换模式")
   , ("unknown", "未知")
   , ("cache ", "缓存 ")
   , ("turn hit ", "现在 ")

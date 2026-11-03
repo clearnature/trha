@@ -2608,7 +2608,7 @@ modeAction body = do
             _           -> "Plan"
       modify $ \s -> s
         { appMode = Just (SessionMode mode' label (nxt == "plan") Nothing)
-        , appStatus = label }
+        , appStatus = tr (appLang s) "Mode switched" }
     Just sid -> do
       let bridge = appBridge st
           chan = appChan st
@@ -2900,8 +2900,10 @@ handleAppEvent (EvNotice notice) = case notice of
 handleAppEvent (EvMode result) = case result of
   Right m -> do
     lang0 <- gets appLang
+    -- 左侧 modeTag 已经显示模式名，appStatus 再写一遍就是「Read only ·
+    -- 模式：Read only」。这里只确认「切换完成」。
     modify $ \s -> s { appMode = Just m
-                     , appStatus = tr (appLang s) "Mode: " <> smLabel m }
+                     , appStatus = tr (appLang s) "Mode switched" }
     showToast (tr lang0 "Mode: " <> smLabel m)
   Left e  -> modify $ \s -> s { appStatus = "Mode: " <> T.pack (show e) }
 
