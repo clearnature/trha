@@ -25,13 +25,16 @@ import Core.RunLog (logDir)
 import Data.Text (Text)
 import qualified Data.Text as T
 import System.Directory
-  ( createDirectoryIfMissing, doesFileExist, findExecutable, getCurrentDirectory )
+  ( createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable
+  , getCurrentDirectory, getModificationTime, listDirectory )
 import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (IOMode(AppendMode), hClose, openFile)
 import System.Process
   ( CreateProcess(..), StdStream(NoStream, UseHandle), createProcess, proc
-  , waitForProcess )
+  , readCreateProcessWithExitCode, waitForProcess )
+import Data.Time.Clock (UTCTime)
+import System.Exit (ExitCode)
 
 -- | The kernel's OpenAI-compatible API port (CLI default in "Core.Args").
 -- Kept here so the bootstrap and the scheduler agree without passing it around.
@@ -101,9 +104,59 @@ spawnScheduler = do
   case found of
     Nothing -> pure False
     Just (dir, entry) -> do
+      -- The scheduler runs from dist/; a stale dist silently serves old routes
+      -- (that is how /workspace kept answering 404 after its route landed).
+      ensureSchedulerFresh dir
       cwd <- getCurrentDirectory
       spawnDetached "scheduler" [("TRHA_WORKSPACE", cwd)] "node" [entry] (Just dir)
       pure True
+
+-- | Rebuild @packages/scheduler/dist@ when any @.ts@ under @src/@ is newer.
+--
+-- Best effort: a missing npm or a failed build leaves the old dist in place,
+-- so the client still starts — it just keeps the old behaviour.
+ensureSchedulerFresh :: FilePath -> IO ()
+ensureSchedulerFresh base = do
+  let distEntry = base </> "dist" </> "cli.js"
+  distThere <- doesFileExist distEntry
+  if not distThere
+    then rebuild
+    else do
+      distTime <- getModificationTime distEntry
+      srcTime <- newestTsTime (base </> "src") (0 :: Int)
+      case srcTime of
+        Just t | t > distTime -> rebuild
+        _ -> pure ()
+  where
+    rebuild = void
+      (try (readCreateProcessWithExitCode
+              ((proc "npm" ["run", "--silent", "build"]) { cwd = Just base }) "")
+        :: IO (Either SomeException (ExitCode, String, String)))
+
+-- | Newest modification time of any file under @dir@ (depth-limited).
+newestTsTime :: FilePath -> Int -> IO (Maybe UTCTime)
+newestTsTime dir depth
+  | depth > 8 = pure Nothing
+  | otherwise = do
+      isDir <- doesDirectoryExist dir
+      if not isDir
+        then pure Nothing
+        else do
+          entries <- listDirectory dir
+          times <- mapM one entries
+          pure (newest times)
+  where
+    one e = do
+      let p = dir </> e
+      isDir <- doesDirectoryExist p
+      if isDir
+        then newestTsTime p (depth + 1)
+        else if ".ts" `T.isSuffixOf` T.pack e || ".json" `T.isSuffixOf` T.pack e
+               then Just <$> getModificationTime p
+               else pure Nothing
+    newest xs = case [ t | Just t <- xs ] of
+      [] -> Nothing
+      ts -> Just (maximum ts)
 
 -- | Start a service that is *not* our child.
 --
