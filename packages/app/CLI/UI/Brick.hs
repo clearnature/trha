@@ -74,6 +74,7 @@ import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics, branchFromHead, statusFitsOneRow, wrapStatusLine)
 import UI.PasteFold (expandPastes, isLongPaste, pasteLabel)
+import UI.TextWidth (takeCells)
 import UI.Interaction (askCountdownText)
 import UI.TimeStamp (clockWithZone)
 import UI.Render.Footer (footerHints)
@@ -1325,7 +1326,7 @@ drawStatus st = Widget Greedy Fixed $ do
         -- 这里原来是常量 " · ready"：appStatus 被各处设置（工具状态、
         -- 中断中、再按一次退出…）却从未真正显示出来。
         , withAttr (attrName "status")
-            (str (T.unpack (" · " <> T.take 48 (appStatus st))))
+            (str (T.unpack (" · " <> takeCells 48 (appStatus st))))
         ]
       , [ withAttr (attrName "timestamp") (str (T.unpack (" · " <> clockNow)))
         | not (T.null clockNow) ]
