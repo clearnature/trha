@@ -21,7 +21,7 @@ import Brick.Widgets.Edit
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.Async (async)
-import Control.Monad (filterM, forM_, unless, void, when)
+import Control.Monad (filterM, forM_, forever, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import System.Timeout (timeout)
 import Core.Clipboard (readClipboardText, saveClipboardImage)
@@ -249,6 +249,11 @@ appFor = App
             then "\ESC[?1000h\ESC[?1006h"
             else "\ESC[?1000l\ESC[?1002l\ESC[?1003l\ESC[?1006l"
         hFlush stdout
+      -- 每秒一次 tick：时钟与「本轮耗时」原本只在按键事件里更新，
+      -- 静止的会话状态栏会停在旧时间上。
+      void $ liftIO $ async $ forever $ do
+        threadDelay 1000000
+        writeBChan (appChan st) EvTick
   , appAttrMap      = themeAttrMap . appTheme
   }
 
@@ -2944,6 +2949,10 @@ handleAppEvent (EvVerdict result) = do
       appendMsg (mkMsg "error" (T.pack (show err)) t)
       modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
   scrollBottom
+handleAppEvent EvTick = do
+  t <- liftIO getCurrentTime
+  modify $ \s -> s { appNow = Just t }
+
 handleAppEvent (EvStatusInfo rows) = do
   modify $ \s -> s { appSysRows = rows }
 handleAppEvent (EvMetrics rows) = do

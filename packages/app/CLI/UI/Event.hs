@@ -135,6 +135,7 @@ data AppEvent
   | EvServices [Text] [Text]                   -- ^ LSP lines, MCP lines
   | EvBalance (Either CLIError Balance)         -- ^ provider account balance
   | EvSandboxConfig (Either CLIError Bool)       -- ^ scheduler's effective sandbox switch
+  | EvTick                                        -- ^ 每秒一次：刷新时钟与耗时显示
   deriving (Show)
 
 -- | Which screen the TUI is showing.  Home is the launch screen (MiMo's
