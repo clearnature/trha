@@ -761,10 +761,10 @@ parseAnthropicTurn v = case v of
         (mi, mo) = case field "usage" o of
           Just (Object u) -> (int "input_tokens" u, int "output_tokens" u)
           _               -> (Nothing, Nothing)
-        stop = case field "stop_reason" o of
-          Just (String s) -> Just s
-          _               -> Nothing
-    Right (ChatTurn (T.concat texts) calls (Just (usageOf mi mo)) stop
+    -- 第 4 个字段是 ctError，不是 stop_reason：这里曾把 @stop_reason@ 原样
+    -- 传进去，于是每个正常结束的 Anthropic 回合都会变成
+    -- “[provider error] end_turn”。
+    Right (ChatTurn (T.concat texts) calls (Just (usageOf mi mo)) Nothing
                     (if T.null reasoning then Nothing else Just reasoning) signature)
   _ -> Left "malformed Anthropic response"
   where
