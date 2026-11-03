@@ -1233,7 +1233,7 @@ executeCommand lang _ _ _ ResumeList = do
 -- | Resume a local session by list number or id: replay its transcript
 -- and set it as the active session (continuing works while the
 -- orchestration layer still holds it).
-executeCommand lang _ sessionRef _ (ResumeSelect sel) = do
+executeCommand lang bridge sessionRef _ (ResumeSelect sel) = do
   sessions <- listLocalSessions
   case pickLocalSession sel sessions of
     Nothing -> return $ Just $ tr lang "No local session matches: " <> T.pack sel
@@ -1241,11 +1241,17 @@ executeCommand lang _ sessionRef _ (ResumeSelect sel) = do
       events <- loadTranscript (ssId s)
       let replay = renderReplayText (renderReplay events)
       writeIORef sessionRef (Just (ssId s))
+      -- 调度层会从 stateDir 恢复会话，所以先问一句它是否真的在：在就能
+      -- 直接接着聊；不在的话本地回放仍可看，但新消息会 404。
+      live <- fetchSessionInfo bridge (ssId s)
+      let note = case live of
+            Right _ -> tr lang "This session is live on the scheduler — keep going."
+            Left _  -> tr lang "This session is not live on the scheduler; /new starts a fresh one."
       return $ Just $
         (if T.null replay
            then tr lang "Resumed " <> T.pack (ssId s) <> tr lang " (empty transcript)"
            else tr lang "Resumed " <> T.pack (ssId s) <> ":\n" <> replay)
-        <> "\n" <> tr lang "Note: continuing needs the session on the orchestration side."
+        <> "\n" <> note
 
 executeCommand lang bridge sessionRef modelRef (RunCustom name args) = do
   cmds <- loadCustomCommands

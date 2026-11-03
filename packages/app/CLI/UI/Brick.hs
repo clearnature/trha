@@ -775,7 +775,13 @@ resumeSession selText = do
                          , appFirstToken = Nothing }
       when (null msgs) $
         appendMsg (mkMsg "system" (tr lang "Session " <> T.pack (ssId s) <> tr lang " has an empty transcript.") t)
-      appendMsg (mkMsg "system" (tr lang "Note: continuing needs the session on the orchestration side.") t)
+      -- 调度层会从 stateDir 恢复会话：先问一句它是否真的在，再决定提示。
+      bridge0 <- gets appBridge
+      live <- liftIO (fetchSessionInfo bridge0 (ssId s))
+      appendMsg (mkMsg "system"
+        (case live of
+           Right _ -> tr lang "This session is live on the scheduler — keep going."
+           Left _  -> tr lang "This session is not live on the scheduler; /new starts a fresh one.") t)
       st <- get
       void $ liftIO $ async $
         refreshSidebar (appBridge st) (appChan st) (ssId s)
