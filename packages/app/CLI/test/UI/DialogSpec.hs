@@ -38,15 +38,15 @@ spec = do
 
   describe "stack" $ do
     it "push and pop round-trip" $ do
-      let s0 = stackPush (DialogModels sampleModels 0) emptyStack
-      stackTop s0 `shouldBe` Just (DialogModels sampleModels 0)
+      let s0 = stackPush (DialogModels sampleModels "" 0) emptyStack
+      stackTop s0 `shouldBe` Just (DialogModels sampleModels "" 0)
       stackPop s0 `shouldBe` emptyStack
 
     it "pops from the top only" $ do
-      let s1 = stackPush (DialogSessions sampleSessions 0)
-             $ stackPush (DialogModels sampleModels 0) emptyStack
-      stackTop s1 `shouldBe` Just (DialogSessions sampleSessions 0)
-      stackTop (stackPop s1) `shouldBe` Just (DialogModels sampleModels 0)
+      let s1 = stackPush (DialogSessions sampleSessions "" 0)
+             $ stackPush (DialogModels sampleModels "" 0) emptyStack
+      stackTop s1 `shouldBe` Just (DialogSessions sampleSessions "" 0)
+      stackTop (stackPop s1) `shouldBe` Just (DialogModels sampleModels "" 0)
 
     it "empty stack: top is Nothing, pop is a no-op, stackNull holds" $ do
       stackTop emptyStack `shouldBe` Nothing
@@ -54,18 +54,18 @@ spec = do
       stackNull emptyStack `shouldBe` True
 
     it "stackNull is False once something is pushed" $ do
-      stackNull (stackPush (DialogModels sampleModels 0) emptyStack) `shouldBe` False
+      stackNull (stackPush (DialogModels sampleModels "" 0) emptyStack) `shouldBe` False
 
   describe "selection" $ do
     it "moves the model picker selection and clamps at the end" $ do
-      dialogMoveSel 1 (DialogModels sampleModels 0) `shouldBe` DialogModels sampleModels 1
-      dialogMoveSel 1 (DialogModels sampleModels 1) `shouldBe` DialogModels sampleModels 1
+      dialogMoveSel 1 (DialogModels sampleModels "" 0) `shouldBe` DialogModels sampleModels "" 1
+      dialogMoveSel 1 (DialogModels sampleModels "" 1) `shouldBe` DialogModels sampleModels "" 1
 
     it "clamps at the start" $ do
-      dialogMoveSel (-5) (DialogSessions sampleSessions 0) `shouldBe` DialogSessions sampleSessions 0
+      dialogMoveSel (-5) (DialogSessions sampleSessions "" 0) `shouldBe` DialogSessions sampleSessions "" 0
 
     it "does not move within an empty list" $ do
-      dialogMoveSel 1 (DialogModels [] 0) `shouldBe` DialogModels [] 0
+      dialogMoveSel 1 (DialogModels [] "" 0) `shouldBe` DialogModels [] "" 0
 
   describe "sandbox panel" $ do
     it "has four rows and clamps the selection" $ do
@@ -191,3 +191,27 @@ spec = do
       dialogCount (DialogApproval "ask" "bash" ["ls"] 0) `shouldBe` 3
       dialogMoveSel 1 (DialogApproval "ask" "bash" ["rm -rf build"] 1)
         `shouldBe` DialogApproval "ask" "bash" ["rm -rf build"] 1
+
+  describe "list filtering" $ do
+    let ms = [ ModelInfo "deepseek-flash" "" 1000
+             , ModelInfo "deepseek-v4-pro" "" 2000 ]
+        s1 = SessionSummary "session-1" "alpha task" 1 Nothing Nothing Nothing Nothing
+        s2 = SessionSummary "session-2" "beta task" 1 Nothing Nothing Nothing Nothing
+
+    it "filters models case-insensitively" $
+      map modelName (filterModels "V4" ms) `shouldBe` ["deepseek-v4-pro"]
+
+    it "filters sessions by title or id" $ do
+      map ssId (filterSessions "beta" [s1, s2]) `shouldBe` ["session-2"]
+      map ssId (filterSessions "session-1" [s1, s2]) `shouldBe` ["session-1"]
+
+    it "keeps every row for an empty query" $ do
+      length (filterModels "" ms) `shouldBe` 2
+      length (filterSessions "   " [s1, s2]) `shouldBe` 2
+
+    it "resets the selection after a query edit" $
+      dialogSessionsAppend 'x' (DialogSessions [s1, s2] "" 1)
+        `shouldBe` DialogSessions [s1, s2] "x" 0
+
+    it "counts the filtered rows, not the raw list" $
+      dialogCount (DialogModels ms "v4" 0) `shouldBe` 1

@@ -605,8 +605,8 @@ drawDialog st d =
       DialogConfirm{}    -> tr lang " Confirm "
       DialogSandbox{}    -> tr lang " SandBox "
     sel = case d of
-      DialogModels _ s -> s
-      DialogSessions _ s -> s
+      DialogModels _ _ s -> s
+      DialogSessions _ _ s -> s
       DialogCommands _ _ s -> s
       DialogProviders _ s -> s
       DialogSkills _ _ s -> s
@@ -634,16 +634,16 @@ drawDialog st d =
         [ padLeftRight 1 $ strWrap (T.unpack msg) ] <>
         [ row idx sel (str (T.unpack (tr lang (confirmOption idx)))) (str "")
         | idx <- [0 .. 1 :: Int] ]
-      DialogModels ms _ ->
+      DialogModels _ _ _ ->
         [ row idx sel
             (str ((if isFavorite (modelName it) (appModelPrefs st) then "★ " else "  ")
                   ++ T.unpack (modelName it)))
             (str ("ctx " ++ show (modelContextSize it)))
-        | (idx, it) <- zip [start ..] (drop start (take (end + 1) ms)) ]
-      DialogSessions ss _ ->
+        | (idx, it) <- zip [start ..] (drop start (take (end + 1) (dialogModelsItems d))) ]
+      DialogSessions _ _ _ ->
         [ row idx sel (str (T.unpack (ssTitle it)))
                       (str (ssId it ++ maybe "" (\tok -> "  " ++ show tok ++ " tok") (ssUsage it)))
-        | (idx, it) <- zip [start ..] (drop start (take (end + 1) ss)) ]
+        | (idx, it) <- zip [start ..] (drop start (take (end + 1) (dialogSessionsItems d))) ]
       DialogCommands{} ->
         [ row idx sel (str (T.unpack (piId it)))
                       (str (T.unpack (T.take 44 (piDesc it))))
@@ -746,8 +746,8 @@ drawDialog st d =
       -- 「选择」，模型/会话/主题等是「打开」。
       DialogApproval{}  -> hintRow "↑/↓ · Tab move · Enter choose · Esc close"
       DialogConfirm{}   -> hintRow "↑/↓ · Tab move · Enter choose · Esc close"
-      DialogModels{}    -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
-      DialogSessions{}  -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
+      DialogModels{}    -> idxHintRow "↑/↓ · Tab move · Enter open · Esc close"
+      DialogSessions{}  -> idxHintRow "↑/↓ · Tab move · Enter open · Esc close"
       DialogThemes{}    -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
       DialogLanguages{} -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
       DialogAgents{}    -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
@@ -756,6 +756,15 @@ drawDialog st d =
       DialogSandbox{}   -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
       _ -> emptyWidget
     hintRow t = padLeftRight 1 $ withAttr (attrName "status") $ str (T.unpack (tr lang t))
+    -- 可过滤的列表：查询行 + 提示（输入即过滤，回车打开）。
+    idxHintRow t = padLeftRight 1 $ hBox
+      [ withAttr (attrName "input") $ str ("> " ++ T.unpack (dialogQueryOf d))
+      , withAttr (attrName "status") $ str ("   " ++ T.unpack (tr lang t))
+      ]
+    dialogQueryOf d0 = case d0 of
+      DialogModels _ q _ -> q
+      DialogSessions _ q _ -> q
+      _ -> ""
 
 statusLine :: AppState -> Text
 statusLine st = T.unlines
@@ -1824,12 +1833,16 @@ dialogAppend :: Char -> Dialog -> Dialog
 dialogAppend c d = case d of
   DialogCommands{} -> dialogCommandsAppend c d
   DialogSkills{}   -> dialogSkillsAppend c d
+  DialogModels{}   -> dialogModelsAppend c d
+  DialogSessions{} -> dialogSessionsAppend c d
   _                -> d
 
 dialogDelete :: Dialog -> Dialog
 dialogDelete d = case d of
   DialogCommands{} -> dialogCommandsDelete d
   DialogSkills{}   -> dialogSkillsDelete d
+  DialogModels{}   -> dialogModelsDelete d
+  DialogSessions{} -> dialogSessionsDelete d
   _                -> d
 
 withCommands :: (Dialog -> Dialog) -> EventM ResourceName AppState ()
@@ -1838,6 +1851,9 @@ withCommands f = do
   case stackTop (appDialogs st) of
     Just DialogCommands{} -> modifyTop f
     Just DialogSkills{}   -> modifyTop f
+    -- 模型/会话列表也可过滤：字符输入进查询行，而不是被丢掉。
+    Just DialogModels{}   -> modifyTop f
+    Just DialogSessions{} -> modifyTop f
     _                     -> return ()
 
 -- | Apply a pure transformation to the top dialog of the stack.
@@ -1871,7 +1887,7 @@ dialogActivate = do
     Just d -> do
       modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
       case d of
-        DialogModels ms sel -> case drop sel ms of
+        DialogModels _ _ sel -> case drop sel (dialogModelsItems d) of
           (m : _) -> do
             modify $ \s -> s { appModel = modelName m }
             st2 <- get
@@ -1879,7 +1895,7 @@ dialogActivate = do
             liftIO (saveModelPrefs prefs')
             modify $ \s -> s { appModelPrefs = prefs' }
           []      -> return ()
-        DialogSessions ss sel -> case drop sel ss of
+        DialogSessions _ _ sel -> case drop sel (dialogSessionsItems d) of
           (s : _) -> resumeSession (T.pack (ssId s))
           []      -> return ()
         DialogCommands _ _ sel -> case drop sel (dialogCommandsItems d) of
@@ -2887,7 +2903,7 @@ handleAppEvent (EvSessions result) = do
     Right sids -> do
       cwd <- liftIO getCurrentDirectory
       local <- liftIO (listLocalSessionsIn cwd)
-      modify $ \s -> s { appDialogs = stackPush (DialogSessions local 0) (appDialogs s) }
+      modify $ \s -> s { appDialogs = stackPush (DialogSessions local "" 0) (appDialogs s) }
       -- legacy ids row kept for parity with the REPL
       appendMsg (mkMsg "system" ((tr lang "Sessions:" <> "\n")
                        <> T.unlines (map (\s -> "  • " <> T.pack s) sids)) t)
@@ -2901,14 +2917,14 @@ handleAppEvent (EvModels result) = do
     Right ms -> do
       st <- get
       case stackTop (appDialogs st) of
-        Just (DialogModels _ _) ->
-          modifyTop (const (DialogModels (orderedModels (appModelPrefs st) ms) 0))
+        Just (DialogModels _ _ _) ->
+          modifyTop (const (DialogModels (orderedModels (appModelPrefs st) ms) "" 0))
         _ -> appendMsg (mkMsg "system" ((tr lang "Models:" <> "\n") <> T.unlines
                          (map (\m -> "  • " <> modelName m <> " — " <> modelDescription m) ms)) t)
     Left err -> do
       st <- get
       case stackTop (appDialogs st) of
-        Just (DialogModels _ _) -> modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
+        Just (DialogModels _ _ _) -> modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
         _ -> return ()
       appendMsg (mkMsg "error" (tr lang "Error: " <> T.pack (show err)) t)
   scrollBottom
@@ -3358,17 +3374,17 @@ handleSlash input = do
       local <- liftIO (listLocalSessionsIn cwd)
       if null local
         then appendMsg (mkMsg "system" (tr lang "No local sessions in this directory yet. Run a conversation first.") t)
-        else modify $ \s -> s { appDialogs = stackPush (DialogSessions local 0) (appDialogs s) }
+        else modify $ \s -> s { appDialogs = stackPush (DialogSessions local "" 0) (appDialogs s) }
     "/models" -> do
       st2 <- get
       case appProvider st2 >>= \n -> find ((== n) . piName) (appProviders st2) of
         Just p | not (null (piModels p)) ->
           -- The picker is scoped to the selected provider; no round trip.
           modify $ \s -> s { appDialogs =
-            stackPush (DialogModels (orderedModels (appModelPrefs s) (providerModelInfos p)) 0)
+            stackPush (DialogModels (orderedModels (appModelPrefs s) (providerModelInfos p)) "" 0)
                       (appDialogs s) }
         _ -> do
-          modify $ \s -> s { appDialogs = stackPush (DialogModels [] 0) (appDialogs s) }
+          modify $ \s -> s { appDialogs = stackPush (DialogModels [] "" 0) (appDialogs s) }
           void $ liftIO $ async $
             listModels bridge >>= writeBChan chan . EvModels
     "/sandbox" -> modify $ \s -> s { appDialogs =

@@ -38,6 +38,16 @@ module UI.Dialog
   , dialogCommandsSelected
   , dialogCommandsItems
   , dialogCommandsInitialSel
+  , dialogModelsAppend
+  , dialogModelsDelete
+  , dialogModelsQuery
+  , dialogModelsItems
+  , filterModels
+  , filterSessions
+  , dialogSessionsAppend
+  , dialogSessionsDelete
+  , dialogSessionsQuery
+  , dialogSessionsItems
     -- * Escape hierarchy
   , EscFlags(..)
   , EscOutcome(..)
@@ -89,8 +99,8 @@ sandboxApply _ s = s
 -- the selected index; the command dialog carries the full registry (so
 -- query edits can re-filter) plus the query and the selection.
 data Dialog
-  = DialogModels [ModelInfo] Int            -- ^ /models: filtered, selected
-  | DialogSessions [SessionSummary] Int     -- ^ /sessions: filtered, selected
+  = DialogModels [ModelInfo] Text Int       -- ^ /models: all models, query, selected
+  | DialogSessions [SessionSummary] Text Int -- ^ /sessions: all sessions, query, selected
   | DialogCommands [PickerItem] Text Int    -- ^ full registry, query, selected
   | DialogProviders [ProviderInfo] Int      -- ^ /provider: providers, selected
   | DialogPresets [Preset] Int             -- ^ /provider: preset vendors, selected
@@ -129,8 +139,8 @@ stackNull = null
 
 -- | Filtered item count of a dialog.
 dialogCount :: Dialog -> Int
-dialogCount (DialogModels ms _)      = length ms
-dialogCount (DialogSessions ss _)    = length ss
+dialogCount (DialogModels ms q _)    = length (filterModels q ms)
+dialogCount (DialogSessions ss q _)  = length (filterSessions q ss)
 dialogCount (DialogCommands all0 q _) = length (filterItems q all0)
 dialogCount (DialogProviders ps _)   = length ps
 dialogCount (DialogPresets ps _)     = length ps
@@ -186,8 +196,8 @@ isDestructiveShell name args
 -- empty lists).
 dialogMoveSel :: Int -> Dialog -> Dialog
 dialogMoveSel delta d = case d of
-  DialogModels ms s      -> DialogModels ms (mv (dialogCount d) s)
-  DialogSessions ss s    -> DialogSessions ss (mv (dialogCount d) s)
+  DialogModels ms q s    -> DialogModels ms q (mv (dialogCount d) s)
+  DialogSessions ss q s  -> DialogSessions ss q (mv (dialogCount d) s)
   DialogCommands all0 q s -> DialogCommands all0 q (moveSelectionSkipping delta s (filterItems q all0))
   DialogProviders ps s     -> DialogProviders ps (mv (dialogCount d) s)
   DialogPresets ps s       -> DialogPresets ps (mv (dialogCount d) s)
@@ -212,6 +222,50 @@ filterSkills q ss
     needle = T.toLower (T.strip q)
     matches sk = needle `T.isInfixOf` T.toLower (skName sk)
               || needle `T.isInfixOf` T.toLower (skDescription sk)
+
+-- | 模型按名字过滤（不区分大小写的子串）。
+filterModels :: Text -> [ModelInfo] -> [ModelInfo]
+filterModels q ms
+  | T.null (T.strip q) = ms
+  | otherwise = filter (matches . modelName) ms
+  where
+    needle = T.toLower (T.strip q)
+    matches name = needle `T.isInfixOf` T.toLower name
+
+-- | 会话按 id 或标题过滤——列表一长，靠 ↑↓ 逐个翻不现实。
+filterSessions :: Text -> [SessionSummary] -> [SessionSummary]
+filterSessions q ss
+  | T.null (T.strip q) = ss
+  | otherwise = filter matches ss
+  where
+    needle = T.toLower (T.strip q)
+    matches s = needle `T.isInfixOf` T.toLower (T.pack (ssId s))
+             || needle `T.isInfixOf` T.toLower (ssTitle s)
+
+dialogModelsAppend :: Char -> Dialog -> Dialog
+dialogModelsAppend c (DialogModels ms q _) = DialogModels ms (queryAppend q c) 0
+
+dialogModelsDelete :: Dialog -> Dialog
+dialogModelsDelete (DialogModels ms q _) = DialogModels ms (queryDelete q) 0
+
+dialogModelsQuery :: Dialog -> Text
+dialogModelsQuery (DialogModels _ q _) = q
+
+-- | 过滤后的模型列表（选中索引指向它）。
+dialogModelsItems :: Dialog -> [ModelInfo]
+dialogModelsItems (DialogModels ms q _) = filterModels q ms
+
+dialogSessionsAppend :: Char -> Dialog -> Dialog
+dialogSessionsAppend c (DialogSessions ss q _) = DialogSessions ss (queryAppend q c) 0
+
+dialogSessionsDelete :: Dialog -> Dialog
+dialogSessionsDelete (DialogSessions ss q _) = DialogSessions ss (queryDelete q) 0
+
+dialogSessionsQuery :: Dialog -> Text
+dialogSessionsQuery (DialogSessions _ q _) = q
+
+dialogSessionsItems :: Dialog -> [SessionSummary]
+dialogSessionsItems (DialogSessions ss q _) = filterSessions q ss
 
 dialogSkillsAppend :: Char -> Dialog -> Dialog
 dialogSkillsAppend c (DialogSkills ss q _) = DialogSkills ss (queryAppend q c) 0
