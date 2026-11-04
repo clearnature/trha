@@ -200,6 +200,18 @@ runConfig env = go
       return $ Just ("SandBox: " <> label
         <> " (TUI: /sandbox opens the panel; the scheduler reads TRHA_SANDBOX)")
 
+    go (SetLanguage Nothing) = Just $
+      return $ Just $ tr lang "Current language: " <> langName lang
+        <> tr lang " — use /language <code> (available: "
+        <> T.intercalate ", " (map langName ([minBound .. maxBound] :: [Lang]))
+        <> ")"
+
+    go (SetLanguage (Just code)) = Just $ do
+      cfg <- resolveConfig defaultCLIConfig
+      let l = parseLang code
+      saveConfig (cfg { configLang = langName l })
+      return $ Just (tr l "Language: " <> langName l)
+
     go _ = Nothing
 
 runSettingsCommand :: Lang -> Text -> IO (Maybe Text)

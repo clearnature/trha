@@ -316,6 +316,19 @@ runSession env = go
                else tr lang "Resumed " <> T.pack (ssId s) <> ":\n" <> body)
             <> "\n" <> note
 
+    go (DeleteSession sid) = Just $ do
+      if null sid
+        then return $ Just (tr lang "Usage: /delete <session-id>")
+        else do
+          result <- deleteSession bridge sid
+          current <- readIORef sessionRef
+          case current of
+            Just currentSid | currentSid == sid -> writeIORef sessionRef Nothing
+            _ -> return ()
+          return $ Just $ case result of
+            Right () -> tr lang "Session deleted: " <> T.pack sid
+            Left err -> tr lang "Error: " <> T.pack (show err)
+
     go _ = Nothing
 
 resumeSessions :: SchedulerBridge -> IO [SessionSummary]

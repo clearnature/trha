@@ -143,4 +143,20 @@ runModel env = go
         ( tr lang "Provider presets:" :
           [ "  " <> preName p <> " (" <> preKind p <> ") " <> preBaseUrl p | p <- presets ] )
 
+    go (SwitchProvider Nothing) = Just $ do
+      r <- listProviders bridge
+      return $ Just $ case r of
+        Left e -> tr lang "Error: " <> T.pack (show e)
+        Right [] -> tr lang "No providers configured."
+        Right ps -> T.unlines
+          (tr lang "Providers:" :
+            [ "  " <> (if piInUse p then "* " else "  ") <> piName p <> " (" <> piKind p <> ")"
+            | p <- ps ])
+
+    go (SwitchProvider (Just name)) = Just $ do
+      r <- setInUseProvider bridge (T.strip name)
+      return $ Just $ case r of
+        Left e -> tr lang "Error: " <> T.pack (show e)
+        Right _ -> tr lang "Switched to " <> T.strip name
+
     go _ = Nothing
