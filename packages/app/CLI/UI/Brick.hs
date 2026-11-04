@@ -73,7 +73,9 @@ import Graphics.Vty.Input.Events
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
-import UI.Brick.Draw.Messages (cardHidden, messageHeader, roleStyle)
+import UI.Brick.Draw.Messages
+  ( cardHidden, diffWidget, messageBody, messageHeader, renderBlocks
+  , renderToolBody, roleStyle )
 import UI.Brick.Draw.Settings (drawSettingsPanel, settingsListMax, settingsRows, visibleRows)
 import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar, sidebarDataFor)
 import UI.Brick.Draw.Status
@@ -686,96 +688,7 @@ drawMessages st =
 
 -- | Body of a message: a tool-invocation card, an assistant reply run
 -- through the Markdown renderer, or plain wrapped text.
-messageBody :: Bool -> Text -> Text -> Maybe ToolCard -> ToolFold -> Widget ResourceName
-messageBody md role content tool fold
-  | role == "stats" =
-      padLeft (Pad 2) $ withAttr (attrName "timestamp") $ strWrap (T.unpack content)
-  | otherwise =
-      case tool of
-    Just card -> renderToolBody card fold
-
-    Nothing
-      | role == "assistant" && md ->
-          padLeft (Pad 2) $
-            withAttr (attrName "assistant") $
-              vBox (renderBlocks (parseMarkdown content))
-      | role == "assistant" ->
-          padLeft (Pad 2) $
-            withAttr (attrName "assistant") $ strWrap (T.unpack content)
-      | role == "error" ->
-          padLeft (Pad 2) $
-            vBox $
-              [ strWrap (T.unpack content) ]
-                ++ [ withAttr (attrName "status") (strWrap (T.unpack hint))
-                   | Just hint <- [errorHint (classifyError content)] ]
-      | role == "thinking" ->
-          -- Reasoning is long; show the first lines plus a size hint (MiMo
-          -- folds it behind "Thought for Xs").
-          padLeft (Pad 2) $
-            withAttr (attrName "system") $
-              borderWithLabel (withAttr (attrName "system") $ str " thinking ") $
-                vBox $
-                  [ padLeftRight 1 $ strWrap (T.unpack l)
-                  | l <- take 3 (filter (not . T.null) (T.lines content)) ]
-                    ++ [ padLeftRight 1 $ withAttr (attrName "timestamp") $
-                           str ("… (" <> show (T.length content) <> " chars)") ]
-      | role == "step" ->
-          padLeft (Pad 2) $
-            withAttr (attrName "timestamp") $
-              str ("── " <> T.unpack content <> " ──")
-      | role == "compact" ->
-          padLeft (Pad 2) $
-            withAttr (attrName "plan") $
-              borderWithLabel (withAttr (attrName "plan") $ str " context ") $
-                padLeftRight 1 (strWrap (T.unpack content))
-      | role == "retry" ->
-          padLeft (Pad 2) $ withAttr (attrName "busy") $ strWrap (T.unpack content)
-      | role == "shell" ->
-          padLeft (Pad 2) $ withAttr (attrName "system") $ strWrap (T.unpack content)
-      | role == "plan" ->
-          -- plan/approval card (Reasonix plan-decision style)
-          padLeft (Pad 2) $
-            withAttr (attrName "plan") $
-              borderWithLabel (withAttr (attrName "plan") $ str " Plan ") $
-                vBox
-                  [ padLeftRight 1 $ strWrap (T.unpack content)
-                  , padLeftRight 1 $ withAttr (attrName "status") $
-                      str "run /approve or /deny"
-                  ]
-      | otherwise ->
-          case filePartsOf content of
-            [] -> padLeft (Pad 2) $ strWrap (T.unpack content)
-            refs ->
-              -- Attachment tokens became file parts (M5-7): the prose keeps
-              -- wrapping, each path gets its own row.
-              let prose = stripFileTokens content
-              in padLeft (Pad 2) $ vBox $
-                   [ strWrap (T.unpack prose) | not (T.null prose) ]
-                     ++ [ withAttr (attrName "timestamp") (str (T.unpack (filePartLine r)))
-                        | r <- refs ]
-
--- | One tool card.  Collapsed: a family-specific headline (shell command,
--- path, pattern, task…).  Expanded: family detail lines, then the diff or
--- output preview.  @present@ renders as a card and skips the raw payload.
-renderToolBody :: ToolCard -> ToolFold -> Widget ResourceName
-renderToolBody card fold =
-  padLeft (Pad 2) $ withAttr (attrName "tool") $
-    case fold of
-      FoldCollapsed -> str (T.unpack (toolHeadline card))
-      FoldExpanded ->
-        vBox $
-          [ str (T.unpack l) | l <- toolDetailLines card ]
-            ++ outputWidgets
-            ++ [ withAttr (attrName "status") $ str (T.unpack (toolStatusLine st (tcDur card)))
-               | Just st <- [tcStatus card] ]
-  where
-    outputWidgets
-      | isJust (presentCard card) = []
-      | looksLikeDiff (tcOutput card) = [diffWidget (tcOutput card)]
-      | otherwise =
-          [ withAttr (diffAttrOf (diffClass l)) $
-              str (T.unpack ("  │ " <> truncLine l))
-          | l <- tcOutput card ]
+-- | messageBody / renderToolBody 见 UI.Brick.Draw.Messages。
 
 drawMessage :: CLIConfig -> Bool -> ToolFold -> ChatMessage -> Widget ResourceName
 drawMessage cfg focused fold msg
@@ -807,27 +720,7 @@ drawMessage cfg focused fold msg
 -- Paragraph spans re-wrap at the context width with styling preserved
 -- (see 'spanWrap'); fenced code blocks get a bordered card labelled with
 -- their language; headings and list items render on one line.
-renderBlocks :: [MdBlock] -> [Widget ResourceName]
-renderBlocks = map renderBlock
-  where
-    renderBlock (MdCodeBlock lang code) =
-      padTop (Pad 1) $
-        withAttr (attrName "codeBlock") $
-          borderWithLabel (withAttr (attrName "codeLang") $ str (" " ++ T.unpack lang ++ " ")) $
-            vBox [ strWrap (T.unpack l) | l <- T.lines code ]
-    renderBlock (MdParagraph spans) = spanWrap spans
-    renderBlock (MdHeading level spans) =
-      padTop (if level <= 2 then Pad 1 else Pad 0) $
-        withAttr (attrName "header") $
-          str (T.unpack (T.replicate level "#" <> " ")) <+> spanLine spans
-    renderBlock (MdListItem marker spans) =
-      padLeft (Pad 2) $ str (T.unpack marker <> " ") <+> spanLine spans
-
-    -- markers are stripped; the styling lives in the attribute
-    spanWidget (MdPlain t) = str (T.unpack t)
-    spanWidget (MdBold t)  = withAttr (attrName "mdBold") $ str (T.unpack t)
-    spanWidget (MdCode t)  = withAttr (attrName "mdCode") $ str (T.unpack t)
-    spanLine spans = hBox (map spanWidget spans)
+-- | renderBlocks 见 UI.Brick.Draw.Messages。
 
 -- | Word-wrap a paragraph of styled inline spans at the available width,
 -- preserving each span's attribute on every wrapped line.
@@ -836,33 +729,11 @@ renderBlocks = map renderBlock
 -- reflow technique of 'txtWrapWith' (measure against the context width,
 -- then emit re-flowed images) but re-flows attributed fragments instead
 -- of plain text.
-spanWrap :: [MdSpan] -> Widget ResourceName
-spanWrap spans = Widget Greedy Fixed $ do
-  c <- getContext
-  let width = max 1 (c ^. availWidthL)
-      resolve n = attrMapLookup (attrName n) (c ^. ctxAttrMapL)
-      imgs =
-        [ V.horizCat [ V.text' (resolve (tokAttr t)) (tokText t) | t <- ts ]
-        | ts <- fillLines width (concatMap spanToks spans)
-        ]
-  return $ emptyResult & imageL .~ V.vertCat imgs
+-- | spanWrap 见 UI.Brick.Draw.Messages。
 
 -- | Render a diff-shaped tool output: line numbers appear once the terminal
 -- is wide enough, and each line keeps its add/remove/hunk colour.
-diffWidget :: [Text] -> Widget ResourceName
-diffWidget ls = Widget Greedy Fixed $ do
-  c <- getContext
-  let width = max 1 (c ^. availWidthL)
-      lay = diffLayout width
-      resolve n = attrMapLookup n (c ^. ctxAttrMapL)
-      prefix = case lay of
-        DiffInline   -> "  │ "
-        DiffNumbered -> ""
-      rows = [ r { drText = truncLine (drText r) } | r <- numberDiff ls ]
-      imgs = [ V.text' (resolve (diffAttrOf (drClass r)))
-                   (prefix <> renderDiffRow lay r)
-             | r <- rows ]
-  return $ emptyResult & imageL .~ V.vertCat imgs
+-- | diffWidget 见 UI.Brick.Draw.Messages。
 
 -- | SpanTok / spanToks / fillLines / splitAtWidth / truncLine / diffAttrOf 等
 -- 纯函数已抽到 UI.Render.Spans（见该模块），这里只保留渲染与交互。
