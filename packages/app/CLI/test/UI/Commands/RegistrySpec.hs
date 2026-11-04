@@ -43,6 +43,17 @@ spec = do
                                     , "/init", "/review", "/compress"
                                     , "/cd", "/tools", "/permissions", "/history", "/about", "/summary", "/forget" ])
 
+    -- 一致性不变量：注册表是「命令存在」的唯一真相，那么每条注册命令都必须
+    -- 能被 parseCommand 认出来。落到 Unknown 就说明「声明了却没接线」——
+    -- 用户会在 TUI 里看到命令存在、执行却得到未识别。
+    it "每条注册命令都能被 parseCommand 解析（不落到 Unknown）" $ do
+      let isUnknown (Unknown _) = True
+          isUnknown _          = False
+          unparsable = [ scCommand c
+                       | c <- slashRegistry
+                       , isUnknown (parseCommand (scCommand c)) ]
+      unparsable `shouldBe` []
+
   describe "pickerItems" $ do
     it "offers exactly the picker-enabled commands in registry order" $ do
       map piId (pickerItems En)
