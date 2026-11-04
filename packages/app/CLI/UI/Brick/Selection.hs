@@ -13,6 +13,9 @@ module UI.Brick.Selection
   , copySelectionText
   , finishSel
   , copyToClipboard
+  , toolCardIds
+  , moveCardFocus
+  , toggleFocusedCard
   ) where
 
 import Brick (EventM, get, modify)
@@ -20,7 +23,11 @@ import Control.Exception (IOException, try)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (fromMaybe, isJust, listToMaybe)
+
+import UI.Brick.DialogKeys (scrollBottom)
+import UI.Brick.Draw.Messages (cardHidden)
+import UI.Event (nextCardFocus)
 import Data.Text (Text)
 import qualified Data.Text as T
 import System.Exit (ExitCode(..))
@@ -123,3 +130,29 @@ copyToClipboard txt = go
       case r of
         Right (ExitSuccess, _, _) -> return True
         _ -> go rest
+
+toolCardIds :: AppState -> [Int]
+toolCardIds st = [ msgId m | m <- appMessages st, isJust (msgTool m), not (cardHidden st m) ]
+
+-- | Move the tool-card focus (alt+↑/↓), clamped to the newest/oldest card.
+moveCardFocus :: Int -> EventM ResourceName AppState ()
+moveCardFocus delta = do
+  st <- get
+  let ids = toolCardIds st
+  modify $ \s -> s { appCardFocus = nextCardFocus ids (appCardFocus s) delta }
+  scrollBottom
+
+-- | Toggle the focused card (ctrl+o, or Enter on empty input).  With no focus
+-- yet this picks the newest card, then flips it — the old single-card
+-- behaviour, now with a movable focus (MiMo parity).
+toggleFocusedCard :: EventM ResourceName AppState ()
+toggleFocusedCard = do
+  st <- get
+  let ids = toolCardIds st
+  case nextCardFocus ids (appCardFocus st) 0 of
+    Nothing -> return ()
+    Just mid ->
+      modify $ \s -> s { appCardFocus = Just mid
+                       , appFolds = Map.alter (Just . toggleFold . fromMaybe FoldCollapsed) mid (appFolds s) }
+  scrollBottom
+

@@ -81,7 +81,8 @@ import UI.Brick.Apply
   ( applyLanguage, applyTheme, modeAction, openSettingsPanel )
 import UI.Brick.Toast (showToast)
 import UI.Brick.Selection
-  ( beginSel, extendSel, copySelectionText, finishSel, copyToClipboard )
+  ( beginSel, extendSel, copySelectionText, finishSel, copyToClipboard
+  , moveCardFocus, toggleFocusedCard, toolCardIds )
 import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
 import UI.Brick.SessionView
@@ -974,30 +975,7 @@ refreshMode bridge sid chan =
 
 -- | Tool-card ids in display order (hidden cards excluded, so focus never
 -- lands on something the viewport does not draw).
-toolCardIds :: AppState -> [Int]
-toolCardIds st = [ msgId m | m <- appMessages st, isJust (msgTool m), not (cardHidden st m) ]
-
--- | Move the tool-card focus (alt+↑/↓), clamped to the newest/oldest card.
-moveCardFocus :: Int -> EventM ResourceName AppState ()
-moveCardFocus delta = do
-  st <- get
-  let ids = toolCardIds st
-  modify $ \s -> s { appCardFocus = nextCardFocus ids (appCardFocus s) delta }
-  scrollBottom
-
--- | Toggle the focused card (ctrl+o, or Enter on empty input).  With no focus
--- yet this picks the newest card, then flips it — the old single-card
--- behaviour, now with a movable focus (MiMo parity).
-toggleFocusedCard :: EventM ResourceName AppState ()
-toggleFocusedCard = do
-  st <- get
-  let ids = toolCardIds st
-  case nextCardFocus ids (appCardFocus st) 0 of
-    Nothing -> return ()
-    Just mid ->
-      modify $ \s -> s { appCardFocus = Just mid
-                       , appFolds = Map.alter (Just . toggleFold . fromMaybe FoldCollapsed) mid (appFolds s) }
-  scrollBottom
+-- | 工具卡焦点组见 UI.Brick.Selection。
 
 -- | Ensure a streaming block is open for the current assistant reply.
 ensurePending :: EventM ResourceName AppState ()
