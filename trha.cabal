@@ -318,6 +318,7 @@ executable trha
     UI.Brick.Slash
     UI.Brick.Wizard
     UI.Brick.DialogActivate
+    UI.Brick.Palette
     UI.Brick.Apply
     UI.Render.ToolSummary
     UI.Render.Message
