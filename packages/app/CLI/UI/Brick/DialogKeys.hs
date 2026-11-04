@@ -11,19 +11,21 @@ module UI.Brick.DialogKeys
   , modifyTop
   , scrollBottom
   , persistSelection
+  , chooseProvider
   ) where
 
-import Brick (EventM, get, modify, viewportScroll, vScrollToEnd)
+import Brick (EventM, get, gets, modify, viewportScroll, vScrollToEnd)
 import Control.Monad.IO.Class (liftIO)
 import Data.Text (Text)
 
 import Config.Settings (saveConfig)
-import Core.Types (CLIConfig(..))
+import Core.Types (CLIConfig(..), ProviderInfo(..), modelForProvider)
 
 import UI.Dialog
   ( Dialog(..), dialogCommandsAppend, dialogCommandsDelete, dialogModelsAppend
   , dialogModelsDelete, dialogSessionsAppend, dialogSessionsDelete
   , dialogSkillsAppend, dialogSkillsDelete, stackPop, stackPush, stackTop )
+import UI.I18n (tr)
 import UI.State (AppState(..), ResourceName(..))
 
 -- | 往当前对话框的查询行追加一个字符（只有可过滤的列表才响应）。
@@ -74,3 +76,19 @@ persistSelection providerName model = do
   let cfg = (appEffCfg st) { configProvider = providerName, configModel = model }
   liftIO $ saveConfig cfg
   modify $ \s -> s { appEffCfg = cfg }
+
+-- | 选定供应商：记住它，并保证当前模型属于该供应商。
+--
+-- 若当前模型不在新供应商的清单里（换到别家），回落到该供应商的默认模型；
+-- 否则保持用户已有的模型选择不变。
+chooseProvider :: ProviderInfo -> EventM ResourceName AppState ()
+chooseProvider p = do
+  lang <- gets appLang
+  modify $ \s ->
+    let model = modelForProvider p (appModel s)
+    in s { appProvider = Just (piName p)
+         , appModel = model
+         , appStatus = tr lang "Provider: " <> piName p <> " · " <> model }
+  st2 <- get
+  persistSelection (piName p) (appModel st2)
+  scrollBottom

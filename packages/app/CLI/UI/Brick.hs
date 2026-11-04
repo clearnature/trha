@@ -75,8 +75,8 @@ import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Selection (inSelRange)
 import UI.Brick.DialogKeys
-  ( dialogAppend, dialogDelete, modifyTop, persistSelection, scrollBottom
-  , withCommands )
+  ( chooseProvider, dialogAppend, dialogDelete, modifyTop, persistSelection
+  , scrollBottom, withCommands )
 import UI.Brick.Apply (applyLanguage, applyTheme)
 import UI.Brick.Toast (showToast)
 import UI.Brick.Input
@@ -977,17 +977,7 @@ handleDialogKey _ = return ()
 -- | Adopt a provider: remember it and make sure the current model belongs
 -- to it (otherwise fall back to the provider's default).  The dialog has
 -- already been popped by 'dialogActivate'.
-chooseProvider :: ProviderInfo -> EventM ResourceName AppState ()
-chooseProvider p = do
-  lang <- gets appLang
-  modify $ \s ->
-    let model = modelForProvider p (appModel s)
-    in s { appProvider = Just (piName p)
-         , appModel = model
-         , appStatus = tr lang "Provider: " <> piName p <> " · " <> model }
-  st2 <- get
-  persistSelection (piName p) (appModel st2)
-  scrollBottom
+-- | chooseProvider 见 UI.Brick.DialogKeys。
 
 dialogActivate :: EventM ResourceName AppState ()
 dialogActivate = do
