@@ -159,80 +159,93 @@ import UI.Theme
 
 handlePlanSlash :: CmdCtx -> Maybe (EventM ResourceName AppState ())
 handlePlanSlash cx = case cxCmd cx of
-    "/approve" -> Just $ do
+  "/approve" -> Just $ slashApprove cx
+  "/deny" -> Just $ slashDeny cx
+  _ | (cxCmd cx) == "/plan" -> Just $ slashPlanUsage cx
+  _ | "/plan " `T.isPrefixOf` (cxCmd cx) -> Just $ slashPlanSubmit cx
+  _ | (cxCmd cx) `elem` ["/skip", "/reject", "/abandon"] -> Just $ slashPlanVerdict cx
+  _ -> Nothing
+
+slashApprove :: CmdCtx -> EventM ResourceName AppState ()
+slashApprove cx = do
+  cur <- gets appSessionId
+  plan <- gets appPlan
+  case cur of
+    Nothing -> appendMsg (mkMsg "system" "No session yet — use /new or send a message first." (cxTime cx))
+    Just sid -> case plan of
+      Just pv | pvPhase pv == "planning" -> do
+        -- multi-step plan: release the pending step, run it, report back
+        modify $ \s -> s { appBusy = True, appStatus = "Approving step..." }
+        void $ liftIO $ async $
+          writeBChan (cxChan cx) . EvPlanState =<< approveAndRun (cxBridge cx) sid
+      _ -> do
+        modify $ \s -> s { appBusy = True, appStatus = "Executing plan..." }
+        void $ liftIO $ async $ do
+          r <- approvePlan (cxBridge cx) sid
+          writeBChan (cxChan cx) (EvVerdict r)
+
+slashDeny :: CmdCtx -> EventM ResourceName AppState ()
+slashDeny cx = do
+  cur <- gets appSessionId
+  let reason = T.strip (T.drop 5 (cxInput cx))
+  case cur of
+    Nothing -> appendMsg (mkMsg "system" "No session yet — use /new or send a message first." (cxTime cx))
+    Just sid -> do
+      -- 有 planning 计划时拒绝待审批步骤；没有就直接说清楚，
+      -- 不要拿内核的 400 "No pending approval" 当反馈。
+      plan <- liftIO (fetchPlan (cxBridge cx) sid)
+      case plan of
+        Right pv | pvPhase pv == "planning" -> do
+          void $ liftIO $ async $ do
+            r <- decideStep (cxBridge cx) sid "reject"
+            writeBChan (cxChan cx) (EvPlanState (fmap ((, Nothing)) r))
+        _ -> appendMsg (mkMsg "system"
+               (tr (cxLang cx) "Nothing to deny — no pending plan or approval.") (cxTime cx))
+
+slashPlanUsage :: CmdCtx -> EventM ResourceName AppState ()
+slashPlanUsage cx = do
+      appendMsg (mkMsg "system" (tr (cxLang cx) "Usage: /plan <what to do>") (cxTime cx))
+
+slashPlanSubmit :: CmdCtx -> EventM ResourceName AppState ()
+slashPlanSubmit cx = do
+      let planText = T.strip (T.drop 6 (cxInput cx))
+          steps = splitPlanSteps planText
       cur <- gets appSessionId
-      plan <- gets appPlan
       case cur of
-        Nothing -> appendMsg (mkMsg "system" "No session yet — use /new or send a message first." (cxTime cx))
-        Just sid -> case plan of
-          Just pv | pvPhase pv == "planning" -> do
-            -- multi-step plan: release the pending step, run it, report back
-            modify $ \s -> s { appBusy = True, appStatus = "Approving step..." }
-            void $ liftIO $ async $
-              writeBChan (cxChan cx) . EvPlanState =<< approveAndRun (cxBridge cx) sid
-          _ -> do
-            modify $ \s -> s { appBusy = True, appStatus = "Executing plan..." }
-            void $ liftIO $ async $ do
-              r <- approvePlan (cxBridge cx) sid
-              writeBChan (cxChan cx) (EvVerdict r)
-    "/deny" -> Just $ do
-      cur <- gets appSessionId
-      let reason = T.strip (T.drop 5 (cxInput cx))
-      case cur of
-        Nothing -> appendMsg (mkMsg "system" "No session yet — use /new or send a message first." (cxTime cx))
+        Nothing ->
+          appendMsg (mkMsg "system" "No session yet — use /new or send a message first." (cxTime cx))
+        -- Two or more steps → a real multi-step plan, approved one step at a
+        -- time. A single line keeps the single-command gate.
+        Just sid | length steps >= 2 -> do
+          appendMsg (mkMsg "user" planText (cxTime cx))
+          modify $ \s2 -> s2 { appBusy = True, appStatus = "Planning..." }
+          void $ liftIO $ async $ do
+            recordUser sid planText
+            r <- submitPlan (cxBridge cx) sid steps
+            writeBChan (cxChan cx) (EvPlanState (fmap ((, Nothing)) r))
         Just sid -> do
-          -- 有 planning 计划时拒绝待审批步骤；没有就直接说清楚，
-          -- 不要拿内核的 400 "No pending approval" 当反馈。
+          appendMsg (mkMsg "user" planText (cxTime cx))
+          modify $ \s2 -> s2 { appBusy = True, appStatus = "Awaiting approval..." }
+          void $ liftIO $ async $ do
+            recordUser sid planText
+            r <- planStep (cxBridge cx) sid planText
+            writeBChan (cxChan cx) (EvPlan r)
+
+slashPlanVerdict :: CmdCtx -> EventM ResourceName AppState ()
+slashPlanVerdict cx = do
+      cur <- gets appSessionId
+      case cur of
+        Nothing ->
+          appendMsg (mkMsg "system" "No session yet — use /new or send a message first." (cxTime cx))
+        Just sid -> do
+          -- 没有待审批计划时先说清楚，不要拿一条内核 502 当反馈。
           plan <- liftIO (fetchPlan (cxBridge cx) sid)
           case plan of
             Right pv | pvPhase pv == "planning" -> do
+              let action = T.drop 1 (cxCmd cx)
+              modify $ \s2 -> s2 { appBusy = True, appStatus = "Plan decision..." }
               void $ liftIO $ async $ do
-                r <- decideStep (cxBridge cx) sid "reject"
+                r <- decideStep (cxBridge cx) sid action
                 writeBChan (cxChan cx) (EvPlanState (fmap ((, Nothing)) r))
             _ -> appendMsg (mkMsg "system"
-                   (tr (cxLang cx) "Nothing to deny — no pending plan or approval.") (cxTime cx))
-    _ | (cxCmd cx) == "/plan" -> Just $
-          appendMsg (mkMsg "system" (tr (cxLang cx) "Usage: /plan <what to do>") (cxTime cx))
-
-    _ | "/plan " `T.isPrefixOf` (cxCmd cx) -> Just $ do
-          let planText = T.strip (T.drop 6 (cxInput cx))
-              steps = splitPlanSteps planText
-          cur <- gets appSessionId
-          case cur of
-            Nothing ->
-              appendMsg (mkMsg "system" "No session yet — use /new or send a message first." (cxTime cx))
-            -- Two or more steps → a real multi-step plan, approved one step at a
-            -- time. A single line keeps the single-command gate.
-            Just sid | length steps >= 2 -> do
-              appendMsg (mkMsg "user" planText (cxTime cx))
-              modify $ \s2 -> s2 { appBusy = True, appStatus = "Planning..." }
-              void $ liftIO $ async $ do
-                recordUser sid planText
-                r <- submitPlan (cxBridge cx) sid steps
-                writeBChan (cxChan cx) (EvPlanState (fmap ((, Nothing)) r))
-            Just sid -> do
-              appendMsg (mkMsg "user" planText (cxTime cx))
-              modify $ \s2 -> s2 { appBusy = True, appStatus = "Awaiting approval..." }
-              void $ liftIO $ async $ do
-                recordUser sid planText
-                r <- planStep (cxBridge cx) sid planText
-                writeBChan (cxChan cx) (EvPlan r)
-
-    _ | (cxCmd cx) `elem` ["/skip", "/reject", "/abandon"] -> Just $ do
-          cur <- gets appSessionId
-          case cur of
-            Nothing ->
-              appendMsg (mkMsg "system" "No session yet — use /new or send a message first." (cxTime cx))
-            Just sid -> do
-              -- 没有待审批计划时先说清楚，不要拿一条内核 502 当反馈。
-              plan <- liftIO (fetchPlan (cxBridge cx) sid)
-              case plan of
-                Right pv | pvPhase pv == "planning" -> do
-                  let action = T.drop 1 (cxCmd cx)
-                  modify $ \s2 -> s2 { appBusy = True, appStatus = "Plan decision..." }
-                  void $ liftIO $ async $ do
-                    r <- decideStep (cxBridge cx) sid action
-                    writeBChan (cxChan cx) (EvPlanState (fmap ((, Nothing)) r))
-                _ -> appendMsg (mkMsg "system"
-                       (tr (cxLang cx) "No pending plan — submit one with /plan first.") (cxTime cx))
-    _ -> Nothing
+                   (tr (cxLang cx) "No pending plan — submit one with /plan first.") (cxTime cx))
