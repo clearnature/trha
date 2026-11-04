@@ -527,6 +527,110 @@ dialogCountdown st =
   fromMaybe ""
     (askCountdownText (configAskTimeout (appEffCfg st)) (appAskAt st) (appNow st))
 
+-- | 审批选项的标签。
+dialogApprovalLabel :: ApprovalOption -> Text
+dialogApprovalLabel opt = case opt of
+  ApprovalOnce   -> "Allow once"
+  ApprovalAlways -> "Allow always"
+  ApprovalReject -> "Reject"
+
+-- | 确认对话框的两个选项。
+dialogConfirmLabel :: Int -> Text
+dialogConfirmLabel i = case i of
+  0 -> "Yes, allow always"
+  _ -> "No, back"
+
+-- | 对话框主体行：13 个构造子的分派。
+--
+-- 窗口位置由本函数自己算（@windowRange n sel 30@），调用方只需给状态与对话框。
+dialogRows :: AppState -> Dialog -> [Widget ResourceName]
+dialogRows st d = case d of
+  DialogApproval msg name args asel ->
+    let sel' = if n > 0 then min asel (n - 1) else 0
+    in [ padLeftRight 1 $ withAttr (attrName "error") $
+           strWrap ("△ " ++ T.unpack msg)
+       ] <>
+       [ dialogRow idx sel' (str (T.unpack (tr lang (dialogApprovalLabel opt)))) (str "")
+       | (idx, opt) <- zip [0 ..] (approvalOptions name args) ]
+       <> [ padLeftRight 1 $ withAttr (attrName "status") $
+              str (T.unpack (dialogCountdown st))
+          | not (T.null (dialogCountdown st)) ]
+  DialogConfirm msg _ ->
+    [ padLeftRight 1 $ strWrap (T.unpack msg) ] <>
+    [ dialogRow idx sel (str (T.unpack (tr lang (dialogConfirmLabel idx)))) (str "")
+    | idx <- [0 .. 1 :: Int] ]
+  DialogModels _ _ _ ->
+    [ dialogRow idx sel
+        (str ((if isFavorite (modelName it) (appModelPrefs st) then "★ " else "  ")
+              ++ T.unpack (modelName it)))
+        (str ("ctx " ++ show (modelContextSize it)))
+    | (idx, it) <- zip [start ..] (drop start (take (end + 1) (dialogModelsItems d))) ]
+  DialogSessions _ _ _ ->
+    [ dialogRow idx sel (str (T.unpack (ssTitle it)))
+                  (str (ssId it ++ maybe "" (\tok -> "  " ++ show tok ++ " tok") (ssUsage it)))
+    | (idx, it) <- zip [start ..] (drop start (take (end + 1) (dialogSessionsItems d))) ]
+  DialogCommands{} ->
+    [ dialogRow idx sel (str (T.unpack (piId it)))
+                  (str (T.unpack (takeCells 44 (piDesc it))))
+    | (idx, it) <- zip [start ..] (drop start (take (end + 1) (dialogCommandsItems d))) ]
+  DialogPresets ps _ ->
+    [ padLeftRight 1 $ withAttr (attrName "timestamp") $ str "Popular" ]
+    ++ [ dialogRow idx sel (str (T.unpack (preName p)))
+                  (str (T.unpack (preKind p <> " · " <> preBaseUrl p)))
+         | (idx, p) <- zip [0 ..] ps, prePopular p ]
+    ++ [ padLeftRight 1 $ withAttr (attrName "timestamp") $ str "Other" ]
+    ++ [ dialogRow idx sel (str (T.unpack (preName p)))
+                  (str (T.unpack (preKind p <> " · " <> preBaseUrl p)))
+         | (idx, p) <- zip [0 ..] ps, not (prePopular p) ]
+    ++ [ padLeftRight 1 $ withAttr (attrName "timestamp") $
+           str "enter choose · esc cancel" ]
+  DialogProviders ps _ ->
+    if null ps
+      then [ padLeftRight 1 $ withAttr (attrName "timestamp") $
+               str " no providers (configure ~/.trha/providers.json)" ]
+      else [ dialogRow idx sel (str (T.unpack (piName p)))
+                    (str (T.unpack (piKind p <> " · " <> piDefault p
+                                    <> (if piInUse p then " · in use" else ""))))
+           | (idx, p) <- zip [start ..] (drop start (take (end + 1) ps)) ]
+           ++ [ padLeftRight 1 $ withAttr (attrName "timestamp") $
+                  str "a add · e edit · r re-probe · enter select" ]
+  DialogSkills _ _ _ ->
+    let its = dialogSkillsItems d
+    in if null its
+      then [ padLeftRight 1 $ withAttr (attrName "timestamp") $
+               str " no skills (put SKILL.md under .agents/skills or .trha/skills)" ]
+      else [ dialogRow idx sel (str (T.unpack (skName it)))
+                    (str (T.unpack (takeCells 44 (skDescription it))))
+           | (idx, it) <- zip [start ..] (drop start (take (end + 1) its)) ]
+  DialogAgents as _ ->
+    if null as
+      then [ padLeftRight 1 $ withAttr (attrName "timestamp") $
+               str " no agents (no subagent sessions)" ]
+      else [ dialogRow idx sel (str (T.unpack (aeId it)))
+                    (str (maybe "root" (\p -> "parent " <> T.unpack p) (aeParent it)))
+           | (idx, it) <- zip [start ..] (drop start (take (end + 1) as)) ]
+  DialogThemes ts _ ->
+    [ dialogRow idx sel (str (T.unpack (themeName it)))
+                  (str (if themeName it == themeName (appTheme st) then "current" else ""))
+    | (idx, it) <- zip [start ..] (drop start (take (end + 1) ts)) ]
+  DialogLanguages ls _ ->
+    [ dialogRow idx sel (str (T.unpack (langName it)))
+                  (str (if it == appLang st then "current" else ""))
+    | (idx, it) <- zip [start ..] (drop start (take (end + 1) ls)) ]
+  DialogSandbox ss _ ->
+    [ dialogRow 0 sel (str (T.unpack ("SandBox: " <> (if ssEnabled ss then "enabled" else "disabled")))) (str "")
+    , dialogRow 1 sel (str (T.unpack ("Policy: " <> ssPolicy ss))) (str "read-only | workspace-write")
+    , dialogRow 2 sel (str (T.unpack ("Network: " <> (if ssNetwork ss then "enabled" else "disabled")))) (str "")
+    , dialogRow 3 sel (str (T.unpack ("Scratch: " <> ssScratch ss))) (str "")
+    , padLeftRight 1 $ withAttr (attrName "timestamp") $
+        str "enter toggle · esc close"
+    ]
+  where
+    lang = appLang st
+    sel = dialogSelected d
+    n = dialogCount d
+    (start, end) = windowRange n sel 30
+
 drawDialog :: AppState -> Dialog -> Widget ResourceName
 drawDialog st d =
   withAttr (attrName "border") $
@@ -540,103 +644,10 @@ drawDialog st d =
     n = dialogCount d
     -- 30 rows for every dialog, including the skills overlay.
     (start, end) = windowRange n sel 30
-    rows = case d of
-      DialogApproval msg name args sel ->
-        let sel' = if n > 0 then min sel (n - 1) else 0
-        in [ padLeftRight 1 $ withAttr (attrName "error") $
-               strWrap ("△ " ++ T.unpack msg)
-           ] <>
-           [ row idx sel' (str (T.unpack (tr lang (approvalOptionLabel opt)))) (str "")
-           | (idx, opt) <- zip [0 ..] (approvalOptions name args) ]
-           <> [ padLeftRight 1 $ withAttr (attrName "status") $
-                  str (T.unpack (askCountdownLine st))
-              | not (T.null (askCountdownLine st)) ]
-      DialogConfirm msg _ ->
-        [ padLeftRight 1 $ strWrap (T.unpack msg) ] <>
-        [ row idx sel (str (T.unpack (tr lang (confirmOption idx)))) (str "")
-        | idx <- [0 .. 1 :: Int] ]
-      DialogModels _ _ _ ->
-        [ row idx sel
-            (str ((if isFavorite (modelName it) (appModelPrefs st) then "★ " else "  ")
-                  ++ T.unpack (modelName it)))
-            (str ("ctx " ++ show (modelContextSize it)))
-        | (idx, it) <- zip [start ..] (drop start (take (end + 1) (dialogModelsItems d))) ]
-      DialogSessions _ _ _ ->
-        [ row idx sel (str (T.unpack (ssTitle it)))
-                      (str (ssId it ++ maybe "" (\tok -> "  " ++ show tok ++ " tok") (ssUsage it)))
-        | (idx, it) <- zip [start ..] (drop start (take (end + 1) (dialogSessionsItems d))) ]
-      DialogCommands{} ->
-        [ row idx sel (str (T.unpack (piId it)))
-                      (str (T.unpack (takeCells 44 (piDesc it))))
-        | (idx, it) <- zip [start ..] (drop start (take (end + 1) (dialogCommandsItems d))) ]
-      DialogPresets ps _ ->
-        [ padLeftRight 1 $ withAttr (attrName "timestamp") $ str "Popular" ]
-        ++ [ row idx sel (str (T.unpack (preName p)))
-                      (str (T.unpack (preKind p <> " · " <> preBaseUrl p)))
-             | (idx, p) <- zip [0 ..] ps, prePopular p ]
-        ++ [ padLeftRight 1 $ withAttr (attrName "timestamp") $ str "Other" ]
-        ++ [ row idx sel (str (T.unpack (preName p)))
-                      (str (T.unpack (preKind p <> " · " <> preBaseUrl p)))
-             | (idx, p) <- zip [0 ..] ps, not (prePopular p) ]
-        ++ [ padLeftRight 1 $ withAttr (attrName "timestamp") $
-               str "enter choose · esc cancel" ]
-      DialogProviders ps _ ->
-        if null ps
-          then [ padLeftRight 1 $ withAttr (attrName "timestamp") $
-                   str " no providers (configure ~/.trha/providers.json)" ]
-          else [ row idx sel (str (T.unpack (piName p)))
-                        (str (T.unpack (piKind p <> " · " <> piDefault p
-                                        <> (if piInUse p then " · in use" else ""))))
-               | (idx, p) <- zip [start ..] (drop start (take (end + 1) ps)) ]
-               ++ [ padLeftRight 1 $ withAttr (attrName "timestamp") $
-                      str "a add · e edit · r re-probe · enter select" ]
-      DialogSkills _ _ _ ->
-        let its = dialogSkillsItems d
-        in if null its
-          then [ padLeftRight 1 $ withAttr (attrName "timestamp") $
-                   str " no skills (put SKILL.md under .agents/skills or .trha/skills)" ]
-          else [ row idx sel (str (T.unpack (skName it)))
-                        (str (T.unpack (takeCells 44 (skDescription it))))
-               | (idx, it) <- zip [start ..] (drop start (take (end + 1) its)) ]
-      DialogAgents as _ ->
-        if null as
-          then [ padLeftRight 1 $ withAttr (attrName "timestamp") $
-                   str " no agents (no subagent sessions)" ]
-          else [ row idx sel (str (T.unpack (aeId it)))
-                        (str (maybe "root" (\p -> "parent " <> T.unpack p) (aeParent it)))
-               | (idx, it) <- zip [start ..] (drop start (take (end + 1) as)) ]
-      DialogThemes ts _ ->
-        [ row idx sel (str (T.unpack (themeName it)))
-                      (str (if themeName it == themeName (appTheme st) then "current" else ""))
-        | (idx, it) <- zip [start ..] (drop start (take (end + 1) ts)) ]
-      DialogLanguages ls _ ->
-        [ row idx sel (str (T.unpack (langName it)))
-                      (str (if it == appLang st then "current" else ""))
-        | (idx, it) <- zip [start ..] (drop start (take (end + 1) ls)) ]
-      DialogSandbox ss _ ->
-        [ row 0 sel (str (T.unpack ("SandBox: " <> (if ssEnabled ss then "enabled" else "disabled")))) (str "")
-        , row 1 sel (str (T.unpack ("Policy: " <> ssPolicy ss))) (str "read-only | workspace-write")
-        , row 2 sel (str (T.unpack ("Network: " <> (if ssNetwork ss then "enabled" else "disabled")))) (str "")
-        , row 3 sel (str (T.unpack ("Scratch: " <> ssScratch ss))) (str "")
-        , padLeftRight 1 $ withAttr (attrName "timestamp") $
-            str "enter toggle · esc close"
-        ]
+    rows = dialogRows st d
 
-    -- One selectable row: marker + label + dim right-hand detail.
-    row = dialogRow
-
-    askCountdownLine = dialogCountdown
-
-    approvalOptionLabel :: ApprovalOption -> Text
-    approvalOptionLabel opt = case opt of
-      ApprovalOnce   -> "Allow once"
-      ApprovalAlways -> "Allow always"
-      ApprovalReject -> "Reject"
-
-    confirmOption :: Int -> Text
-    confirmOption i = case i of
-      0 -> "Yes, allow always"
-      _ -> "No, back"
+    -- 行渲染、审批标签、倒计时都已在顶层（dialogRow / dialogApprovalLabel /
+    -- dialogConfirmLabel / dialogCountdown）。
 
     queryRow = case d of
       DialogCommands _ q _ -> padLeftRight 1 $ hBox
