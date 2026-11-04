@@ -90,6 +90,7 @@ import UI.Brick.Slash.Lifecycle (handleLifecycleSlash)
 import UI.Brick.Slash.Session (handleSessionSlash)
 import UI.Brick.Slash.Config (handleConfigSlash)
 import UI.Brick.Slash.Integration (handleIntegrationSlash)
+import UI.Brick.Slash.Model (handleModelSlash)
 import UI.Brick.Slash.Workspace (handleWorkspaceSlash)
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.RunControl
@@ -173,7 +174,7 @@ handleSlash input = do
       cx     = CmdCtx t st input cmd bridge chan lang
   case cmd of
     _ | Just act <- msum [ handleLifecycleSlash cx, handleInfoSlash cx, handleConfigSlash cx
-         , handleIntegrationSlash cx, handleSessionSlash cx, handleWorkspaceSlash cx ] -> act
+         , handleIntegrationSlash cx, handleModelSlash cx, handleSessionSlash cx, handleWorkspaceSlash cx ] -> act
     _ | cmd == "/delete" || "/delete " `T.isPrefixOf` cmd -> do
       let sid = T.strip (T.drop (T.length "/delete") input)
       if T.null sid
@@ -293,37 +294,6 @@ handleSlash input = do
               appendMsg (mkMsg "system" ("exported → " <> T.pack path) t)
               showToast ("exported → " <> T.pack path)
             Left e   -> appendMsg (mkMsg "error" ("export failed: " <> T.pack (show e)) t)
-    "/models" -> do
-      st2 <- get
-      case appProvider st2 >>= \n -> find ((== n) . piName) (appProviders st2) of
-        Just p | not (null (piModels p)) ->
-          -- The picker is scoped to the selected provider; no round trip.
-          modify $ \s -> s { appDialogs =
-            stackPush (DialogModels (orderedModels (appModelPrefs s) (providerModelInfos p)) "" 0)
-                      (appDialogs s) }
-        _ -> do
-          modify $ \s -> s { appDialogs = stackPush (DialogModels [] "" 0) (appDialogs s) }
-          void $ liftIO $ async $
-            listModels bridge >>= writeBChan chan . EvModels
-    "/provider" -> do
-      modify $ \s -> s { appDialogs = stackPush (DialogProviders [] 0) (appDialogs s) }
-      void $ liftIO $ async $
-        listProviders bridge >>= writeBChan chan . EvProviders
-    -- /switch 之前没有 TUI 分支，落到 executeCommand 的 SwitchProvider
-    -- 分支只打印一段带 `*` 的列表 —— 用户看到「列出来但选不中」。
-    -- 无参时和 /provider 走同一个可选中对话框；带参就直接切。
-    _ | cmd == "/switch" || "/switch " `T.isPrefixOf` cmd -> do
-      let arg = T.strip (T.drop (T.length "/switch") input)
-      if T.null arg
-        then do
-          modify $ \s -> s { appDialogs = stackPush (DialogProviders [] 0) (appDialogs s) }
-          void $ liftIO $ async $
-            listProviders bridge >>= writeBChan chan . EvProviders
-        else do
-          r <- liftIO $ setInUseProvider bridge arg
-          case r of
-            Right _ -> showToast (tr lang "Switched to " <> arg)
-            Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) t)
     "/approve" -> do
       cur <- gets appSessionId
       plan <- gets appPlan

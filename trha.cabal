@@ -342,6 +342,7 @@ executable trha
     UI.Brick.Slash.Ctx
     UI.Brick.Slash.Config
     UI.Brick.Slash.Integration
+    UI.Brick.Slash.Model
     UI.Brick.Slash.Lifecycle
     UI.Brick.Slash.Info
     UI.Brick.Slash.Session
