@@ -505,6 +505,28 @@ drawHome st =
 -- | One dialog as a centered bordered card (the top of the dialog stack).
 -- | dialogTitle / dialogSelected / dialogEditable / dialogQuery 见 UI.Dialog。
 
+-- | 对话框里的一行：marker + 标签 + 右对齐的次要信息。
+dialogRow :: Int -> Int -> Widget ResourceName -> Widget ResourceName -> Widget ResourceName
+dialogRow idx cur label detail =
+  padLeftRight 1 $ hBox
+    [ withAttr markerAttr $ str marker
+    , str " "
+    , withAttr (attrName "title") label
+    , withAttr (attrName "timestamp") (str "  ")
+    , withAttr (attrName "timestamp") detail
+    ]
+  where
+    marker | idx == cur = "▸ "
+           | otherwise  = "  "
+    markerAttr | idx == cur = attrName "tool"
+               | otherwise  = attrName "timestamp"
+
+-- | 审批倒计时行（纯逻辑在 UI.Interaction.askCountdownText）。
+dialogCountdown :: AppState -> Text
+dialogCountdown st =
+  fromMaybe ""
+    (askCountdownText (configAskTimeout (appEffCfg st)) (appAskAt st) (appNow st))
+
 drawDialog :: AppState -> Dialog -> Widget ResourceName
 drawDialog st d =
   withAttr (attrName "border") $
@@ -601,25 +623,9 @@ drawDialog st d =
         ]
 
     -- One selectable row: marker + label + dim right-hand detail.
-    row :: Int -> Int -> Widget ResourceName -> Widget ResourceName -> Widget ResourceName
-    row idx cur label detail =
-      padLeftRight 1 $ hBox
-        [ withAttr markerAttr $ str marker
-        , str " "
-        , withAttr (attrName "title") label
-        , withAttr (attrName "timestamp") (str "  ")
-        , withAttr (attrName "timestamp") detail
-        ]
-      where
-        marker | idx == cur = "▸ "
-               | otherwise  = "  "
-        markerAttr | idx == cur = attrName "tool"
-                   | otherwise  = attrName "timestamp"
+    row = dialogRow
 
-    -- 审批倒计时（纯逻辑在 UI.Interaction.askCountdownText）。
-    askCountdownLine st' =
-      fromMaybe ""
-        (askCountdownText (configAskTimeout (appEffCfg st')) (appAskAt st') (appNow st'))
+    askCountdownLine = dialogCountdown
 
     approvalOptionLabel :: ApprovalOption -> Text
     approvalOptionLabel opt = case opt of
