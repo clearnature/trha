@@ -76,7 +76,7 @@ import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Selection (inSelRange)
 import UI.Brick.DialogKeys
   ( chooseProvider, dialogAppend, dialogDelete, modifyTop, persistSelection
-  , scrollBottom, withCommands )
+  , scrollBottom, selectSkill, withCommands )
 import UI.Brick.Apply
   ( applyLanguage, applyTheme, modeAction, openSettingsPanel )
 import UI.Brick.Toast (showToast)
@@ -1282,10 +1282,7 @@ finishWizard w = do
 -- stop there.  MiMo's @DialogSkill@ does exactly this (@setText("/"+name+" ")@,
 -- cursor to the end); running the skill is the submit key's job, never the
 -- list's.
-selectSkill :: Text -> EventM ResourceName AppState ()
-selectSkill name =
-  modify $ \s -> s { appInput = editorText InputArea (Just 1) ("/skill:" <> name <> " ")
-                   , appPalette = Nothing }
+-- | selectSkill 见 UI.Brick.DialogKeys。
 
 -- | Run a skill.  The transcript shows the visible trigger (@/skill:<name>
 -- <request>@) while the model receives the skill's instructions plus the

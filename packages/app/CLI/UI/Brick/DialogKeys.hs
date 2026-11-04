@@ -12,9 +12,11 @@ module UI.Brick.DialogKeys
   , scrollBottom
   , persistSelection
   , chooseProvider
+  , selectSkill
   ) where
 
 import Brick (EventM, get, gets, modify, viewportScroll, vScrollToEnd)
+import Brick.Widgets.Edit (editorText)
 import Control.Monad.IO.Class (liftIO)
 import Data.Text (Text)
 
@@ -92,3 +94,9 @@ chooseProvider p = do
   st2 <- get
   persistSelection (piName p) (appModel st2)
   scrollBottom
+
+-- | 选中一个技能：把它填进输入框作为 @/skill:<name> @，并关掉面板。
+selectSkill :: Text -> EventM ResourceName AppState ()
+selectSkill name =
+  modify $ \s -> s { appInput = editorText InputArea (Just 1) ("/skill:" <> name <> " ")
+                   , appPalette = Nothing }
