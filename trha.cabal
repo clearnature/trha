@@ -259,6 +259,7 @@ executable trha
     Core.Args
     UI.Commands.Registry
     UI.Commands.Registry.Settings
+    UI.Commands.Registry.Table
     UI.Commands.Env
     UI.Commands.Meta
     UI.Commands.Session
