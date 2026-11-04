@@ -72,7 +72,7 @@ import Graphics.Vty.CrossPlatform (mkVty)
 import Graphics.Vty.Input.Events
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
-import UI.Brick.Draw.Dialog (drawPalette, drawWizard, wizardSummary)
+import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Brick.Draw.Settings (drawSettingsPanel, settingsListMax, settingsRows, visibleRows)
 import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar, sidebarDataFor)
 import UI.Brick.Draw.Status
@@ -631,53 +631,7 @@ dialogRows st d = case d of
     n = dialogCount d
     (start, end) = windowRange n sel 30
 
-drawDialog :: AppState -> Dialog -> Widget ResourceName
-drawDialog st d =
-  withAttr (attrName "border") $
-    borderWithLabel (withAttr (attrName "title") $ str (T.unpack title)) $
-      vBox (rows ++ [queryRow])
-  where
-    lang = appLang st
-    isEditable = dialogEditable d
-    title = dialogTitle lang d
-    sel = dialogSelected d
-    n = dialogCount d
-    -- 30 rows for every dialog, including the skills overlay.
-    (start, end) = windowRange n sel 30
-    rows = dialogRows st d
-
-    -- 行渲染、审批标签、倒计时都已在顶层（dialogRow / dialogApprovalLabel /
-    -- dialogConfirmLabel / dialogCountdown）。
-
-    queryRow = case d of
-      DialogCommands _ q _ -> padLeftRight 1 $ hBox
-        [ withAttr (attrName "input") $ str ("> " ++ T.unpack q)
-        , withAttr (attrName "status") $ str (T.unpack (tr lang "   ↑/↓ move · Enter run · Esc close"))
-        ]
-      DialogSkills _ q _ -> padLeftRight 1 $ hBox
-        [ withAttr (attrName "input") $ str ("> " ++ T.unpack q)
-        , withAttr (attrName "status") $ str (T.unpack (tr lang "   ↑/↓ move · Enter open · Esc close"))
-        ]
-      -- 其余对话框没有查询行，但操作提示同样要可见：审批/确认是
-      -- 「选择」，模型/会话/主题等是「打开」。
-      DialogApproval{}  -> hintRow "↑/↓ · Tab move · Enter choose · Esc close"
-      DialogConfirm{}   -> hintRow "↑/↓ · Tab move · Enter choose · Esc close"
-      DialogModels{}    -> idxHintRow "↑/↓ · Tab move · Enter open · Esc close"
-      DialogSessions{}  -> idxHintRow "↑/↓ · Tab move · Enter open · Esc close"
-      DialogThemes{}    -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
-      DialogLanguages{} -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
-      DialogAgents{}    -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
-      DialogPresets{}   -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
-      DialogProviders{} -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
-      DialogSandbox{}   -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
-      _ -> emptyWidget
-    hintRow t = padLeftRight 1 $ withAttr (attrName "status") $ str (T.unpack (tr lang t))
-    -- 可过滤的列表：查询行 + 提示（输入即过滤，回车打开）。
-    idxHintRow t = padLeftRight 1 $ hBox
-      [ withAttr (attrName "input") $ str ("> " ++ T.unpack (dialogQuery d))
-      , withAttr (attrName "status") $ str ("   " ++ T.unpack (tr lang t))
-      ]
-    -- 查询串已由顶层 dialogQuery 统一提供。
+-- | drawDialog 见 UI.Brick.Draw.Dialog。
 
 -- | statusLine 见 UI.Brick.Draw.Status。
 
