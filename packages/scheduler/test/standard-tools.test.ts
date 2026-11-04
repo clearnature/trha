@@ -85,10 +85,18 @@ async function runScript(
 describe('standard tools (dsh port)', () => {
   let dir: string;
   beforeEach(async () => {
+    // 测试不能继承开发机上的沙箱状态：sandbox.yaml 里 enabled: true + network: off
+    // 时，web_fetch 的本地回环请求会被 sandboxBlocksNetwork() 拦掉（2026-11-04 实测）。
+    //
+    // 不能只重置缓存：createServer() 会异步 readSandboxConfig() 再 .then 把缓存填
+    // 回来（index.ts:1055），重置会被竞态覆盖。改用 env——在 sandboxEnabled() 里
+    // TRHA_SANDBOX 的优先级高于 cachedConfig，所以这里能压住异步回填。
+    process.env.TRHA_SANDBOX = 'off';
     dir = await mkdtemp(path.join(tmpdir(), 'trha-std-'));
     process.env.TRHA_WORKSPACE = dir;
   });
   afterEach(async () => {
+    delete process.env.TRHA_SANDBOX;
     delete process.env.TRHA_WORKSPACE;
     delete process.env.TRHA_SKILLS_DIR;
     // Windows：杀软/句柄延迟释放会让 rmdir 报 EBUSY——重试覆盖大部分，仍失败忽略。
