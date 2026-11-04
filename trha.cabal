@@ -330,6 +330,7 @@ executable trha
     UI.Brick.Draw.Dialog
     UI.Brick.Draw.Settings
     UI.Brick.Draw.MessageBody
+    UI.Brick.Draw.MessageList
     UI.Brick.Draw.Messages
     UI.Brick.Input
     UI.Brick.DialogKeys
