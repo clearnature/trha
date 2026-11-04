@@ -187,4 +187,60 @@ handleModelSlash cx = case cxCmd cx of
           case r of
             Right _ -> showToast (tr (cxLang cx) "Switched to " <> arg)
             Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) (cxTime cx))
+    _ | (cxCmd cx) == "/ctx" || "/ctx " `T.isPrefixOf` (cxCmd cx) -> Just $ do
+      cfg <- liftIO (resolveConfig defaultCLIConfig)
+      let raw = T.strip (T.drop (T.length "/ctx") (cxCmd cx))
+      if T.null raw
+        then appendMsg (mkMsg "system" ("context: "
+                          <> maybe "model default" (T.pack . show) (configCtxSize cfg)) (cxTime cx))
+        else case reads (T.unpack raw) :: [(Int, String)] of
+          [(n, "")] | n > 0 -> do
+            liftIO (saveConfig (cfg { configCtxSize = Just n }))
+            modify $ \s -> s { appCtxSize = Just n }
+            -- Keep the saved provider's window in sync, so the kernel's
+            -- compaction threshold and the UI agree after a restart.
+            providers <- liftIO (listProviders (cxBridge cx))
+            case providers of
+              Right ps | (p : _) <- [ q | q <- ps, piInUse q ] -> do
+                void $ liftIO $ async $ do
+                  saved <- saveProvider (cxBridge cx) (piName p) (piKind p) (piBaseUrl p) ""
+                             (piModels p) (piDefault p) (piAuthHeader p) (piNoProxy p)
+                             (piEffort p) (piVision p) (piEfforts p)
+                             (piHeaders p) (piExtraBody p) (piThinking p) (piResponsesMode p)
+                             (Just n)
+                  writeBChan (cxChan cx) (EvProviderSaved saved)
+              _ -> pure ()
+            appendMsg (mkMsg "system" ("context: " <> T.pack (show n) <> " tokens") (cxTime cx))
+          _ -> appendMsg (mkMsg "error" "Usage: /ctx <tokens>" (cxTime cx))
+    _ | (cxCmd cx) == "/effort" || "/effort " `T.isPrefixOf` (cxCmd cx) -> Just $ do
+      cfg <- liftIO (resolveConfig defaultCLIConfig)
+      -- Reasonix shape: the endpoint/model advertises an effort ladder
+      -- (probe.efforts); validate against it instead of a hard-coded list.
+      providers <- liftIO (listProviders (cxBridge cx))
+      let (base, kind, ladder) = case providers of
+            Right ps -> case [ p | p <- ps, piInUse p ] of
+              (p : _) -> (piBaseUrl p, piKind p, piEfforts p)
+              []      -> maybe ("", "", [])
+                              (\p -> (piBaseUrl p, piKind p, piEfforts p))
+                              (listToMaybe ps)
+            Left _ -> ("", "", [])
+          levels = levelsFor ladder base kind (appModel (cxState cx))
+          lvl = T.toLower (T.strip (T.drop (T.length "/effort") (cxCmd cx)))
+          shown = "(" <> T.intercalate "|" levels <> ")"
+      if T.null lvl
+        then appendMsg (mkMsg "system" ("effort: " <> configEffort cfg <> "  " <> shown) (cxTime cx))
+        else if lvl `elem` levels
+          then do
+            liftIO (saveConfig (cfg { configEffort = lvl }))
+            modify $ \s -> s { appEffort = lvl }
+            appendMsg (mkMsg "system" ("effort: " <> lvl) (cxTime cx))
+          else appendMsg (mkMsg "error" ("Unknown effort: " <> lvl <> "  " <> shown) (cxTime cx))
+    _ | (cxCmd cx) == "/fav" || "/fav " `T.isPrefixOf` (cxCmd cx) -> Just $ do
+      st2 <- get
+      let arg = T.strip (T.drop 4 (cxInput cx))
+          name = if T.null arg then appModel st2 else arg
+          prefs' = toggleFavorite name (appModelPrefs st2)
+      liftIO (saveModelPrefs prefs')
+      modify $ \s -> s { appModelPrefs = prefs' }
+      showToast (tr (cxLang cx) "Favourite: " <> name)
     _ -> Nothing

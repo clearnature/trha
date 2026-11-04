@@ -189,4 +189,47 @@ handleSessionSlash cx = case cxCmd cx of
           case r of
             Right _ -> showToast (tr (cxLang cx) "Tags updated")
             Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) (cxTime cx))
+    _ | (cxCmd cx) == "/delete" || "/delete " `T.isPrefixOf` (cxCmd cx) -> Just $ do
+      let sid = T.strip (T.drop (T.length "/delete") (cxInput cx))
+      if T.null sid
+        then appendMsg (mkMsg "error" (tr (appLang (cxState cx)) "Usage: /delete <session-id>") (cxTime cx))
+        else modify $ \s -> s
+               { appDialogs = stackPush (DialogConfirm ("Delete session " <> sid <> "?") 1) (appDialogs s)
+               , appPendingDelete = Just (T.unpack sid) }
+    "/export" -> Just $ do
+      st2 <- get
+      case appSessionId st2 of
+        Nothing -> appendMsg (mkMsg "system" (tr (cxLang cx) "No session to export") (cxTime cx))
+        Just sid -> do
+          evs <- liftIO (loadTranscript sid)
+          (dir, stamp) <- liftIO $ do
+            nowT <- getCurrentTime
+            tz <- getCurrentTimeZone
+            home <- getHomeDirectory
+            pure (home </> ".trha" </> "exports",
+                  T.pack (formatTime defaultTimeLocale "%Y%m%d-%H%M%S" (utcToZonedTime tz nowT)))
+          let args = T.words (T.drop 7 (cxInput cx))
+              asJson = case args of
+                (a : _) -> T.toLower a == "json"
+                []      -> False
+              explicit = case args of
+                (a : b : _) | T.toLower a `elem` ["json", "md", "markdown"] -> Just b
+                (a : _) | T.toLower a `notElem` ["json", "md", "markdown"] -> Just a
+                _ -> Nothing
+              ext = if asJson then "json" else "md"
+              path = case explicit of
+                Just p
+                  | "/" `T.isPrefixOf` p -> T.unpack p
+                  | otherwise            -> dir </> T.unpack p
+                Nothing -> dir </> defaultExportName (T.pack sid) stamp ext
+              body = if asJson then exportJson (T.pack sid) stamp evs
+                               else exportMarkdown (T.pack sid) stamp evs
+          written <- liftIO (try (do
+            createDirectoryIfMissing True (takeDirectory path)
+            TIO.writeFile path body) :: IO (Either IOException ()))
+          case written of
+            Right () -> do
+              appendMsg (mkMsg "system" ("exported → " <> T.pack path) (cxTime cx))
+              showToast ("exported → " <> T.pack path)
+            Left e   -> appendMsg (mkMsg "error" ("export failed: " <> T.pack (show e)) (cxTime cx))
     _ -> Nothing

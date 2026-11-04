@@ -180,4 +180,17 @@ handleConfigSlash cx = case cxCmd cx of
       if T.null arg
         then modeAction (object ["action" .= ("cycle" :: Text)])
         else modeAction (object ["action" .= ("set" :: Text), "mode" .= arg])
+    _ | (cxCmd cx) == "/language" || "/language " `T.isPrefixOf` (cxCmd cx) -> Just $ do
+      cfg <- liftIO (resolveConfig defaultCLIConfig)
+      let raw = T.strip (T.drop (T.length "/language") (cxInput cx))
+          available = T.intercalate ", " (map langName ([minBound .. maxBound] :: [Lang]))
+      if T.null raw
+        then modify $ \s -> s { appDialogs =
+               stackPush (DialogLanguages ([minBound .. maxBound] :: [Lang]) 0) (appDialogs s) }
+        else do
+          let l = parseLang raw
+          liftIO (saveConfig (cfg { configLang = langName l }))
+          modify $ \s -> s { appLang = l, appStatus = tr l "Language: " <> langName l }
+          appendMsg (mkMsg "system"
+            (tr l "Language: " <> langName l <> "\n" <> tr l "available: " <> available) (cxTime cx))
     _ -> Nothing
