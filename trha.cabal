@@ -260,6 +260,8 @@ executable trha
     UI.Commands.Registry
     UI.Commands.Registry.Settings
     UI.Commands.Registry.Table
+    UI.Commands.Registry.Types
+    UI.Commands.Registry.Parser
     UI.Commands.Env
     UI.Commands.Meta
     UI.Commands.Session
