@@ -11,6 +11,7 @@ module UI.Brick.RunControl
   , decideApprovalNow
   , escapeHierarchy
   , escapeWithoutApproval
+  , runShellCommand
   ) where
 
 import Brick (EventM, get, gets, halt, modify)
@@ -25,7 +26,10 @@ import Data.Time.Clock (diffUTCTime, getCurrentTime)
 
 import Bridge.Scheduler (decidePlan, interruptSession)
 import Core.RunState (stopAll, stopResultText)
+import System.Exit (ExitCode(..))
+import UI.Brick.DialogKeys (scrollBottom)
 import UI.Brick.MessageOps (appendMsg, now)
+import UI.Commands (runLocalShell)
 import UI.Dialog
   ( Dialog(..), EscFlags(..), EscOutcome(..), escWiring, resolveEscape
   , stackNull, stackPop, stackPush )
@@ -121,3 +125,21 @@ escapeWithoutApproval = do
           modify $ \s -> s { appEscLast = Nothing }
           requestInterrupt
       | otherwise -> modify $ \s -> s { appEscLast = arm }
+
+-- | @!cmd@ / @/shell cmd@：跑一条本地 shell 命令，把输出贴回消息区。
+--
+-- 输出按 20000 字符截断（避免一次刷爆消息区），非零退出码补一行 @(exit N)@。
+runShellCommand :: Text -> EventM ResourceName AppState ()
+runShellCommand cmd = do
+  t <- liftIO now
+  appendMsg (mkMsg "shell" ("$ " <> cmd) t)
+  r <- liftIO (runLocalShell cmd)
+  case r of
+    Left e -> appendMsg (mkMsg "error" e t)
+    Right (code, out, err) -> do
+      let body = T.take 20000 (T.pack (out <> err))
+          suffix = case code of
+            ExitSuccess -> ""
+            ExitFailure n -> "\n(exit " <> T.pack (show n) <> ")"
+      appendMsg (mkMsg "shell" (body <> suffix) t)
+  scrollBottom

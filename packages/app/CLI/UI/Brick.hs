@@ -86,7 +86,7 @@ import UI.Brick.Input
 import UI.Brick.SessionView (blocksToMessages, localSessionLines)
 import UI.Brick.RunControl
   ( decideApprovalNow, escapeHierarchy, escapeWithoutApproval, requestInterrupt
-  , requestStopServices, stopServicesAndHalt )
+  , requestStopServices, runShellCommand, stopServicesAndHalt )
 import UI.Brick.MessageOps (appendMsg, now)
 import UI.Brick.Draw.Messages
   ( cardHidden, diffWidget, drawHome, drawInput, drawMessage, drawMessages
@@ -2055,20 +2055,7 @@ handleSubmit rawInput = do
 -- | Run one local shell command and show its output as a card.  120s cap, 20k
 -- character cap; the exit code is appended when non-zero.  The execution
 -- contract lives in 'runLocalShell' so the REPL's @/shell@ behaves identically.
-runShellCommand :: Text -> EventM ResourceName AppState ()
-runShellCommand cmd = do
-  t <- liftIO now
-  appendMsg (mkMsg "shell" ("$ " <> cmd) t)
-  r <- liftIO (runLocalShell cmd)
-  case r of
-    Left e -> appendMsg (mkMsg "error" e t)
-    Right (code, out, err) -> do
-      let body = T.take 20000 (T.pack (out <> err))
-          suffix = case code of
-            ExitSuccess -> ""
-            ExitFailure n -> "\n(exit " <> T.pack (show n) <> ")"
-      appendMsg (mkMsg "shell" (body <> suffix) t)
-  scrollBottom
+-- | runShellCommand 见 UI.Brick.RunControl。
 
 handleSlash :: Text -> EventM ResourceName AppState ()
 handleSlash input = do
