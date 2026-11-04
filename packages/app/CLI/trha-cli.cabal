@@ -26,6 +26,8 @@ test-suite trha-cli-test
     Core.HTTP
     Core.HTTPSpec
     Bridge.Scheduler
+    Bridge.Scheduler.Core
+    Bridge.Scheduler.Session
     BridgeDeltaSpec
     Core.SSE
     Core.SSESpec

@@ -249,6 +249,8 @@ executable trha
   -- （共享 `src/` 被迫重编）**性质不同**，不要互相对照或"清理"。
   other-modules:
     Bridge.Scheduler
+    Bridge.Scheduler.Core
+    Bridge.Scheduler.Session
     Config.Settings
     Config.Home
     Core.Args
