@@ -523,6 +523,9 @@ drawDialog st d =
       DialogApproval{}   -> tr lang " Approval "
       DialogConfirm{}    -> tr lang " Confirm "
       DialogSandbox{}    -> tr lang " SandBox "
+      -- DialogPresets 曾漏在这里：非穷尽 case 不会编译失败，只会在打开
+      -- Preset 对话框时 pattern match failure。与 rows/queryRow 保持一致。
+      DialogPresets{}    -> tr lang " Providers "
     sel = case d of
       DialogModels _ _ s -> s
       DialogSessions _ _ s -> s
@@ -535,6 +538,7 @@ drawDialog st d =
       DialogApproval _ _ _ s -> s
       DialogConfirm _ s -> s
       DialogSandbox _ s -> s
+      DialogPresets _ s -> s
     n = dialogCount d
     -- 30 rows for every dialog, including the skills overlay.
     (start, end) = windowRange n sel 30
