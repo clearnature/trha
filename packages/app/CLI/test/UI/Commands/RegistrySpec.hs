@@ -8,7 +8,8 @@ import Core.Types (configTheme, configLang, configReasoningLanguage, defaultCLIC
 import UI.I18n (Lang(..))
 import UI.Render.Picker (piId)
 import Data.Either (isLeft, isRight)
-import Data.List (sort)
+import Data.Char (isAsciiLower, isDigit)
+import Data.List (nub, sort)
 import qualified Data.Text as T
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KM
@@ -53,6 +54,23 @@ spec = do
                        | c <- slashRegistry
                        , isUnknown (parseCommand (scCommand c)) ]
       unparsable `shouldBe` []
+
+    -- 另一侧：TUI 分派里出现、但注册表没声明的命令 = 孤儿命令。
+    -- 它们能被响应，却不会出现在 /help 与补全里，用户无从发现。
+    --
+    -- 已知例外（2026-11-04 实测）：/ctx 与 /effort 只在 UI.Brick.handleSlash
+    -- 有实现，UI.Commands.parseCommand 会把它们解析成 Unknown，REPL 与
+    -- executeCommand 完全没有对应路径。补进注册表需要先给 Command 加构造子、
+    -- 在 executeCommand 里实现同等逻辑（约 80 行），属于独立一步，故列为显式
+    -- 例外而不是悄悄放过。新增例外必须在此登记并写明原因。
+    it "handleSlash 里出现的命令都在注册表中（无孤儿命令）" $ do
+      src <- readFile "UI/Brick.hs"
+      let knownOrphans = ["/ctx", "/effort"]
+          registered   = map scCommand slashRegistry
+          orphans      = [ c | c <- slashCommandsIn (T.pack src)
+                             , c `notElem` registered
+                             , c `notElem` knownOrphans ]
+      orphans `shouldBe` []
 
   describe "pickerItems" $ do
     it "offers exactly the picker-enabled commands in registry order" $ do
@@ -261,3 +279,21 @@ unique xs = length xs == length (dedup xs)
 isParsed :: (T.Text, Command) -> Bool
 isParsed (_, Unknown _) = False
 isParsed _              = True
+
+-- | 从源码中取出所有 @"/xxx"@ 形式的字符串字面量（去重）。
+--
+-- 'handleSlash' 是函数、无法在测试里枚举，所以把 TUI 分派静态转成命令清单
+-- 与注册表比对。只认「斜杠 + 小写字母开头 + 字母/数字/连字符」：这样既排除
+-- @"/"@ 这类路径分隔符、@"/api/v3"@ 这类 URL 片段，也排除 @"/3@ 这类被切词
+-- 撕开的碎片。
+slashCommandsIn :: T.Text -> [T.Text]
+slashCommandsIn src = nub
+  [ c
+  | tok <- T.words src
+  , Just rest <- [T.stripPrefix "\"" tok]
+  , let c = T.takeWhile (/= '"') rest
+  , "/" `T.isPrefixOf` c
+  , T.length c > 1
+  , T.all (\ch -> ch == '-' || ch == '/' || isAsciiLower ch || isDigit ch) c
+  , maybe False (isAsciiLower . fst) (T.uncons (T.drop 1 c))
+  ]
