@@ -462,15 +462,6 @@ handleAppEvent (EvToggleToolFold mid) = do
   modify $ \s -> s { appFolds =
     Map.alter (Just . toggleFold . fromMaybe FoldCollapsed) mid (appFolds s) }
   scrollBottom
-handleAppEvent (EvCtxSize cs) = do
-  modify $ \s -> s { appCtxSize = Just cs }
-handleAppEvent (EvTodos (Right ts)) = do
-  modify $ \s -> s { appTodos = ts }
-handleAppEvent (EvTodos (Left _)) = return ()
-handleAppEvent (EvSessionTitle mt) = do
-  modify $ \s -> s { appSessionTitle = mt }
-handleAppEvent (EvCompletionIndex ix) = do
-  modify $ \s -> s { appIndex = ix }
 handleAppEvent (EvProviders (Right ps)) = do
   modify $ \s -> s { appProviders = ps }
   -- The dialog is pushed empty while the fetch is in flight; fill it in

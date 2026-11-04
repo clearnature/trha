@@ -172,4 +172,18 @@ handleSidebarEvent (EvAgents (Right as)) = Just $ modify $ \s -> s { appAgents =
 handleSidebarEvent (EvAgents (Left _)) = Just $ return ()
 
 handleSidebarEvent (EvRecent xs) = Just $ modify $ \s -> s { appRecent = xs }
+handleSidebarEvent (EvCtxSize cs) = Just $ do
+  modify $ \s -> s { appCtxSize = Just cs }
+
+handleSidebarEvent (EvTodos (Right ts)) = Just $ do
+  modify $ \s -> s { appTodos = ts }
+
+handleSidebarEvent (EvTodos (Left _)) = Just $ return ()
+
+handleSidebarEvent (EvSessionTitle mt) = Just $ do
+  modify $ \s -> s { appSessionTitle = mt }
+
+handleSidebarEvent (EvCompletionIndex ix) = Just $ do
+  modify $ \s -> s { appIndex = ix }
+
 handleSidebarEvent _ = Nothing
