@@ -27,6 +27,7 @@ import Brick.Widgets.Edit
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.Async (async)
+import Data.Foldable (msum)
 import Control.Monad (filterM, forM_, forever, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import System.Timeout (timeout)
@@ -94,6 +95,9 @@ import UI.Brick.Input
 import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.Chat (handleChatWith)
+import UI.Brick.AppEvent.Sidebar (handleSidebarEvent)
+import UI.Brick.AppEvent.Status (handleStatusEvent)
+import UI.Brick.AppEvent.Toast (handleToastEvent)
 import UI.Brick.Stream
   ( addToolLine, appendDelta, appendReasoningDelta, ensurePending, flushPending
   , flushPendingAt, refreshMode )
@@ -169,6 +173,10 @@ import UI.Stash (Stash(..), emptyStash, stashPush, stashPop, stashEntries, loadS
 import UI.Frecency (Frecency(..), emptyFrecency, recordUse, rankItems, loadFrecency, saveFrecency)
 
 handleAppEvent :: AppEvent -> EventM ResourceName AppState ()
+-- | 认领式分派：Sidebar/Status/Toast 三个域先试，未命中再落到下方各等式。
+handleAppEvent ev = fromMaybe (pure ()) $
+  msum [handleSidebarEvent ev, handleStatusEvent ev, handleToastEvent ev]
+
 handleAppEvent (EvSession result) = do
   case result of
     Right sid -> do
@@ -317,30 +325,11 @@ handleAppEvent (EvMode result) = case result of
     showToast (tr lang0 "Mode: " <> smLabel m)
   Left e  -> modify $ \s -> s { appStatus = "Mode: " <> T.pack (show e) }
 
-handleAppEvent (EvSidebarInfo cwd files instrs) =
-  modify $ \s -> s { appCwd = cwd, appFiles = files, appInstructions = instrs }
 
-handleAppEvent (EvSessionInfo (Right info)) =
-  modify $ \s -> s { appTodos = siTodos info, appGoal = siGoal info }
-handleAppEvent (EvSessionInfo (Left _)) = return ()
 
-handleAppEvent (EvAgents (Right as)) = modify $ \s -> s { appAgents = as }
-handleAppEvent (EvAgents (Left _)) = return ()
-handleAppEvent (EvServices lsp mcp) = modify $ \s -> s { appLsp = lsp, appMcp = mcp }
-handleAppEvent (EvBalance (Right b)) = modify $ \s -> s { appBalance = Just b }
-handleAppEvent (EvBalance (Left _)) = return ()
-handleAppEvent (EvSandboxConfig (Right on)) = modify $ \s ->
-  s { appSandbox = (appSandbox s) { ssEnabled = on } }
-handleAppEvent (EvSandboxConfig (Left _)) = return ()
 
-handleAppEvent (EvRecent xs) = modify $ \s -> s { appRecent = xs }
 
-handleAppEvent (EvToast msg) = showToast msg
 
-handleAppEvent (EvToastExpire t) =
-  modify $ \s -> case appToast s of
-    Just (_, t0) | t0 == t -> s { appToast = Nothing }
-    _                      -> s
 
 handleAppEvent (EvSessions result) = do
   lang <- gets appLang
@@ -422,15 +411,7 @@ handleAppEvent (EvVerdict result) = do
       appendMsg (mkMsg "error" (T.pack (show err)) t)
       modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
   scrollBottom
-handleAppEvent EvTick = do
-  t <- liftIO getCurrentTime
-  modify $ \s -> s { appNow = Just t }
 
-handleAppEvent (EvStatusInfo rows) = do
-  modify $ \s -> s { appSysRows = rows }
-handleAppEvent (EvMetrics rows) = do
-  modify $ \s -> s { appMetrics = rows }
-handleAppEvent (EvGitStat t) = modify $ \s -> s { appGitStat = t }
 handleAppEvent (EvTool result) = do
   lang <- gets appLang
   t <- liftIO now
