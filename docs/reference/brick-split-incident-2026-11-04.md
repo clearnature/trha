@@ -55,7 +55,10 @@ sed -n '506,816p' packages/app/CLI/UI/Brick.hs | rg -n '^[a-zA-Z][a-zA-Z0-9_]* :
 | `ModelInfo(..)`、`ProviderInfo(..)` | `Core.Types` |
 | `SessionSummary(..)` | `Core.SessionSummary` |
 | `configAskTimeout` | `Core.Types` |
-| `strWrap` | `Brick.Widgets.Core` |
+
+> ⚠️ 上面这张表里，`strWrap` 的归属**未经验证**（`ghc-pkg` 未返回 brick 的模块列表，
+> 我在事故当时的推测是 `Brick.Widgets.Core`）。下一轮搬迁前应对它单独执行一次
+> `rg` 或试编译确认——**表格里凡是没跑过命令的条目都不可当作事实**。
 
 ### 根因 3：把「分发器」当成普通函数
 
