@@ -87,6 +87,7 @@ import UI.Brick.Input
 import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.Chat (handleChatWith)
+import UI.Brick.DialogActivate (dialogActivate)
 import UI.Brick.Slash (handleSlash)
 import UI.Brick.Wizard
   ( commitWizard, finishWizard, invalidJson, refreshWizardInput
@@ -733,117 +734,7 @@ handleDialogKey _ = return ()
 -- already been popped by 'dialogActivate'.
 -- | chooseProvider 见 UI.Brick.DialogKeys。
 
-dialogActivate :: EventM ResourceName AppState ()
-dialogActivate = do
-  st <- get
-  case stackTop (appDialogs st) of
-    Nothing -> return ()
-    Just d -> do
-      modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
-      case d of
-        DialogModels _ _ sel -> case drop sel (dialogModelsItems d) of
-          (m : _) -> do
-            modify $ \s -> s { appModel = modelName m }
-            st2 <- get
-            let prefs' = recordRecent (modelName m) (appModelPrefs st2)
-            liftIO (saveModelPrefs prefs')
-            modify $ \s -> s { appModelPrefs = prefs' }
-          []      -> return ()
-        DialogSessions _ _ sel -> case drop sel (dialogSessionsItems d) of
-          (s : _) -> resumeSession (T.pack (ssId s))
-          []      -> return ()
-        DialogCommands _ _ sel -> case drop sel (dialogCommandsItems d) of
-          (item : _) | not (isSection item) -> handleSlash (piId item)
-          _                                 -> return ()
-        DialogProviders ps sel -> case drop sel ps of
-          (p : _) -> chooseProvider p
-          []      -> return ()
-        DialogPresets ps sel -> case drop sel ps of
-          (p : _) -> startWizardPreset p
-          []      -> return ()
-        DialogSkills _ _ sel -> case drop sel (dialogSkillsItems d) of
-          (sk : _) -> selectSkill (skName sk)
-          []       -> return ()
-        DialogAgents as sel -> case drop sel as of
-          (a : _) -> resumeSession (aeId a)
-          []      -> return ()
-        DialogThemes ts sel -> case drop sel ts of
-          (t : _) -> applyTheme (themeName t)
-          []      -> return ()
-        DialogLanguages ls sel -> case drop sel ls of
-          (l : _) -> applyLanguage l
-          []      -> return ()
-        DialogApproval _ name args sel ->
-          case drop sel (approvalOptions name args) of
-            (ApprovalOnce : _)   -> decideApprovalNow True
-            (ApprovalAlways : _) -> modifyTop $ \_ ->
-              DialogConfirm (alwaysConfirmText (appLang st) name args) 0
-            _                    -> decideApprovalNow False
-        DialogSandbox ss sel -> do
-          st <- get
-          let ss' = sandboxApply sel ss
-          modify $ \s0 -> s0 { appSandbox = ss' }
-          void $ liftIO $ async $ do
-            r <- setSandboxConfig (appBridge st) (ssEnabled ss')
-                   (ssPolicy ss')
-                   (if ssNetwork ss' then "allow:*" else "off")
-                   (ssScratch ss')
-            case r of
-              Left e -> writeBChan (appChan st) (EvToast ("sandbox: " <> T.pack (show e)))
-              Right () -> writeBChan (appChan st) (EvToast "sandbox config saved")
-        DialogConfirm _ sel -> case sel of
-          0 -> do
-            st2 <- get
-            if appPendingStop st2
-              then stopServicesAndHalt
-              else case (appPendingProviderRemove st2, appPendingDelete st2) of
-                (Just pname, _) -> do
-                  modify $ \s -> s { appDialogs = stackPop (appDialogs s)
-                                   , appPendingProviderRemove = Nothing
-                                   , appStatus = tr (appLang s) "Removing..." }
-                  let bridge = appBridge st2
-                      chan   = appChan st2
-                  void $ liftIO $ async $ do
-                    r <- removeProvider bridge pname
-                    writeBChan chan (case r of
-                      Right ps -> EvProviders (Right ps)   -- registry refresh
-                      Left e   -> EvToast (T.pack ("Error: " <> show e)))
-                (Nothing, Just sid) -> do
-                  modify $ \s -> s { appDialogs = stackPop (appDialogs s)
-                                   , appPendingDelete = Nothing
-                                   , appStatus = tr (appLang s) "Deleting..." }
-                  let bridge = appBridge st2
-                      chan = appChan st2
-                  void $ liftIO $ async $ do
-                    r <- deleteSession bridge sid
-                    writeBChan chan (EvToast (case r of
-                      Right () -> "Session deleted: " <> T.pack sid
-                      Left e   -> "Error: " <> T.pack (show e)))
-                (Nothing, Nothing) -> do  -- persist the rule, then approve once
-                  modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
-                  let (name, args) = fromMaybe ("", []) (appAskTool st2)
-                      bridge = appBridge st2
-                      chan   = appChan st2
-                  case appSessionId st2 of
-                    Nothing -> decideApprovalNow True
-                    Just sid -> do
-                      modify $ \s2 -> s2 { appStatus = tr (appLang s2) "Approving..." }
-                      void $ liftIO $ async $ do
-                        _ <- allowAlways bridge name args  -- best effort: a failed rule
-                                                           -- still allows this once
-                        r <- decidePlan bridge sid True
-                        writeBChan chan (EvVerdict r)
-          _ -> do  -- no: cancel the pending stop, or go back to the approval card
-            st2 <- get
-            if appPendingStop st2
-              then modify $ \s -> s { appPendingStop = False }
-              else do
-                modify $ \s -> s { appPendingDelete = Nothing, appPendingProviderRemove = Nothing }
-                st3 <- get
-                case (appApproval st3, appAskTool st3) of
-                  (Just msg, Just (name, args)) ->
-                    modifyTop (const (DialogApproval msg name args 0))
-                  _ -> modify $ \s2 -> s2 { appDialogs = stackPop (appDialogs s2) }
+-- | dialogActivate 见 UI.Brick.DialogActivate。
 
 -- | Keys in the normal chat view.
 handleChatKey :: Event -> EventM ResourceName AppState ()
