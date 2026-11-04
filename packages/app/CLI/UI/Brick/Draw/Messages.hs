@@ -39,6 +39,7 @@ import Core.SessionSummary (SessionSummary(..))
 import Core.Types (CLIConfig(..), PlanStepView(..), PlanView(..))
 import Brick.Widgets.Edit (getEditContents, renderEditor)
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard)
+import UI.Brick.Draw.Home (drawHome, drawPlanCard)
 import UI.Brick.Draw.MessageList
   ( cardHidden, drawMessage, drawMessages, drawPending, inSel )
 import UI.Brick.Draw.MessageBody
@@ -107,82 +108,7 @@ drawInput st =
 -- | Braille spinner frames 见 UI.Render.Spans.spinnerFrame。
 
 
-drawPlanCard :: PlanView -> Widget ResourceName
-drawPlanCard pv =
-  withAttr (attrName "plan") $
-    borderWithLabel (withAttr (attrName "plan") $ str " Plan ") $
-      vBox $
-        [ padLeftRight 1 $ withAttr (attrName "status") $
-            str (T.unpack (phaseLabel (pvPhase pv)))
-        ]
-        ++ zipWith (\n st -> padLeftRight 1 . str . T.unpack $ renderStep pv (n, st))
-                   [1 :: Int ..] (pvSteps pv)
-        ++ [ padLeftRight 1 $ withAttr (attrName "status") $ str (T.unpack hints)
-           | not (T.null hints) ]
-  where
-    phaseLabel "executing_step" = "running a step…"
-    phaseLabel "planning"       = "waiting for a decision"
-    phaseLabel other            = other
-    hints :: Text
-    hints
-      | pvPhase pv == "planning" = "/approve · /skip · /reject · /abandon"
-      | otherwise                = "/abandon"
-    renderStep p (n, st) =
-      let mark = case psvStatus st of
-            "done"     -> "[x]"
-            "failed"   -> "[!]"
-            "skipped"  -> "[-]"
-            "approved" -> "[+]"
-            "rejected" -> "[r]"
-            _          -> "[·]"
-          here = if pvPending pv == Just (psvId st) then "  ←" else ""
-      in T.pack (show (n :: Int)) <> ". " <> mark <> " " <> psvTitle st <> here
 
--- | 状态栏的纯文本源（statusSandboxTag / statusClock / statusModelLine /
--- statusGitLine / statusPeak / statusStatsLine …）已整体迁到
--- UI.Brick.Draw.Status。本模块只保留 Widget 装配。
-
--- | 统计工具（statusCommas / statusShortK / statusPct / statusOneDec /
--- statusUsable / statusCtxPct / statusTurnsSuffix）见 UI.Brick.Draw.Status。
-
--- | 状态栏第 2 行的统计段：缓存 / 上下文 / 压缩 / 吞吐 / token / 成本 / 余额 / 峰谷。
---
-
-drawHome :: AppState -> Widget ResourceName
-drawHome st =
-  padAll 1 $
-    vBox $
-      [ withAttr (attrName "title") $ vBox (map str logoLines)
-      , padTop (Pad 1) $ withAttr (attrName "system") $
-          strWrap (T.unpack (tr (appLang st) "Type a message to start a new session, or /resume to continue one."))
-      , padTop (Pad 1) $ withAttr (attrName "header") $
-          str (T.unpack (tr (appLang st) "Recent sessions"))
-      ]
-      ++ recentLines
-      ++ [ padTop (Pad 1) $ withAttr (attrName "timestamp") $
-             strWrap (T.unpack (tr (appLang st) "Shift+Tab switches the permission posture; /help lists commands.")) ]
-  where
-    recentLines = case take 6 (appRecent st) of
-      [] -> [ padLeft (Pad 2) $ withAttr (attrName "timestamp") $
-                str (T.unpack (tr (appLang st) "No local sessions yet.")) ]
-      xs -> [ padLeft (Pad 2) $
-                hBox [ withAttr (attrName "user") (str ("• " ++ T.unpack (ssTitle s)))
-                     , withAttr (attrName "timestamp") (str ("  " ++ ssId s)) ]
-            | s <- xs ]
-    logoLines =
-      [ "  ████████╗██████╗ ██╗  ██╗ █████╗ "
-      , "  ╚══██╔══╝██╔══██╗██║  ██║██╔══██╗"
-      , "     ██║   ██████╔╝███████║███████║"
-      , "     ██║   ██╔══██╗██╔══██║██╔══██║"
-      , "     ██║   ██║  ██║██║  ██║██║  ██║"
-      , "     ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝"
-      ]
-
--- | The sidebar card: Context, TODO and Session sections.
---
--- The bottom line names the two shortcuts a first-time user needs: hiding
--- the sidebar and leaving the TUI.
--- | drawSidebar 见 UI.Brick.Draw.Sidebar。
 
 
 drawUI :: AppState -> [Widget ResourceName]
