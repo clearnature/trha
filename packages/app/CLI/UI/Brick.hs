@@ -87,7 +87,9 @@ import UI.Brick.Input
 import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.Chat (handleChatWith)
-import UI.Brick.DialogActivate (dialogActivate)
+import UI.Brick.DialogActivate
+  ( dialogActivate, handleDialogKey, refreshProviderEfforts
+  , startProviderRemove, toggleProviderThinking )
 import UI.Brick.Slash (handleSlash)
 import UI.Brick.Wizard
   ( commitWizard, finishWizard, invalidJson, refreshWizardInput
@@ -687,51 +689,8 @@ handleCtrlDKey = do
 -- | 中断/审批组见 UI.Brick.RunControl。
 
 -- | Keys while a dialog is open: the top dialog owns them all.
-handleDialogKey :: Event -> EventM ResourceName AppState ()
-handleDialogKey (EvKey KUp [])    = modifyTop (dialogMoveSel (-1))
-handleDialogKey (EvKey KDown [])  = modifyTop (dialogMoveSel 1)
-handleDialogKey (EvKey (KChar 'p') [MCtrl]) = modifyTop (dialogMoveSel (-1))
-handleDialogKey (EvKey (KChar 'n') [MCtrl]) = modifyTop (dialogMoveSel 1)
--- | tab：列表前进（vty 把 Tab 报成 KChar '\t'）。
-handleDialogKey (EvKey (KChar '\t') []) = modifyTop (dialogMoveSel 1)
-handleDialogKey (EvKey KEnter []) = dialogActivate
-handleDialogKey (EvKey KBS [])    = withCommands dialogDelete >> scrollBottom
--- | j/k：没有查询行的列表用 vim 风格上下移动（Reasonix 的 prompts.go）。
--- 有查询行的列表（命令/技能/模型/会话）里 j/k 是普通字符，不抢导航。
-handleDialogKey (EvKey (KChar c) [])
-  | c == 'j' || c == 'k' = do
-      st <- get
-      case stackTop (appDialogs st) of
-        Just DialogCommands{} -> withCommands (dialogAppend c) >> scrollBottom
-        Just DialogSkills{}   -> withCommands (dialogAppend c) >> scrollBottom
-        Just DialogModels{}   -> withCommands (dialogAppend c) >> scrollBottom
-        Just DialogSessions{} -> withCommands (dialogAppend c) >> scrollBottom
-        _ -> modifyTop (dialogMoveSel (if c == 'j' then 1 else -1))
-handleDialogKey (EvKey (KChar c) [])
-  | let o = fromEnum c in o >= 32 && o < 127 = do
-      st <- get
-      case stackTop (appDialogs st) of
-        Just (DialogProviders ps sel) | c == 'a' ->
-          modify $ \s -> s { appDialogs = stackPush (DialogPresets presets 0) (appDialogs s) }
-        Just (DialogProviders ps sel) | c == 'e'
-          , (p : _) <- drop sel ps -> startWizard (Just p)
-        Just (DialogProviders ps sel) | c == 'r'
-          , (p : _) <- drop sel ps -> refreshProviderEfforts p
-        Just (DialogProviders ps sel) | c == 'd'
-          , (p : _) <- drop sel ps -> startProviderRemove p
-        Just (DialogProviders ps sel) | c == 't'
-          , (p : _) <- drop sel ps -> toggleProviderThinking p
-        _ -> withCommands (dialogAppend c) >> scrollBottom
-handleDialogKey _ = return ()
+-- | handleDialogKey 见 UI.Brick.DialogActivate。
 
--- | Editing keys apply only to the command dialog (approval/confirm have
--- no query row).
--- | dialogAppend / dialogDelete / withCommands / modifyTop 见 UI.Brick.DialogKeys。
-
--- | Activate the entry under the top dialog's cursor.
--- | Adopt a provider: remember it and make sure the current model belongs
--- to it (otherwise fall back to the provider's default).  The dialog has
--- already been popped by 'dialogActivate'.
 -- | chooseProvider 见 UI.Brick.DialogKeys。
 
 -- | dialogActivate 见 UI.Brick.DialogActivate。
@@ -992,53 +951,7 @@ runPaletteItem = do
 
 -- | Re-probe a saved provider and write its effort ladder back (a relay may
 -- have gained or lost a model's depth levels since it was saved).
--- | 思考开关（tui-port L290）：翻转 piThinking（yes↔no）并经 saveProvider
--- 持久化。DialogProviders 的 't' 与 settings 的 Providers 页签共用。
-toggleProviderThinking :: ProviderInfo -> EventM ResourceName AppState ()
-toggleProviderThinking p = do
-  st <- get
-  let bridge = appBridge st
-      chan   = appChan st
-      next   = if piThinking p == "yes" then "no" else "yes"
-  modify $ \s -> s { appStatus = tr (appLang st) "Saving thinking toggle..." }
-  void $ liftIO $ async $ do
-    r <- saveProvider bridge (piName p) (piKind p) (piBaseUrl p) ""
-           (piModels p) (piDefault p) (piAuthHeader p) (piNoProxy p)
-           (piEffort p) (piVision p) (piEfforts p)
-           (piHeaders p) (piExtraBody p) next (piResponsesMode p)
-           (piContextWindow p)
-    writeBChan chan (case r of
-      Right _  -> EvToast (T.pack "thinking: " <> next)
-      Left e   -> EvToast (T.pack ("Error: " <> show e)))
-
--- | 删除确认入口（tui-port L290）：pending 标记 + DialogConfirm（默认取消）。
--- 确认后的实际删除在 DialogConfirm 分发（appPendingProviderRemove）。
-startProviderRemove :: ProviderInfo -> EventM ResourceName AppState ()
-startProviderRemove p = do
-  st <- get
-  modify $ \s -> s
-    { appPendingProviderRemove = Just (piName p)
-    , appDialogs = stackPush
-        (DialogConfirm (T.pack ("Remove provider " <> T.unpack (piName p) <> "?")) 1)
-        (appDialogs st) }
-
-refreshProviderEfforts :: ProviderInfo -> EventM ResourceName AppState ()
-refreshProviderEfforts p = do
-  st <- get
-  let bridge = appBridge st
-      chan = appChan st
-  modify $ \s -> s { appStatus = "Probing " <> piName p <> "..." }
-  void $ liftIO $ async $ do
-    r <- probeProvider bridge (piBaseUrl p) ""
-    case r of
-      Right probe -> do
-        saved <- saveProvider bridge (piName p) (piKind p) (piBaseUrl p) ""
-                   (piModels p) (piDefault p) (piAuthHeader p) (piNoProxy p)
-                   (piEffort p) (piVision p) (ppEfforts probe)
-                   (piHeaders p) (piExtraBody p) (piThinking p) (piResponsesMode p)
-                   (piContextWindow p)
-        writeBChan chan (EvProviderSaved saved)
-      Left e -> writeBChan chan (EvProviderSaved (Left e))
+-- | 供应商面板三个动作见 UI.Brick.DialogActivate。
 
 -- | startWizard 见 UI.Brick.Wizard。
 
