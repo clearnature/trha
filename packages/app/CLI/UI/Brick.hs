@@ -89,6 +89,8 @@ import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.ChatKeys (editDefaultKey, handleChatEnter, handleChatKey)
+import UI.Brick.KeyDispatch
+  ( disarmLeader, handleCtrlCKey, handleCtrlDKey, handleLeaderKey )
 import UI.Brick.DialogActivate
   ( dialogActivate, handleDialogKey, refreshProviderEfforts
   , startProviderRemove, toggleProviderThinking )
@@ -647,70 +649,7 @@ handleEvent _ = return ()
 
 -- | One keystroke after the leader (ctrl+x).  Executes one action, then
 -- disarms; anything unbound cancels.
-handleLeaderKey :: Event -> EventM ResourceName AppState ()
-handleLeaderKey (EvKey KEsc _) = disarmLeader "Ready"
-handleLeaderKey (EvKey (KChar c) []) = do
-  modify $ \s -> s { appLeader = False }
-  case leaderResolve c of
-    Just LeaderSidebar   -> modify $ \s -> s { appSidebar = toggleSidebar (appSidebar s) }
-    Just LeaderProvider  -> handleSlash "/provider"
-    Just LeaderModels    -> handleSlash "/models"
-    Just LeaderSessions  -> handleSlash "/sessions"
-    Just LeaderSettings  -> handleSlash "/settings"
-    Just LeaderHelp      -> handleSlash "/help"
-    Just LeaderInterrupt -> requestInterrupt
-    Nothing              -> disarmLeader "Unknown leader key"
-handleLeaderKey _ = disarmLeader "Ready"
-
-disarmLeader :: Text -> EventM ResourceName AppState ()
-disarmLeader msg = modify $ \s -> s
-  { appLeader = False, appStatus = tr (appLang s) msg }
-
--- | Ctrl+C follows the terminal convention: interrupt first, clear input
--- second, quit only on a second press from an idle empty prompt.  Ctrl+D quits
--- only from an idle empty prompt; Ctrl+Q stays as a direct exit.
-handleCtrlCKey :: EventM ResourceName AppState ()
-handleCtrlCKey = do
-  st <- get
-  now <- liftIO getCurrentTime
-  -- 有选区时 ctrl+c 先复制（Reasonix 的 copyIt），否则才走中断/清空/退出。
-  case appSelStart st of
-    Just _  -> copySelectionText True
-    Nothing -> case decideCtrlC (appBusy st) (not (promptIsEmpty st)) (appQuitLast st) now of
-      CtrlCInterrupt  -> requestInterrupt
-      CtrlCClearInput -> modify $ \s -> s { appInput = editorText InputArea (Just 1) "" }
-      CtrlCQuit       -> halt
-      CtrlCArmQuit    -> modify $ \s -> s
-        { appQuitLast = Just now
-        , appStatus = tr (appLang s) "Press Ctrl+C again to quit"
-        }
-
-handleCtrlDKey :: EventM ResourceName AppState ()
-handleCtrlDKey = do
-  st <- get
-  when (decideCtrlD (appBusy st) (not (promptIsEmpty st))) halt
-
--- | promptIsEmpty 见 UI.Brick.Input。
-
--- | Ask the host to stop the running turn (shared by the leader and the
--- double-escape path).
--- | 中断/审批组见 UI.Brick.RunControl。
-
--- | Keys while a dialog is open: the top dialog owns them all.
--- | handleDialogKey 见 UI.Brick.DialogActivate。
-
--- | chooseProvider 见 UI.Brick.DialogKeys。
-
--- | dialogActivate 见 UI.Brick.DialogActivate。
-
--- | Keys in the normal chat view.
--- | handleChatKey / handleChatEnter 见 UI.Brick.ChatKeys。
-
--- | Run a skill.  The transcript shows the visible trigger (@/skill:<name>
--- <request>@) while the model receives the skill's instructions plus the
--- user's own request — the same split MiMo uses (visible message + body
--- injected as context).
--- | 提交路径（submitSkill/commitEditor/editExternally）见 UI.Brick.ChatKeys。
+-- | 全局键位组见 UI.Brick.KeyDispatch。
 
 refreshMode :: SchedulerBridge -> SessionId -> BChan AppEvent -> IO ()
 refreshMode bridge sid chan =
