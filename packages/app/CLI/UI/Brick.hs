@@ -85,7 +85,7 @@ import UI.Brick.Selection
 import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
 import UI.Brick.SessionView
-  ( blocksToMessages, localSessionLines, refreshSidebar )
+  ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
@@ -449,76 +449,7 @@ runTUI bridge cfg = do
 -- | 调度层的压缩标记（govern 写入的一条 user 消息）。
 -- | 压缩标记判定见 UI.Render.Spans.isCompactionMark。
 
-resumeSession :: Text -> EventM ResourceName AppState ()
-resumeSession selText = do
-  lang <- gets appLang
-  t <- liftIO now
-  cwd <- liftIO getCurrentDirectory
-  -- `--all` is the escape hatch for transcripts written before sessions
-  -- recorded their cwd: they are invisible to the per-project list but still
-  -- resumable when asked for explicitly.
-  let wantAll = T.strip selText == "--all"
-  bridge0 <- gets appBridge
-  -- 候选 = 本地 transcript ∪ 调度层（stateDir 恢复的）会话：只存在于
-  -- 调度层的会话没有本地 transcript，但历史仍可拉回来继续。
-  local <- liftIO (if wantAll then listLocalSessions else resumeSessions bridge0)
-  case pickLocalSession (T.unpack selText) local of
-    Nothing -> do
-      let recent = take 5 local
-          listing = T.intercalate ", " (map (T.pack . ssId) recent)
-          hint
-            | null local = tr lang "No local sessions yet. Run a conversation first."
-            | otherwise  = tr lang "Recent sessions: " <> listing
-      appendMsg (mkMsg "error"
-        (tr lang "No local session matches: " <> selText <> "\n" <> hint) t)
-      showToast (tr lang "No matching session")
-    Just s -> do
-      liftIO $ setWindowTitle ("trha · " <> T.take 8 (T.pack (ssId s)))
-      events <- liftIO (loadTranscript (ssId s))
-      let localMsgs = blocksToMessages (renderReplay events)
-      -- 本地没有 transcript 时从调度层拉历史（stateDir 恢复的会话）。
-      remote <- if null localMsgs
-        then liftIO (resumeMessages bridge0 (ssId s))
-        else pure []
-      let msgs = if null localMsgs
-                   then [ mkMsg role content t | (role, content) <- remote ]
-                   else localMsgs
-      modify $ \st -> st { appMessages = msgs
-                         , appNextMsgId = length msgs
-                         , appCardFocus = Nothing
-                         , appSessionId = Just (ssId s)
-                         , appStatus = tr (appLang st) "Resumed " <> T.pack (ssId s)
-                         , appBusy = False
-                         , appPending = Nothing
-                         , appRoute = RouteSession
-                         -- Cache totals are per session: carrying them across a
-                         -- switch silently blends two sessions' hit rates.
-                         , appCacheNow = Nothing
-                         , appCacheSum = (0, 0)
-                         , appCacheTurns = 0
-                         , appLastCost = 0
-                         , appSessTokens = 0
-                         , appLastDecodeTps = Nothing
-                         , appFirstToken = Nothing }
-      when (null msgs) $
-        appendMsg (mkMsg "system" (tr lang "Session " <> T.pack (ssId s) <> tr lang " has an empty transcript.") t)
-      -- 调度层会从 stateDir 恢复会话：先问一句它是否真的在，再决定提示。
-      bridge0 <- gets appBridge
-      live <- liftIO (fetchSessionInfo bridge0 (ssId s))
-      appendMsg (mkMsg "system"
-        (case live of
-           Right _ -> tr lang "This session is live on the scheduler — keep going."
-           Left _  -> tr lang "This session is not live on the scheduler; /new starts a fresh one.") t)
-      -- 压缩发生在调度层，本地 transcript 里没有那条标记：恢复时把它
-      -- 单独显示出来，否则用户看到的是一段"凭空变短"的历史。
-      remoteAll <- liftIO (resumeMessages bridge0 (ssId s))
-      case [ c | (_, c) <- remoteAll, isCompactionMark c ] of
-        (c : _) -> appendMsg (mkMsg "compact" c t)
-        []      -> pure ()
-      st <- get
-      void $ liftIO $ async $
-        refreshSidebar (appBridge st) (appChan st) (ssId s)
-      scrollBottom
+-- | resumeSession 见 UI.Brick.SessionView。
 
 -- | setWindowTitle 见 UI.Brick.MessageOps。
 
