@@ -88,6 +88,7 @@ import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.Slash (handleSlash)
+import UI.Brick.Wizard (refreshWizardInput)
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
   , requestInterrupt, requestStopServices, runShellCommand, stopServicesAndHalt )
@@ -1183,10 +1184,7 @@ startWizard existing = do
   refreshWizardInput w
 
 -- | Put the current field's value in the editor so the user can edit it.
-refreshWizardInput :: ProviderWizard -> EventM ResourceName AppState ()
-refreshWizardInput w = do
-  modify $ \s -> s { appWizard = Just w
-                   , appInput = editorText InputArea (Just 1) (wizardValue w (pwStep w)) }
+-- | refreshWizardInput 见 UI.Brick.Wizard。
 
 -- | Take the editor's text as the current field and advance (or save).
 commitWizard :: EventM ResourceName AppState ()
