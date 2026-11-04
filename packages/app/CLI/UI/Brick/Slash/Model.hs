@@ -156,103 +156,126 @@ import UI.Theme
 
 handleModelSlash :: CmdCtx -> Maybe (EventM ResourceName AppState ())
 handleModelSlash cx = case cxCmd cx of
-    "/models" -> Just $ do
-      st2 <- get
-      case appProvider st2 >>= \n -> find ((== n) . piName) (appProviders st2) of
-        Just p | not (null (piModels p)) ->
-          -- The picker is scoped to the selected provider; no round trip.
-          modify $ \s -> s { appDialogs =
-            stackPush (DialogModels (orderedModels (appModelPrefs s) (providerModelInfos p)) "" 0)
-                      (appDialogs s) }
-        _ -> do
-          modify $ \s -> s { appDialogs = stackPush (DialogModels [] "" 0) (appDialogs s) }
-          void $ liftIO $ async $
-            listModels (cxBridge cx) >>= writeBChan (cxChan cx) . EvModels
-    "/provider" -> Just $ do
-      modify $ \s -> s { appDialogs = stackPush (DialogProviders [] 0) (appDialogs s) }
+  "/models" -> Just $ slashModels cx
+  "/provider" -> Just $ slashProvider cx
+  _ | (cxCmd cx) == "/switch" || "/switch " `T.isPrefixOf` (cxCmd cx) -> Just $ slashSwitch cx
+  _ | (cxCmd cx) == "/ctx" || "/ctx " `T.isPrefixOf` (cxCmd cx) -> Just $ slashCtx cx
+  _ | (cxCmd cx) == "/effort" || "/effort " `T.isPrefixOf` (cxCmd cx) -> Just $ slashEffort cx
+  _ | (cxCmd cx) == "/fav" || "/fav " `T.isPrefixOf` (cxCmd cx) -> Just $ slashFav cx
+  _ | (cxCmd cx) == "/model" -> Just $ slashModelShow cx
+  _ | "/model " `T.isPrefixOf` (cxCmd cx) -> Just $ slashModelSet cx
+  _ -> Nothing
+
+slashModels :: CmdCtx -> EventM ResourceName AppState ()
+slashModels cx = do
+  st2 <- get
+  case appProvider st2 >>= \n -> find ((== n) . piName) (appProviders st2) of
+    Just p | not (null (piModels p)) ->
+      -- The picker is scoped to the selected provider; no round trip.
+      modify $ \s -> s { appDialogs =
+        stackPush (DialogModels (orderedModels (appModelPrefs s) (providerModelInfos p)) "" 0)
+                  (appDialogs s) }
+    _ -> do
+      modify $ \s -> s { appDialogs = stackPush (DialogModels [] "" 0) (appDialogs s) }
       void $ liftIO $ async $
-        listProviders (cxBridge cx) >>= writeBChan (cxChan cx) . EvProviders
+        listModels (cxBridge cx) >>= writeBChan (cxChan cx) . EvModels
+
+slashProvider :: CmdCtx -> EventM ResourceName AppState ()
+slashProvider cx = do
+  modify $ \s -> s { appDialogs = stackPush (DialogProviders [] 0) (appDialogs s) }
+  void $ liftIO $ async $
+    listProviders (cxBridge cx) >>= writeBChan (cxChan cx) . EvProviders
     -- /switch 之前没有 TUI 分支，落到 executeCommand 的 SwitchProvider
     -- 分支只打印一段带 `*` 的列表 —— 用户看到「列出来但选不中」。
     -- 无参时和 /provider 走同一个可选中对话框；带参就直接切。
-    _ | (cxCmd cx) == "/switch" || "/switch " `T.isPrefixOf` (cxCmd cx) -> Just $ do
-      let arg = T.strip (T.drop (T.length "/switch") (cxInput cx))
-      if T.null arg
-        then do
-          modify $ \s -> s { appDialogs = stackPush (DialogProviders [] 0) (appDialogs s) }
-          void $ liftIO $ async $
-            listProviders (cxBridge cx) >>= writeBChan (cxChan cx) . EvProviders
-        else do
-          r <- liftIO $ setInUseProvider (cxBridge cx) arg
-          case r of
-            Right _ -> showToast (tr (cxLang cx) "Switched to " <> arg)
-            Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) (cxTime cx))
-    _ | (cxCmd cx) == "/ctx" || "/ctx " `T.isPrefixOf` (cxCmd cx) -> Just $ do
-      cfg <- liftIO (resolveConfig defaultCLIConfig)
-      let raw = T.strip (T.drop (T.length "/ctx") (cxCmd cx))
-      if T.null raw
-        then appendMsg (mkMsg "system" ("context: "
-                          <> maybe "model default" (T.pack . show) (configCtxSize cfg)) (cxTime cx))
-        else case reads (T.unpack raw) :: [(Int, String)] of
-          [(n, "")] | n > 0 -> do
-            liftIO (saveConfig (cfg { configCtxSize = Just n }))
-            modify $ \s -> s { appCtxSize = Just n }
-            -- Keep the saved provider's window in sync, so the kernel's
-            -- compaction threshold and the UI agree after a restart.
-            providers <- liftIO (listProviders (cxBridge cx))
-            case providers of
-              Right ps | (p : _) <- [ q | q <- ps, piInUse q ] -> do
-                void $ liftIO $ async $ do
-                  saved <- saveProvider (cxBridge cx) (piName p) (piKind p) (piBaseUrl p) ""
-                             (piModels p) (piDefault p) (piAuthHeader p) (piNoProxy p)
-                             (piEffort p) (piVision p) (piEfforts p)
-                             (piHeaders p) (piExtraBody p) (piThinking p) (piResponsesMode p)
-                             (Just n)
-                  writeBChan (cxChan cx) (EvProviderSaved saved)
-              _ -> pure ()
-            appendMsg (mkMsg "system" ("context: " <> T.pack (show n) <> " tokens") (cxTime cx))
-          _ -> appendMsg (mkMsg "error" "Usage: /ctx <tokens>" (cxTime cx))
-    _ | (cxCmd cx) == "/effort" || "/effort " `T.isPrefixOf` (cxCmd cx) -> Just $ do
-      cfg <- liftIO (resolveConfig defaultCLIConfig)
-      -- Reasonix shape: the endpoint/model advertises an effort ladder
-      -- (probe.efforts); validate against it instead of a hard-coded list.
-      providers <- liftIO (listProviders (cxBridge cx))
-      let (base, kind, ladder) = case providers of
-            Right ps -> case [ p | p <- ps, piInUse p ] of
-              (p : _) -> (piBaseUrl p, piKind p, piEfforts p)
-              []      -> maybe ("", "", [])
-                              (\p -> (piBaseUrl p, piKind p, piEfforts p))
-                              (listToMaybe ps)
-            Left _ -> ("", "", [])
-          levels = levelsFor ladder base kind (appModel (cxState cx))
-          lvl = T.toLower (T.strip (T.drop (T.length "/effort") (cxCmd cx)))
-          shown = "(" <> T.intercalate "|" levels <> ")"
-      if T.null lvl
-        then appendMsg (mkMsg "system" ("effort: " <> configEffort cfg <> "  " <> shown) (cxTime cx))
-        else if lvl `elem` levels
-          then do
-            liftIO (saveConfig (cfg { configEffort = lvl }))
-            modify $ \s -> s { appEffort = lvl }
-            appendMsg (mkMsg "system" ("effort: " <> lvl) (cxTime cx))
-          else appendMsg (mkMsg "error" ("Unknown effort: " <> lvl <> "  " <> shown) (cxTime cx))
-    _ | (cxCmd cx) == "/fav" || "/fav " `T.isPrefixOf` (cxCmd cx) -> Just $ do
+
+slashSwitch :: CmdCtx -> EventM ResourceName AppState ()
+slashSwitch cx = do
+  let arg = T.strip (T.drop (T.length "/switch") (cxInput cx))
+  if T.null arg
+    then do
+      modify $ \s -> s { appDialogs = stackPush (DialogProviders [] 0) (appDialogs s) }
+      void $ liftIO $ async $
+        listProviders (cxBridge cx) >>= writeBChan (cxChan cx) . EvProviders
+    else do
+      r <- liftIO $ setInUseProvider (cxBridge cx) arg
+      case r of
+        Right _ -> showToast (tr (cxLang cx) "Switched to " <> arg)
+        Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) (cxTime cx))
+
+slashCtx :: CmdCtx -> EventM ResourceName AppState ()
+slashCtx cx = do
+  cfg <- liftIO (resolveConfig defaultCLIConfig)
+  let raw = T.strip (T.drop (T.length "/ctx") (cxCmd cx))
+  if T.null raw
+    then appendMsg (mkMsg "system" ("context: "
+                      <> maybe "model default" (T.pack . show) (configCtxSize cfg)) (cxTime cx))
+    else case reads (T.unpack raw) :: [(Int, String)] of
+      [(n, "")] | n > 0 -> do
+        liftIO (saveConfig (cfg { configCtxSize = Just n }))
+        modify $ \s -> s { appCtxSize = Just n }
+        -- Keep the saved provider's window in sync, so the kernel's
+        -- compaction threshold and the UI agree after a restart.
+        providers <- liftIO (listProviders (cxBridge cx))
+        case providers of
+          Right ps | (p : _) <- [ q | q <- ps, piInUse q ] -> do
+            void $ liftIO $ async $ do
+              saved <- saveProvider (cxBridge cx) (piName p) (piKind p) (piBaseUrl p) ""
+                         (piModels p) (piDefault p) (piAuthHeader p) (piNoProxy p)
+                         (piEffort p) (piVision p) (piEfforts p)
+                         (piHeaders p) (piExtraBody p) (piThinking p) (piResponsesMode p)
+                         (Just n)
+              writeBChan (cxChan cx) (EvProviderSaved saved)
+          _ -> pure ()
+        appendMsg (mkMsg "system" ("context: " <> T.pack (show n) <> " tokens") (cxTime cx))
+      _ -> appendMsg (mkMsg "error" "Usage: /ctx <tokens>" (cxTime cx))
+
+slashEffort :: CmdCtx -> EventM ResourceName AppState ()
+slashEffort cx = do
+  cfg <- liftIO (resolveConfig defaultCLIConfig)
+  -- Reasonix shape: the endpoint/model advertises an effort ladder
+  -- (probe.efforts); validate against it instead of a hard-coded list.
+  providers <- liftIO (listProviders (cxBridge cx))
+  let (base, kind, ladder) = case providers of
+        Right ps -> case [ p | p <- ps, piInUse p ] of
+          (p : _) -> (piBaseUrl p, piKind p, piEfforts p)
+          []      -> maybe ("", "", [])
+                          (\p -> (piBaseUrl p, piKind p, piEfforts p))
+                          (listToMaybe ps)
+        Left _ -> ("", "", [])
+      levels = levelsFor ladder base kind (appModel (cxState cx))
+      lvl = T.toLower (T.strip (T.drop (T.length "/effort") (cxCmd cx)))
+      shown = "(" <> T.intercalate "|" levels <> ")"
+  if T.null lvl
+    then appendMsg (mkMsg "system" ("effort: " <> configEffort cfg <> "  " <> shown) (cxTime cx))
+    else if lvl `elem` levels
+      then do
+        liftIO (saveConfig (cfg { configEffort = lvl }))
+        modify $ \s -> s { appEffort = lvl }
+        appendMsg (mkMsg "system" ("effort: " <> lvl) (cxTime cx))
+      else appendMsg (mkMsg "error" ("Unknown effort: " <> lvl <> "  " <> shown) (cxTime cx))
+
+slashFav :: CmdCtx -> EventM ResourceName AppState ()
+slashFav cx = do
+  st2 <- get
+  let arg = T.strip (T.drop 4 (cxInput cx))
+      name = if T.null arg then appModel st2 else arg
+      prefs' = toggleFavorite name (appModelPrefs st2)
+  liftIO (saveModelPrefs prefs')
+  modify $ \s -> s { appModelPrefs = prefs' }
+  showToast (tr (cxLang cx) "Favourite: " <> name)
+
+slashModelShow :: CmdCtx -> EventM ResourceName AppState ()
+slashModelShow cx = do
+      appendMsg (mkMsg "system" ("Current model: " <> modelLabel (cxState cx)) (cxTime cx))
+
+slashModelSet :: CmdCtx -> EventM ResourceName AppState ()
+slashModelSet cx = do
+      let model = T.strip (T.drop 7 (cxInput cx))
+      modify $ \s -> s { appModel = model }
       st2 <- get
-      let arg = T.strip (T.drop 4 (cxInput cx))
-          name = if T.null arg then appModel st2 else arg
-          prefs' = toggleFavorite name (appModelPrefs st2)
+      persistSelection (fromMaybe "" (appProvider st2)) model
+      let prefs' = recordRecent model (appModelPrefs st2)
       liftIO (saveModelPrefs prefs')
       modify $ \s -> s { appModelPrefs = prefs' }
-      showToast (tr (cxLang cx) "Favourite: " <> name)
-    _ | (cxCmd cx) == "/model" -> Just $
-          appendMsg (mkMsg "system" ("Current model: " <> modelLabel (cxState cx)) (cxTime cx))
-
-    _ | "/model " `T.isPrefixOf` (cxCmd cx) -> Just $ do
-          let model = T.strip (T.drop 7 (cxInput cx))
-          modify $ \s -> s { appModel = model }
-          st2 <- get
-          persistSelection (fromMaybe "" (appProvider st2)) model
-          let prefs' = recordRecent model (appModelPrefs st2)
-          liftIO (saveModelPrefs prefs')
-          modify $ \s -> s { appModelPrefs = prefs' }
-          appendMsg (mkMsg "system" ("Model set: " <> modelLabel (st2 { appModel = model })) (cxTime cx))
-    _ -> Nothing
+      appendMsg (mkMsg "system" ("Model set: " <> modelLabel (st2 { appModel = model })) (cxTime cx))
