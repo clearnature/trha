@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | 状态栏：**文本层** + **装配层**。
 --
@@ -29,13 +30,21 @@ module UI.Brick.Draw.Status
   , statusTurnsSuffix
   -- * 状态栏装配（迁自 UI.Brick）
   , drawStatus
+  , gitBranchText
+  , gitStatText
   ) where
 
 import Brick
 import Brick.Widgets.Core
+import Control.Exception (IOException, catch, try)
+import System.Directory (getCurrentDirectory)
+import System.Exit (ExitCode(..))
+import System.Process (readProcessWithExitCode)
+import Text.Read (readMaybe)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import Lens.Micro ((^.))
 import Numeric (showFFloat)
 import System.FilePath (takeFileName)
@@ -43,7 +52,7 @@ import System.FilePath (takeFileName)
 import Core.Types (SessionMode(..))
 import UI.Dialog (SandboxSettings(..))
 import UI.I18n (tr)
-import UI.Render.Footer (statusFitsOneRow, wrapStatusLine)
+import UI.Render.Footer (branchFromHead, statusFitsOneRow, wrapStatusLine)
 import UI.State (AppState(..), ResourceName(..))
 import UI.TextWidth (takeCells)
 
@@ -298,4 +307,69 @@ drawStatus st = Widget Greedy Fixed $ do
 --------------------------------------------------------------------------------
 -- Event handling
 --------------------------------------------------------------------------------
+
+
+gitBranchText :: IO Text
+gitBranchText = do
+  cwd <- getCurrentDirectory
+  (code, out, _) <- runGit ["-C", cwd, "symbolic-ref", "--short", "HEAD"]
+  let branch = T.strip (T.pack out)
+  if code == ExitSuccess && not (T.null branch)
+    then return branch
+    else do
+      (code2, out2, _) <- runGit ["-C", cwd, "rev-parse", "--short", "HEAD"]
+      let short = T.strip (T.pack out2)
+      if code2 == ExitSuccess && not (T.null short)
+        then return short
+        else do
+          mhead <- readMaybeFile ".git/HEAD"
+          return $ case mhead >>= branchFromHead of
+            Just b  -> b
+            Nothing -> case mhead of
+              Just hd -> T.take 7 (T.strip hd)
+              Nothing -> "—"
+  where
+    runGit args =
+      readProcessWithExitCode "git" args "" `catch` \(_ :: IOException) ->
+        pure (ExitFailure 1, "", "")
+    readMaybeFile fp = do
+      r <- try (TIO.readFile fp) :: IO (Either IOException Text)
+      return $ case r of
+        Left _  -> Nothing
+        Right t -> Just t
+
+-- | `+N -M ?K` for the second status line (tracked diff + untracked files).
+gitStatText :: IO Text
+gitStatText = do
+  cwd <- getCurrentDirectory
+  (_, ns, _) <- runGit ["-C", cwd, "diff", "--numstat"]
+  (_, st, _) <- runGit ["-C", cwd, "status", "--porcelain"]
+  let rows = filter (not . T.null) (T.lines (T.pack ns))
+      pairs = [ (a, d) | r <- rows
+                       , let parts = T.splitOn "\t" r
+                       , length parts >= 2
+                       , let a = parts !! 0
+                       , let d = parts !! 1
+                       , a /= "-" ]
+      adds = sum [ readI a | (a, _) <- pairs ]
+      dels = sum [ readI d | (_, d) <- pairs ]
+      -- Only "??" rows are untracked; counting every porcelain row (as this
+      -- used to) reported modified files as untracked and inflated the
+      -- second status row.
+      untracked = length [ r | r <- T.lines (T.pack st), "??" `T.isPrefixOf` r ]
+      diff = if adds == 0 && dels == 0 then "" else "+" <> T.pack (show adds) <> " -" <> T.pack (show dels)
+      unt = if untracked > 0 then " ?" <> T.pack (show untracked) else ""
+  pure (T.strip (diff <> "  " <> unt))
+  where
+    runGit args =
+      readProcessWithExitCode "git" args "" `catch` \(_ :: IOException) ->
+        pure (ExitSuccess, "", "")
+    readI t = fromMaybe 0 (readMaybe (T.unpack t))
+
+-- | settingsListMax 见 UI.Brick.Draw.Settings。
+
+-- | One task glyph (sidebar and /todo share the vocabulary).
+-- | todoGlyph 见 UI.Render.Spans。
+
+-- | copyToClipboard 见 UI.Brick.Selection。
 

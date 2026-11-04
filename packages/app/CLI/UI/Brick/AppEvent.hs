@@ -16,6 +16,7 @@ module UI.Brick.AppEvent
   , flushPending
   , flushPendingAt
   , toCardStatus
+  , renderToolEvent
   ) where
 
 import Brick
@@ -140,7 +141,7 @@ import Control.Exception (IOException, SomeException, catch, try)
 import Core.RunLog (logLine)
 import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
 import UI.Dialog
-import UI.Render.ToolCard (ToolCard(..), ToolFold(..), ToolStatus(..), toggleFold)
+import UI.Render.ToolCard (ToolCard(..), ToolFold(..), ToolStatus(..), toolCardWithStatus, toggleFold)
 import UI.ModelPrefs (orderedModels)
 import UI.Render.Message (metaLine)
 import UI.Render.Diff
@@ -666,4 +667,22 @@ toCardStatus s = case s of
 -- | handleChat 见 UI.Brick.ChatKeys。
 
 -- | expandFileReferences 见 UI.Brick.ChatKeys。
+
+
+renderToolEvent :: ToolEvent -> Text
+renderToolEvent ev =
+  T.unlines (toolCardWithStatus (cardLabel ev) (teArgs ev)
+              (toCardStatus (teStatus ev)) (teDurationMs ev))
+  where
+    -- DSH's `presentCall`: the tool says how this specific call should be
+    -- labelled. Falls back to the tool name when the event carries no view,
+    -- which is every tool today.
+    cardLabel e = case teView e of
+      Just v | not (T.null (tvTitle v)) -> tvTitle v
+      _                                 -> T.pack (teName e)
+
+-- | Map the wire status to the card status type.
+-- | toCardStatus 见 UI.Brick.AppEvent。
+
+-- | 设置面板组见 UI.Brick.KeyDispatch。
 

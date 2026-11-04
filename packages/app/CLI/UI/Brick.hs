@@ -116,7 +116,7 @@ import UI.Brick.Draw.Messages
 import UI.Brick.Draw.Settings (drawSettingsPanel, settingsListMax, settingsRows, visibleRows)
 import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar, sidebarDataFor)
 import UI.Brick.Draw.Status
-  ( drawStatus, modelLabel, pricesOf, statusLine
+  ( drawStatus, gitBranchText, gitStatText, modelLabel, pricesOf, statusLine
   , statusSandboxTag, statusClock, statusModelLine, statusGitLine, statusStatsLine )
 import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics, branchFromHead, statusFitsOneRow, wrapStatusLine)
 import UI.Render.Spans
@@ -564,84 +564,9 @@ runTUI bridge cfg = do
 
 -- | handleEvent 见 UI.Brick.KeyDispatch。
 
-renderToolEvent :: ToolEvent -> Text
-renderToolEvent ev =
-  T.unlines (toolCardWithStatus (cardLabel ev) (teArgs ev)
-              (toCardStatus (teStatus ev)) (teDurationMs ev))
-  where
-    -- DSH's `presentCall`: the tool says how this specific call should be
-    -- labelled. Falls back to the tool name when the event carries no view,
-    -- which is every tool today.
-    cardLabel e = case teView e of
-      Just v | not (T.null (tvTitle v)) -> tvTitle v
-      _                                 -> T.pack (teName e)
+-- | renderToolEvent 见 UI.Brick.AppEvent。
 
--- | Map the wire status to the card status type.
--- | toCardStatus 见 UI.Brick.AppEvent。
-
--- | 设置面板组见 UI.Brick.KeyDispatch。
-
-gitBranchText :: IO Text
-gitBranchText = do
-  cwd <- getCurrentDirectory
-  (code, out, _) <- runGit ["-C", cwd, "symbolic-ref", "--short", "HEAD"]
-  let branch = T.strip (T.pack out)
-  if code == ExitSuccess && not (T.null branch)
-    then return branch
-    else do
-      (code2, out2, _) <- runGit ["-C", cwd, "rev-parse", "--short", "HEAD"]
-      let short = T.strip (T.pack out2)
-      if code2 == ExitSuccess && not (T.null short)
-        then return short
-        else do
-          mhead <- readMaybeFile ".git/HEAD"
-          return $ case mhead >>= branchFromHead of
-            Just b  -> b
-            Nothing -> case mhead of
-              Just hd -> T.take 7 (T.strip hd)
-              Nothing -> "—"
-  where
-    runGit args =
-      readProcessWithExitCode "git" args "" `catch` \(_ :: IOException) ->
-        pure (ExitFailure 1, "", "")
-    readMaybeFile fp = do
-      r <- try (TIO.readFile fp) :: IO (Either IOException Text)
-      return $ case r of
-        Left _  -> Nothing
-        Right t -> Just t
-
--- | `+N -M ?K` for the second status line (tracked diff + untracked files).
-gitStatText :: IO Text
-gitStatText = do
-  cwd <- getCurrentDirectory
-  (_, ns, _) <- runGit ["-C", cwd, "diff", "--numstat"]
-  (_, st, _) <- runGit ["-C", cwd, "status", "--porcelain"]
-  let rows = filter (not . T.null) (T.lines (T.pack ns))
-      pairs = [ (a, d) | r <- rows
-                       , let parts = T.splitOn "\t" r
-                       , length parts >= 2
-                       , let a = parts !! 0
-                       , let d = parts !! 1
-                       , a /= "-" ]
-      adds = sum [ readI a | (a, _) <- pairs ]
-      dels = sum [ readI d | (_, d) <- pairs ]
-      -- Only "??" rows are untracked; counting every porcelain row (as this
-      -- used to) reported modified files as untracked and inflated the
-      -- second status row.
-      untracked = length [ r | r <- T.lines (T.pack st), "??" `T.isPrefixOf` r ]
-      diff = if adds == 0 && dels == 0 then "" else "+" <> T.pack (show adds) <> " -" <> T.pack (show dels)
-      unt = if untracked > 0 then " ?" <> T.pack (show untracked) else ""
-  pure (T.strip (diff <> "  " <> unt))
-  where
-    runGit args =
-      readProcessWithExitCode "git" args "" `catch` \(_ :: IOException) ->
-        pure (ExitSuccess, "", "")
-    readI t = fromMaybe 0 (readMaybe (T.unpack t))
-
--- | settingsListMax 见 UI.Brick.Draw.Settings。
-
--- | One task glyph (sidebar and /todo share the vocabulary).
--- | todoGlyph 见 UI.Render.Spans。
+-- | gitBranchText / gitStatText 见 UI.Brick.Draw.Status。
 
 -- | copyToClipboard 见 UI.Brick.Selection。
 
