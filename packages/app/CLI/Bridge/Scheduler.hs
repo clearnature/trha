@@ -119,6 +119,9 @@ import Bridge.Scheduler.Session
   , sendMessageWithTargetEffort, sendMessageWithUsage, setSessionCwd, steerSession
   , subscribeSessionEvents, subscribeSessionEventsWith
   , subscribeSessionEventsWithTerminal, tagSession )
+import Bridge.Scheduler.Model
+  ( ProviderProbe(..), getModel, listModels, listProviders, probeProvider
+  , removeProvider, saveProvider, setInUseProvider )
 import Config.Settings (resolveConfig)
 import Core.Types
 import Core.RunState (RuntimeEntry(..), Service(..), readRuntimeEntry)
@@ -150,64 +153,6 @@ import Network.HTTP.Types (HeaderName)
 --------------------------------------------------------------------------------
 
 
-listProviders :: SchedulerBridge -> IO (Either CLIError [ProviderInfo])
-listProviders bridge = do
-  result <- httpGet (bridgeHTTP bridge) "/api/providers"
-    :: IO (Either CLIError Value)
-  return (result >>= providerStoreToList)
-
--- | Ask an endpoint what it is (@POST /api/providers/probe@).  The kernel
--- classifies the model listing; the caller confirms every field.
-probeProvider
-  :: SchedulerBridge -> Text -> Text
-  -> IO (Either CLIError ProviderProbe)
-probeProvider bridge baseUrl apiKey = do
-  let body = object [ "baseUrl" .= baseUrl, "apiKey" .= apiKey ]
-  r <- httpPost (bridgeHTTP bridge) "/api/providers/probe" body
-    :: IO (Either CLIError Value)
-  return $ case r of
-    Right v  -> case fromJSON v of
-      Success p -> Right p
-      _         -> Left (ValidationError "Invalid probe response")
-    Left err -> Left err
-
--- | Save (or overwrite) one provider.  An empty @apiKey@ keeps the stored
--- key (the kernel treats a blank key as "unchanged").
-saveProvider
-  :: SchedulerBridge -> Text -> Text -> Text -> Text -> [Text] -> Text
-  -> Bool -> Bool -> Text -> [Text] -> [Text]
-  -> Maybe Value -> Maybe Value -> Text -> Text -> Maybe Int
-  -> IO (Either CLIError [ProviderInfo])
-saveProvider bridge name kind baseUrl apiKey models def authHeader noProxy effort vision efforts
-             headers extraBody thinking responsesMode contextWindow = do
-  let body = object
-        [ "name" .= name
-        , "kind" .= kind
-        , "baseUrl" .= baseUrl
-        , "apiKey" .= apiKey
-        , "models" .= models
-        , "default" .= def
-        , "authHeader" .= authHeader
-        , "noProxy" .= noProxy
-        , "effort" .= effort
-        , "efforts" .= efforts
-        , "vision" .= vision
-        , "headers" .= headers
-        , "extraBody" .= extraBody
-        , "thinking" .= thinking
-        , "responsesMode" .= responsesMode
-        , "contextWindow" .= contextWindow
-        ]
-  result <- httpPost (bridgeHTTP bridge) "/api/providers" body
-    :: IO (Either CLIError Value)
-  return (result >>= providerStoreToList)
-
--- | Remove one provider by name.
-removeProvider :: SchedulerBridge -> Text -> IO (Either CLIError [ProviderInfo])
-removeProvider bridge name = do
-  result <- httpPost (bridgeHTTP bridge) "/api/providers/remove"
-              (object ["name" .= name]) :: IO (Either CLIError Value)
-  return (result >>= providerStoreToList)
 
 fetchAgents :: SchedulerBridge -> IO (Either CLIError [AgentEntry])
 fetchAgents bridge = do
@@ -280,15 +225,6 @@ stopLoops bridge sid = do
       Just n  -> Right n
       Nothing -> Left (ServerError "loop stop returned no count")
 
--- | Make one saved provider the active one (/switch).
-setInUseProvider :: SchedulerBridge -> Text -> IO (Either CLIError [ProviderInfo])
-setInUseProvider bridge name = do
-  r <- httpPost (bridgeHTTP bridge) "/api/providers/in-use" (object ["name" .= name])
-  pure $ case r of
-    Left e  -> Left e
-    Right v -> providerStoreToList v
-
--- | Read the scheduler's effective sandbox switch (/sandbox badge).
 fetchSandboxConfig :: SchedulerBridge -> IO (Either CLIError Bool)
 fetchSandboxConfig bridge = do
   r <- httpGet (bridgeHTTP bridge) "/api/sandbox/config" :: IO (Either CLIError Value)
@@ -522,30 +458,6 @@ updateAgentState _ _ _ =
 -- Model Operations
 --------------------------------------------------------------------------------
 
--- | List available models (name/description/contextSize from orchestration).
-listModels :: SchedulerBridge -> IO (Either CLIError [ModelInfo])
-listModels bridge = do
-  result <- httpGet (bridgeHTTP bridge) "/api/models" :: IO (Either CLIError [Value])
-  return $ case result of
-    Right raw -> Right [ mi | Object m <- raw, Just mi <- [parseModel m] ]
-    Left err -> Left err
-  where
-    parseModel :: Object -> Maybe ModelInfo
-    parseModel o = ModelInfo
-      <$> parseMaybe (.: "name") o
-      <*> parseMaybe (.: "description") o
-      <*> parseMaybe (.: "contextSize") o
-
--- | Fetch a single model by name (no dedicated endpoint; explicit error).
-getModel :: SchedulerBridge -> Text -> IO (Either CLIError ModelInfo)
-getModel _ _ =
-  return $ Left $ UnknownCLIError "getModel: not wired to orchestration API"
-
---------------------------------------------------------------------------------
--- Plugins (Phase 3)
---------------------------------------------------------------------------------
-
--- | List plugins registered on the orchestration layer.
 listPlugins :: SchedulerBridge -> IO (Either CLIError [PluginInfo])
 listPlugins bridge = do
   result <- httpGet (bridgeHTTP bridge) "/api/plugins" :: IO (Either CLIError [PluginInfo])
