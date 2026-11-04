@@ -95,6 +95,7 @@ import UI.Brick.Input
 import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.Chat (handleChatWith)
+import UI.Brick.AppEvent.Model (handleModelEvent)
 import UI.Brick.AppEvent.Sidebar (handleSidebarEvent)
 import UI.Brick.AppEvent.Status (handleStatusEvent)
 import UI.Brick.AppEvent.Toast (handleToastEvent)
@@ -175,7 +176,8 @@ import UI.Frecency (Frecency(..), emptyFrecency, recordUse, rankItems, loadFrece
 handleAppEvent :: AppEvent -> EventM ResourceName AppState ()
 -- | 认领式分派：Sidebar/Status/Toast 三个域先试，未命中再落到下方各等式。
 handleAppEvent ev = fromMaybe (pure ()) $
-  msum [handleSidebarEvent ev, handleStatusEvent ev, handleToastEvent ev]
+  msum [ handleModelEvent ev, handleSidebarEvent ev
+         , handleStatusEvent ev, handleToastEvent ev ]
 
 handleAppEvent (EvSession result) = do
   case result of
@@ -345,25 +347,6 @@ handleAppEvent (EvSessions result) = do
                        <> T.unlines (map (\s -> "  • " <> T.pack s) sids)) t)
     Left err -> appendMsg (mkMsg "system" (tr lang "Error: " <> T.pack (show err)) t)
   scrollBottom
-handleAppEvent (EvModels result) = do
-  lang <- gets appLang
-  t <- liftIO now
-  case result of
-    Right [] -> appendMsg (mkMsg "system" (tr lang "No models available.") t)
-    Right ms -> do
-      st <- get
-      case stackTop (appDialogs st) of
-        Just (DialogModels _ _ _) ->
-          modifyTop (const (DialogModels (orderedModels (appModelPrefs st) ms) "" 0))
-        _ -> appendMsg (mkMsg "system" ((tr lang "Models:" <> "\n") <> T.unlines
-                         (map (\m -> "  • " <> modelName m <> " — " <> modelDescription m) ms)) t)
-    Left err -> do
-      st <- get
-      case stackTop (appDialogs st) of
-        Just (DialogModels _ _ _) -> modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
-        _ -> return ()
-      appendMsg (mkMsg "error" (tr lang "Error: " <> T.pack (show err)) t)
-  scrollBottom
 handleAppEvent (EvDeleted sid) = do
   lang <- gets appLang
   t <- liftIO now
@@ -462,24 +445,6 @@ handleAppEvent (EvToggleToolFold mid) = do
   modify $ \s -> s { appFolds =
     Map.alter (Just . toggleFold . fromMaybe FoldCollapsed) mid (appFolds s) }
   scrollBottom
-handleAppEvent (EvProviders (Right ps)) = do
-  modify $ \s -> s { appProviders = ps }
-  -- The dialog is pushed empty while the fetch is in flight; fill it in
-  -- place so the user does not have to reopen it.
-  st <- get
-  case stackTop (appDialogs st) of
-    Just (DialogProviders _ _) -> modifyTop (const (DialogProviders ps 0))
-    _                          -> return ()
-handleAppEvent (EvProviders (Left _)) = return ()
-handleAppEvent (EvSkills skills) = do
-  modify $ \s -> s { appSkills = skills }
-handleAppEvent (EvProviderSaved (Right ps)) = do
-  modify $ \s -> s { appProviders = ps
-                   , appStatus = tr (appLang s) "Provider saved" }
-  lang <- gets appLang
-  showToast (tr lang "Provider saved")
-handleAppEvent (EvProviderSaved (Left e)) = do
-  modify $ \s -> s { appStatus = "Provider save failed: " <> T.pack (show e) }
 handleAppEvent (EvFinalReply text) = do
   -- The step reply is authoritative: replace whatever the preview has
   -- accumulated (a dropped delta must not truncate the answer).
