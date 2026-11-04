@@ -69,6 +69,8 @@ import UI.CustomCommands (CustomCommand(..), loadCustomCommands, renderCustomCom
 import UI.Theme (Theme(..), themes, themeNames, resolveTheme)
 import UI.Render.Sidebar (agentTreeLines)
 import System.Directory (getCurrentDirectory)
+import UI.Commands.Env (CmdEnv(..), dispatch)
+import UI.Commands.Meta (runMeta)
 import UI.I18n (Lang(..), langName, parseLang, tr)
 import Config.Settings (resolveConfig, saveConfig)
 
@@ -131,16 +133,10 @@ parseInterval raw = case T.unsnoc (T.toLower (T.strip raw)) of
       [(n, "")] | n > 0 -> Just n
       _                 -> Nothing
 
-executeCommand lang _ _ _ Help = return $ Just (registryHelp lang)
+executeCommand lang bridge sessionRef modelRef cmd
+  | Just act <- dispatch [runMeta] env cmd = act
+  where env = CmdEnv lang bridge sessionRef modelRef
 
-executeCommand _ _ _ _ Quit = return Nothing
-
--- | @/stop@ needs an explicit confirmation: stopping the backend leaves the
--- shell with nothing to talk to, so a single keystroke must not do it.
-executeCommand lang _ _ _ StopRequest =
-  return $ Just (tr lang "This stops the kernel and scheduler and exits. Type /stop confirm to proceed.")
-
-executeCommand _ _ _ _ StopConfirmed = return Nothing
 
 executeCommand lang bridge _ _ Sessions = do
   result <- listSessions bridge
@@ -815,18 +811,6 @@ executeCommand lang _ _ _ ShowHistory = do
     else T.unlines (tr lang "Recent input:" : map ("  " <>) entries)
 
 -- | @/about@：版本、工作区与运行时信息。
-executeCommand lang bridge _ _ About = do
-  cwd <- getCurrentDirectory
-  home <- getHomeDirectory
-  (lspLines, mcpLines) <- fetchServiceStatus bridge
-  return $ Just $ T.unlines
-    [ "trha · " <> tr lang "agent harness"
-    , tr lang "Working directory: " <> T.pack cwd
-    , tr lang "Config: " <> T.pack (home </> ".trha")
-    , tr lang "LSP: " <> T.intercalate ", " lspLines
-    , tr lang "MCP: " <> T.intercalate ", " mcpLines
-    ]
-
 -- | @/forget <text>@：删除匹配的备注。
 executeCommand lang _ _ _ (Forget text)
   | T.null (T.strip text) = return $ Just (tr lang "Usage: /forget <text>")

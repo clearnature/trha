@@ -75,6 +75,8 @@ test-suite trha-cli-test
     UI.CommandsSpec
     UI.Commands.RegistrySpec
     UI.Commands.Registry
+    UI.Commands.Env
+    UI.Commands.Meta
     UI.InputHistory
     UI.InputHistorySpec
     UI.Dialog

@@ -253,6 +253,8 @@ executable trha
     Config.Home
     Core.Args
     UI.Commands.Registry
+    UI.Commands.Env
+    UI.Commands.Meta
     Core.Bootstrap
     Core.HTTP
     Core.Transcript
