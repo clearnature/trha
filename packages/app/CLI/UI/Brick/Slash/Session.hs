@@ -152,113 +152,153 @@ import UI.Theme
 
 handleSessionSlash :: CmdCtx -> Maybe (EventM ResourceName AppState ())
 handleSessionSlash cx = case cxCmd cx of
-    "/clear" -> Just $ do
-      modify $ \s -> s { appMessages = [], appFolds = Map.empty, appCardFocus = Nothing }
-      showToast (tr (cxLang cx) "Cleared")
-    "/new" -> Just $ do
-      st0 <- get
-      -- 把当前姿态带进新会话：Shift+Tab/Ctrl+Y 选的是「待用姿态」，
-      -- 只有落到 createSession 才算真的切换（否则服务端仍是 read-only）。
-      let pm = smMode <$> appMode st0
-      modify $ \s -> s { appBusy = True, appStatus = "Creating session..." }
-      void $ liftIO $ async $
-        createSession (cxBridge cx) pm >>= writeBChan (cxChan cx) . EvSession
-    "/sessions" -> Just $ do
-      cwd <- liftIO getCurrentDirectory
-      local <- liftIO (listLocalSessionsIn cwd)
-      if null local
-        then appendMsg (mkMsg "system" (tr (cxLang cx) "No local sessions in this directory yet. Run a conversation first.") (cxTime cx))
-        else modify $ \s -> s { appDialogs = stackPush (DialogSessions local "" 0) (appDialogs s) }
-    "/rename" -> Just $ do
-      st2 <- get
-      let title = T.strip (T.drop 7 (cxInput cx))
-      case appSessionId st2 of
-        Nothing -> appendMsg (mkMsg "system" (tr (cxLang cx) "No active session.") (cxTime cx))
-        Just sid -> do
-          r <- liftIO $ renameSession (appBridge st2) sid title
-          case r of
-            Right _ -> showToast (tr (cxLang cx) "Renamed")
-            Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) (cxTime cx))
-    "/tag" -> Just $ do
-      st2 <- get
-      let tags = T.words (T.drop 4 (cxInput cx))
-      case appSessionId st2 of
-        Nothing -> appendMsg (mkMsg "system" (tr (cxLang cx) "No active session.") (cxTime cx))
-        Just sid -> do
-          r <- liftIO $ tagSession (appBridge st2) sid tags
-          case r of
-            Right _ -> showToast (tr (cxLang cx) "Tags updated")
-            Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) (cxTime cx))
-    _ | (cxCmd cx) == "/delete" || "/delete " `T.isPrefixOf` (cxCmd cx) -> Just $ do
-      let sid = T.strip (T.drop (T.length "/delete") (cxInput cx))
-      if T.null sid
-        then appendMsg (mkMsg "error" (tr (appLang (cxState cx)) "Usage: /delete <session-id>") (cxTime cx))
-        else modify $ \s -> s
-               { appDialogs = stackPush (DialogConfirm ("Delete session " <> sid <> "?") 1) (appDialogs s)
-               , appPendingDelete = Just (T.unpack sid) }
-    "/export" -> Just $ do
-      st2 <- get
-      case appSessionId st2 of
-        Nothing -> appendMsg (mkMsg "system" (tr (cxLang cx) "No session to export") (cxTime cx))
-        Just sid -> do
-          evs <- liftIO (loadTranscript sid)
-          (dir, stamp) <- liftIO $ do
-            nowT <- getCurrentTime
-            tz <- getCurrentTimeZone
-            home <- getHomeDirectory
-            pure (home </> ".trha" </> "exports",
-                  T.pack (formatTime defaultTimeLocale "%Y%m%d-%H%M%S" (utcToZonedTime tz nowT)))
-          let args = T.words (T.drop 7 (cxInput cx))
-              asJson = case args of
-                (a : _) -> T.toLower a == "json"
-                []      -> False
-              explicit = case args of
-                (a : b : _) | T.toLower a `elem` ["json", "md", "markdown"] -> Just b
-                (a : _) | T.toLower a `notElem` ["json", "md", "markdown"] -> Just a
-                _ -> Nothing
-              ext = if asJson then "json" else "md"
-              path = case explicit of
-                Just p
-                  | "/" `T.isPrefixOf` p -> T.unpack p
-                  | otherwise            -> dir </> T.unpack p
-                Nothing -> dir </> defaultExportName (T.pack sid) stamp ext
-              body = if asJson then exportJson (T.pack sid) stamp evs
-                               else exportMarkdown (T.pack sid) stamp evs
-          written <- liftIO (try (do
-            createDirectoryIfMissing True (takeDirectory path)
-            TIO.writeFile path body) :: IO (Either IOException ()))
-          case written of
-            Right () -> do
-              appendMsg (mkMsg "system" ("exported → " <> T.pack path) (cxTime cx))
-              showToast ("exported → " <> T.pack path)
-            Left e   -> appendMsg (mkMsg "error" ("export failed: " <> T.pack (show e)) (cxTime cx))
-    _ | "/resume " `T.isPrefixOf` (cxCmd cx) -> Just $ resumeSession (T.strip (T.drop 8 (cxInput cx)))
-    _ | "/delete " `T.isPrefixOf` (cxCmd cx) -> Just $ do
-          let sid = T.unpack (T.strip (T.drop 8 (cxInput cx)))
-          if null sid
-            then appendMsg (mkMsg "system" "Usage: /delete <session-id>" (cxTime cx))
-            else do
-              cur <- gets appSessionId
-              when (cur == Just sid) $
-                modify $ \s -> s { appSessionId = Nothing
-                                 , appCacheNow = Nothing
-                                 , appCacheSum = (0, 0)
-                                 , appCacheTurns = 0
-                                 , appLastCost = 0
-                                 , appSessTokens = 0
-                                 , appLastDecodeTps = Nothing
-                                 , appFirstToken = Nothing }
-              void $ liftIO $ async $ do
-                _ <- deleteSession (cxBridge cx) sid
-                writeBChan (cxChan cx) (EvDeleted sid)
-    "/resume" -> Just $ do
-      cwd <- liftIO getCurrentDirectory
-      local <- liftIO (listLocalSessionsIn cwd)
-      if null local
-        then do
-          appendMsg (mkMsg "system" (tr (cxLang cx) "No local sessions in this directory yet.") (cxTime cx))
-          appendMsg (mkMsg "system" (tr (cxLang cx) "/resume --all shows sessions from other (or older) projects.") (cxTime cx))
+  "/clear" -> Just $ slashClear cx
+  "/new" -> Just $ slashNew cx
+  "/sessions" -> Just $ slashSessions cx
+  "/rename" -> Just $ slashRename cx
+  "/tag" -> Just $ slashTag cx
+  _ | (cxCmd cx) == "/delete" || "/delete " `T.isPrefixOf` (cxCmd cx) -> Just $ slashDeleteConfirm cx
+  "/export" -> Just $ slashExport cx
+  _ | "/resume " `T.isPrefixOf` (cxCmd cx) -> Just $ slashResumeSession cx
+  _ | "/delete " `T.isPrefixOf` (cxCmd cx) -> Just $ slashDeleteSession cx
+  "/resume" -> Just $ slashResumeList cx
+  _ -> Nothing
+
+-- | @?@
+slashClear :: CmdCtx -> EventM ResourceName AppState ()
+slashClear cx = do
+  modify $ \s -> s { appMessages = [], appFolds = Map.empty, appCardFocus = Nothing }
+  showToast (tr (cxLang cx) "Cleared")
+
+-- | @?@
+slashNew :: CmdCtx -> EventM ResourceName AppState ()
+slashNew cx = do
+  st0 <- get
+  -- 把当前姿态带进新会话：Shift+Tab/Ctrl+Y 选的是「待用姿态」，
+  -- 只有落到 createSession 才算真的切换（否则服务端仍是 read-only）。
+  let pm = smMode <$> appMode st0
+  modify $ \s -> s { appBusy = True, appStatus = "Creating session..." }
+  void $ liftIO $ async $
+    createSession (cxBridge cx) pm >>= writeBChan (cxChan cx) . EvSession
+
+-- | @?@
+slashSessions :: CmdCtx -> EventM ResourceName AppState ()
+slashSessions cx = do
+  cwd <- liftIO getCurrentDirectory
+  local <- liftIO (listLocalSessionsIn cwd)
+  if null local
+    then appendMsg (mkMsg "system" (tr (cxLang cx) "No local sessions in this directory yet. Run a conversation first.") (cxTime cx))
+    else modify $ \s -> s { appDialogs = stackPush (DialogSessions local "" 0) (appDialogs s) }
+
+-- | @?@
+slashRename :: CmdCtx -> EventM ResourceName AppState ()
+slashRename cx = do
+  st2 <- get
+  let title = T.strip (T.drop 7 (cxInput cx))
+  case appSessionId st2 of
+    Nothing -> appendMsg (mkMsg "system" (tr (cxLang cx) "No active session.") (cxTime cx))
+    Just sid -> do
+      r <- liftIO $ renameSession (appBridge st2) sid title
+      case r of
+        Right _ -> showToast (tr (cxLang cx) "Renamed")
+        Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) (cxTime cx))
+
+-- | @?@
+slashTag :: CmdCtx -> EventM ResourceName AppState ()
+slashTag cx = do
+  st2 <- get
+  let tags = T.words (T.drop 4 (cxInput cx))
+  case appSessionId st2 of
+    Nothing -> appendMsg (mkMsg "system" (tr (cxLang cx) "No active session.") (cxTime cx))
+    Just sid -> do
+      r <- liftIO $ tagSession (appBridge st2) sid tags
+      case r of
+        Right _ -> showToast (tr (cxLang cx) "Tags updated")
+        Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) (cxTime cx))
+
+-- | @?@
+slashDeleteConfirm :: CmdCtx -> EventM ResourceName AppState ()
+slashDeleteConfirm cx = do
+  let sid = T.strip (T.drop (T.length "/delete") (cxInput cx))
+  if T.null sid
+    then appendMsg (mkMsg "error" (tr (appLang (cxState cx)) "Usage: /delete <session-id>") (cxTime cx))
+    else modify $ \s -> s
+           { appDialogs = stackPush (DialogConfirm ("Delete session " <> sid <> "?") 1) (appDialogs s)
+           , appPendingDelete = Just (T.unpack sid) }
+
+-- | @?@
+slashExport :: CmdCtx -> EventM ResourceName AppState ()
+slashExport cx = do
+  st2 <- get
+  case appSessionId st2 of
+    Nothing -> appendMsg (mkMsg "system" (tr (cxLang cx) "No session to export") (cxTime cx))
+    Just sid -> do
+      evs <- liftIO (loadTranscript sid)
+      (dir, stamp) <- liftIO $ do
+        nowT <- getCurrentTime
+        tz <- getCurrentTimeZone
+        home <- getHomeDirectory
+        pure (home </> ".trha" </> "exports",
+              T.pack (formatTime defaultTimeLocale "%Y%m%d-%H%M%S" (utcToZonedTime tz nowT)))
+      let args = T.words (T.drop 7 (cxInput cx))
+          asJson = case args of
+            (a : _) -> T.toLower a == "json"
+            []      -> False
+          explicit = case args of
+            (a : b : _) | T.toLower a `elem` ["json", "md", "markdown"] -> Just b
+            (a : _) | T.toLower a `notElem` ["json", "md", "markdown"] -> Just a
+            _ -> Nothing
+          ext = if asJson then "json" else "md"
+          path = case explicit of
+            Just p
+              | "/" `T.isPrefixOf` p -> T.unpack p
+              | otherwise            -> dir </> T.unpack p
+            Nothing -> dir </> defaultExportName (T.pack sid) stamp ext
+          body = if asJson then exportJson (T.pack sid) stamp evs
+                           else exportMarkdown (T.pack sid) stamp evs
+      written <- liftIO (try (do
+        createDirectoryIfMissing True (takeDirectory path)
+        TIO.writeFile path body) :: IO (Either IOException ()))
+      case written of
+        Right () -> do
+          appendMsg (mkMsg "system" ("exported → " <> T.pack path) (cxTime cx))
+          showToast ("exported → " <> T.pack path)
+        Left e   -> appendMsg (mkMsg "error" ("export failed: " <> T.pack (show e)) (cxTime cx))
+
+-- | @?@
+slashResumeSession :: CmdCtx -> EventM ResourceName AppState ()
+slashResumeSession cx = resumeSession (T.strip (T.drop 8 (cxInput cx)))
+
+-- | @?@
+slashDeleteSession :: CmdCtx -> EventM ResourceName AppState ()
+slashDeleteSession cx = do
+      let sid = T.unpack (T.strip (T.drop 8 (cxInput cx)))
+      if null sid
+        then appendMsg (mkMsg "system" "Usage: /delete <session-id>" (cxTime cx))
         else do
-          appendMsg (mkMsg "system" ("Local sessions:\n" <> T.unlines (localSessionLines (appLang (cxState cx)) local)) (cxTime cx))
-          appendMsg (mkMsg "system" (tr (cxLang cx) "Resume with /resume <number-or-id>  (/resume --all for every project).") (cxTime cx))
-    _ -> Nothing
+          cur <- gets appSessionId
+          when (cur == Just sid) $
+            modify $ \s -> s { appSessionId = Nothing
+                             , appCacheNow = Nothing
+                             , appCacheSum = (0, 0)
+                             , appCacheTurns = 0
+                             , appLastCost = 0
+                             , appSessTokens = 0
+                             , appLastDecodeTps = Nothing
+                             , appFirstToken = Nothing }
+          void $ liftIO $ async $ do
+            _ <- deleteSession (cxBridge cx) sid
+            writeBChan (cxChan cx) (EvDeleted sid)
+
+-- | @?@
+slashResumeList :: CmdCtx -> EventM ResourceName AppState ()
+slashResumeList cx = do
+  cwd <- liftIO getCurrentDirectory
+  local <- liftIO (listLocalSessionsIn cwd)
+  if null local
+    then do
+      appendMsg (mkMsg "system" (tr (cxLang cx) "No local sessions in this directory yet.") (cxTime cx))
+      appendMsg (mkMsg "system" (tr (cxLang cx) "/resume --all shows sessions from other (or older) projects.") (cxTime cx))
+    else do
+      appendMsg (mkMsg "system" ("Local sessions:\n" <> T.unlines (localSessionLines (appLang (cxState cx)) local)) (cxTime cx))
+      appendMsg (mkMsg "system" (tr (cxLang cx) "Resume with /resume <number-or-id>  (/resume --all for every project).") (cxTime cx))
