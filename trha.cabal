@@ -347,6 +347,7 @@ executable trha
     UI.Brick.Slash.Lifecycle
     UI.Brick.Slash.Info
     UI.Brick.Slash.Session
+    UI.Brick.Slash.Tools
     UI.Brick.Slash.Workspace
     UI.Brick.Wizard
     UI.Brick.DialogActivate

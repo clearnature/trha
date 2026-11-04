@@ -92,6 +92,7 @@ import UI.Brick.Slash.Config (handleConfigSlash)
 import UI.Brick.Slash.Integration (handleIntegrationSlash)
 import UI.Brick.Slash.Model (handleModelSlash)
 import UI.Brick.Slash.Plan (handlePlanSlash)
+import UI.Brick.Slash.Tools (handleToolsSlash)
 import UI.Brick.Slash.Workspace (handleWorkspaceSlash)
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.RunControl
@@ -175,12 +176,7 @@ handleSlash input = do
       cx     = CmdCtx t st input cmd bridge chan lang
   case cmd of
     _ | Just act <- msum [ handleLifecycleSlash cx, handleInfoSlash cx, handleConfigSlash cx
-         , handleIntegrationSlash cx, handleModelSlash cx, handlePlanSlash cx, handleSessionSlash cx, handleWorkspaceSlash cx ] -> act
-    _ | cmd == "/shell" || "/shell " `T.isPrefixOf` cmd -> do
-      let arg = T.strip (T.drop (T.length "/shell") input)
-      if T.null arg
-        then appendMsg (mkMsg "error" (tr (appLang st) "Usage: /shell <cmd>") t)
-        else runShellCommand arg
+         , handleIntegrationSlash cx, handleModelSlash cx, handlePlanSlash cx, handleSessionSlash cx, handleToolsSlash cx, handleWorkspaceSlash cx ] -> act
     "/resume" -> do
       cwd <- liftIO getCurrentDirectory
       local <- liftIO (listLocalSessionsIn cwd)
