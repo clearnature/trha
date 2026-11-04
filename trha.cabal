@@ -315,6 +315,7 @@ executable trha
     UI.Brick.RunControl
     UI.Brick.SessionView
     UI.Brick.Chat
+    UI.Brick.Slash
     UI.Brick.Apply
     UI.Render.ToolSummary
     UI.Render.Message
