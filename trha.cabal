@@ -327,6 +327,8 @@ executable trha
     UI.Render.Settings
     UI.Brick.Draw.Status
     UI.Brick.Status.Format
+    UI.Brick.Status.Stats
+    UI.Brick.Status.Shared
     UI.Brick.Draw.Sidebar
     UI.Brick.Draw.Dialog
     UI.Brick.Draw.Settings
