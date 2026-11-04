@@ -23,6 +23,10 @@ module UI.Dialog
     -- * Selection
   , dialogMoveSel
   , dialogCount
+  , dialogTitle
+  , dialogSelected
+  , dialogEditable
+  , dialogQuery
     -- * Approval options
   , ApprovalOption(..)
   , approvalOptions
@@ -56,7 +60,7 @@ module UI.Dialog
   , escWiring
   ) where
 
-import UI.I18n (Lang)
+import UI.I18n (Lang, tr)
 
 import Core.Types (AgentEntry(..), ModelInfo(..), ProviderInfo(..))
 import Core.SessionSummary (SessionSummary(..))
@@ -138,6 +142,56 @@ stackNull :: DialogStack -> Bool
 stackNull = null
 
 -- | Filtered item count of a dialog.
+-- | 对话框标题。**12 个构造子必须齐全**——非穷尽 case 不会编译失败，只会在
+-- 运行时 pattern match failure（`DialogPresets` 就这样漏过一次，见
+-- docs/reference/brick-split-incident-2026-11-04.md）。
+dialogTitle :: Lang -> Dialog -> Text
+dialogTitle lang d = case d of
+  DialogModels{}     -> tr lang " Models "
+  DialogSessions{}   -> tr lang " Sessions "
+  DialogCommands{}   -> tr lang " Commands "
+  DialogProviders{}  -> tr lang " Providers "
+  DialogPresets{}    -> tr lang " Providers "
+  DialogSkills{}     -> tr lang " Skills "
+  DialogAgents{}     -> tr lang " Agents "
+  DialogThemes{}     -> tr lang " Themes "
+  DialogLanguages{}  -> tr lang " Languages "
+  DialogApproval{}   -> tr lang " Approval "
+  DialogConfirm{}    -> tr lang " Confirm "
+  DialogSandbox{}    -> tr lang " SandBox "
+
+-- | 当前选中索引（同样必须覆盖全部构造子）。
+dialogSelected :: Dialog -> Int
+dialogSelected d = case d of
+  DialogModels _ _ s -> s
+  DialogSessions _ _ s -> s
+  DialogCommands _ _ s -> s
+  DialogProviders _ s -> s
+  DialogPresets _ s -> s
+  DialogSkills _ _ s -> s
+  DialogAgents _ s -> s
+  DialogThemes _ s -> s
+  DialogLanguages _ s -> s
+  DialogApproval _ _ _ s -> s
+  DialogConfirm _ s -> s
+  DialogSandbox _ s -> s
+
+-- | 只有命令与技能面板接受字符输入（其余面板的字符键被丢弃）。
+dialogEditable :: Dialog -> Bool
+dialogEditable d = case d of
+  DialogCommands{} -> True
+  DialogSkills{}   -> True
+  _                -> False
+
+-- | 列表过滤用的查询串；不可过滤的面板返回空。
+dialogQuery :: Dialog -> Text
+dialogQuery d = case d of
+  DialogModels _ q _ -> q
+  DialogSessions _ q _ -> q
+  DialogCommands _ q _ -> q
+  DialogSkills _ q _ -> q
+  _ -> ""
+
 dialogCount :: Dialog -> Int
 dialogCount (DialogModels ms q _)    = length (filterModels q ms)
 dialogCount (DialogSessions ss q _)  = length (filterSessions q ss)

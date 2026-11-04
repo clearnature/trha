@@ -503,6 +503,8 @@ drawHome st =
 
 
 -- | One dialog as a centered bordered card (the top of the dialog stack).
+-- | dialogTitle / dialogSelected / dialogEditable / dialogQuery 见 UI.Dialog。
+
 drawDialog :: AppState -> Dialog -> Widget ResourceName
 drawDialog st d =
   withAttr (attrName "border") $
@@ -510,35 +512,9 @@ drawDialog st d =
       vBox (rows ++ [queryRow])
   where
     lang = appLang st
-    isEditable = case d of DialogCommands{} -> True; DialogSkills{} -> True; _ -> False
-    title = case d of
-      DialogModels{}     -> tr lang " Models "
-      DialogSessions{}   -> tr lang " Sessions "
-      DialogCommands{}   -> tr lang " Commands "
-      DialogProviders{}  -> tr lang " Providers "
-      DialogSkills{}     -> tr lang " Skills "
-      DialogAgents{}     -> tr lang " Agents "
-      DialogThemes{}     -> tr lang " Themes "
-      DialogLanguages{}  -> tr lang " Languages "
-      DialogApproval{}   -> tr lang " Approval "
-      DialogConfirm{}    -> tr lang " Confirm "
-      DialogSandbox{}    -> tr lang " SandBox "
-      -- DialogPresets 曾漏在这里：非穷尽 case 不会编译失败，只会在打开
-      -- Preset 对话框时 pattern match failure。与 rows/queryRow 保持一致。
-      DialogPresets{}    -> tr lang " Providers "
-    sel = case d of
-      DialogModels _ _ s -> s
-      DialogSessions _ _ s -> s
-      DialogCommands _ _ s -> s
-      DialogProviders _ s -> s
-      DialogSkills _ _ s -> s
-      DialogAgents _ s -> s
-      DialogThemes _ s -> s
-      DialogLanguages _ s -> s
-      DialogApproval _ _ _ s -> s
-      DialogConfirm _ s -> s
-      DialogSandbox _ s -> s
-      DialogPresets _ s -> s
+    isEditable = dialogEditable d
+    title = dialogTitle lang d
+    sel = dialogSelected d
     n = dialogCount d
     -- 30 rows for every dialog, including the skills overlay.
     (start, end) = windowRange n sel 30
@@ -681,13 +657,10 @@ drawDialog st d =
     hintRow t = padLeftRight 1 $ withAttr (attrName "status") $ str (T.unpack (tr lang t))
     -- 可过滤的列表：查询行 + 提示（输入即过滤，回车打开）。
     idxHintRow t = padLeftRight 1 $ hBox
-      [ withAttr (attrName "input") $ str ("> " ++ T.unpack (dialogQueryOf d))
+      [ withAttr (attrName "input") $ str ("> " ++ T.unpack (dialogQuery d))
       , withAttr (attrName "status") $ str ("   " ++ T.unpack (tr lang t))
       ]
-    dialogQueryOf d0 = case d0 of
-      DialogModels _ q _ -> q
-      DialogSessions _ q _ -> q
-      _ -> ""
+    -- 查询串已由顶层 dialogQuery 统一提供。
 
 -- | statusLine 见 UI.Brick.Draw.Status。
 

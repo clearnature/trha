@@ -3,9 +3,13 @@
 module UI.DialogSpec (spec) where
 
 import Test.Hspec
+import Control.Exception (evaluate)
+import Control.Monad (forM_, void)
+import qualified Data.Text as T
 import Core.Types (ModelInfo(..), ProviderInfo(..))
 import Core.SessionSummary (SessionSummary(..))
 import UI.Dialog
+import UI.I18n (Lang(..))
 import UI.Render.Picker (PickerItem(..), sectionItem)
 
 sampleModels :: [ModelInfo]
@@ -215,3 +219,29 @@ spec = do
 
     it "counts the filtered rows, not the raw list" $
       dialogCount (DialogModels ms "v4" 0) `shouldBe` 1
+
+  describe "视图属性覆盖全部 Dialog 构造子" $ do
+    -- 回归：DialogPresets 曾漏在 title/sel 的 case 里。Haskell 的非穷尽 case
+    -- 不报编译错，只在运行时 pattern match failure —— 这里对每个构造子强制
+    -- 求值，让「漏一个分支」变成测试失败，而不是用户端的崩溃。
+    let allDialogs =
+          [ ("DialogModels",    DialogModels [] "q" 1)
+          , ("DialogSessions",  DialogSessions [] "q" 1)
+          , ("DialogCommands",  DialogCommands [] "q" 1)
+          , ("DialogProviders", DialogProviders [] 1)
+          , ("DialogPresets",   DialogPresets [] 1)
+          , ("DialogSkills",    DialogSkills [] "q" 1)
+          , ("DialogAgents",    DialogAgents [] 1)
+          , ("DialogThemes",    DialogThemes [] 1)
+          , ("DialogLanguages", DialogLanguages [] 1)
+          , ("DialogApproval",  DialogApproval "msg" "bash" [] 1)
+          , ("DialogConfirm",   DialogConfirm "msg" 1)
+          , ("DialogSandbox",   DialogSandbox (SandboxSettings True "workspace-write" False "/tmp") 1)
+          ]
+
+    forM_ allDialogs $ \(name, d) ->
+      it (name <> " 的四个视图属性都能求值") $ do
+        void (evaluate (T.length (dialogTitle Zh d))) `shouldReturn` ()
+        void (evaluate (dialogSelected d)) `shouldReturn` ()
+        void (evaluate (dialogEditable d)) `shouldReturn` ()
+        void (evaluate (T.length (dialogQuery d))) `shouldReturn` ()
