@@ -77,7 +77,8 @@ import UI.Selection (inSelRange)
 import UI.Brick.DialogKeys
   ( chooseProvider, dialogAppend, dialogDelete, modifyTop, persistSelection
   , scrollBottom, withCommands )
-import UI.Brick.Apply (applyLanguage, applyTheme, openSettingsPanel)
+import UI.Brick.Apply
+  ( applyLanguage, applyTheme, modeAction, openSettingsPanel )
 import UI.Brick.Toast (showToast)
 import UI.Brick.Selection
   ( beginSel, extendSel, copySelectionText, finishSel, copyToClipboard )
@@ -1453,37 +1454,7 @@ editExternally = do
 -- | Run one posture action (cycle / yolo / set) and reflect the answer in
 -- the footer.  Modes are session state: without a session there is nothing
 -- to switch.
-modeAction :: Value -> EventM ResourceName AppState ()
-modeAction body = do
-  st <- get
-  case appSessionId st of
-    Nothing -> do
-      -- No session yet: cycle the label locally so the shortcut still
-      -- responds (Studio updates its status without a round trip too).
-      let cur = maybe "read-only" smMode (appMode st)
-          nextOf m = case m of
-            "read-only" -> "ask"
-            "ask"       -> "auto"
-            "auto"      -> "yolo"
-            "yolo"      -> "plan"
-            _           -> "read-only"
-          nxt = nextOf cur
-          -- plan is a flag (scheduler parity): the approval mode stays ask.
-          mode' = if nxt == "plan" then "ask" else nxt
-          label = case nxt of
-            "read-only" -> "Read only"
-            "ask"       -> "Ask"
-            "auto"      -> "Auto"
-            "yolo"      -> "YOLO"
-            _           -> "Plan"
-      modify $ \s -> s
-        { appMode = Just (SessionMode mode' label (nxt == "plan") Nothing)
-        , appStatus = tr (appLang s) "Mode switched" }
-    Just sid -> do
-      let bridge = appBridge st
-          chan = appChan st
-      void $ liftIO $ async $ applySessionMode bridge sid body >>= writeBChan chan . EvMode
-  scrollBottom
+-- | modeAction 见 UI.Brick.Apply。
 
 -- | Show a transient notice and schedule its dismissal.  The stamp keeps a
 -- late timer from clearing a newer toast.
