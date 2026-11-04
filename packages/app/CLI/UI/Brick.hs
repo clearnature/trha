@@ -73,6 +73,7 @@ import Graphics.Vty.Input.Events
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
+import UI.Selection (inSelRange)
 import UI.Brick.Draw.Messages
   ( cardHidden, diffWidget, drawMessage, drawPending, messageBody, messageHeader
   , renderBlocks, renderToolBody, roleStyle )
@@ -880,10 +881,13 @@ msgHeight st m
   , Map.lookup (msgId m) (appFolds st) /= Just FoldExpanded = 1
   | otherwise = max 1 (length (T.lines (msgContent m))) + 2
 
+-- | 消息是否落在拖选区间内。
+--
+-- 区间归一与判定在 UI.Selection.inSelRange（纯、可单测）；这里只做
+-- AppState 取字段的薄封装，因为 UI.State 依赖 brick，纯模块不能反向依赖它
+-- ——否则测试套件会被迫引入 brick。
 inSel :: AppState -> Int -> Bool
-inSel st i = case appSelStart st of
-  Nothing -> False
-  Just a  -> let b = fromMaybe a (appSelEnd st) in i >= min a b && i <= max a b
+inSel st = inSelRange (appSelStart st) (appSelEnd st)
 
 -- | A terminal row → the message area's row: the box border + title take two
 -- rows, and the viewport may be scrolled.  Without this every click landed on

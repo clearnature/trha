@@ -12,8 +12,10 @@ module UI.Selection
   , normalizeSelection
   , selectionIsEmpty
   , selectionText
+  , inSelRange
   ) where
 
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import UI.TextWidth (dropCells, takeCells, textWidth)
@@ -57,3 +59,14 @@ selectionText lines0 sel
       let lo = if r == spRow a then spCol a else 0
           hi = if r == spRow b then spCol b else textWidth line
       in takeCells (max 0 (hi - max 0 lo)) (dropCells (max 0 lo) line)
+
+-- | 消息级选区判定（纯）：给定锚点、光标与消息 id，判断该 id 是否落在选区内。
+--
+-- 参数化而不是直接接收 'AppState' 是为了可测。拖选可以向上也可以向下，区间
+-- 因此按 @min@/@max@ 归一；锚点已设而光标尚未设置时（刚按下鼠标还没拖），
+-- 选区就是锚点本身。
+inSelRange :: Maybe Int -> Maybe Int -> Int -> Bool
+inSelRange Nothing _ _ = False
+inSelRange (Just a) mb i =
+  let b = fromMaybe a mb
+  in i >= min a b && i <= max a b
