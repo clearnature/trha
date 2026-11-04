@@ -341,6 +341,7 @@ executable trha
     UI.Brick.Slash
     UI.Brick.Slash.Ctx
     UI.Brick.Slash.Lifecycle
+    UI.Brick.Slash.Info
     UI.Brick.Wizard
     UI.Brick.DialogActivate
     UI.Brick.Palette

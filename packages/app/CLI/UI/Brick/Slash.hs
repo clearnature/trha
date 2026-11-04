@@ -85,6 +85,7 @@ import UI.Brick.Input
 import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.Slash.Ctx (CmdCtx(..))
+import UI.Brick.Slash.Info (handleInfoSlash)
 import UI.Brick.Slash.Lifecycle (handleLifecycleSlash)
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.RunControl
@@ -167,9 +168,7 @@ handleSlash input = do
       lang   = appLang st
       cx     = CmdCtx t st input cmd bridge chan lang
   case cmd of
-    _ | Just act <- msum [handleLifecycleSlash cx] -> act
-    "/help" ->
-      appendMsg (mkMsg "system" (helpTextFor (appLang st)) t)
+    _ | Just act <- msum [handleLifecycleSlash cx, handleInfoSlash cx] -> act
     _ | cmd == "/delete" || "/delete " `T.isPrefixOf` cmd -> do
       let sid = T.strip (T.drop (T.length "/delete") input)
       if T.null sid
@@ -389,21 +388,6 @@ handleSlash input = do
       if T.null arg
         then modeAction (object ["action" .= ("cycle" :: Text)])
         else modeAction (object ["action" .= ("set" :: Text), "mode" .= arg])
-    "/copy" -> do
-      st2 <- get
-      t2 <- liftIO now
-      case [ m | m <- reverse (appMessages st2), msgRole m == "assistant", not (T.null (msgContent m)) ] of
-        (m : _) -> do
-          ok <- liftIO $ copyToClipboard (msgContent m)
-          if ok
-            then showToast (tr lang "Copied to clipboard")
-            else do
-              tmp <- liftIO getTemporaryDirectory
-              let path = tmp </> "trha-copy.txt"
-              liftIO $ TIO.writeFile path (msgContent m)
-              appendMsg (mkMsg "system"
-                (tr lang "Clipboard unavailable; wrote " <> T.pack path) t2)
-        [] -> appendMsg (mkMsg "system" (tr lang "No assistant message to copy") t2)
     "/verbose" -> do
       v <- gets appVerbose
       modify $ \s -> s { appVerbose = not v }
@@ -471,8 +455,6 @@ handleSlash input = do
           case r of
             Right _ -> showToast (tr lang "Switched to " <> arg)
             Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) t)
-    "/status" ->
-      appendMsg (mkMsg "system" (statusLine st) t)
     "/approve" -> do
       cur <- gets appSessionId
       plan <- gets appPlan
