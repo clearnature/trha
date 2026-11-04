@@ -260,6 +260,7 @@ executable trha
     UI.Commands.Helpers
     UI.Commands.Integration
     UI.Commands.Config
+    UI.Commands.Model
     Core.Bootstrap
     Core.HTTP
     Core.Transcript

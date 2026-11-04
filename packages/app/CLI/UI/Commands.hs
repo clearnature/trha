@@ -73,6 +73,7 @@ import UI.Commands.Env (CmdEnv(..), dispatch)
 import UI.Commands.Meta (runMeta)
 import UI.Commands.Config (runConfig, runSettingsCommand)
 import UI.Commands.Integration (runIntegration)
+import UI.Commands.Model (runModel)
 import UI.Commands.Plan (approvePlanStep, decidePlanStep, runPlan)
 import UI.Commands.Session (friendlyDenyError, resumeMessages, resumeSessions, runSession)
 import UI.I18n (Lang(..), langName, parseLang, tr)
@@ -105,7 +106,7 @@ executeCommand :: Lang -> SchedulerBridge -> IORef (Maybe SessionId) -> IORef Te
 -- | Parse a loop interval: @30s@, @5m@, @1h@, or plain seconds.
 
 executeCommand lang bridge sessionRef modelRef cmd
-  | Just act <- dispatch [runMeta, runSession, runConfig, runIntegration, runPlan] env cmd = act
+  | Just act <- dispatch [runMeta, runModel, runSession, runConfig, runIntegration, runPlan] env cmd = act
   where env = CmdEnv lang bridge sessionRef modelRef
 
 
@@ -122,22 +123,6 @@ executeCommand lang bridge sessionRef _ (DeleteSession sid) = do
         Right () -> tr lang "Session deleted: " <> T.pack sid
         Left err -> tr lang "Error: " <> T.pack (show err)
 
-executeCommand lang bridge _ _ Models = do
-  result <- listModels bridge
-  return $ Just $ case result of
-    Right models -> if null models
-      then tr lang "No models available"
-      else (tr lang "Models:" <> "\n") <> T.unlines (map (\m -> "  - " <> modelName m <> " (" <> modelDescription m <> ")") models)
-    Left err -> tr lang "Error: " <> T.pack (show err)
-
-executeCommand lang _ _ modelRef (SelectModel name) = do
-  writeIORef modelRef name
-  return $ Just $ tr lang "Model selected: " <> name
-
-executeCommand lang _ _ modelRef ShowModel = do
-  model <- readIORef modelRef
-  return $ Just $ tr lang "Current model: " <> model
-
 executeCommand lang _ sessionRef modelRef Status = do
   session <- readIORef sessionRef
   model <- readIORef modelRef
@@ -146,39 +131,6 @@ executeCommand lang _ sessionRef modelRef Status = do
     , tr lang "  Current session: " <> maybe (tr lang "none") T.pack session
     , tr lang "  Current model: " <> model
     ]
-
-executeCommand _ _ _ modelRef (Fav arg) = do
-  m <- readIORef modelRef
-  p <- loadModelPrefs
-  let name = if T.null (T.strip arg) then m else T.strip arg
-      p' = toggleFavorite name p
-  saveModelPrefs p'
-  return $ Just ("favourite: " <> name)
-
-executeCommand _ _ _ _ (SetCtx arg) = do
-  cfg <- resolveConfig defaultCLIConfig
-  let raw = T.strip arg
-  if T.null raw
-    then return $ Just ("context: " <> maybe "model default" (T.pack . show) (configCtxSize cfg))
-    else case reads (T.unpack raw) :: [(Int, String)] of
-      [(n, "")] | n > 0 -> do
-        saveConfig (cfg { configCtxSize = Just n })
-        return $ Just ("context: " <> T.pack (show n) <> " tokens")
-      _ -> return $ Just ("Usage: /ctx <tokens>")
-
-executeCommand _ _ _ _ (Effort arg) = do
-  cfg <- resolveConfig defaultCLIConfig
-  let lvl = T.toLower (T.strip arg)
-      levels = ["auto", "minimal", "low", "medium", "high"]
-  if T.null lvl
-    then return $ Just ("effort: " <> configEffort cfg
-                          <> "  (auto|minimal|low|medium|high)")
-    else if lvl `elem` levels
-      then do
-        saveConfig (cfg { configEffort = lvl })
-        return $ Just ("effort: " <> lvl)
-      else return $ Just ("Unknown effort: " <> arg
-                            <> "  (auto|minimal|low|medium|high)")
 
 executeCommand _ _ _ _ (RunShell cmd)
   | T.null (T.strip cmd) = return $ Just "Usage: /shell <cmd>"
@@ -196,18 +148,6 @@ executeCommand _ _ _ _ (RunShell cmd)
 executeCommand _ _ _ _ CopyLast =
   return $ Just "Copy is available in the TUI (run: trha tui, then /copy)"
 
-executeCommand lang bridge _ _ Providers = do
-  result <- listProviders bridge
-  return $ Just $ case result of
-    Right [] -> tr lang "No providers configured (see ~/.trha/providers.json)."
-    Right ps -> (tr lang "Providers:" <> "\n") <> T.unlines
-      [ "  - " <> piName p <> " (" <> piKind p <> ")"
-          <> " · " <> piDefault p
-          <> (if piInUse p then " · in use" else "")
-      | p <- ps ]
-      <> tr lang "Switch providers in the TUI (/provider or ctrl+x p)."
-    Left err -> tr lang "Error: " <> T.pack (show err)
-
 executeCommand lang _ _ _ ShowDiff = do
   r <- try (readProcessWithExitCode "git" ["diff", "--no-color"] "")
          :: IO (Either IOException (ExitCode, String, String))
@@ -216,11 +156,6 @@ executeCommand lang _ _ _ ShowDiff = do
     Right (_, out, _)
       | null (dropWhile (== '\n') out) -> tr lang "No uncommitted changes."
       | otherwise -> T.take 4000 (T.pack out)
-
-executeCommand lang _ _ _ ShowContext = do
-  cfg <- resolveConfig defaultCLIConfig
-  return $ Just $ tr lang "Context window: "
-    <> maybe (tr lang "model default") (T.pack . show) (configCtxSize cfg)
 
 executeCommand lang bridge _ _ Doctor = do
   sessions <- listSessions bridge
@@ -415,11 +350,6 @@ executeCommand lang _ _ _ (Paste text) = do
     Nothing -> tr lang "No image in clipboard"
     Just path -> tr lang "Image saved: " <> T.pack path
       <> (if T.null (T.strip text) then "" else " (" <> T.strip text <> ")")
-
-executeCommand lang _ _ _ ShowPresets =
-  return $ Just $ T.unlines
-    ( tr lang "Provider presets:" :
-      [ "  " <> preName p <> " (" <> preKind p <> ") " <> preBaseUrl p | p <- presets ] )
 
 executeCommand lang bridge _ _ ShowUsage = do
   bal <- fetchBalance bridge
