@@ -7,22 +7,22 @@
 
 ## 1. 为什么要拆
 
-`packages/app/CLI/UI/Brick.hs` 已长到 **4333 行、151 个顶层定义**，把五类职责挤在
-一个模块里：
+`packages/app/CLI/UI/Brick.hs` 曾长到 **4333 行、151 个顶层定义**（拆分前基线；2026-11-04
+已降至 3313 行），把五类职责挤在一个模块里：
 
 | 职责 | 代表定义 | 数量 |
 |---|---|---|
 | 装配/入口 | `initialState`、`appFor`、`runTUI`、`themeAttrMap` | ~8 |
 | 渲染 | `draw*` | 15 |
 | 交互 | `handle*` | 13 |
-| 命令 | `handleSlash`（90+ 分支） | 4 |
+| 命令 | `handleSlash`（**实测 861 行 / 41 个命令**，原估「90+ 分支」偏高） | 4 |
 | 状态查询/纯辅助 | `msgHeight`、`cardHidden`、`sidebarDataFor`… | ~110 |
 
 后果不是「文件长」这种审美问题，而是三条实际障碍：
 
 1. **无法单测**：`EventM ResourceName AppState` 与 Brick 运行时绑定，任何 `handle*`
    都只能在真终端里验证。
-2. **改一处要读全篇**：`drawStatus` 的 15 个 segment 与 `handleSlash` 的 90 个分支
+2. **改一处要读全篇**：`drawStatus` 的 15 个 segment 与 `handleSlash` 的 861 行
    同处一文件，定位成本高。
 3. **合并冲突面大**：任何两人同时改 TUI 都命中同一文件。
 
@@ -68,14 +68,23 @@
 - 迁移时**逐分支核对**，不要凭记忆重写。已发生两次事故：`diffAttrOf` 漏掉
   `CPlain -> "tool"`、`roleStyle` 被误删——都是靠编译报错才捞回。
 
-## 3. 现状（已完成两批）
+## 3. 现状（批次 0–3 完成，批次 4 部分完成）
 
 | 批次 | 提交 | 模块 | 迁出内容 |
 |---|---|---|---|
 | 0-a | `65d53b7` | `UI.Render.Spans` | `SpanTok(..)`、`spanToks`、`spanToksWith`、`fillLines`、`splitAtWidth`、`truncLine`、`diffAttrOf`、`spinnerFrame`、`boolText`、`isCompactionMark` |
 | 0-b | `237d487` | `UI.Brick.Draw.Status` | `modelLabel`、`statusLine`、`pricesOf` |
+| 1 | 多个 | `UI.Brick.Draw.Status`（续） | 13 个 `status*` 纯函数（`statusLine`/`statusModelLine`/`statusGitLine`/`statusStatsLine`/`statusSandboxTag`/`statusClock`/`statusPeak`/`statusCtxPct`/`statusTurnsSuffix` …） |
+| 2 | 多个 | `UI.Brick.Draw.Sidebar`<br>`UI.Brick.Draw.Dialog`<br>`UI.Brick.Draw.Settings`<br>`UI.Render.Settings` | `drawSidebar`、`drawCompletion`、`sidebarDataFor`；`drawDialog`、`dialogRows`、`dialogRow`、`dialogCountdown`、`dialogApprovalLabel`、`dialogConfirmLabel`、`drawPalette`、`drawWizard`、`wizardSummary`；`drawSettingsPanel`、`settingsRows`、`visibleRows`、`settingsListMax`；`renderStatusRows`、`computeStatsBlocks`、`renderStatsBlocks` |
+| 3 | `fc12937` `a0633b3`<br>`1755d7d` `09808dd` | `UI.Brick.Draw.Messages`<br>`UI.Brick.Draw.Status`（`drawStatus`） | `drawMessage`、`drawMessages`、`drawPending`、`drawInput`、`drawPlanCard`、`drawHome`、`drawUI`、`drawToast`、`cardHidden`、`roleStyle`、`messageHeader`、`messageBody`、`renderToolBody`、`renderBlocks`、`spanWrap`、`diffWidget`；`drawStatus` |
+| 4（部分） | `cdb7909` `6e1aaa5`<br>`bd85b22` `a8337a4`<br>`7cc3527` `3bb87d6` | `UI.Brick.Input`<br>`UI.Brick.DialogKeys`<br>`UI.Brick.Toast`<br>`UI.Brick.Apply` | `promptIsEmpty`、`editorValue`、`editorCursor`、`alwaysConfirmText`；`dialogAppend`、`dialogDelete`、`withCommands`、`modifyTop`、`scrollBottom`、`persistSelection`、`chooseProvider`；`showToast`；`applyLanguage`、`applyTheme` |
 
-两批验证：`cabal build all` = 0；`cabal test trha-cli-test` = **667 examples, 0 failures**。
+**行数轨迹**：4414 → **3313**（-1101，-24.9%）
+**测试基线**：667 → **685 examples, 0 failures**（批次 3 新增 18 例）
+
+> 批次 3 的教训见 [`docs/reference/brick-split-incident-2026-11-04.md`](../reference/brick-split-incident-2026-11-04.md)：
+> 一次「删一半就编译」的中间态让工作区不可编译数小时，且无人发现。此后每步都必须
+> 以「编译通过 + 测试全绿 + 已推送」结束。
 
 ---
 
@@ -171,17 +180,50 @@
 
 ### 批次 4：交互层
 
-**迁出**：`handleEvent`、`handleLeaderKey`、`handleCtrlCKey`、`handleCtrlDKey`、
-`handleDialogKey`、`handleChatKey`、`handleChatEnter`、`handleAppEvent`、`handleSettingsKey`，
-以及选区：`msgIndexAt`、`msgRowAt`、`inSel`、`finishSel`、`extendSel`、`copySelectionText`、
-`moveCardFocus`、`nextCardFocus`、`toolCardIds`。
+**已完成（2026-11-04）**：`UI.Brick.Input`、`UI.Brick.DialogKeys`、`UI.Brick.Toast`、
+`UI.Brick.Apply`——共 15 个函数、约 250 行（详见 §3）。
+
+**待迁出**：`handleEvent`(709)、`handleLeaderKey`(797)、`handleCtrlCKey`(819)、
+`handleCtrlDKey`(835)、`handleDialogKey`(935)、`dialogActivate`(982)、`handleChatKey`(1095)、
+`handleChatEnter`(1215)、`handleAppEvent`(1805)、命令面板组（`refreshCompletion`(1251)、
+`paletteItemsFor`(1259)、`allPickerItems`(1284)、`refreshPalette`(1298)、`movePalette`(1318)、
+`runPaletteItem`(1323)）、中断审批组（`requestInterrupt`(844)、`requestStopServices`(856)、
+`stopServicesAndHalt`(867)、`decideApprovalNow`(880)、`escapeHierarchy`(905)、
+`escapeWithoutApproval`(911)）、选区组（`msgIndexAt`(629)、`msgHeight`(636)、`msgRowAt`(647)、
+`beginSel`(655)、`extendSel`(662)、`copySelectionText`(672)、`finishSel`(689)、
+`toolCardIds`(1680)、`moveCardFocus`(1684)、`toggleFocusedCard`(1694)）。
+
+**依赖关系（2026-11-04 实测，取代此前的猜测）**
+
+`rg 'dialogActivate'` 在 `UI.Brick.hs` 里只有 4 处；`handleSlash`（2254–3114，861 行）
+内部只调用 `modeAction`(3 次) / `handleSlash`(2 次，内部子分派) / `resumeSession`(1 次)，
+**不调用任何 `handle*`、也不调用 `dialogActivate`**。
+
+=> **不存在循环依赖。** 真实依赖是单向 DAG：
+
+```
+handleEvent (709)
+ ├→ handleLeaderKey / handleCtrlCKey / handleCtrlDKey
+ ├→ handleDialogKey (935) → dialogActivate (982) ─┐
+ ├→ handleChatKey (1095)                         ├→ handleSlash (2254-3114)
+ ├→ handleChatEnter (1215) ──────────────────────┘     → modeAction / resumeSession
+ ├→ handleAppEvent (1805)
+ └→ 选区：msgRowAt / beginSel / extendSel / finishSel
+```
+
+> **一次误判的记录**：上一轮仅凭 `dialogActivate → handleSlash` 这条单向边，臆测存在
+> 反向边，据此得出「强连通环、必须回调注入或整体搬迁」的结论。实际 `rg` 统计推翻了它。
+> **教训：判断循环依赖必须全文件统计调用点，不能凭印象补边。**
+
+**因此执行顺序**：`handleSlash`（批次 5）先于 `dialogActivate`（它会调 `handleSlash`）；
+其余子组（选区、中断审批、命令面板）可按任意顺序，`handleEvent` 最后。
 
 **为什么选区跟着交互层**：它们都是 `EventM` 里的鼠标/键盘行为，与渲染无关。但注意
-`inSel`/`cardHidden` 被渲染层调用——若批次 3 先完成，这两个要留在渲染层或下沉到
-`UI.Selection`（现有模块）。**执行顺序必须是批次 3 → 批次 4**，否则会产生回指。
+`inSelRange`/`cardHidden` 被渲染层调用——`inSelRange` 已下沉到 `UI.Selection`（纯函数），
+`cardHidden` 在 `UI.Brick.Draw.Messages`。**批次 3 必须先于批次 4**，否则产生回指。
 
 **依赖**：`UI.State`、`UI.Dialog`、`UI.Selection`、`Core.Clipboard`、`Bridge.Scheduler`、
-`UI.Event`（`AppEvent`）。
+`UI.Event`（`AppEvent`）、以及本批次已迁出的四个新模块。
 
 **验证点**（tmux 键位矩阵）：
 
@@ -206,36 +248,116 @@
 
 ### 批次 5：命令层
 
-**迁出**：`handleSubmit`、`handleSlash`（90+ 分支）、`handleChat`、`handleChatWith`。
+**迁出**：`handleSubmit`(2218)、`handleSlash`(**2254–3114，861 行**)、`runShellCommand`(2239)、
+`handleChat`、`handleChatWith`。
 
-**依赖**：`UI.Commands`（`executeCommand`、`Command` 构造子）、`Bridge.Scheduler`（数十个
-HTTP 调用）、`UI.Commands.Registry`（`parseCommand`）。
+**实测数据（2026-11-04，取代此前的「90+ 分支」估计）**：
+
+| 项 | 实测值 |
+|---|---|
+| `handleSlash` 行数 | **861 行**（2254–3114） |
+| 其中的字面 `"/xxx"` 分支 | **28** 个 |
+| 覆盖的命令名（含守卫分支去重） | **41** 个 |
+| 它调用的本文件函数 | `modeAction`×3、`handleSlash`×2、`resumeSession`×1 |
+
+**依赖**：`UI.Commands`（`executeCommand`）、`UI.Commands.Registry`（`parseCommand`）、
+`Bridge.Scheduler`（数十个 HTTP 调用）、`modeAction`、`resumeSession`。
+
+> 注意：`handleSlash` 与 `dialogActivate` 是**单向**关系（`dialogActivate → handleSlash`），
+> 反向不存在。所以批次 5 应当**先于**批次 4 中的 `dialogActivate` 完成。
 
 **验证点**（命令矩阵，见 [`docs/reference/cli-command-matrix.md`](../reference/cli-command-matrix.md)）：
 
-1. 编译 + 667 例
-2. tmux 逐个执行 90 条命令，记录 `OK` / `DIALOG` / `FAIL`
-3. 重点回归本轮修过的：
+1. 编译 + **685 例**
+2. tmux 逐个执行命令矩阵里的条目，记录 `OK` / `DIALOG` / `FAIL`
+3. 重点回归已修过的：
    - `/switch` 无参 → 打开可选中对话框（`d3a1e7c`）
    - `/provider` → `DialogProviders`
    - `/recap` `/btw` `/review` → 返回真实摘要（`4835673`）
    - `/skip` `/reject` `/abandon` 无计划时提示「No pending plan …」（`ee7b365`）
    - `/mode <x>` 带参数走 `modeAction`（`7f34bb8`）
 
-**风险**：`handleSlash` 900+ 行，分支之间**顺序敏感**（`_ | cmd == …` 守卫分支必须在
+**风险**：`handleSlash` 861 行，分支之间**顺序敏感**（`_ | cmd == …` 守卫分支必须在
 字面分支之后的正确位置）。搬运**只做剪切**，不改分支顺序、不改守卫条件。
+
+### 批次 5b：命令定义单一来源（建议，优先级高于继续拆模块）
+
+**问题（2026-11-04 实测）**：命令在三个地方各定义一份，规模互不相等。
+
+| 位置 | 规模 | 用途 |
+|---|---:|---|
+| `UI.Commands.Registry.slashRegistry` | **89** 条 `SlashCommand` | 补全 / 帮助（纯元数据，可单测） |
+| `UI.Brick.handleSlash` | **41** 个命令 | TUI 执行分派 |
+| `UI.Commands.executeCommand` | **106** 个分支 | 通用执行（REPL/TUI 共用） |
+
+三个集合没有任何机制保证一致。**实证后果**：`/provider` 在 `handleSlash` 有分支
+（应打开 `DialogProviders`），实测却走了 `executeCommand` 打印文本——因为两者都在，
+而判定顺序只走了一条。
+
+**对照 Reasonix**：`internal/frontend/cli/slash_registry.go` 的 `builtinSlashSpecs`
+把 `{name, aliases, handler, help}` **绑定在同一张表里**——表即执行，元数据与行为
+不可能漂移。加一个命令只改一处。
+
+**方案对比**：
+
+| 方案 | 做法 | 取舍 |
+|---|---|---|
+| A（Reasonix 式） | `SlashSpec { name, help, handler }` 合一 | 单一来源；但 `Registry` 被迫依赖 brick，失去纯层可测性 |
+| **B（推荐）** | 纯元数据表 + 执行表 + **一致性测试** | 保持纯层可测；漂移由测试拦截 |
+| C | 现状不动，只补测试 | 最小改动；106/41/89 的差距仍在，但不再静默 |
+
+**方案 B 的落地形态**：
+
+```haskell
+-- UI.Commands.Registry（纯层，可测）
+slashRegistry :: [SlashCommand]        -- 元数据 89 条
+
+-- 执行表（可依赖 brick）
+slashHandlers :: [(Text, Handler)]     -- Handler = [Text] -> EventM ResourceName AppState ()
+
+-- test/ 里的一致性断言
+it "元数据表与执行表的键集合相等" $
+  sort (map scName slashRegistry) `shouldBe` sort (map fst slashHandlers)
+```
+
+这条测试一旦存在，`/provider` 那类「声明了却没接上」的问题会在 CI 暴露，
+而不是靠人工 tmux 实测发现。
+
+**建议顺序**：先做 5b（约 20 行测试 + 补齐差异），再搬 `handleSlash`（否则搬完 861 行
+case 仍要重写成表驱动，等于做两遍）。
 
 ---
 
 ## 6. 执行顺序与依赖关系
 
+**已完成部分（批次 0–3）**
+
 ```
-批次 1（状态栏）─┐
-批次 2（对话框）─┤ 1、2 互不依赖，可并行
-批次 3（消息区）─┘ ↓ 必须在批次 4 之前（inSel/cardHidden 的归属）
-批次 4（交互）   ↓
-批次 5（命令）
+批次 0-a（纯函数层）──┐
+批次 0-b / 1（状态栏）┼→ 批次 2（侧栏/对话框/设置）→ 批次 3（消息区）→ 批次 4（部分）
 ```
+
+**剩余部分的真实依赖方向（2026-11-04 实测）**
+
+```
+批次 5b（命令单一来源 + 一致性测试）   ← 建议最先做
+       ↓
+批次 5：handleSlash（861 行）
+       ↓ 被它调用
+批次 4 剩余：dialogActivate → handleDialogKey
+                            dialogActivate → chooseProvider（已迁）
+批次 4 其余：选区组 / 中断审批组 / 命令面板组（互不依赖，任意顺序）
+       ↓
+handleEvent（永远最后——它调用其余全部）
+```
+
+**四条硬约束**：
+
+1. **批次 3 → 批次 4**：`inSelRange` 与 `cardHidden` 被渲染层调用，先拆渲染层才不会回指。
+2. **批次 5 的 `handleSlash` → 批次 4 的 `dialogActivate`**：单向，**不存在循环依赖**
+   （实测见 §5 批次 4）。所以 `handleSlash` 必须先搬。
+3. **`handleEvent` 永远最后**：它是总入口，调用其余所有 `handle*`。
+4. **每步都必须以「编译通过 + 测试全绿 + 已推送」结束**，不留中间态。
 
 ## 7. 每批的完成判据（Definition of Done）
 
@@ -264,8 +386,22 @@ HTTP 调用）、`UI.Commands.Registry`（`parseCommand`）。
 
 - [x] 批次 0-a：`UI.Render.Spans`（`65d53b7`）
 - [x] 批次 0-b：`UI.Brick.Draw.Status` 文本层（`237d487`）
-- [ ] 批次 1：`drawStatus` 完整迁移
-- [ ] 批次 2：侧栏与对话框
-- [ ] 批次 3：消息区渲染
-- [ ] 批次 4：交互层
-- [ ] 批次 5：命令层
+- [x] 批次 1：`drawStatus` 完整迁移（`1755d7d`，含 13 个 `status*`）
+- [x] 批次 2：侧栏与对话框（`UI.Brick.Draw.{Sidebar,Dialog,Settings}` + `UI.Render.Settings`）
+- [x] 批次 3：消息区渲染（`fc12937`/`a0633b3`/`09808dd`）
+- [ ] 批次 4：交互层——**部分完成**（`cdb7909`/`6e1aaa5`/`bd85b22`/`a8337a4`/`7cc3527`/`3bb87d6`，共 4 个模块、15 个函数）
+  - [x] `UI.Brick.Input`、`UI.Brick.DialogKeys`、`UI.Brick.Toast`、`UI.Brick.Apply`
+  - [ ] 选区组（`msgRowAt`/`beginSel`/`extendSel`/`finishSel`/`copySelectionText` …）
+  - [ ] 中断审批组（`requestInterrupt`/`stopServicesAndHalt`/`decideApprovalNow`/`escape*`）
+  - [ ] 命令面板组（`paletteItemsFor`/`refreshPalette`/`movePalette`/`runPaletteItem`）
+  - [ ] `dialogActivate`/`handleDialogKey`/`handleChatKey`/`handleChatEnter`
+  - [ ] `handleEvent`（最后）
+- [ ] 批次 5：命令层（`handleSubmit`/`handleSlash` 861 行/`runShellCommand`）
+- [ ] 批次 5b：命令定义单一来源 + 一致性测试（**建议优先于批次 5 主体**）
+
+**2026-11-04 的两次纠错记录**：
+
+1. 「批次 4 存在强连通环」——**错误**。实测 `rg` 统计证明 `handleSlash` 不回调
+   `dialogActivate`，依赖是单向 DAG。
+2. 「`handleSlash` 90+ 分支、900+ 行」——**高估**。实测 861 行、28 个字面分支、
+   41 个命令名。
