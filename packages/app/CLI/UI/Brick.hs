@@ -75,8 +75,8 @@ import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Selection (inSelRange)
 import UI.Brick.Draw.Messages
-  ( cardHidden, diffWidget, drawMessage, drawPending, messageBody, messageHeader
-  , renderBlocks, renderToolBody, roleStyle )
+  ( cardHidden, diffWidget, drawMessage, drawMessages, drawPending, messageBody
+  , messageHeader, renderBlocks, renderToolBody, roleStyle )
 import UI.Brick.Draw.Settings (drawSettingsPanel, settingsListMax, settingsRows, visibleRows)
 import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar, sidebarDataFor)
 import UI.Brick.Draw.Status
@@ -648,39 +648,7 @@ blocksToMessages blocks =
         toolMsg "tool" (ToolCard name args Nothing Nothing [] "") (maybe "" id (rbTime b))
       Nothing           -> mkMsg (rbRole b) (rbContent b) (maybe "" id (rbTime b))
 
-drawMessages :: AppState -> Widget ResourceName
-drawMessages st =
-  withAttr (attrName "border") $
-    borderWithLabel (withAttr (attrName "title") $ str " trha — agent harness · Messages ") $
-      viewport MessageArea Vertical $
-        vBox $
-          case (appMessages st, visible, appPending st) of
-            ([], _, Nothing) ->
-              [ padAll 1 $ withAttr (attrName "timestamp") $
-                  strWrap "No messages yet. Type something and press Enter, or /help for commands." ]
-            (_, [], Nothing) ->
-              -- Everything on screen was a quiet tool card (M6-7); say so
-              -- instead of drawing an empty viewport.
-              [ padAll 1 $ withAttr (attrName "timestamp") $
-                  strWrap "All tool cards are hidden (quiet read/search). /verbose shows them." ]
-            _ -> [ let -- 焦点标记只属于工具卡：之前只看 id 相等，焦点落到
-                       -- 同号的 user 消息上时，「▶」会画在用户消息前面。
-                       focused = isJust (msgTool m) && appCardFocus st == Just (msgId m)
-                       fold = foldOf m
-                       sel = inSel st (msgId m)
-                       draw = drawMessage cfg focused fold m
-                       widget = if sel then withAttr (attrName "selection") draw else draw
-                   -- Retained per-message render (the ported TranscriptScrolling
-                   -- contract): scrolling and typing redraw only what changed.
-                   in cached (MsgCache (msgId m) (fold == FoldExpanded) focused sel) widget
-                 | m <- visible ]
-                   ++ maybe [] (pure . drawPending cfg) (appPending st)
-  where
-    cfg = appEffCfg st
-    visible = filter (not . cardHidden st) (appMessages st)
-    foldOf m
-      | appVerbose st = FoldExpanded
-      | otherwise = fromMaybe FoldCollapsed (Map.lookup (msgId m) (appFolds st))
+-- | drawMessages 见 UI.Brick.Draw.Messages。
 
 -- | Whether a finished tool message is omitted from the stream (M6-7).
 -- Low-noise lookups vanish once complete, but an explicitly expanded card
@@ -881,13 +849,7 @@ msgHeight st m
   , Map.lookup (msgId m) (appFolds st) /= Just FoldExpanded = 1
   | otherwise = max 1 (length (T.lines (msgContent m))) + 2
 
--- | 消息是否落在拖选区间内。
---
--- 区间归一与判定在 UI.Selection.inSelRange（纯、可单测）；这里只做
--- AppState 取字段的薄封装，因为 UI.State 依赖 brick，纯模块不能反向依赖它
--- ——否则测试套件会被迫引入 brick。
-inSel :: AppState -> Int -> Bool
-inSel st = inSelRange (appSelStart st) (appSelEnd st)
+-- | inSel / drawMessages 见 UI.Brick.Draw.Messages。
 
 -- | A terminal row → the message area's row: the box border + title take two
 -- rows, and the viewport may be scrolled.  Without this every click landed on
