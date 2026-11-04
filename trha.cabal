@@ -312,6 +312,7 @@ executable trha
     UI.Brick.Toast
     UI.Brick.Selection
     UI.Brick.MessageOps
+    UI.Brick.RunControl
     UI.Brick.Apply
     UI.Render.ToolSummary
     UI.Render.Message
