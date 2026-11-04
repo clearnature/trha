@@ -406,13 +406,35 @@ handleEvent（永远最后——它调用其余全部）
 - [x] 批次 1：`drawStatus` 完整迁移（`1755d7d`，含 13 个 `status*`）
 - [x] 批次 2：侧栏与对话框（`UI.Brick.Draw.{Sidebar,Dialog,Settings}` + `UI.Render.Settings`）
 - [x] 批次 3：消息区渲染（`fc12937`/`a0633b3`/`09808dd`）
-- [ ] 批次 4：交互层——**部分完成**（`cdb7909`/`6e1aaa5`/`bd85b22`/`a8337a4`/`7cc3527`/`3bb87d6`，共 4 个模块、15 个函数）
-  - [x] `UI.Brick.Input`、`UI.Brick.DialogKeys`、`UI.Brick.Toast`、`UI.Brick.Apply`
-  - [ ] 选区组（`msgRowAt`/`beginSel`/`extendSel`/`finishSel`/`copySelectionText` …）
-  - [ ] 中断审批组（`requestInterrupt`/`stopServicesAndHalt`/`decideApprovalNow`/`escape*`）
+- [ ] 批次 4：交互层——**大部分完成**（`UI.Brick` 4414 → 2923，-33.8%）
+  - [x] `UI.Brick.Input`（`cdb7909`）：promptIsEmpty/editorValue/editorCursor/alwaysConfirmText
+  - [x] `UI.Brick.DialogKeys`（`6e1aaa5`/`7cc3527`/`3bb87d6`）：dialogAppend/dialogDelete/withCommands/modifyTop/scrollBottom/persistSelection/chooseProvider
+  - [x] `UI.Brick.Toast`（`bd85b22`）：showToast
+  - [x] `UI.Brick.RunControl`（`099fbef`/`7383fd6`/`53c229b`）：中断审批组 6 个 + runShellCommand + approveAndRun
+  - [x] `UI.Brick.Apply`（`a8337a4`/`de44aeb`/`70a2147`）：applyLanguage/applyTheme/openSettingsPanel/modeAction
+  - [x] `UI.Brick.Selection`（`4be82a9`）：选区组 7 个 + copyToClipboard
+  - [x] `UI.Brick.MessageOps`（`e75d246`/`f9de435`）：now/appendMsg/setWindowTitle
+  - [x] `UI.Brick.SessionView`（`5430ee8`/`dc7b41a`/`dcc9e98`）：localSessionLines/blocksToMessages/refreshSidebar
+  - [x] `UI.Brick.Chat`（`49d9d53`）：handleChatWith（84 行）
+  - [ ] **阶段 3 最后一项**：`resumeSession`（167 行，`Brick.hs` 450 起）
   - [ ] 命令面板组（`paletteItemsFor`/`refreshPalette`/`movePalette`/`runPaletteItem`）
-  - [ ] `dialogActivate`/`handleDialogKey`/`handleChatKey`/`handleChatEnter`
-  - [ ] `handleEvent`（最后）
+  - [ ] `dialogActivate`(802)/`handleDialogKey`(755)/`handleChatKey`(915)/`handleChatEnter`(1035)
+  - [ ] `handleSlash`（503 行，2073 起）——等上述依赖全部外置后才可搬
+  - [ ] `handleEvent`（最后，总入口）
+
+**搬一个函数的固定四处改动**（本会话反复踩坑后的结论）：
+
+```
+① 原处删除定义   ② 原处 import 补符号
+③ 新处实现 + 导出 ④ 新处 import 补依赖
+```
+
+少一处就编译不过。前三处是 `helpTextFor` 一次踩全的。
+
+**边界锚点只认函数名，不认注释**：`handleChatWith` 那次用
+`-- | Send a chat message` 当起点，结果删掉了相邻的 `handleChat` 与
+`expandFileReferences`（126 行），靠 `git checkout` 回退后改用
+`handleChatWith ::` 才对。
 - [ ] 批次 5：命令层（`handleSubmit`/`handleSlash` 861 行/`runShellCommand`）
 - [ ] 批次 5b：命令定义单一来源 + 一致性测试（**建议优先于批次 5 主体**）
 
