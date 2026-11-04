@@ -75,7 +75,8 @@ import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Selection (inSelRange)
 import UI.Brick.DialogKeys
-  ( dialogAppend, dialogDelete, modifyTop, withCommands )
+  ( dialogAppend, dialogDelete, modifyTop, persistSelection, scrollBottom
+  , withCommands )
 import UI.Brick.Apply (applyLanguage, applyTheme)
 import UI.Brick.Toast (showToast)
 import UI.Brick.Input
@@ -703,8 +704,7 @@ finishSel y = do
         -- 也还能继续拖选调整。清空只发生在 Ctrl+C 之后。
         else copySelectionText False
 
-scrollBottom :: EventM ResourceName AppState ()
-scrollBottom = vScrollToEnd (viewportScroll MessageArea)
+-- | scrollBottom 见 UI.Brick.DialogKeys。
 
 handleEvent :: BrickEvent ResourceName AppEvent -> EventM ResourceName AppState ()
 handleEvent (AppEvent ev) = handleAppEvent ev
@@ -1351,12 +1351,7 @@ runPaletteItem = do
         [] -> modify $ \s -> s { appPalette = Nothing }
 
 -- | Persist the active provider/model so the next launch starts there.
-persistSelection :: Text -> Text -> EventM ResourceName AppState ()
-persistSelection providerName model = do
-  st <- get
-  let cfg = (appEffCfg st) { configProvider = providerName, configModel = model }
-  liftIO $ saveConfig cfg
-  modify $ \s -> s { appEffCfg = cfg }
+-- | persistSelection 见 UI.Brick.DialogKeys。
 
 -- | Begin adding (Nothing) or editing (Just provider) a provider.
 startWizardPreset :: Preset -> EventM ResourceName AppState ()

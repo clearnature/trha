@@ -9,9 +9,16 @@ module UI.Brick.DialogKeys
   , dialogDelete
   , withCommands
   , modifyTop
+  , scrollBottom
+  , persistSelection
   ) where
 
-import Brick (EventM, get, modify)
+import Brick (EventM, get, modify, viewportScroll, vScrollToEnd)
+import Control.Monad.IO.Class (liftIO)
+import Data.Text (Text)
+
+import Config.Settings (saveConfig)
+import Core.Types (CLIConfig(..))
 
 import UI.Dialog
   ( Dialog(..), dialogCommandsAppend, dialogCommandsDelete, dialogModelsAppend
@@ -55,3 +62,15 @@ modifyTop f = modify $ \s -> s { appDialogs =
   case stackTop (appDialogs s) of
     Just d  -> stackPush (f d) (stackPop (appDialogs s))
     Nothing -> appDialogs s }
+
+-- | 把消息区滚到底部（对话框选完后回到最新消息）。
+scrollBottom :: EventM ResourceName AppState ()
+scrollBottom = vScrollToEnd (viewportScroll MessageArea)
+
+-- | 记住所选供应商与模型（写回 settings.yaml）。
+persistSelection :: Text -> Text -> EventM ResourceName AppState ()
+persistSelection providerName model = do
+  st <- get
+  let cfg = (appEffCfg st) { configProvider = providerName, configModel = model }
+  liftIO $ saveConfig cfg
+  modify $ \s -> s { appEffCfg = cfg }
