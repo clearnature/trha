@@ -287,6 +287,8 @@ executable trha
     UI.Event
     UI.Commands
     UI.I18n
+    UI.I18n.Zh
+    UI.I18n.Other
     UI.SettingsView
     UI.StatsView
     UI.StatusInfo
