@@ -83,6 +83,7 @@ import UI.Brick.Selection
   ( beginSel, extendSel, copySelectionText, finishSel, copyToClipboard )
 import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
+import UI.Brick.MessageOps (appendMsg, now)
 import UI.Brick.Draw.Messages
   ( cardHidden, diffWidget, drawHome, drawInput, drawMessage, drawMessages
   , drawPending, drawPlanCard, drawToast, drawUI, messageBody, messageHeader
@@ -614,18 +615,7 @@ blocksToMessages blocks =
 -- Event handling
 --------------------------------------------------------------------------------
 
-now :: IO Text
-now = do
-  t <- getCurrentTime
-  tz <- getCurrentTimeZone
-  pure (clockWithZone tz t)
-
--- | Append a message, stamping it with the next position-based id.
-appendMsg :: ChatMessage -> EventM ResourceName AppState ()
-appendMsg msg = modify $ \st ->
-  let i = appNextMsgId st
-  in st { appMessages = appMessages st ++ [msg { msgId = i }]
-        , appNextMsgId = i + 1 }
+-- | now / appendMsg 见 UI.Brick.MessageOps。
 
 -- | msgIndexAt / msgHeight 见 UI.Brick.Selection。
 
