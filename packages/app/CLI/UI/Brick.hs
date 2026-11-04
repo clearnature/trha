@@ -505,40 +505,8 @@ drawHome st =
 -- | One dialog as a centered bordered card (the top of the dialog stack).
 -- | dialogTitle / dialogSelected / dialogEditable / dialogQuery 见 UI.Dialog。
 
--- | 对话框里的一行：marker + 标签 + 右对齐的次要信息。
-dialogRow :: Int -> Int -> Widget ResourceName -> Widget ResourceName -> Widget ResourceName
-dialogRow idx cur label detail =
-  padLeftRight 1 $ hBox
-    [ withAttr markerAttr $ str marker
-    , str " "
-    , withAttr (attrName "title") label
-    , withAttr (attrName "timestamp") (str "  ")
-    , withAttr (attrName "timestamp") detail
-    ]
-  where
-    marker | idx == cur = "▸ "
-           | otherwise  = "  "
-    markerAttr | idx == cur = attrName "tool"
-               | otherwise  = attrName "timestamp"
-
--- | 审批倒计时行（纯逻辑在 UI.Interaction.askCountdownText）。
-dialogCountdown :: AppState -> Text
-dialogCountdown st =
-  fromMaybe ""
-    (askCountdownText (configAskTimeout (appEffCfg st)) (appAskAt st) (appNow st))
-
--- | 审批选项的标签。
-dialogApprovalLabel :: ApprovalOption -> Text
-dialogApprovalLabel opt = case opt of
-  ApprovalOnce   -> "Allow once"
-  ApprovalAlways -> "Allow always"
-  ApprovalReject -> "Reject"
-
--- | 确认对话框的两个选项。
-dialogConfirmLabel :: Int -> Text
-dialogConfirmLabel i = case i of
-  0 -> "Yes, allow always"
-  _ -> "No, back"
+-- | dialogRow / dialogCountdown / dialogApprovalLabel / dialogConfirmLabel
+-- 见 UI.Brick.Draw.Dialog。
 
 -- | 对话框主体行：13 个构造子的分派。
 --
