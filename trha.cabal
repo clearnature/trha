@@ -288,6 +288,8 @@ executable trha
     Core.Fs
     Core.Sandbox
     Core.Sandbox.Report
+    Core.Sandbox.Run
+    Core.Sandbox.Types
     Core.TurnStats
     Core.EffortContract
     Core.Types
