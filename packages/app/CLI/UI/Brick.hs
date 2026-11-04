@@ -74,6 +74,8 @@ import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Selection (inSelRange)
+import UI.Brick.Input
+  ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
 import UI.Brick.Draw.Messages
   ( cardHidden, diffWidget, drawHome, drawInput, drawMessage, drawMessages
   , drawPending, drawPlanCard, drawToast, drawUI, messageBody, messageHeader
@@ -851,8 +853,7 @@ handleCtrlDKey = do
   st <- get
   when (decideCtrlD (appBusy st) (not (promptIsEmpty st))) halt
 
-promptIsEmpty :: AppState -> Bool
-promptIsEmpty st = T.null (T.strip (T.unlines (getEditContents (appInput st))))
+-- | promptIsEmpty 见 UI.Brick.Input。
 
 -- | Ask the host to stop the running turn (shared by the leader and the
 -- double-escape path).
@@ -911,11 +912,7 @@ decideApprovalNow approve = do
         writeBChan chan (EvVerdict r)
 
 -- | The "always" confirmation card's message.
-alwaysConfirmText :: Lang -> String -> [Text] -> Text
-alwaysConfirmText lang name args =
-  tr lang "Always allow " <> T.pack name
-    <> case args of (c : _) -> " " <> T.replace "\n" " " c; [] -> ""
-    <> tr lang " for future runs?"
+-- | alwaysConfirmText 见 UI.Brick.Input。
 
 -- | Escape resolution per MiMo's hierarchy.  A parked ask is rejected on
 -- escape (permission page escapeKey=reject); otherwise pop an open
@@ -1306,16 +1303,7 @@ handleChatEnter st
                  -- 折叠仍由 ctrl+o 负责，不再占用回车。
                  else when (T.null input && not (appBusy st)) scrollBottom
 -- | Full editor text: lines joined with newlines (no trailing newline).
-editorValue :: AppState -> Text
-editorValue st = T.intercalate "\n" (getEditContents (appInput st))
-
--- | Cursor offset in 'editorValue' units.
-editorCursor :: AppState -> Int
-editorCursor st =
-  sum (map T.length (take row ls)) + row + col
-  where
-    ls = getEditContents (appInput st)
-    (row, col) = getCursorPosition (appInput st)
+-- | editorValue / editorCursor 见 UI.Brick.Input。
 
 -- | Recompute the @\@@-file popup from the current text and cursor.
 refreshCompletion :: EventM ResourceName AppState ()
