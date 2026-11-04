@@ -14,6 +14,7 @@ module UI.Brick.Draw.Messages
   , renderBlocks
   , diffWidget
   , drawMessage
+  , drawPending
   ) where
 
 import Brick
@@ -27,6 +28,7 @@ import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (^.))
 
 import Core.Types (CLIConfig(..))
+import UI.Event (PendingMsg(..))
 import UI.Render.Diff
   ( DiffClass(..), DiffLayout(..), DiffRow(..), diffClass, diffLayout
   , looksLikeDiff, numberDiff, renderDiffRow )
@@ -269,3 +271,15 @@ drawMessage cfg focused fold msg
 --
 -- brick 3.0 removed the widget-level 'wrap'; this mirrors the render-time
 -- reflow technique of 'txtWrapWith' (measure against the context width,
+
+-- | Render the assistant reply currently being accumulated.
+-- A blinking cursor suffix signals that the stream is still open.
+drawPending :: CLIConfig -> PendingMsg -> Widget ResourceName
+drawPending cfg pm =
+  padLeftRight 1 $
+    padTopBottom 1 $
+      vBox
+        [ messageHeader (configTimestamps cfg) "assistant" (pmContent pm) (pmStart pm)
+        , messageBody (configMarkdown cfg) "assistant" (pmContent pm <> "▍") Nothing FoldCollapsed
+        ]
+

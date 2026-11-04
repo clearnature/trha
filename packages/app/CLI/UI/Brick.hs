@@ -74,8 +74,8 @@ import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Brick.Draw.Messages
-  ( cardHidden, diffWidget, drawMessage, messageBody, messageHeader, renderBlocks
-  , renderToolBody, roleStyle )
+  ( cardHidden, diffWidget, drawMessage, drawPending, messageBody, messageHeader
+  , renderBlocks, renderToolBody, roleStyle )
 import UI.Brick.Draw.Settings (drawSettingsPanel, settingsListMax, settingsRows, visibleRows)
 import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar, sidebarDataFor)
 import UI.Brick.Draw.Status
@@ -719,16 +719,7 @@ drawMessages st =
 -- | Split the longest prefix whose display width fits @w@ columns.
 -- 实现见 UI.Render.Spans.splitAtWidth。
 
--- | Render the assistant reply currently being accumulated.
--- A blinking cursor suffix signals that the stream is still open.
-drawPending :: CLIConfig -> PendingMsg -> Widget ResourceName
-drawPending cfg pm =
-  padLeftRight 1 $
-    padTopBottom 1 $
-      vBox
-        [ messageHeader (configTimestamps cfg) "assistant" (pmContent pm) (pmStart pm)
-        , messageBody (configMarkdown cfg) "assistant" (pmContent pm <> "▍") Nothing FoldCollapsed
-        ]
+-- | drawPending 见 UI.Brick.Draw.Messages。
 
 drawInput :: AppState -> Widget ResourceName
 drawInput st =
