@@ -401,46 +401,59 @@ handleEvent（永远最后——它调用其余全部）
 
 ## 9. 状态跟踪
 
-- [x] 批次 0-a：`UI.Render.Spans`（`65d53b7`）
-- [x] 批次 0-b：`UI.Brick.Draw.Status` 文本层（`237d487`）
-- [x] 批次 1：`drawStatus` 完整迁移（`1755d7d`，含 13 个 `status*`）
-- [x] 批次 2：侧栏与对话框（`UI.Brick.Draw.{Sidebar,Dialog,Settings}` + `UI.Render.Settings`）
-- [x] 批次 3：消息区渲染（`fc12937`/`a0633b3`/`09808dd`）
-- [ ] 批次 4：交互层——**大部分完成**（`UI.Brick` 4414 → 2923，-33.8%）
-  - [x] `UI.Brick.Input`（`cdb7909`）：promptIsEmpty/editorValue/editorCursor/alwaysConfirmText
-  - [x] `UI.Brick.DialogKeys`（`6e1aaa5`/`7cc3527`/`3bb87d6`）：dialogAppend/dialogDelete/withCommands/modifyTop/scrollBottom/persistSelection/chooseProvider
-  - [x] `UI.Brick.Toast`（`bd85b22`）：showToast
-  - [x] `UI.Brick.RunControl`（`099fbef`/`7383fd6`/`53c229b`）：中断审批组 6 个 + runShellCommand + approveAndRun
-  - [x] `UI.Brick.Apply`（`a8337a4`/`de44aeb`/`70a2147`）：applyLanguage/applyTheme/openSettingsPanel/modeAction
-  - [x] `UI.Brick.Selection`（`4be82a9`）：选区组 7 个 + copyToClipboard
-  - [x] `UI.Brick.MessageOps`（`e75d246`/`f9de435`）：now/appendMsg/setWindowTitle
-  - [x] `UI.Brick.SessionView`（`5430ee8`/`dc7b41a`/`dcc9e98`）：localSessionLines/blocksToMessages/refreshSidebar
-  - [x] `UI.Brick.Chat`（`49d9d53`）：handleChatWith（84 行）
-  - [ ] **阶段 3 最后一项**：`resumeSession`（167 行，`Brick.hs` 450 起）
-  - [ ] 命令面板组（`paletteItemsFor`/`refreshPalette`/`movePalette`/`runPaletteItem`）
-  - [ ] `dialogActivate`(802)/`handleDialogKey`(755)/`handleChatKey`(915)/`handleChatEnter`(1035)
-  - [ ] `handleSlash`（503 行，2073 起）——等上述依赖全部外置后才可搬
-  - [ ] `handleEvent`（最后，总入口）
+**全部完成**：`UI.Brick` 4414 → 573 行（-87.0%），只剩 8 个装配层定义。
 
-**搬一个函数的固定四处改动**（本会话反复踩坑后的结论）：
+| 批次 | 状态 | 模块 |
+|---|---|---|
+| 0-a | ✅ `65d53b7` | `UI.Render.Spans` |
+| 0-b | ✅ `237d487` | `UI.Brick.Draw.Status` 文本层 |
+| 1 | ✅ `1755d7d` | `drawStatus` + 13 个 `status*` |
+| 2 | ✅ | `UI.Brick.Draw.{Sidebar,Dialog,Settings}` + `UI.Render.Settings` |
+| 3 | ✅ | `UI.Brick.Draw.Messages`（消息区 + drawUI） |
+| 4 | ✅ | 交互层 16 个模块（见下） |
+| 5 | ✅ `ae6e3c2` | `UI.Brick.Slash`（handleSlash，489 行） |
+
+**批次 4 的 16 个模块**：
+
+| 模块 | 提交 | 内容 |
+|---|---|---|
+| `UI.Brick.Input` | `cdb7909` | 纯判定：promptIsEmpty/editorValue/editorCursor |
+| `UI.Brick.DialogKeys` | `6e1aaa5` | 对话框操作 + scrollBottom/persistSelection/chooseProvider/selectSkill |
+| `UI.Brick.Toast` | `bd85b22` | showToast |
+| `UI.Brick.Apply` | `a8337a4` | applyLanguage/applyTheme/openSettingsPanel/modeAction |
+| `UI.Brick.Selection` | `4be82a9` | 选区 7 个 + 卡片焦点 3 个 |
+| `UI.Brick.MessageOps` | `e75d246` | now/appendMsg/setWindowTitle |
+| `UI.Brick.SessionView` | `5430ee8` | 会话列表/回放/侧栏刷新/resumeSession |
+| `UI.Brick.Chat` | `49d9d53` | handleChatWith |
+| `UI.Brick.RunControl` | `099fbef` | 中断审批 6 个 + runShellCommand + approveAndRun |
+| `UI.Brick.Wizard` | `36f0eaa` | 供应商向导 6 个 |
+| `UI.Brick.DialogActivate` | `8d9c450` | dialogActivate + handleDialogKey + 3 个供应商动作 |
+| `UI.Brick.Palette` | `94d6c05` | 命令面板 6 个 |
+| `UI.Brick.InputOps` | `7420d5a` | 粘贴/清屏/转向/语音 7 个 |
+| `UI.Brick.ChatKeys` | `5bf87f6` | handleChatKey/Enter + 提交路径 8 个 |
+| `UI.Brick.KeyDispatch` | `93552b3` | 全局键位 + handleSettingsKey + handleEvent |
+| `UI.Brick.AppEvent` | `2236974` | handleAppEvent（351 行）+ 流式处理 + renderToolEvent |
+
+**`UI.Brick` 最终只剩 8 个定义**：
 
 ```
-① 原处删除定义   ② 原处 import 补符号
-③ 新处实现 + 导出 ④ 新处 import 补依赖
+sandboxOn / initialState / appFor / themeAttrMap
+toVtyAttr / toVtyStyle / vtyFg / runTUI
 ```
 
-少一处就编译不过。前三处是 `helpTextFor` 一次踩全的。
+**本会话沉淀的三条教训**：
 
-**边界锚点只认函数名，不认注释**：`handleChatWith` 那次用
-`-- | Send a chat message` 当起点，结果删掉了相邻的 `handleChat` 与
-`expandFileReferences`（126 行），靠 `git checkout` 回退后改用
-`handleChatWith ::` 才对。
-- [ ] 批次 5：命令层（`handleSubmit`/`handleSlash` 861 行/`runShellCommand`）
-- [ ] 批次 5b：命令定义单一来源 + 一致性测试（**建议优先于批次 5 主体**）
+1. **搬一个函数要同步改四处**：原处删除 / 原处 import / 新处实现+导出 /
+   新处 import 补依赖。少一处就编译不过（`helpTextFor` 一次踩全三处）。
 
-**2026-11-04 的两次纠错记录**：
+2. **边界锚点只认函数名，不认注释**：`handleChatWith` 那次用
+   `-- | Send a chat message` 当起点，误删相邻的 `handleChat` 与
+   `expandFileReferences`（126 行），靠 `git checkout` 回退后改用
+   `handleChatWith ::` 才对。注释块还经常让行数估算偏大一倍以上
+   （`resumeSession` 估 167 实际 90，`blocksToMessages` 估 90 实际 9）。
 
-1. 「批次 4 存在强连通环」——**错误**。实测 `rg` 统计证明 `handleSlash` 不回调
-   `dialogActivate`，依赖是单向 DAG。
-2. 「`handleSlash` 90+ 分支、900+ 行」——**高估**。实测 861 行、28 个字面分支、
-   41 个命令名。
+3. **新模块一律照抄 `Brick.hs` 的 import 段，不要手写精简版**：
+   `ChatKeys` 那次手写精简 import，逐轮补了 5 次仍有 15 个错误；改整段
+   照抄后一次收敛。**副作用**：照抄会把「其他新模块」也带进来，可能造成
+   循环（`AppEvent ↔ KeyDispatch` 就是这么来的），搬完要检查新模块之间的
+   import 方向。
