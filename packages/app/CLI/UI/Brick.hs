@@ -83,6 +83,7 @@ import UI.Brick.Selection
   ( beginSel, extendSel, copySelectionText, finishSel, copyToClipboard )
 import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
+import UI.Brick.SessionView (localSessionLines)
 import UI.Brick.RunControl
   ( decideApprovalNow, escapeHierarchy, escapeWithoutApproval, requestInterrupt
   , requestStopServices, stopServicesAndHalt )
@@ -526,16 +527,7 @@ setWindowTitle t = do
 -- | applyLanguage / applyTheme 见 UI.Brick.Apply。
 
 -- | Numbered listing of local sessions (mirrors the REPL format).
-localSessionLines :: Lang -> [SessionSummary] -> [Text]
-localSessionLines lang sessions =
-  [ "  [" <> T.pack (show (i :: Int)) <> "] " <> ssTitle s
-      <> "  (" <> T.pack (ssId s)
-      <> maybe "" (\m -> " · " <> m) (ssModel s)
-      <> " · " <> T.pack (show (ssTurns s)) <> tr lang " turn(s)"
-      <> maybe "" (\tok -> " · " <> T.pack (show tok) <> " tok") (ssUsage s)
-      <> maybe "" (\ts -> " · " <> ts) (ssLastTs s)
-      <> ")"
-  | (i, s) <- zip [1 :: Int ..] sessions ]
+-- | localSessionLines 见 UI.Brick.SessionView。
 
 -- | Turn replay blocks into chat messages for the message area.
 blocksToMessages :: [ReplayBlock] -> [ChatMessage]

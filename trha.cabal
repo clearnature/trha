@@ -313,6 +313,7 @@ executable trha
     UI.Brick.Selection
     UI.Brick.MessageOps
     UI.Brick.RunControl
+    UI.Brick.SessionView
     UI.Brick.Apply
     UI.Render.ToolSummary
     UI.Render.Message
