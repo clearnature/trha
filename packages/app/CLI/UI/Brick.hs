@@ -48,7 +48,7 @@ import Core.Transcript (listLocalSessions, listLocalSessionsIn, loadTranscript, 
 import UI.Commands (executeCommand, runSettingsCommand, runLocalShell, resumeSessions, resumeMessages)
 import UI.Commands.Registry
     ( Command(..), parseCommandWith, pickerItems, pickerItemsGrouped
-    , groupKey, groupTitle, registryHelp )
+    , groupKey, groupTitle, helpTextFor, registryHelp )
 import UI.SettingsView (SettingsEntry(..), settingsEntries, filterEntries, isOverridden, maskSecret)
 import UI.State
 import UI.StatusInfo (StatusRow(..), collectStatusInfo)
@@ -2706,32 +2706,7 @@ stashListing _ entries =
     | (i, e) <- zip [(1 :: Int) ..] entries ]
 
 -- | Localised /help text (command list + picker/key hints).
-helpTextFor :: Lang -> Text
-helpTextFor lang = T.unlines $
-  T.lines (registryHelp lang)
-    ++ [ ""
-       , tr lang "Quick picker:"
-       , tr lang "  Type a slash prefix and press Enter to open the command menu;"
-       , tr lang "  keep typing to filter, ↑/↓ to move, Enter to run, Esc to close."
-       , ""
-       , tr lang "Keys:"
-       , tr lang "  PgUp / PgDn       Scroll messages"
-       , tr lang "  Ctrl+Home / End   Jump to top / bottom"
-       , tr lang "  Ctrl+O            Fold / expand thinking and tool cards"
-       , tr lang "  Alt+↑ / Alt+↓     Move the tool-card focus"
-       , tr lang "  Shift+Tab         Cycle permission posture"
-       , tr lang "  Ctrl+Y            Toggle YOLO"
-       , tr lang "  Esc Esc           Interrupt the running turn"
-       , tr lang "  Ctrl+C            Interrupt · copy selection · clear draft · quit"
-       , tr lang "  Ctrl+S            Submit the draft (same as Enter)"
-       , tr lang "  Ctrl+Enter        Steer the running turn with the draft"
-       , tr lang "  Ctrl+L            Clear the transcript view (history kept)"
-       , tr lang "  Alt+V             Paste clipboard text"
-       , tr lang "  Ctrl+G            Expand folded pastes"
-       , tr lang "  Ctrl+B            Show / hide the sidebar"
-       , tr lang "  Ctrl+X            Leader (b/p/m/s/,/?/i)"
-       , tr lang "  Ctrl+Q / Ctrl+D   Quit"
-       ]
+-- | helpTextFor 见 UI.Commands.Registry。
 
 
 -- /settings panel -- port of the qwen-code SettingsDialog interaction:

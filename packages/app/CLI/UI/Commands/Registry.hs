@@ -34,6 +34,7 @@ module UI.Commands.Registry
   , completions
   , isKnownCommand
   , registryHelp
+  , helpTextFor
   ) where
 
 import Data.Aeson (Value(..), object, toJSON, (.=))
@@ -687,3 +688,34 @@ settingsSchemaJson = TE.decodeUtf8 (BL.toStrict (Aeson.encode rows))
                ]
            | (k, kind, desc) <- settingKeyDocs
            ]
+
+-- | @/help@ 的完整输出：命令分类表 + 键位表。
+--
+-- 纯函数（只依赖同模块的 'registryHelp' 与翻译表），从 @UI.Brick@ 拆出后
+-- 可以脱离终端单测——命令清单与键位说明都不该需要真终端才能验证。
+helpTextFor :: Lang -> Text
+helpTextFor lang = T.unlines $
+  T.lines (registryHelp lang)
+    ++ [ ""
+       , tr lang "Quick picker:"
+       , tr lang "  Type a slash prefix and press Enter to open the command menu;"
+       , tr lang "  keep typing to filter, ↑/↓ to move, Enter to run, Esc to close."
+       , ""
+       , tr lang "Keys:"
+       , tr lang "  PgUp / PgDn       Scroll messages"
+       , tr lang "  Ctrl+Home / End   Jump to top / bottom"
+       , tr lang "  Ctrl+O            Fold / expand thinking and tool cards"
+       , tr lang "  Alt+↑ / Alt+↓     Move the tool-card focus"
+       , tr lang "  Shift+Tab         Cycle permission posture"
+       , tr lang "  Ctrl+Y            Toggle YOLO"
+       , tr lang "  Esc Esc           Interrupt the running turn"
+       , tr lang "  Ctrl+C            Interrupt · copy selection · clear draft · quit"
+       , tr lang "  Ctrl+S            Submit the draft (same as Enter)"
+       , tr lang "  Ctrl+Enter        Steer the running turn with the draft"
+       , tr lang "  Ctrl+L            Clear the transcript view (history kept)"
+       , tr lang "  Alt+V             Paste clipboard text"
+       , tr lang "  Ctrl+G            Expand folded pastes"
+       , tr lang "  Ctrl+B            Show / hide the sidebar"
+       , tr lang "  Ctrl+X            Leader (b/p/m/s/,/?/i)"
+       , tr lang "  Ctrl+Q / Ctrl+D   Quit"
+       ]
