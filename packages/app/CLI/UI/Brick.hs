@@ -79,6 +79,8 @@ import UI.Brick.DialogKeys
   , scrollBottom, withCommands )
 import UI.Brick.Apply (applyLanguage, applyTheme)
 import UI.Brick.Toast (showToast)
+import UI.Brick.Selection
+  ( beginSel, extendSel, copySelectionText, finishSel, copyToClipboard )
 import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
 import UI.Brick.Draw.Messages
@@ -625,84 +627,11 @@ appendMsg msg = modify $ \st ->
   in st { appMessages = appMessages st ++ [msg { msgId = i }]
         , appNextMsgId = i + 1 }
 
--- | Message under a screen row (approximate: content lines + 2).
-msgIndexAt :: Int -> AppState -> Maybe Int
-msgIndexAt y st =
-  let hs = [ msgHeight st m | m <- appMessages st ]
-      tops = scanl (+) 0 hs
-  in listToMaybe [ i | i <- [0 .. length hs - 1], y >= tops !! i, y < tops !! (i + 1) ]
-
--- | Screen rows a message occupies (a folded reasoning block is one line).
-msgHeight :: AppState -> ChatMessage -> Int
-msgHeight st m
-  | msgRole m == "thinking"
-  , Map.lookup (msgId m) (appFolds st) /= Just FoldExpanded = 1
-  | otherwise = max 1 (length (T.lines (msgContent m))) + 2
+-- | msgIndexAt / msgHeight 见 UI.Brick.Selection。
 
 -- | inSel / drawMessages 见 UI.Brick.Draw.Messages。
 
--- | A terminal row → the message area's row: the box border + title take two
--- rows, and the viewport may be scrolled.  Without this every click landed on
--- the wrong message, so the thinking triangle never toggled.
-msgRowAt :: Int -> EventM ResourceName AppState Int
-msgRowAt y = do
-  st <- get
-  -- The message box contributes a border + title (2 rows); a visible toast
-  -- adds its own 3-row box above it.
-  let toastRows = maybe 0 (const 3) (appToast st)
-  pure (max 0 (y - 2 - toastRows))
-
-beginSel :: Int -> EventM ResourceName AppState ()
-beginSel y = do
-  st <- get
-  rel <- msgRowAt y
-  let i = fromMaybe 0 (msgIndexAt rel st)
-  modify $ \s -> s { appSelStart = Just i, appSelEnd = Just i }
-
-extendSel :: Int -> EventM ResourceName AppState ()
-extendSel y = do
-  st <- get
-  rel <- msgRowAt y
-  case appSelStart st of
-    Nothing -> return ()
-    Just _  -> modify $ \s -> s { appSelEnd = Just (fromMaybe 0 (msgIndexAt rel s)) }
-
--- | 复制当前选区的文本。@clearSel@ 决定复制后是否清空选区：
--- 鼠标松开时保留高亮（用户还能接着调整，Ctrl+C 才清掉），Ctrl+C 复制后清空。
-copySelectionText :: Bool -> EventM ResourceName AppState ()
-copySelectionText clearSel = do
-  st <- get
-  case appSelStart st of
-    Nothing -> pure ()
-    Just a0 -> do
-      let b0 = fromMaybe a0 (appSelEnd st)
-          lo = min a0 b0
-          hi = max a0 b0
-          txt = T.intercalate "\n\n"
-                  [ msgContent m | m <- appMessages st, msgId m >= lo, msgId m <= hi ]
-      when (not (T.null (T.strip txt))) $ do
-        ok <- liftIO (copyToClipboard txt)
-        showToast (if ok then "Copied" else "Clipboard unavailable")
-      when clearSel $
-        modify $ \s -> s { appSelStart = Nothing, appSelEnd = Nothing }
-
-finishSel :: Int -> EventM ResourceName AppState ()
-finishSel y = do
-  st <- get
-  case appSelStart st of
-    Nothing -> return ()
-    Just a0 -> do
-      let b0 = fromMaybe a0 (appSelEnd st)
-          lo = min a0 b0
-          hi = max a0 b0
-          isThinking = any (\m -> msgId m == a0 && msgRole m == "thinking") (appMessages st)
-      if a0 == b0 && isThinking
-        then modify $ \s -> s
-               { appFolds = Map.alter (Just . toggleFold . fromMaybe FoldCollapsed) a0 (appFolds s)
-               , appSelStart = Nothing, appSelEnd = Nothing }
-        -- 松开鼠标时复制但**保留**选区：高亮还在，Ctrl+C 仍可复制，
-        -- 也还能继续拖选调整。清空只发生在 Ctrl+C 之后。
-        else copySelectionText False
+-- | msgRowAt / beginSel / extendSel / copySelectionText / finishSel 见 UI.Brick.Selection。
 
 -- | scrollBottom 见 UI.Brick.DialogKeys。
 
@@ -3183,22 +3112,7 @@ todoGlyph TodoPending    = "○"
 todoGlyph TodoInProgress = "◐"
 todoGlyph TodoDone       = "●"
 
--- | Try the usual clipboard helpers in order; 'False' when none exists.
-copyToClipboard :: Text -> IO Bool
-copyToClipboard txt = go
-  [ ("wl-copy", [])
-  , ("xclip", ["-selection", "clipboard"])
-  , ("xsel", ["--clipboard", "--input"])
-  , ("pbcopy", [])
-  ]
-  where
-    go [] = return False
-    go ((cmd, args) : rest) = do
-      r <- try (readProcessWithExitCode cmd args (T.unpack txt))
-             :: IO (Either IOException (ExitCode, String, String))
-      case r of
-        Right (ExitSuccess, _, _) -> return True
-        _ -> go rest
+-- | copyToClipboard 见 UI.Brick.Selection。
 
 -- | Ctrl+V: attach a clipboard image.  The image is saved under
 -- ~/.trha/paste and inserted as a path reference (the read tool can open
