@@ -180,53 +180,7 @@ handleStreamEvent (EvResponse result) = Just $ case result of
       appendDelta text
       scrollBottom
     ChunkToolCall n as -> addToolLine n as >> scrollBottom
-    ChunkDone usage    -> do
-      let real = usageTotalTokens usage > 0
-          hit = usageCacheHitTokens usage
-          miss = usageCacheMissTokens usage
-          cacheSeen = real && hit + miss > 0
-      st0 <- get
-      t1 <- liftIO getCurrentTime
-      let elapsed = maybe 0 (\t0 -> realToFrac (diffUTCTime t1 t0)) (appTurnStart st0)
-                    :: Double
-          tps = if real && elapsed > 0 && usageCompletionTokens usage > 0
-                  then Just (fromIntegral (usageCompletionTokens usage) / elapsed)
-                  else appLastTps st0
-          -- Same numerator, but the clock starts at the first token: this is
-          -- the number a provider's own dashboard reports as "t/s".
-          decodeTps = case (appFirstToken st0, usageCompletionTokens usage) of
-            (Just tFirst, n) | real && n > 0 ->
-              let d = realToFrac (diffUTCTime t1 tFirst) :: Double
-              in if d > 0.02 then Just (fromIntegral n / d) else Nothing
-            _ -> appLastDecodeTps st0
-      modify $ \s -> s { appLastUsage = Just (usageTotalTokens usage)
-                       , appUsage = if real then Just usage else appUsage s
-                       , appCacheNow = if cacheSeen then Just (hit, miss) else appCacheNow s
-                       , appCacheSum = if cacheSeen
-                                         then let (h0, m0) = appCacheSum s
-                                              in (h0 + hit, m0 + miss)
-                                         else appCacheSum s
-                       , appCacheTurns = if cacheSeen
-                                           then appCacheTurns s + 1
-                                           else appCacheTurns s
-                       , appCtxUsed = if usagePromptTokens usage > 0
-                                        then Just (usagePromptTokens usage
-                                                   + usageCompletionTokens usage)
-                                        else appCtxUsed s
-                       , appLastTps = tps
-                       , appLastDecodeTps = decodeTps
-                       , appCostSum = appCostSum s + estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
-                       , appLastCost = estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
-                       , appSessTokens = appSessTokens s + usageTotalTokens usage
-                       , appFirstToken = Nothing
-                       , appTurnStart = Nothing }
-      flushPending (if real then Just usage else Nothing)
-      st3 <- get
-      let summary = turnSummary (pricesOf (appModel st3) (appEffCfg st3)) usage (usageReasoningTokens usage) t1
-      appendMsg (mkMsg "stats" summary "")
-      bell <- gets (configBell . appEffCfg)
-      when bell $ liftIO (putStr "\a" >> hFlush stdout)
-      scrollBottom
+    ChunkDone usage    -> finishTurn usage
   Left err -> do
     flushPending Nothing -- keep whatever partial content already arrived
     t <- liftIO now
@@ -295,3 +249,55 @@ handleStreamEvent (EvFinalReply text) = Just $ do
 -- | Tool-card message from a completed lifecycle event (with output
 -- preview lines from the kernel tail).
 handleStreamEvent _ = Nothing
+
+-- | 回合收尾：把累积的用量/耗时/缓存换算成统计字段，落盘并输出摘要。
+-- 从 handleStreamEvent 的 ChunkDone 分支提取——它是一个完整业务动作，
+-- 与「哪类 chunk 进来了」无关。
+finishTurn :: Usage -> EventM ResourceName AppState ()
+finishTurn usage = do
+  let real = usageTotalTokens usage > 0
+      hit = usageCacheHitTokens usage
+      miss = usageCacheMissTokens usage
+      cacheSeen = real && hit + miss > 0
+  st0 <- get
+  t1 <- liftIO getCurrentTime
+  let elapsed = maybe 0 (\t0 -> realToFrac (diffUTCTime t1 t0)) (appTurnStart st0)
+                :: Double
+      tps = if real && elapsed > 0 && usageCompletionTokens usage > 0
+              then Just (fromIntegral (usageCompletionTokens usage) / elapsed)
+              else appLastTps st0
+      -- Same numerator, but the clock starts at the first token: this is
+      -- the number a provider's own dashboard reports as "t/s".
+      decodeTps = case (appFirstToken st0, usageCompletionTokens usage) of
+        (Just tFirst, n) | real && n > 0 ->
+          let d = realToFrac (diffUTCTime t1 tFirst) :: Double
+          in if d > 0.02 then Just (fromIntegral n / d) else Nothing
+        _ -> appLastDecodeTps st0
+  modify $ \s -> s { appLastUsage = Just (usageTotalTokens usage)
+                   , appUsage = if real then Just usage else appUsage s
+                   , appCacheNow = if cacheSeen then Just (hit, miss) else appCacheNow s
+                   , appCacheSum = if cacheSeen
+                                     then let (h0, m0) = appCacheSum s
+                                          in (h0 + hit, m0 + miss)
+                                     else appCacheSum s
+                   , appCacheTurns = if cacheSeen
+                                       then appCacheTurns s + 1
+                                       else appCacheTurns s
+                   , appCtxUsed = if usagePromptTokens usage > 0
+                                    then Just (usagePromptTokens usage
+                                               + usageCompletionTokens usage)
+                                    else appCtxUsed s
+                   , appLastTps = tps
+                   , appLastDecodeTps = decodeTps
+                   , appCostSum = appCostSum s + estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
+                   , appLastCost = estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
+                   , appSessTokens = appSessTokens s + usageTotalTokens usage
+                   , appFirstToken = Nothing
+                   , appTurnStart = Nothing }
+  flushPending (if real then Just usage else Nothing)
+  st3 <- get
+  let summary = turnSummary (pricesOf (appModel st3) (appEffCfg st3)) usage (usageReasoningTokens usage) t1
+  appendMsg (mkMsg "stats" summary "")
+  bell <- gets (configBell . appEffCfg)
+  when bell $ liftIO (putStr "\a" >> hFlush stdout)
+  scrollBottom
