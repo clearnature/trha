@@ -71,6 +71,7 @@ import UI.Render.Sidebar (agentTreeLines)
 import System.Directory (getCurrentDirectory)
 import UI.Commands.Env (CmdEnv(..), dispatch)
 import UI.Commands.Meta (runMeta)
+import UI.Commands.Integration (runIntegration)
 import UI.Commands.Plan (approvePlanStep, decidePlanStep, runPlan)
 import UI.Commands.Session (friendlyDenyError, resumeMessages, resumeSessions, runSession)
 import UI.I18n (Lang(..), langName, parseLang, tr)
@@ -126,7 +127,7 @@ executeCommand :: Lang -> SchedulerBridge -> IORef (Maybe SessionId) -> IORef Te
 -- | Parse a loop interval: @30s@, @5m@, @1h@, or plain seconds.
 
 executeCommand lang bridge sessionRef modelRef cmd
-  | Just act <- dispatch [runMeta, runSession, runPlan] env cmd = act
+  | Just act <- dispatch [runMeta, runSession, runIntegration, runPlan] env cmd = act
   where env = CmdEnv lang bridge sessionRef modelRef
 
 
@@ -175,14 +176,6 @@ executeCommand _ _ _ modelRef (Fav arg) = do
       p' = toggleFavorite name p
   saveModelPrefs p'
   return $ Just ("favourite: " <> name)
-
-executeCommand _ _ _ _ Skills = do
-  cwd <- getCurrentDirectory
-  dirs <- skillDirs cwd
-  skills <- scanSkills dirs
-  return $ Just $ if null skills
-    then "No skills found (put SKILL.md under .agents/skills or .trha/skills)."
-    else T.unlines [ "  • " <> skName s <> " — " <> skDescription s | s <- skills ]
 
 executeCommand _ _ _ _ (SetCtx arg) = do
   cfg <- resolveConfig defaultCLIConfig
@@ -272,30 +265,6 @@ executeCommand _ _ _ _ CopyLast =
 executeCommand _ _ _ _ Verbose =
   return $ Just "Verbose is available in the TUI (/verbose)"
 
-executeCommand lang bridge sessionRef _ Todo = do
-  msid <- readIORef sessionRef
-  case msid of
-    Nothing -> return $ Just (tr lang "No active session.")
-    Just sid -> do
-      r <- fetchSessionInfo bridge sid
-      return $ Just $ case r of
-        Right info
-          | null (siTodos info) -> tr lang "No tasks"
-          | otherwise -> T.unlines
-              [ "  " <> glyph (todoStatus i) <> " " <> todoSubject i | i <- siTodos info ]
-        Left e -> T.pack (show e)
-  where
-    glyph TodoPending    = "○"
-    glyph TodoInProgress = "◐"
-    glyph TodoDone       = "●"
-
-executeCommand _ bridge _ _ Tree = do
-  r <- fetchAgents bridge
-  return $ Just $ case r of
-    Right [] -> "no agents"
-    Right as -> T.unlines (agentTreeLines Nothing as)
-    Left e   -> T.pack (show e)
-
 executeCommand lang _ _ _ ShowSettings = runSettingsCommand lang ""
 
 executeCommand lang bridge _ _ Providers = do
@@ -341,13 +310,6 @@ executeCommand lang bridge _ _ Doctor = do
     , tr lang "  context: " <> maybe (tr lang "model default") (T.pack . show) (configCtxSize cfg)
     , tr lang "  font: " <> fontLine
     ]
-
-executeCommand lang _ _ _ ShowMemory = do
-  entries <- allMemories
-  if null entries
-    then return $ Just $ tr lang "No memory notes yet (use /remember <text>)."
-    else return $ Just $ T.intercalate "\n\n"
-           [ "# " <> name <> "\n" <> body | (name, body) <- entries ]
 
 executeCommand lang bridge sessionRef _ ShowStats = do
   rows <- fetchUsageStats bridge
@@ -444,39 +406,6 @@ executeCommand lang _ _ _ (Currency arg) = do
       return $ Just $ tr lang "Currency base: " <> T.toUpper code
     _ -> return $ Just usage
 
-executeCommand lang bridge sessionRef _ (Workflow arg) = do
-  cur <- readIORef sessionRef
-  case cur of
-    Nothing -> return $ Just (tr lang "No active session.")
-    Just sid -> case T.words (T.strip arg) of
-      [] -> do
-        r <- listWorkflows bridge
-        return $ Just $ case r of
-          Left e -> tr lang "Error: " <> T.pack (show e)
-          Right [] -> tr lang "No workflows."
-          Right ws -> T.unlines
-            (tr lang "Workflows:" : [ "  " <> n <> "  " <> d | (n, d) <- ws ])
-      (name : rest) -> do
-        r <- runWorkflow bridge sid name (T.unwords rest)
-        return $ Just $ case r of
-          Left e -> tr lang "Error: " <> T.pack (show e)
-          Right reply -> reply
-
-executeCommand lang bridge sessionRef _ Graph = do
-  agents <- fetchAgents bridge
-  cur <- readIORef sessionRef
-  rows <- maybe (pure []) loadTranscript cur
-  let blocks = renderReplay rows
-      tools = [ nm | ReplayBlock { rbTool = Just (nm, _) } <- blocks ]
-      counts = Map.toList (Map.fromListWith (+) [ (nm, 1 :: Int) | nm <- tools ])
-      tree = case agents of
-        Left e -> [ "  ! " <> T.pack (show e) ]
-        Right as -> [ "  - " <> aeId a | a <- as ]
-  return $ Just $ T.unlines $
-    [ tr lang "Graph:", tr lang "  session: " <> maybe "-" T.pack cur ]
-    ++ [ "  - " <> T.pack nm <> " x" <> T.pack (show n) | (nm, n) <- counts ]
-    ++ tree
-
 executeCommand lang bridge _ _ (SwitchProvider Nothing) = do
   r <- listProviders bridge
   return $ Just $ case r of
@@ -492,19 +421,6 @@ executeCommand lang bridge _ _ (SwitchProvider (Just name)) = do
   return $ Just $ case r of
     Left e -> tr lang "Error: " <> T.pack (show e)
     Right _ -> tr lang "Switched to " <> T.strip name
-
-executeCommand lang bridge sessionRef _ GoalView = do
-  cur <- readIORef sessionRef
-  case cur of
-    Nothing -> return $ Just (tr lang "No active session.")
-    Just sid -> do
-      info <- fetchSessionInfo bridge sid
-      return $ Just $ case info of
-        Left e -> tr lang "Error: " <> T.pack (show e)
-        Right si -> T.unlines
-          [ tr lang "Goal: " <> fromMaybe (tr lang "none") (siGoal si)
-          , tr lang "Todos: " <> T.pack (show (length (siTodos si)))
-          ]
 
 executeCommand lang bridge _ _ (Auth arg) = do
   ps <- listProviders bridge
@@ -601,51 +517,6 @@ executeCommand lang _ _ _ ShowHistory = do
 
 -- | @/about@：版本、工作区与运行时信息。
 -- | @/forget <text>@：删除匹配的备注。
-executeCommand lang _ _ _ (Forget text)
-  | T.null (T.strip text) = return $ Just (tr lang "Usage: /forget <text>")
-  | otherwise = do
-      n <- forgetText (T.strip text)
-      return $ Just $ tr lang "Forgot " <> T.pack (show n) <> tr lang " note line(s)."
-
--- | @/reload-plugins@：重扫用户命令；scheduler 的插件目录本来就有 watcher。
-executeCommand lang _ _ _ ReloadPlugins = do
-  cmds <- loadCustomCommands
-  return $ Just $ tr lang "Reloaded user commands: " <> T.pack (show (length cmds))
-                   <> tr lang " (scheduler plugins hot-reload automatically)"
-
--- | @/init@：项目里没有 AGENTS.md 时写一份骨架；已有就不动它。
-executeCommand lang _ _ _ InitProject = do
-  cwd <- getCurrentDirectory
-  let target = cwd </> "AGENTS.md"
-  exists <- doesFileExist target
-  if exists
-    then return $ Just $ tr lang "AGENTS.md already exists: " <> T.pack target
-    else do
-      TIO.writeFile target initSkeleton
-      return $ Just $ tr lang "Wrote " <> T.pack target
-                       <> tr lang " — fill in build, test and conventions."
-
--- | @/review [path]@：把工作区（含已暂存）的 diff 交给模型评审。
-executeCommand lang bridge sessionRef modelRef (Review arg) = do
-  cwd <- getCurrentDirectory
-  let git xs = readCreateProcessWithExitCode (proc "git" ("-C" : cwd : xs)) ""
-      paths = map T.unpack (T.words arg)
-  (probeOut, _, _) <- git ["rev-parse", "--show-toplevel"]
-  case probeOut of
-    ExitFailure _ -> return $ Just $ tr lang "Not a git checkout: " <> T.pack cwd
-    ExitSuccess -> do
-      (_, unstaged, _) <- git (["diff"] <> paths)
-      (_, staged, _) <- git (["diff", "--cached"] <> paths)
-      let diffText = T.pack (unstaged <> staged)
-          clipped = if T.length diffText > 40000
-                      then T.take 40000 diffText <> "\n… (truncated)"
-                      else diffText
-      if T.null (T.strip diffText)
-        then return $ Just (tr lang "No uncommitted changes to review.")
-        else executeCommand lang bridge sessionRef modelRef
-               (SendMessage ("请审阅以下未提交的改动，指出问题与改进点：\n\n```diff\n"
-                             <> clipped <> "\n```"))
-
 executeCommand lang bridge sessionRef _ (Workspace mdir) = do
   cur <- readIORef sessionRef
   case cur of
@@ -677,30 +548,10 @@ executeCommand lang _ _ _ (OutputStyle arg) = do
              return $ Just $ tr lang "Output style: " <> v
            else return $ Just $ tr lang "Usage: /output-style [default|concise|detailed]"
 
-executeCommand lang bridge _ _ ShowMcp = do
-  (_, mcp) <- fetchServiceStatus bridge
-  return $ Just $ T.unlines (tr lang "MCP:" : map ("  " <>) mcp)
-
-executeCommand lang bridge _ _ ShowLsp = do
-  (lsp, _) <- fetchServiceStatus bridge
-  return $ Just $ T.unlines (tr lang "LSP:" : map ("  " <>) lsp)
-
 executeCommand lang _ _ _ ShowPresets =
   return $ Just $ T.unlines
     ( tr lang "Provider presets:" :
       [ "  " <> preName p <> " (" <> preKind p <> ") " <> preBaseUrl p | p <- presets ] )
-
-executeCommand lang _ _ _ ShowHooks = do
-  home <- getHomeDirectory
-  let dir = home </> ".trha" </> "hooks"
-  ok <- doesDirectoryExist dir
-  if not ok
-    then return $ Just (tr lang "No hooks.")
-    else do
-      fs <- listDirectory dir
-      return $ Just $ if null fs
-        then tr lang "No hooks."
-        else T.unlines (tr lang "Hooks:" : map T.pack fs)
 
 executeCommand lang bridge _ _ ShowUsage = do
   bal <- fetchBalance bridge
@@ -711,13 +562,6 @@ executeCommand lang bridge _ _ ShowUsage = do
     , tr lang "  balance: " <> either (const (tr lang "unavailable"))
         (\b -> balanceCurrency b <> " " <> T.pack (show (balanceTotal b))) bal
     ]
-
-executeCommand lang _ _ _ (Remember text) =
-  if T.null (T.strip text)
-    then return $ Just $ tr lang "Usage: /remember <text>"
-    else do
-      rememberText text
-      return $ Just $ tr lang "Remembered: " <> T.strip text
 
 executeCommand lang _ _ _ (SetLanguage Nothing) =
   return $ Just $ tr lang "Current language: " <> langName lang
@@ -739,16 +583,6 @@ executeCommand lang _ _ _ (SetSetting key raw)
       return $ Just (tr lang "Usage: /settings <key> <value>")
   | otherwise = runSettingsCommand lang (key <> " " <> raw)
 
-executeCommand lang bridge _ _ Plugins = do
-  result <- listPlugins bridge
-  return $ Just $ case result of
-    Right [] -> tr lang "No plugins registered."
-    Right ps -> (tr lang "Plugins:" <> "\n") <> T.unlines
-      [ "  - " <> pluginName p <> " " <> pluginVersion p
-          <> maybe "" (\d -> "  —  " <> d) (Just (pluginDescription p))
-      | p <- ps ]
-    Left err -> tr lang "Error: " <> T.pack (show err)
-
 executeCommand lang bridge sessionRef modelRef (RunCustom name args) = do
   cmds <- loadCustomCommands
   case [ cc | cc <- cmds, ccName cc == name ] of
@@ -764,12 +598,6 @@ executeCommand _ _ _ _ Sandbox = do
   let label = if state == "on" then "enabled" else "disabled"
   return $ Just ("SandBox: " <> label
     <> " (TUI: /sandbox opens the panel; the scheduler reads TRHA_SANDBOX)")
-
-executeCommand lang bridge _ _ Agents = do
-  r <- fetchAgents bridge
-  return $ Just $ case r of
-    Left err -> tr lang "Error: " <> T.pack (show err)
-    Right as -> T.unlines (tr lang "Agents:" : [ "  - " <> aeId a | a <- as ])
 
 executeCommand _ _ _ _ cmd =
   return $ Just ("Command not available in this front-end: " <> T.pack (show cmd))
@@ -813,25 +641,3 @@ jsonMaybeStr :: Text -> Object -> Maybe Text
 jsonMaybeStr k o = case KeyMap.lookup (AesonKey.fromText k) o of
   Just (String s) -> Just s
   _               -> Nothing
-
--- | @/init@ 写出的 AGENTS.md 骨架。initSkeleton :: Text
-initSkeleton = T.unlines
-  [ "# AGENTS.md"
-  , ""
-  , "本文件是 agent 的入口。请按项目实际情况补充下面几节。"
-  , ""
-  , "## 项目概况"
-  , ""
-  , "## 构建与测试"
-  , ""
-  , "```bash"
-  , "# 构建命令"
-  , "```"
-  , ""
-  , "## 约定"
-  , ""
-  ]
-
--- | Map the wire tool status to the card status type.
-
--- | One plan decision, rendered as a compact list.

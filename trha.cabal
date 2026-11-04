@@ -258,6 +258,7 @@ executable trha
     UI.Commands.Session
     UI.Commands.Plan
     UI.Commands.Helpers
+    UI.Commands.Integration
     Core.Bootstrap
     Core.HTTP
     Core.Transcript
