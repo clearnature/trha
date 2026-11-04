@@ -88,6 +88,7 @@ import UI.Brick.Slash.Ctx (CmdCtx(..))
 import UI.Brick.Slash.Info (handleInfoSlash)
 import UI.Brick.Slash.Lifecycle (handleLifecycleSlash)
 import UI.Brick.Slash.Session (handleSessionSlash)
+import UI.Brick.Slash.Workspace (handleWorkspaceSlash)
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
@@ -169,7 +170,8 @@ handleSlash input = do
       lang   = appLang st
       cx     = CmdCtx t st input cmd bridge chan lang
   case cmd of
-    _ | Just act <- msum [handleLifecycleSlash cx, handleInfoSlash cx, handleSessionSlash cx] -> act
+    _ | Just act <- msum [ handleLifecycleSlash cx, handleInfoSlash cx
+         , handleSessionSlash cx, handleWorkspaceSlash cx ] -> act
     _ | cmd == "/delete" || "/delete " `T.isPrefixOf` cmd -> do
       let sid = T.strip (T.drop (T.length "/delete") input)
       if T.null sid
@@ -245,30 +247,6 @@ handleSlash input = do
             modify $ \s -> s { appEffort = lvl }
             appendMsg (mkMsg "system" ("effort: " <> lvl) t)
           else appendMsg (mkMsg "error" ("Unknown effort: " <> lvl <> "  " <> shown) t)
-    "/home" -> do
-      cwd <- liftIO getCurrentDirectory
-      local <- liftIO (listLocalSessionsIn cwd)
-      modify $ \s -> s { appRoute = RouteHome, appRecent = local
-                       , appStatus = tr (appLang s) "Home" }
-    -- Human channel: move the session's workspace.  No tool reaches this
-    -- endpoint, so an agent cannot widen its own sandbox root.
-    "/workspace" -> do
-      st2 <- get
-      let arg = T.strip (T.drop (T.length "/workspace") input)
-      case appSessionId st2 of
-        Nothing -> appendMsg (mkMsg "system" (tr lang "No active session.") t)
-        Just sid
-          | T.null arg ->
-              appendMsg (mkMsg "system"
-                (tr lang "Usage: /workspace <absolute-path>  (shows the sandbox root)") t)
-          | otherwise -> do
-              r <- liftIO (setSessionCwd (appBridge st2) sid (T.unpack arg))
-              case r of
-                Left e -> appendMsg (mkMsg "error"
-                            (tr lang "Error: " <> T.pack (show e)) t)
-                Right p -> do
-                  modify $ \s -> s { appCwd = Just (T.pack p) }
-                  appendMsg (mkMsg "system" ("Workspace: " <> T.pack p) t)
     _ | cmd == "/fav" || "/fav " `T.isPrefixOf` cmd -> do
       st2 <- get
       let arg = T.strip (T.drop 4 input)
@@ -277,31 +255,6 @@ handleSlash input = do
       liftIO (saveModelPrefs prefs')
       modify $ \s -> s { appModelPrefs = prefs' }
       showToast (tr lang "Favourite: " <> name)
-    "/stash" -> do
-      st2 <- get
-      let rest = T.strip (T.drop 6 input)
-          entries = stashEntries (appStash st2)
-      case T.words rest of
-        [] -> case T.strip (editorValue st2) of
-          "" -> appendMsg (mkMsg "system"
-                  (tr lang "stash: " <> T.pack (show (length entries)) <> tr lang " drafts") t)
-          draft -> do
-            let st' = stashPush draft (appStash st2)
-            liftIO (saveStash st')
-            modify $ \s -> s { appStash = st', appInput = editorText InputArea (Just 1) "" }
-            showToast (tr lang "Draft stashed")
-        ("pop" : _) -> case stashPop (appStash st2) of
-          Nothing -> appendMsg (mkMsg "system" (tr lang "stash is empty") t)
-          Just (draft, st') -> do
-            liftIO (saveStash st')
-            modify $ \s -> s { appStash = st', appInput = editorText InputArea (Just 1) draft }
-            showToast (tr lang "Draft restored")
-        ("list" : _) -> appendMsg (mkMsg "system" (stashListing lang entries) t)
-        _ -> do
-          let st' = stashPush rest (appStash st2)
-          liftIO (saveStash st')
-          modify $ \s -> s { appStash = st' }
-          showToast (tr lang "Draft stashed")
     "/export" -> do
       st2 <- get
       case appSessionId st2 of
@@ -587,10 +540,3 @@ handleSlash input = do
 -- While the step runs, tool lifecycle events arrive over SSE; they are
 -- recorded to the transcript and surfaced through 'EvTool'.
 
--- | 草稿列表的编号预览（每行一条）。
-stashListing :: Lang -> [Text] -> Text
-stashListing lang [] = tr lang "stash is empty"
-stashListing _ entries =
-  T.unlines
-    [ T.pack (show i) <> ". " <> takeCells 60 (T.replace "\n" " " e)
-    | (i, e) <- zip [(1 :: Int) ..] entries ]
