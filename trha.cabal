@@ -255,6 +255,7 @@ executable trha
     UI.Commands.Registry
     UI.Commands.Env
     UI.Commands.Meta
+    UI.Commands.Session
     Core.Bootstrap
     Core.HTTP
     Core.Transcript
