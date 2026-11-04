@@ -253,6 +253,7 @@ executable trha
     Bridge.Scheduler.Session
     Bridge.Scheduler.Model
     Bridge.Scheduler.Plan
+    Bridge.Scheduler.Admin
     Config.Settings
     Config.Home
     Core.Args

@@ -30,6 +30,7 @@ test-suite trha-cli-test
     Bridge.Scheduler.Session
     Bridge.Scheduler.Model
     Bridge.Scheduler.Plan
+    Bridge.Scheduler.Admin
     BridgeDeltaSpec
     Core.SSE
     Core.SSESpec
