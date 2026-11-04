@@ -91,6 +91,7 @@ import UI.Brick.Slash.Session (handleSessionSlash)
 import UI.Brick.Slash.Config (handleConfigSlash)
 import UI.Brick.Slash.Integration (handleIntegrationSlash)
 import UI.Brick.Slash.Model (handleModelSlash)
+import UI.Brick.Slash.Plan (handlePlanSlash)
 import UI.Brick.Slash.Workspace (handleWorkspaceSlash)
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.RunControl
@@ -174,7 +175,7 @@ handleSlash input = do
       cx     = CmdCtx t st input cmd bridge chan lang
   case cmd of
     _ | Just act <- msum [ handleLifecycleSlash cx, handleInfoSlash cx, handleConfigSlash cx
-         , handleIntegrationSlash cx, handleModelSlash cx, handleSessionSlash cx, handleWorkspaceSlash cx ] -> act
+         , handleIntegrationSlash cx, handleModelSlash cx, handlePlanSlash cx, handleSessionSlash cx, handleWorkspaceSlash cx ] -> act
     _ | cmd == "/delete" || "/delete " `T.isPrefixOf` cmd -> do
       let sid = T.strip (T.drop (T.length "/delete") input)
       if T.null sid
@@ -294,38 +295,6 @@ handleSlash input = do
               appendMsg (mkMsg "system" ("exported → " <> T.pack path) t)
               showToast ("exported → " <> T.pack path)
             Left e   -> appendMsg (mkMsg "error" ("export failed: " <> T.pack (show e)) t)
-    "/approve" -> do
-      cur <- gets appSessionId
-      plan <- gets appPlan
-      case cur of
-        Nothing -> appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
-        Just sid -> case plan of
-          Just pv | pvPhase pv == "planning" -> do
-            -- multi-step plan: release the pending step, run it, report back
-            modify $ \s -> s { appBusy = True, appStatus = "Approving step..." }
-            void $ liftIO $ async $
-              writeBChan chan . EvPlanState =<< approveAndRun bridge sid
-          _ -> do
-            modify $ \s -> s { appBusy = True, appStatus = "Executing plan..." }
-            void $ liftIO $ async $ do
-              r <- approvePlan bridge sid
-              writeBChan chan (EvVerdict r)
-    "/deny" -> do
-      cur <- gets appSessionId
-      let reason = T.strip (T.drop 5 input)
-      case cur of
-        Nothing -> appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
-        Just sid -> do
-          -- 有 planning 计划时拒绝待审批步骤；没有就直接说清楚，
-          -- 不要拿内核的 400 "No pending approval" 当反馈。
-          plan <- liftIO (fetchPlan bridge sid)
-          case plan of
-            Right pv | pvPhase pv == "planning" -> do
-              void $ liftIO $ async $ do
-                r <- decideStep bridge sid "reject"
-                writeBChan chan (EvPlanState (fmap ((, Nothing)) r))
-            _ -> appendMsg (mkMsg "system"
-                   (tr lang "Nothing to deny — no pending plan or approval.") t)
     "/resume" -> do
       cwd <- liftIO getCurrentDirectory
       local <- liftIO (listLocalSessionsIn cwd)
