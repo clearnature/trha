@@ -253,6 +253,7 @@ executable trha
     Config.Home
     Core.Args
     UI.Commands.Registry
+    UI.Commands.Registry.Settings
     UI.Commands.Env
     UI.Commands.Meta
     UI.Commands.Session

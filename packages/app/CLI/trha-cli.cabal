@@ -75,6 +75,7 @@ test-suite trha-cli-test
     UI.CommandsSpec
     UI.Commands.RegistrySpec
     UI.Commands.Registry
+    UI.Commands.Registry.Settings
     UI.Commands.Env
     UI.Commands.Meta
     UI.Commands.Session
