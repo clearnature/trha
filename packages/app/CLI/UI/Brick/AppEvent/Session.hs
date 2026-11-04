@@ -165,7 +165,13 @@ import UI.Frecency (Frecency(..), emptyFrecency, recordUse, rankItems, loadFrece
 
 -- | 认领 EvSession / EvSessions / EvDeleted。
 handleSessionEvent :: AppEvent -> Maybe (EventM ResourceName AppState ())
-handleSessionEvent (EvSession result) = Just $ do
+handleSessionEvent (EvSession result) = Just $ onSessionCreated result
+handleSessionEvent (EvSessions result) = Just $ onSessionsListed result
+handleSessionEvent (EvDeleted sid) = Just $ onSessionDeleted sid
+handleSessionEvent _ = Nothing
+
+onSessionCreated :: Either CLIError SessionId -> EventM ResourceName AppState ()
+onSessionCreated result = do
   case result of
     Right sid -> do
       st <- get
@@ -190,7 +196,8 @@ handleSessionEvent (EvSession result) = Just $ do
       modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
   scrollBottom
 
-handleSessionEvent (EvSessions result) = Just $ do
+onSessionsListed :: Either CLIError [SessionId] -> EventM ResourceName AppState ()
+onSessionsListed result = do
   lang <- gets appLang
   t <- liftIO now
   case result of
@@ -205,10 +212,10 @@ handleSessionEvent (EvSessions result) = Just $ do
     Left err -> appendMsg (mkMsg "system" (tr lang "Error: " <> T.pack (show err)) t)
   scrollBottom
 
-handleSessionEvent (EvDeleted sid) = Just $ do
+onSessionDeleted :: SessionId -> EventM ResourceName AppState ()
+onSessionDeleted sid = do
   lang <- gets appLang
   t <- liftIO now
   appendMsg (mkMsg "system" (tr lang "Deleted session: " <> T.pack sid) t)
   showToast (tr lang "Deleted session: " <> T.pack sid)
   scrollBottom
-handleSessionEvent _ = Nothing
