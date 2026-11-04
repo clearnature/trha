@@ -177,16 +177,6 @@ handleSlash input = do
   case cmd of
     _ | Just act <- msum [ handleLifecycleSlash cx, handleInfoSlash cx, handleConfigSlash cx
          , handleIntegrationSlash cx, handleModelSlash cx, handlePlanSlash cx, handleSessionSlash cx, handleToolsSlash cx, handleWorkspaceSlash cx ] -> act
-    "/resume" -> do
-      cwd <- liftIO getCurrentDirectory
-      local <- liftIO (listLocalSessionsIn cwd)
-      if null local
-        then do
-          appendMsg (mkMsg "system" (tr lang "No local sessions in this directory yet.") t)
-          appendMsg (mkMsg "system" (tr lang "/resume --all shows sessions from other (or older) projects.") t)
-        else do
-          appendMsg (mkMsg "system" ("Local sessions:\n" <> T.unlines (localSessionLines (appLang st) local)) t)
-          appendMsg (mkMsg "system" (tr lang "Resume with /resume <number-or-id>  (/resume --all for every project).") t)
     _ 
       | otherwise -> case parseCommandWith (map ccName (appCustomCmds st)) input of
           Unknown _ ->

@@ -251,4 +251,14 @@ handleSessionSlash cx = case cxCmd cx of
               void $ liftIO $ async $ do
                 _ <- deleteSession (cxBridge cx) sid
                 writeBChan (cxChan cx) (EvDeleted sid)
+    "/resume" -> Just $ do
+      cwd <- liftIO getCurrentDirectory
+      local <- liftIO (listLocalSessionsIn cwd)
+      if null local
+        then do
+          appendMsg (mkMsg "system" (tr (cxLang cx) "No local sessions in this directory yet.") (cxTime cx))
+          appendMsg (mkMsg "system" (tr (cxLang cx) "/resume --all shows sessions from other (or older) projects.") (cxTime cx))
+        else do
+          appendMsg (mkMsg "system" ("Local sessions:\n" <> T.unlines (localSessionLines (appLang (cxState cx)) local)) (cxTime cx))
+          appendMsg (mkMsg "system" (tr (cxLang cx) "Resume with /resume <number-or-id>  (/resume --all for every project).") (cxTime cx))
     _ -> Nothing
