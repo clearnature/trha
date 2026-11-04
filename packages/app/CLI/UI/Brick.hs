@@ -88,7 +88,8 @@ import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.Slash (handleSlash)
-import UI.Brick.Wizard (finishWizard, invalidJson, refreshWizardInput)
+import UI.Brick.Wizard
+  ( commitWizard, finishWizard, invalidJson, refreshWizardInput )
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
   , requestInterrupt, requestStopServices, runShellCommand, stopServicesAndHalt )
@@ -1187,29 +1188,7 @@ startWizard existing = do
 -- | refreshWizardInput 见 UI.Brick.Wizard。
 
 -- | Take the editor's text as the current field and advance (or save).
-commitWizard :: EventM ResourceName AppState ()
-commitWizard = do
-  st <- get
-  case appWizard st of
-    Nothing -> return ()
-    Just w -> do
-      let value = T.strip (editorValue st)
-          w' = wizardSet (pwStep w) value w
-      if pwStep w >= 14
-        then
-          -- A malformed JSON object must not be silently dropped: keep the
-          -- wizard open and say which field is wrong.
-          if invalidJson (pwHeaders w') || invalidJson (pwExtraBody w')
-            then modify $ \s -> s
-                   { appStatus = tr (appLang s)
-                       "Invalid JSON in extra headers/body (use a JSON object or leave it blank)" }
-            else finishWizard w'
-        else do
-          let n = pwStep w + 1
-          modify $ \s -> s { appStatus = tr (appLang s) "Provider wizard "
-                                 <> T.pack (show (n + 1)) <> "/15: "
-                                 <> wizardPrompts !! n }
-          refreshWizardInput w' { pwStep = n }
+-- | commitWizard 见 UI.Brick.Wizard。
 
 -- | A non-blank field that does not decode as JSON.
 -- | invalidJson 见 UI.Brick.Wizard。
