@@ -75,9 +75,9 @@ import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Selection (inSelRange)
 import UI.Brick.Draw.Messages
-  ( cardHidden, diffWidget, drawInput, drawMessage, drawMessages, drawPending
-  , drawPlanCard, messageBody, messageHeader, renderBlocks, renderToolBody
-  , roleStyle )
+  ( cardHidden, diffWidget, drawHome, drawInput, drawMessage, drawMessages
+  , drawPending, drawPlanCard, messageBody, messageHeader, renderBlocks
+  , renderToolBody, roleStyle )
 import UI.Brick.Draw.Settings (drawSettingsPanel, settingsListMax, settingsRows, visibleRows)
 import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar, sidebarDataFor)
 import UI.Brick.Draw.Status
@@ -452,35 +452,7 @@ drawToast (msg, _) =
 
 -- | Home route: logo, recent sessions, and hints.  Submitting a message (or
 -- resuming) moves to the session view (MiMo's home route).
-drawHome :: AppState -> Widget ResourceName
-drawHome st =
-  padAll 1 $
-    vBox $
-      [ withAttr (attrName "title") $ vBox (map str logoLines)
-      , padTop (Pad 1) $ withAttr (attrName "system") $
-          strWrap (T.unpack (tr (appLang st) "Type a message to start a new session, or /resume to continue one."))
-      , padTop (Pad 1) $ withAttr (attrName "header") $
-          str (T.unpack (tr (appLang st) "Recent sessions"))
-      ]
-      ++ recentLines
-      ++ [ padTop (Pad 1) $ withAttr (attrName "timestamp") $
-             strWrap (T.unpack (tr (appLang st) "Shift+Tab switches the permission posture; /help lists commands.")) ]
-  where
-    recentLines = case take 6 (appRecent st) of
-      [] -> [ padLeft (Pad 2) $ withAttr (attrName "timestamp") $
-                str (T.unpack (tr (appLang st) "No local sessions yet.")) ]
-      xs -> [ padLeft (Pad 2) $
-                hBox [ withAttr (attrName "user") (str ("• " ++ T.unpack (ssTitle s)))
-                     , withAttr (attrName "timestamp") (str ("  " ++ ssId s)) ]
-            | s <- xs ]
-    logoLines =
-      [ "  ████████╗██████╗ ██╗  ██╗ █████╗ "
-      , "  ╚══██╔══╝██╔══██╗██║  ██║██╔══██╗"
-      , "     ██║   ██████╔╝███████║███████║"
-      , "     ██║   ██╔══██╗██╔══██║██╔══██║"
-      , "     ██║   ██║  ██║██║  ██║██║  ██║"
-      , "     ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝"
-      ]
+-- | drawHome 见 UI.Brick.Draw.Messages。
 
 -- | The sidebar card: Context, TODO and Session sections.
 --

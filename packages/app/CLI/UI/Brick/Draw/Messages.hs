@@ -16,6 +16,7 @@ module UI.Brick.Draw.Messages
   , drawMessage
   , drawMessages
   , drawInput
+  , drawHome
   , drawPlanCard
   , drawPending
   ) where
@@ -30,9 +31,11 @@ import qualified Data.Map.Strict as Map
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (^.))
 
+import Core.SessionSummary (SessionSummary(..))
 import Core.Types (CLIConfig(..), PlanStepView(..), PlanView(..))
 import Brick.Widgets.Edit (getEditContents, renderEditor)
 import UI.Event (PendingMsg(..), RunState(..), runState)
+import UI.I18n (tr)
 import UI.Render.Diff
   ( DiffClass(..), DiffLayout(..), DiffRow(..), diffClass, diffLayout
   , looksLikeDiff, numberDiff, renderDiffRow )
@@ -404,3 +407,40 @@ drawPlanCard pv =
 
 -- | 状态栏第 2 行的统计段：缓存 / 上下文 / 压缩 / 吞吐 / token / 成本 / 余额 / 峰谷。
 --
+
+drawHome :: AppState -> Widget ResourceName
+drawHome st =
+  padAll 1 $
+    vBox $
+      [ withAttr (attrName "title") $ vBox (map str logoLines)
+      , padTop (Pad 1) $ withAttr (attrName "system") $
+          strWrap (T.unpack (tr (appLang st) "Type a message to start a new session, or /resume to continue one."))
+      , padTop (Pad 1) $ withAttr (attrName "header") $
+          str (T.unpack (tr (appLang st) "Recent sessions"))
+      ]
+      ++ recentLines
+      ++ [ padTop (Pad 1) $ withAttr (attrName "timestamp") $
+             strWrap (T.unpack (tr (appLang st) "Shift+Tab switches the permission posture; /help lists commands.")) ]
+  where
+    recentLines = case take 6 (appRecent st) of
+      [] -> [ padLeft (Pad 2) $ withAttr (attrName "timestamp") $
+                str (T.unpack (tr (appLang st) "No local sessions yet.")) ]
+      xs -> [ padLeft (Pad 2) $
+                hBox [ withAttr (attrName "user") (str ("• " ++ T.unpack (ssTitle s)))
+                     , withAttr (attrName "timestamp") (str ("  " ++ ssId s)) ]
+            | s <- xs ]
+    logoLines =
+      [ "  ████████╗██████╗ ██╗  ██╗ █████╗ "
+      , "  ╚══██╔══╝██╔══██╗██║  ██║██╔══██╗"
+      , "     ██║   ██████╔╝███████║███████║"
+      , "     ██║   ██╔══██╗██╔══██║██╔══██║"
+      , "     ██║   ██║  ██║██║  ██║██║  ██║"
+      , "     ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝"
+      ]
+
+-- | The sidebar card: Context, TODO and Session sections.
+--
+-- The bottom line names the two shortcuts a first-time user needs: hiding
+-- the sidebar and leaving the TUI.
+-- | drawSidebar 见 UI.Brick.Draw.Sidebar。
+
