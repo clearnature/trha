@@ -94,6 +94,9 @@ import UI.Brick.DialogActivate
 import UI.Brick.Palette
   ( allPickerItems, movePalette, paletteItemsFor, refreshCompletion
   , refreshPalette, runPaletteItem )
+import UI.Brick.InputOps
+  ( clearView, insertPaste, pasteClipboardText, pasteImage, recordVoice
+  , recordVoiceNote, steerDraft )
 import UI.Brick.Slash (handleSlash)
 import UI.Brick.Wizard
   ( commitWizard, finishWizard, invalidJson, refreshWizardInput
@@ -1804,114 +1807,4 @@ gitStatText = do
 
 -- | copyToClipboard 见 UI.Brick.Selection。
 
--- | Ctrl+V: attach a clipboard image.  The image is saved under
--- ~/.trha/paste and inserted as a path reference (the read tool can open
--- it; the model's multimodal channel is not wired yet).
-pasteImage :: EventM ResourceName AppState ()
-pasteImage = do
-  lang <- gets appLang
-  r <- liftIO saveClipboardImage
-  case r of
-    Nothing -> showToast (tr lang "No image in clipboard")
-    Just path -> do
-      modify $ \s -> s
-        { appInput = editorText InputArea (Just 1)
-            (editorValue s <> " [image: " <> T.pack path <> "]") }
-      showToast (tr lang "Image saved: " <> T.pack path)
-
--- | ctrl+l：清空消息视图；历史保留在 transcript 里（/resume 仍可回放）。
-clearView :: EventM ResourceName AppState ()
-clearView = do
-  modify $ \s -> s { appMessages = [], appFolds = Map.empty, appCardFocus = Nothing }
-  scrollBottom
-
--- | ctrl+enter：把当前输入作为 steer 注入运行中的回合；空闲时忽略
--- （空闲下这个键多半是想换行，不能悄悄发出去）。
-steerDraft :: EventM ResourceName AppState ()
-steerDraft = do
-  st <- get
-  let input = T.strip (editorValue st)
-  case appSessionId st of
-    Just sid | appBusy st && not (T.null input) -> do
-      t0 <- liftIO now
-      ref <- liftIO (newIORef (Just sid))
-      mref <- liftIO (newIORef (appModel st))
-      r <- liftIO (executeCommand (appLang st) (appBridge st) ref mref (Steer input))
-      forM_ r $ \out -> appendMsg (mkMsg "system" out t0)
-      modify $ \s -> s { appInput = editorText InputArea (Just 1) "" }
-      scrollBottom
-    _ -> pure ()
-
--- | shift+insert：把剪贴板文本插到输入末尾。
--- | 粘贴一段文本：长内容折叠成占位符，短内容直接进编辑器。
--- 终端的 bracketed paste（EvPaste）与剪贴板粘贴（alt+v）共用这一条。
-insertPaste :: Text -> EventM ResourceName AppState ()
-insertPaste txt = do
-  st <- get
-  let n = appPasteSeq st + 1
-      nlines = T.count "\n" txt + 1
-      label = pasteLabel n nlines
-      folded = isLongPaste txt
-  modify $ \s -> s
-    { appPastes = if folded then appPastes s <> [(label, txt)] else appPastes s
-    , appPasteSeq = if folded then n else appPasteSeq s
-    , appInput = editorText InputArea (Just 1)
-        (editorValue s <> (if folded then label else txt)) }
-  refreshCompletion >> refreshPalette
-  scrollBottom
-
-pasteClipboardText :: EventM ResourceName AppState ()
-pasteClipboardText = do
-  st <- get
-  mt <- liftIO readClipboardText
-  case mt of
-    Nothing -> showToast (tr (appLang st) "No text on the clipboard")
-    Just txt -> insertPaste txt
-
--- | Ctrl+R: record a short voice note.  The recorder takes over the
--- terminal (arecord needs a device handle), then the saved path is inserted
--- as an attachment reference.  Transcription needs an external service.
-recordVoice :: EventM ResourceName AppState ()
-recordVoice = do
-  lang <- gets appLang
-  st <- get
-  resultVar <- liftIO newEmptyMVar
-  suspendAndResume $ do
-    r <- recordVoiceNote
-    putMVar resultVar r
-    pure st
-  r <- liftIO (takeMVar resultVar)
-  case r of
-    Nothing -> showToast (tr lang "Recording unavailable")
-    Just p -> do
-      -- Prefer the transcript; an unconfigured/failed ASR keeps the path so
-      -- the recording is never lost (MiMo's fallback behaviour).
-      transcript <- liftIO (transcribeVoice (appBridge st) (T.pack p))
-      case transcript of
-        Right text -> do
-          modify $ \s -> s
-            { appInput = editorText InputArea (Just 1) (editorValue s <> " " <> text) }
-          showToast (tr lang "Transcribed")
-        Left _ -> do
-          modify $ \s -> s
-            { appInput = editorText InputArea (Just 1)
-                (editorValue s <> " [voice: " <> T.pack p <> "]") }
-          showToast (tr lang "Voice saved: " <> T.pack p)
-
--- | Record 5 s of mono 16 kHz audio with arecord (ALSA).  'Nothing' when the
--- recorder or the input device is missing.
-recordVoiceNote :: IO (Maybe FilePath)
-recordVoiceNote = do
-  home <- getHomeDirectory
-  let dir = home </> ".trha" </> "voice"
-  createDirectoryIfMissing True dir
-  t <- getPOSIXTime
-  let out = dir </> ("voice-" <> show (round (t * 1000) :: Int) <> ".wav")
-  r <- try (readProcessWithExitCode "arecord"
-              ["-q", "-d", "5", "-f", "S16_LE", "-r", "16000", "-c", "1", out] "")
-         :: IO (Either IOException (ExitCode, String, String))
-  case r of
-    Right (ExitSuccess, _, _) -> do
-      sz <- getFileSize out `catch` \(_ :: IOException) -> pure 0
-      pure (if sz > 44 then Just out else Nothing)  -- 44 = WAV header
-    _ -> pure Nothing
+-- | 输入操作组见 UI.Brick.InputOps。
