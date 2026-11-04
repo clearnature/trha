@@ -77,7 +77,7 @@ import UI.Selection (inSelRange)
 import UI.Brick.DialogKeys
   ( chooseProvider, dialogAppend, dialogDelete, modifyTop, persistSelection
   , scrollBottom, withCommands )
-import UI.Brick.Apply (applyLanguage, applyTheme)
+import UI.Brick.Apply (applyLanguage, applyTheme, openSettingsPanel)
 import UI.Brick.Toast (showToast)
 import UI.Brick.Selection
   ( beginSel, extendSel, copySelectionText, finishSel, copyToClipboard )
@@ -2710,18 +2710,7 @@ stashListing _ entries =
 -- | settingsRows / visibleRows 见 UI.Brick.Draw.Settings。
 
 -- | Open the panel with a fresh effective configuration snapshot.
-openSettingsPanel :: EventM ResourceName AppState ()
-openSettingsPanel = do
-  st <- get
-  let chan = appChan st
-      model = appModel st
-      mSid = appSessionId st
-  cfg <- liftIO (resolveConfig defaultCLIConfig)
-  _ <- liftIO $ async $ do
-    rows <- collectStatusInfo cfg mSid model
-    writeBChan chan (EvStatusInfo rows)
-  modify $ \s -> s { appSettings = Just (SettingsPanel TabSettings FocusList 0 "" Nothing Nothing)
-                    , appEffCfg = cfg }
+-- | openSettingsPanel 见 UI.Brick.Apply。
 
 -- | Close the /settings panel.
 closeSettingsPanel :: EventM ResourceName AppState ()

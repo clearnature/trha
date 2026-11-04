@@ -7,19 +7,26 @@
 module UI.Brick.Apply
   ( applyLanguage
   , applyTheme
+  , openSettingsPanel
   ) where
 
 import Brick (EventM, get, modify)
+import Brick.BChan (writeBChan)
+import Control.Concurrent.Async (async)
 import Control.Monad.IO.Class (liftIO)
 import Data.Text (Text)
 import qualified Data.Text as T
 
-import Config.Settings (saveConfig)
-import Core.Types (CLIConfig(..))
+import Config.Settings (resolveConfig, saveConfig)
+import Core.Types (CLIConfig(..), defaultCLIConfig)
 import UI.Brick.Toast (showToast)
 import UI.Dialog (stackPop)
+import UI.Event (AppEvent(..))
 import UI.I18n (Lang, langName, tr)
-import UI.State (AppState(..), ResourceName(..))
+import UI.State
+  ( AppState(..), ResourceName(..), SettingsFocus(..), SettingsPanel(..)
+  , SettingsTab(..) )
+import UI.StatusInfo (collectStatusInfo)
 import UI.Theme (resolveTheme, themeName)
 
 -- | 切换语言：持久化到配置、关掉对话框、状态栏留一句回执。
@@ -44,3 +51,17 @@ applyTheme name = do
       liftIO $ saveConfig cfg'
       modify $ \s -> s { appTheme = th, appEffCfg = cfg' }
       showToast ("Theme: " <> themeName th)
+
+-- | 打开 @/settings@ 面板：先把有效配置快照下来，并异步拉取状态行。
+openSettingsPanel :: EventM ResourceName AppState ()
+openSettingsPanel = do
+  st <- get
+  let chan = appChan st
+      model = appModel st
+      mSid = appSessionId st
+  cfg <- liftIO (resolveConfig defaultCLIConfig)
+  _ <- liftIO $ async $ do
+    rows <- collectStatusInfo cfg mSid model
+    writeBChan chan (EvStatusInfo rows)
+  modify $ \s -> s { appSettings = Just (SettingsPanel TabSettings FocusList 0 "" Nothing Nothing)
+                    , appEffCfg = cfg }
