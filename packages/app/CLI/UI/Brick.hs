@@ -83,7 +83,7 @@ import UI.Brick.Selection
   ( beginSel, extendSel, copySelectionText, finishSel, copyToClipboard )
 import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
-import UI.Brick.SessionView (localSessionLines)
+import UI.Brick.SessionView (blocksToMessages, localSessionLines)
 import UI.Brick.RunControl
   ( decideApprovalNow, escapeHierarchy, escapeWithoutApproval, requestInterrupt
   , requestStopServices, stopServicesAndHalt )
@@ -530,14 +530,7 @@ setWindowTitle t = do
 -- | localSessionLines 见 UI.Brick.SessionView。
 
 -- | Turn replay blocks into chat messages for the message area.
-blocksToMessages :: [ReplayBlock] -> [ChatMessage]
-blocksToMessages blocks =
-  zipWith (\i m -> m { msgId = i }) [0 ..] (map toMsg blocks)
-  where
-    toMsg b = case rbTool b of
-      Just (name, args) ->
-        toolMsg "tool" (ToolCard name args Nothing Nothing [] "") (maybe "" id (rbTime b))
-      Nothing           -> mkMsg (rbRole b) (rbContent b) (maybe "" id (rbTime b))
+-- | blocksToMessages 见 UI.Brick.SessionView。
 
 -- | drawMessages 见 UI.Brick.Draw.Messages。
 
