@@ -323,6 +323,23 @@ it "元数据表与执行表的键集合相等" $
 这条测试一旦存在，`/provider` 那类「声明了却没接上」的问题会在 CI 暴露，
 而不是靠人工 tmux 实测发现。
 
+**债务的真实规模（2026-11-04 实测）**：新增一条命令要同步 **6 处**，其中 5 处已有
+测试或明确兜底，第 6 处是有意保留的差异：
+
+| # | 派生表 | 作用 | 防线 |
+|---|---|---|---|
+| 1 | `slashRegistry` | 声明（补全 / 帮助） | ✅ `RegistrySpec`·注册表→可解析（`3f86963`） |
+| 2 | `parseCommandBase` | 文本 → `Command` | ✅ 同上（不落 `Unknown`） |
+| 3 | `commandGroupOf` | 分到 GSession / GModel / … | ✅ 已有「lists every command exactly once」 |
+| 4 | `UI.Interaction.layerTable` | 分到 CmdReply / CmdDialog / … | ✅ 已有「classifies every registered command (no fall-through)」 |
+| 5 | `handleSlash`（TUI） | TUI 执行 | ✅ `RegistrySpec`·无孤儿命令（`17fd6a7`） |
+| 6 | `executeCommand`（REPL） | REPL 执行 | ⚠️ 有意保留：兜底返回「Command not available in this front-end: \<构造子\>」，不是静默 |
+
+**已知例外（必须登记，不可静默放过）**：`/ctx` 与 `/effort` 只在第 5 处有实现——
+第 2 处会解析成 `Unknown`，第 6 处没有路径。补齐需要给 `Command` 加构造子并在
+`executeCommand` 里实现同等逻辑（约 80 行），属独立一步。已在 `RegistrySpec` 的
+`knownOrphans` 里显式列出，并写明「新增例外必须登记原因」。
+
 **建议顺序**：先做 5b（约 20 行测试 + 补齐差异），再搬 `handleSlash`（否则搬完 861 行
 case 仍要重写成表驱动，等于做两遍）。
 
