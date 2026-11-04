@@ -232,6 +232,23 @@ handleSessionSlash cx = case cxCmd cx of
               appendMsg (mkMsg "system" ("exported → " <> T.pack path) (cxTime cx))
               showToast ("exported → " <> T.pack path)
             Left e   -> appendMsg (mkMsg "error" ("export failed: " <> T.pack (show e)) (cxTime cx))
-    _ | "/resume " `T.isPrefixOf` (cxCmd cx) ->
-          Just $ resumeSession (T.strip (T.drop 8 (cxInput cx)))
+    _ | "/resume " `T.isPrefixOf` (cxCmd cx) -> Just $ resumeSession (T.strip (T.drop 8 (cxInput cx)))
+    _ | "/delete " `T.isPrefixOf` (cxCmd cx) -> Just $ do
+          let sid = T.unpack (T.strip (T.drop 8 (cxInput cx)))
+          if null sid
+            then appendMsg (mkMsg "system" "Usage: /delete <session-id>" (cxTime cx))
+            else do
+              cur <- gets appSessionId
+              when (cur == Just sid) $
+                modify $ \s -> s { appSessionId = Nothing
+                                 , appCacheNow = Nothing
+                                 , appCacheSum = (0, 0)
+                                 , appCacheTurns = 0
+                                 , appLastCost = 0
+                                 , appSessTokens = 0
+                                 , appLastDecodeTps = Nothing
+                                 , appFirstToken = Nothing }
+              void $ liftIO $ async $ do
+                _ <- deleteSession (cxBridge cx) sid
+                writeBChan (cxChan cx) (EvDeleted sid)
     _ -> Nothing

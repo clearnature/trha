@@ -243,4 +243,16 @@ handleModelSlash cx = case cxCmd cx of
       liftIO (saveModelPrefs prefs')
       modify $ \s -> s { appModelPrefs = prefs' }
       showToast (tr (cxLang cx) "Favourite: " <> name)
+    _ | (cxCmd cx) == "/model" -> Just $
+          appendMsg (mkMsg "system" ("Current model: " <> modelLabel (cxState cx)) (cxTime cx))
+
+    _ | "/model " `T.isPrefixOf` (cxCmd cx) -> Just $ do
+          let model = T.strip (T.drop 7 (cxInput cx))
+          modify $ \s -> s { appModel = model }
+          st2 <- get
+          persistSelection (fromMaybe "" (appProvider st2)) model
+          let prefs' = recordRecent model (appModelPrefs st2)
+          liftIO (saveModelPrefs prefs')
+          modify $ \s -> s { appModelPrefs = prefs' }
+          appendMsg (mkMsg "system" ("Model set: " <> modelLabel (st2 { appModel = model })) (cxTime cx))
     _ -> Nothing
