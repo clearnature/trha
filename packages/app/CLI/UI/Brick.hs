@@ -76,8 +76,8 @@ import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Selection (inSelRange)
 import UI.Brick.Draw.Messages
   ( cardHidden, diffWidget, drawHome, drawInput, drawMessage, drawMessages
-  , drawPending, drawPlanCard, messageBody, messageHeader, renderBlocks
-  , renderToolBody, roleStyle )
+  , drawPending, drawPlanCard, drawToast, drawUI, messageBody, messageHeader
+  , renderBlocks, renderToolBody, roleStyle )
 import UI.Brick.Draw.Settings (drawSettingsPanel, settingsListMax, settingsRows, visibleRows)
 import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar, sidebarDataFor)
 import UI.Brick.Draw.Status
@@ -381,74 +381,7 @@ runTUI bridge cfg = do
 -- Drawing
 --------------------------------------------------------------------------------
 
-drawUI :: AppState -> [Widget ResourceName]
-drawUI st =
-  case appSettings st of
-    -- /settings takes over the whole screen (qwen-style dialog): the tab
-    -- bar sits at the top and the content fills the terminal.
-    Just _  -> [ drawSettingsPanel st ]
-    Nothing -> dialogLayer ++ [ overlayLayer, mainUI ]
-  where
-    -- The sidebar needs the terminal width, which only exists inside a
-    -- rendering context.  Dock: share the row.  Overlay: draw the card in a
-    -- separate layer translated to the right edge (the cells it does not
-    -- cover stay transparent, so the conversation shows through).
-    mainUI = Widget Greedy Greedy $ do
-      c <- getContext
-      let w = c ^. availWidthL
-      case sidebarRender w (appSidebar st) of
-        RenderDocked sw -> render $ vBox
-          [ hBox
-              [ hLimit (messageWidth w (appSidebar st)) content
-              , padLeft (Pad 1) (drawSidebar st sw)
-              ]
-          , drawStatus st
-          ]
-        _ -> render (vBox [content, drawStatus st])
-
-    overlayLayer = Widget Greedy Greedy $ do
-      c <- getContext
-      let w = c ^. availWidthL
-      case sidebarRender w (appSidebar st) of
-        RenderOverlay sw -> do
-          res <- render (drawSidebar st sw)
-          return $ res & imageL %~ V.translate (max 0 (w - sw)) 0
-        _ -> return emptyResult
-
-    content = vBox $
-      case appRoute st of
-        RouteHome ->
-          [ maybe emptyWidget drawToast (appToast st)
-          , drawHome st
-          , drawInput st
-          ]
-        RouteSession ->
-          [ maybe emptyWidget drawToast (appToast st)
-          , drawMessages st
-          , maybe emptyWidget drawPlanCard (appPlan st)
-          , maybe emptyWidget drawWizard (appWizard st)
-          , maybe emptyWidget (drawCompletion st) (appComp st)
-          , drawInput st
-          ]
-    -- Brick's draw returns a layer stack: the first widget is the top
-    -- layer, so an open dialog renders over the chat as a centered card
-    -- (mouse clicks no longer pass through it in brick 3.0).
-    dialogLayer = case stackTop (appDialogs st) of
-      Just d  -> [ centerLayer (drawDialog st d) ]
-      Nothing -> case appPalette st of
-        -- Identical attribute to the skills dialog (which the user confirmed
-        -- floats correctly): centerLayer is brick's float — transparent
-        -- background, no container row taken.
-        Just d  -> [ centerLayer (drawPalette d) ]
-        Nothing -> []
-
--- | Transient notice strip above the message area (Toast).
-drawToast :: (Text, UTCTime) -> Widget ResourceName
-drawToast (msg, _) =
-  padLeftRight 1 $
-    withAttr (attrName "busy") $
-      borderWithLabel (withAttr (attrName "busy") $ str " notice ") $
-        padLeftRight 1 $ strWrap (T.unpack msg)
+-- | drawUI / drawToast 见 UI.Brick.Draw.Messages。
 
 -- | Home route: logo, recent sessions, and hints.  Submitting a message (or
 -- resuming) moves to the session view (MiMo's home route).
