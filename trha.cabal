@@ -357,6 +357,7 @@ executable trha
     UI.Brick.AppEvent
     UI.Brick.AppEvent.Model
     UI.Brick.AppEvent.Plan
+    UI.Brick.AppEvent.Session
     UI.Brick.AppEvent.Sidebar
     UI.Brick.AppEvent.Status
     UI.Brick.AppEvent.Toast

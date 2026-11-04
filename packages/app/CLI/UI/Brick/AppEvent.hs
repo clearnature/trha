@@ -97,6 +97,7 @@ import UI.Brick.SessionView
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.AppEvent.Model (handleModelEvent)
 import UI.Brick.AppEvent.Plan (handlePlanEvent)
+import UI.Brick.AppEvent.Session (handleSessionEvent)
 import UI.Brick.AppEvent.Sidebar (handleSidebarEvent)
 import UI.Brick.AppEvent.Status (handleStatusEvent)
 import UI.Brick.AppEvent.Toast (handleToastEvent)
@@ -177,33 +178,9 @@ import UI.Frecency (Frecency(..), emptyFrecency, recordUse, rankItems, loadFrece
 handleAppEvent :: AppEvent -> EventM ResourceName AppState ()
 -- | 认领式分派：Sidebar/Status/Toast 三个域先试，未命中再落到下方各等式。
 handleAppEvent ev = fromMaybe (pure ()) $
-  msum [ handleModelEvent ev, handlePlanEvent ev, handleSidebarEvent ev
+  msum [ handleModelEvent ev, handlePlanEvent ev, handleSessionEvent ev, handleSidebarEvent ev
          , handleStatusEvent ev, handleToastEvent ev ]
 
-handleAppEvent (EvSession result) = do
-  case result of
-    Right sid -> do
-      st <- get
-      -- Auto-created sessions are recorded silently so that the system
-      -- message does not interleave between the user message and the reply.
-      modify $ \s -> s { appSessionId = Just sid, appStatus = tr (appLang s) "Ready"
-                       , appBusy = False
-                       , appRoute = RouteSession
-                       , appCacheNow = Nothing
-                       , appCacheSum = (0, 0)
-                       , appCacheTurns = 0
-                       , appLastCost = 0
-                       , appSessTokens = 0
-                       , appLastDecodeTps = Nothing
-                       , appFirstToken = Nothing }
-      liftIO $ setWindowTitle ("trha · " <> T.take 8 (T.pack sid))
-      liftIO $ refreshMode (appBridge st) sid (appChan st)
-    Left err -> do
-      lang <- gets appLang
-      t <- liftIO now
-      appendMsg (mkMsg "error" (tr lang "Session failed: " <> T.pack (show err)) t)
-      modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
-  scrollBottom
 handleAppEvent (EvResponse result) = case result of
   Right chunk -> case chunk of
     ChunkDelta text    -> do
@@ -325,26 +302,6 @@ handleAppEvent (EvNotice notice) = case notice of
 
 
 
-handleAppEvent (EvSessions result) = do
-  lang <- gets appLang
-  t <- liftIO now
-  case result of
-    Right [] -> appendMsg (mkMsg "system" (tr lang "No sessions.") t)
-    Right sids -> do
-      cwd <- liftIO getCurrentDirectory
-      local <- liftIO (listLocalSessionsIn cwd)
-      modify $ \s -> s { appDialogs = stackPush (DialogSessions local "" 0) (appDialogs s) }
-      -- legacy ids row kept for parity with the REPL
-      appendMsg (mkMsg "system" ((tr lang "Sessions:" <> "\n")
-                       <> T.unlines (map (\s -> "  • " <> T.pack s) sids)) t)
-    Left err -> appendMsg (mkMsg "system" (tr lang "Error: " <> T.pack (show err)) t)
-  scrollBottom
-handleAppEvent (EvDeleted sid) = do
-  lang <- gets appLang
-  t <- liftIO now
-  appendMsg (mkMsg "system" (tr lang "Deleted session: " <> T.pack sid) t)
-  showToast (tr lang "Deleted session: " <> T.pack sid)
-  scrollBottom
 
 
 handleAppEvent (EvTool result) = do
