@@ -340,6 +340,7 @@ executable trha
     UI.Brick.Chat
     UI.Brick.Slash
     UI.Brick.Slash.Ctx
+    UI.Brick.Slash.Config
     UI.Brick.Slash.Lifecycle
     UI.Brick.Slash.Info
     UI.Brick.Slash.Session

@@ -88,6 +88,7 @@ import UI.Brick.Slash.Ctx (CmdCtx(..))
 import UI.Brick.Slash.Info (handleInfoSlash)
 import UI.Brick.Slash.Lifecycle (handleLifecycleSlash)
 import UI.Brick.Slash.Session (handleSessionSlash)
+import UI.Brick.Slash.Config (handleConfigSlash)
 import UI.Brick.Slash.Workspace (handleWorkspaceSlash)
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.RunControl
@@ -170,7 +171,7 @@ handleSlash input = do
       lang   = appLang st
       cx     = CmdCtx t st input cmd bridge chan lang
   case cmd of
-    _ | Just act <- msum [ handleLifecycleSlash cx, handleInfoSlash cx
+    _ | Just act <- msum [ handleLifecycleSlash cx, handleInfoSlash cx, handleConfigSlash cx
          , handleSessionSlash cx, handleWorkspaceSlash cx ] -> act
     _ | cmd == "/delete" || "/delete " `T.isPrefixOf` cmd -> do
       let sid = T.strip (T.drop (T.length "/delete") input)
@@ -291,13 +292,6 @@ handleSlash input = do
               appendMsg (mkMsg "system" ("exported → " <> T.pack path) t)
               showToast ("exported → " <> T.pack path)
             Left e   -> appendMsg (mkMsg "error" ("export failed: " <> T.pack (show e)) t)
-    "/settings"
-      | T.null (T.strip (T.drop 9 input)) -> openSettingsPanel
-      | otherwise -> do
-          let arg = T.strip (T.drop 9 input)
-          msg <- liftIO (runSettingsCommand lang arg)
-          forM_ msg $ \m -> appendMsg (mkMsg "system" m t)
-          scrollBottom
     "/models" -> do
       st2 <- get
       case appProvider st2 >>= \n -> find ((== n) . piName) (appProviders st2) of
@@ -310,25 +304,6 @@ handleSlash input = do
           modify $ \s -> s { appDialogs = stackPush (DialogModels [] "" 0) (appDialogs s) }
           void $ liftIO $ async $
             listModels bridge >>= writeBChan chan . EvModels
-    "/sandbox" -> modify $ \s -> s { appDialogs =
-      stackPush (DialogSandbox (appSandbox s) 0) (appDialogs s) }
-    "/theme" -> do
-      let arg = T.strip (T.drop 6 input)
-      if T.null arg
-        then modify $ \s -> s { appDialogs =
-               stackPush (DialogThemes themes 0) (appDialogs s) }
-        else applyTheme arg
-    _ | cmd == "/mode" || "/mode " `T.isPrefixOf` cmd -> do
-      -- 带参数的 /mode 也必须走 modeAction：兜底的 executeCommand 只改
-      -- scheduler 侧、不更新 appMode，状态栏会一直停在旧姿态。
-      let arg = T.strip (T.drop 5 input)
-      if T.null arg
-        then modeAction (object ["action" .= ("cycle" :: Text)])
-        else modeAction (object ["action" .= ("set" :: Text), "mode" .= arg])
-    "/verbose" -> do
-      v <- gets appVerbose
-      modify $ \s -> s { appVerbose = not v }
-      showToast (if v then tr lang "Verbose off" else tr lang "Verbose on")
     "/todo" -> do
       st2 <- get
       t2 <- liftIO now
