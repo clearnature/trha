@@ -306,6 +306,7 @@ executable trha
     UI.Brick.Draw.Sidebar
     UI.Brick.Draw.Dialog
     UI.Brick.Draw.Settings
+    UI.Brick.Draw.Messages
     UI.Render.ToolSummary
     UI.Render.Message
     UI.Render.FilePart

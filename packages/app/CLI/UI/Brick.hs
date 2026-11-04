@@ -73,6 +73,7 @@ import Graphics.Vty.Input.Events
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
+import UI.Brick.Draw.Messages (cardHidden, messageHeader, roleStyle)
 import UI.Brick.Draw.Settings (drawSettingsPanel, settingsListMax, settingsRows, visibleRows)
 import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar, sidebarDataFor)
 import UI.Brick.Draw.Status
@@ -681,42 +682,7 @@ drawMessages st =
 -- | Whether a finished tool message is omitted from the stream (M6-7).
 -- Low-noise lookups vanish once complete, but an explicitly expanded card
 -- (the user asked to see it) and @/verbose@ both keep it.
-cardHidden :: AppState -> ChatMessage -> Bool
-cardHidden st m
-  | appVerbose st = False
-  | Map.lookup (msgId m) (appFolds st) == Just FoldExpanded = False
-  | otherwise = maybe False shouldHideTool (msgTool m)
-
--- | Display style for a message role: (attribute, bracket label).  Errors are
--- classified so a rate limit reads as such instead of a generic failure
--- (MiMo's @errorKind()@).
-roleStyle :: Text -> Text -> (AttrName, Text)
-roleStyle role content = case role of
-  "user"      -> (attrName "user", role)
-  "assistant" -> (attrName "assistant", role)
-  "tool"      -> (attrName "tool", role)
-  "plan"      -> (attrName "plan", role)
-  "system"    -> (attrName "system", role)
-  "error"     -> (attrName "error", errorLabel (classifyError content))
-  "thinking"  -> (attrName "system", "thinking")
-  "step"      -> (attrName "timestamp", "step")
-  "stats"     -> (attrName "timestamp", "stats")
-  "compact"   -> (attrName "plan", "context")
-  "retry"     -> (attrName "busy", "retry")
-  "shell"     -> (attrName "tool", "shell")
-  _           -> (attrName "header", role)
-
--- | Header row shared by messages and the streaming block:
--- @[role] timestamp@.
-messageHeader :: Bool -> Text -> Text -> Text -> Widget ResourceName
-messageHeader showTs role content time
-  -- The per-turn accounting line is a plain row, not a bracketed message.
-  | role == "stats" = emptyWidget
-  | otherwise = hBox (roleW : [timeW | showTs])
-  where
-    sty = roleStyle role content
-    roleW = withAttr (fst sty) $ str $ "[" ++ T.unpack (snd sty) ++ "]"
-    timeW = hBox [str " ", withAttr (attrName "timestamp") (str (T.unpack time))]
+-- | cardHidden / roleStyle / messageHeader 见 UI.Brick.Draw.Messages。
 
 -- | Body of a message: a tool-invocation card, an assistant reply run
 -- through the Markdown renderer, or plain wrapped text.
