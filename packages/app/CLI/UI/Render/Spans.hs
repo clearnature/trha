@@ -17,6 +17,7 @@ module UI.Render.Spans
   , spanToksWith
   , splitAtWidth
   , spinnerFrame
+  , todoGlyph
   , truncLine
   ) where
 
@@ -25,6 +26,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Graphics.Vty as V
 
+import Core.Types (TodoStatus(..))
 import UI.Render.Diff (DiffClass(..))
 import UI.Render.Markdown (MdSpan(..))
 import UI.Render.ToolCard (cardWidth)
@@ -36,6 +38,12 @@ data SpanTok = SpanTok { tokAttr :: String, tokText :: Text }
 boolText :: Bool -> Text
 boolText True  = "True"
 boolText False = "False"
+
+-- | 待办状态的字形（侧栏与 @/todo@ 共用）。
+todoGlyph :: TodoStatus -> Text
+todoGlyph TodoPending    = "○"
+todoGlyph TodoInProgress = "◐"
+todoGlyph TodoDone       = "●"
 
 -- | 调度层的压缩标记（govern 写入的一条 user 消息）。
 isCompactionMark :: Text -> Bool

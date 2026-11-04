@@ -100,7 +100,7 @@ import UI.Brick.Draw.Status
 import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics, branchFromHead, statusFitsOneRow, wrapStatusLine)
 import UI.Render.Spans
   ( SpanTok(..), boolText, diffAttrOf, fillLines, isCompactionMark
-  , spanToks, splitAtWidth, spinnerFrame, truncLine )
+  , spanToks, splitAtWidth, spinnerFrame, todoGlyph, truncLine )
 import UI.PasteFold (expandPastes, isLongPaste, pasteLabel)
 import UI.TextWidth (takeCells)
 import UI.TimeStamp (clockWithZone)
@@ -2997,10 +2997,7 @@ gitStatText = do
 -- | settingsListMax 见 UI.Brick.Draw.Settings。
 
 -- | One task glyph (sidebar and /todo share the vocabulary).
-todoGlyph :: TodoStatus -> Text
-todoGlyph TodoPending    = "○"
-todoGlyph TodoInProgress = "◐"
-todoGlyph TodoDone       = "●"
+-- | todoGlyph 见 UI.Render.Spans。
 
 -- | copyToClipboard 见 UI.Brick.Selection。
 
