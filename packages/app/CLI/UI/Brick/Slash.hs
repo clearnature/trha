@@ -87,6 +87,7 @@ import UI.Brick.SessionView
 import UI.Brick.Slash.Ctx (CmdCtx(..))
 import UI.Brick.Slash.Info (handleInfoSlash)
 import UI.Brick.Slash.Lifecycle (handleLifecycleSlash)
+import UI.Brick.Slash.Session (handleSessionSlash)
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
@@ -168,7 +169,7 @@ handleSlash input = do
       lang   = appLang st
       cx     = CmdCtx t st input cmd bridge chan lang
   case cmd of
-    _ | Just act <- msum [handleLifecycleSlash cx, handleInfoSlash cx] -> act
+    _ | Just act <- msum [handleLifecycleSlash cx, handleInfoSlash cx, handleSessionSlash cx] -> act
     _ | cmd == "/delete" || "/delete " `T.isPrefixOf` cmd -> do
       let sid = T.strip (T.drop (T.length "/delete") input)
       if T.null sid
@@ -337,17 +338,6 @@ handleSlash input = do
               appendMsg (mkMsg "system" ("exported → " <> T.pack path) t)
               showToast ("exported → " <> T.pack path)
             Left e   -> appendMsg (mkMsg "error" ("export failed: " <> T.pack (show e)) t)
-    "/clear" -> do
-      modify $ \s -> s { appMessages = [], appFolds = Map.empty, appCardFocus = Nothing }
-      showToast (tr lang "Cleared")
-    "/new" -> do
-      st0 <- get
-      -- 把当前姿态带进新会话：Shift+Tab/Ctrl+Y 选的是「待用姿态」，
-      -- 只有落到 createSession 才算真的切换（否则服务端仍是 read-only）。
-      let pm = smMode <$> appMode st0
-      modify $ \s -> s { appBusy = True, appStatus = "Creating session..." }
-      void $ liftIO $ async $
-        createSession bridge pm >>= writeBChan chan . EvSession
     "/settings"
       | T.null (T.strip (T.drop 9 input)) -> openSettingsPanel
       | otherwise -> do
@@ -355,12 +345,6 @@ handleSlash input = do
           msg <- liftIO (runSettingsCommand lang arg)
           forM_ msg $ \m -> appendMsg (mkMsg "system" m t)
           scrollBottom
-    "/sessions" -> do
-      cwd <- liftIO getCurrentDirectory
-      local <- liftIO (listLocalSessionsIn cwd)
-      if null local
-        then appendMsg (mkMsg "system" (tr lang "No local sessions in this directory yet. Run a conversation first.") t)
-        else modify $ \s -> s { appDialogs = stackPush (DialogSessions local "" 0) (appDialogs s) }
     "/models" -> do
       st2 <- get
       case appProvider st2 >>= \n -> find ((== n) . piName) (appProviders st2) of
@@ -412,26 +396,6 @@ handleSlash input = do
         then appendMsg (mkMsg "system" (tr lang "no agents") t)
         else modify $ \s -> s { appDialogs =
                stackPush (DialogAgents (appAgents st2) 0) (appDialogs s) }
-    "/rename" -> do
-      st2 <- get
-      let title = T.strip (T.drop 7 input)
-      case appSessionId st2 of
-        Nothing -> appendMsg (mkMsg "system" (tr lang "No active session.") t)
-        Just sid -> do
-          r <- liftIO $ renameSession (appBridge st2) sid title
-          case r of
-            Right _ -> showToast (tr lang "Renamed")
-            Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) t)
-    "/tag" -> do
-      st2 <- get
-      let tags = T.words (T.drop 4 input)
-      case appSessionId st2 of
-        Nothing -> appendMsg (mkMsg "system" (tr lang "No active session.") t)
-        Just sid -> do
-          r <- liftIO $ tagSession (appBridge st2) sid tags
-          case r of
-            Right _ -> showToast (tr lang "Tags updated")
-            Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) t)
     "/skills" -> do
       st2 <- get
       modify $ \s -> s { appDialogs =
