@@ -94,8 +94,6 @@ import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.ChatKeys (editDefaultKey, handleChatEnter, handleChatKey)
-import UI.Brick.KeyDispatch
-  ( disarmLeader, handleCtrlCKey, handleCtrlDKey, handleLeaderKey )
 import UI.Brick.DialogActivate
   ( dialogActivate, handleDialogKey, refreshProviderEfforts
   , startProviderRemove, toggleProviderThinking )
