@@ -102,6 +102,7 @@ import UI.Brick.AppEvent.Stream (handleStreamEvent)
 import UI.Brick.AppEvent.Sidebar (handleSidebarEvent)
 import UI.Brick.AppEvent.Status (handleStatusEvent)
 import UI.Brick.AppEvent.Toast (handleToastEvent)
+import UI.Brick.AppEvent.Tools (handleToolEvent)
 import UI.Brick.Stream
   ( addToolLine, appendDelta, appendReasoningDelta, ensurePending, flushPending
   , flushPendingAt, refreshMode )
@@ -181,7 +182,8 @@ handleAppEvent :: AppEvent -> EventM ResourceName AppState ()
 handleAppEvent ev = fromMaybe (pure ()) $
   msum [ handleModelEvent ev, handlePlanEvent ev, handleSessionEvent ev, handleSidebarEvent ev
          , handleStreamEvent ev
-         , handleStatusEvent ev, handleToastEvent ev ]
+         , handleStatusEvent ev, handleToastEvent ev
+         , handleToolEvent ev ]
 
 
 
@@ -193,53 +195,3 @@ handleAppEvent ev = fromMaybe (pure ()) $
 
 
 
-handleAppEvent (EvTool result) = do
-  lang <- gets appLang
-  t <- liftIO now
-  case result of
-    Right ev -> do
-      -- running events only update the status line; completed events
-      -- become tool cards
-      modify $ \st -> st { appStatus = tr (appLang st) "tool: " <> T.pack (teName ev) <> " " <> tr (appLang st) (statusTagOf (teStatus ev)) }
-      -- a permission ask parks the turn: keep the tool identity for the
-      -- approval dialog ("always" derives its rule pattern from it)
-      when (case teStatus ev of
-              ToolRunFailed err -> "REQUIRE_APPROVAL:" `T.isPrefixOf` err
-              _                 -> False) $ do
-        asked <- liftIO getCurrentTime
-        modify $ \st -> st { appAskTool = Just (teName ev, teArgs ev)
-                           , appAskAt = Just asked }
-      case teStatus ev of
-        ToolRunRunning -> do
-          -- A long tool call used to be invisible until it finished: the card
-          -- only existed once the closing event arrived. Open the card now and
-          -- remember which message it is, so `end` can rewrite it.
-          appendMsg (toolCardMsg ev t)
-          st <- get
-          -- `appendMsg` appends, so the message just added is the last one and
-          -- its id is (length - 1); `listToMaybe` would hand back the oldest.
-          let mid = length (appMessages st) - 1
-          when (not (T.null (teCallId ev))) $
-            modify $ \s -> s { appRunningTools =
-              Map.insert (teCallId ev) mid (appRunningTools s) }
-        _ -> do
-          st <- get
-          let running = Map.lookup (teCallId ev) (appRunningTools st)
-          case running of
-            Just mid -> do
-              -- Rewrite the opening card in place: one call, one card.
-              modify $ \s -> s
-                { appMessages = map (\m -> if msgId m == mid then toolCardMsg ev t else m)
-                                  (appMessages s)
-                , appRunningTools = Map.delete (teCallId ev) (appRunningTools s)
-                }
-            Nothing -> appendMsg (toolCardMsg ev t)
-    Left err -> do
-      appendMsg (mkMsg "error" (tr lang "SSE: " <> T.pack (show err)) t)
-      modify $ \st -> st { appStatus = tr (appLang st) "Error" }
-  scrollBottom
-handleAppEvent (EvToggleToolFold mid) = do
-  -- Flip the fold state of the tool message with the given id.
-  modify $ \s -> s { appFolds =
-    Map.alter (Just . toggleFold . fromMaybe FoldCollapsed) mid (appFolds s) }
-  scrollBottom

@@ -362,6 +362,7 @@ executable trha
     UI.Brick.AppEvent.Status
     UI.Brick.AppEvent.Stream
     UI.Brick.AppEvent.Toast
+    UI.Brick.AppEvent.Tools
     UI.Brick.Stream
     UI.Brick.ToolCardMsg
     UI.Brick.Apply
