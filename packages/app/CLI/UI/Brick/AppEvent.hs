@@ -96,6 +96,7 @@ import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.AppEvent.Model (handleModelEvent)
+import UI.Brick.AppEvent.Plan (handlePlanEvent)
 import UI.Brick.AppEvent.Sidebar (handleSidebarEvent)
 import UI.Brick.AppEvent.Status (handleStatusEvent)
 import UI.Brick.AppEvent.Toast (handleToastEvent)
@@ -176,7 +177,7 @@ import UI.Frecency (Frecency(..), emptyFrecency, recordUse, rankItems, loadFrece
 handleAppEvent :: AppEvent -> EventM ResourceName AppState ()
 -- | 认领式分派：Sidebar/Status/Toast 三个域先试，未命中再落到下方各等式。
 handleAppEvent ev = fromMaybe (pure ()) $
-  msum [ handleModelEvent ev, handleSidebarEvent ev
+  msum [ handleModelEvent ev, handlePlanEvent ev, handleSidebarEvent ev
          , handleStatusEvent ev, handleToastEvent ev ]
 
 handleAppEvent (EvSession result) = do
@@ -317,15 +318,6 @@ handleAppEvent (EvNotice notice) = case notice of
         <> T.pack (show delayMs) <> "ms — " <> reason) t)
     scrollBottom
 
-handleAppEvent (EvMode result) = case result of
-  Right m -> do
-    lang0 <- gets appLang
-    -- 左侧 modeTag 已经显示模式名，appStatus 再写一遍就是「Read only ·
-    -- 模式：Read only」。这里只确认「切换完成」。
-    modify $ \s -> s { appMode = Just m
-                     , appStatus = tr (appLang s) "Mode switched" }
-    showToast (tr lang0 "Mode: " <> smLabel m)
-  Left e  -> modify $ \s -> s { appStatus = "Mode: " <> T.pack (show e) }
 
 
 
@@ -353,47 +345,7 @@ handleAppEvent (EvDeleted sid) = do
   appendMsg (mkMsg "system" (tr lang "Deleted session: " <> T.pack sid) t)
   showToast (tr lang "Deleted session: " <> T.pack sid)
   scrollBottom
-handleAppEvent (EvPlan result) = do
-  t <- liftIO now
-  case result of
-    Right (PlanAwaiting preview) ->
-      appendMsg (mkMsg "plan" ("⏸ " <> preview) t)
-    Left err -> do
-      appendMsg (mkMsg "error" (T.pack (show err)) t)
-      modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
-  scrollBottom
-handleAppEvent (EvPlanState result) = do
-  lang <- gets appLang
-  t <- liftIO now
-  case result of
-    Right (pv, reply) -> do
-      -- Mirror the kernel's plan to ~/.trha/plans/ so it survives the session.
-      sid <- gets appSessionId
-      forM_ sid $ \s -> void (liftIO (savePlanSnapshot (T.pack s) pv))
-      modify $ \st -> st { appPlan = Just pv, appStatus = tr lang "Plan", appBusy = False }
-      case reply of
-        Just txt | not (T.null txt) -> appendMsg (mkMsg "assistant" txt t)
-        _ -> pure ()
-    Left err -> do
-      appendMsg (mkMsg "error" (T.pack (show err)) t)
-      modify $ \st -> st { appStatus = tr lang "Error", appBusy = False }
-  scrollBottom
 
-handleAppEvent (EvVerdict result) = do
-  lang <- gets appLang
-  t <- liftIO now
-  case result of
-    Right (PlanApproved reply) -> do
-      appendMsg (mkMsg "assistant" reply t)
-      modify $ \st -> st { appStatus = tr (appLang st) "Ready", appBusy = False
-                         , appApproval = Nothing }
-    Right PlanDenied -> do
-      appendMsg (mkMsg "system" (tr lang "Plan denied.") t)
-      modify $ \st -> st { appApproval = Nothing, appBusy = False }
-    Left err -> do
-      appendMsg (mkMsg "error" (T.pack (show err)) t)
-      modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
-  scrollBottom
 
 handleAppEvent (EvTool result) = do
   lang <- gets appLang
