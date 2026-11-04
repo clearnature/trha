@@ -71,6 +71,7 @@ import UI.Render.Sidebar (agentTreeLines)
 import System.Directory (getCurrentDirectory)
 import UI.Commands.Env (CmdEnv(..), dispatch)
 import UI.Commands.Meta (runMeta)
+import UI.Commands.Config (runConfig, runSettingsCommand)
 import UI.Commands.Integration (runIntegration)
 import UI.Commands.Plan (approvePlanStep, decidePlanStep, runPlan)
 import UI.Commands.Session (friendlyDenyError, resumeMessages, resumeSessions, runSession)
@@ -80,29 +81,6 @@ import Config.Settings (resolveConfig, saveConfig)
 -- | Handle @/settings@ outside the interactive loop: read the effective
 -- configuration, then either print it or apply+persist one key.  Shared by
 -- the REPL executor and the TUI so both surfaces behave identically.
-runSettingsCommand :: Lang -> Text -> IO (Maybe Text)
-runSettingsCommand lang arg =
-  case T.words arg of
-    [] -> do
-      cfg <- resolveConfig defaultCLIConfig
-      return $ Just (formatSettings lang cfg)
-    (key : rest) -> do
-      cfg <- resolveConfig defaultCLIConfig
-      let raw = T.unwords rest
-      case parseSettingValue lang cfg key raw of
-        Left err    -> return $ Just err
-        Right newCfg -> do
-          saveConfig newCfg
-          return $ Just (tr lang "Setting updated: " <> key)
-
--- | Execute a command
--- | Run one local shell command, shared by the REPL (@/shell@) and the TUI
--- card renderer (@UI.Brick@).
---
--- A native Windows console has no @bash@, so @ComSpec@ runs the command via
--- @/c@; everywhere else uses @bash -lc@.  The dsh/Codex ENV_OVERRIDES keep
--- colour, pagers and interactive features from garbling captured output.  The
--- run is capped at 120 s so a hung command cannot wedge the shell.
 runLocalShell :: Text -> IO (Either Text (ExitCode, String, String))
 runLocalShell cmd = do
   r <- timeout 120000000 $ do
@@ -127,7 +105,7 @@ executeCommand :: Lang -> SchedulerBridge -> IORef (Maybe SessionId) -> IORef Te
 -- | Parse a loop interval: @30s@, @5m@, @1h@, or plain seconds.
 
 executeCommand lang bridge sessionRef modelRef cmd
-  | Just act <- dispatch [runMeta, runSession, runIntegration, runPlan] env cmd = act
+  | Just act <- dispatch [runMeta, runSession, runConfig, runIntegration, runPlan] env cmd = act
   where env = CmdEnv lang bridge sessionRef modelRef
 
 
@@ -202,50 +180,6 @@ executeCommand _ _ _ _ (Effort arg) = do
       else return $ Just ("Unknown effort: " <> arg
                             <> "  (auto|minimal|low|medium|high)")
 
-executeCommand _ _ _ _ (SetMouseCapture arg) = do
-  cfg <- resolveConfig defaultCLIConfig
-  case arg of
-    Nothing -> return $ Just ("Mouse capture: "
-      <> (if configMouseCapture cfg then "on" else "off (native terminal selection)")
-      <> " — /mouse on|off")
-    Just on -> do
-      saveConfig (cfg { configMouseCapture = on })
-      -- xterm SGR mouse reporting: off restores native terminal selection.
-      hPutStr stdout (if on
-        then "\ESC[?1000h\ESC[?1002h\ESC[?1006h"
-        else "\ESC[?1000l\ESC[?1002l\ESC[?1003l\ESC[?1006l")
-      hFlush stdout
-      return $ Just (if on
-        then "Mouse capture: on"
-        else "Mouse capture: off — the terminal now does text selection")
-
-executeCommand _ _ _ _ (SetTheme arg) = do
-  cfg <- resolveConfig defaultCLIConfig
-  let name = T.strip arg
-  if T.null name
-    then return $ Just ("Themes: " <> T.intercalate ", " themeNames)
-    else do
-      let th = resolveTheme name
-      if T.toLower (themeName th) /= T.toLower name
-        then return $ Just ("Unknown theme: " <> name)
-        else do
-          saveConfig (cfg { configTheme = themeName th })
-          return $ Just ("theme: " <> themeName th)
-
-executeCommand lang bridge sessionRef _ (Mode arg) = do
-  msid <- readIORef sessionRef
-  case msid of
-    Nothing -> return $ Just (tr lang "No active session.")
-    Just sid -> do
-      let name = T.strip arg
-          body = if T.null name
-                   then object ["action" .= ("cycle" :: Text)]
-                   else object ["action" .= ("set" :: Text), "mode" .= name]
-      r <- applySessionMode bridge sid body
-      return $ Just $ case r of
-        Right m  -> tr lang "Mode: " <> smLabel m
-        Left e   -> T.pack (show e)
-
 executeCommand _ _ _ _ (RunShell cmd)
   | T.null (T.strip cmd) = return $ Just "Usage: /shell <cmd>"
   | otherwise = do
@@ -261,11 +195,6 @@ executeCommand _ _ _ _ (RunShell cmd)
 
 executeCommand _ _ _ _ CopyLast =
   return $ Just "Copy is available in the TUI (run: trha tui, then /copy)"
-
-executeCommand _ _ _ _ Verbose =
-  return $ Just "Verbose is available in the TUI (/verbose)"
-
-executeCommand lang _ _ _ ShowSettings = runSettingsCommand lang ""
 
 executeCommand lang bridge _ _ Providers = do
   result <- listProviders bridge
@@ -356,55 +285,6 @@ executeCommand lang bridge sessionRef _ ShowStats = do
            + fromIntegral (urCacheHit r) * priceCached p
            + fromIntegral (urCompletion r) * priceOutput p ) / 1e6
     money x = T.pack (show (fromIntegral (round (x * 10000) :: Int) / 10000 :: Double))
-
-executeCommand lang _ _ _ (AskTimeout arg) = do
-  cfg <- resolveConfig defaultCLIConfig
-  case arg of
-    Nothing -> return $ Just $ tr lang "Approval timeout: "
-      <> T.pack (show (configAskTimeout cfg)) <> tr lang " seconds"
-    Just raw -> case reads (T.unpack (T.strip raw)) :: [(Int, String)] of
-      [(n, "")] | n > 0 -> do
-        saveConfig (cfg { configAskTimeout = n })
-        return $ Just $ tr lang "Approval timeout: " <> T.pack (show n) <> tr lang " seconds"
-      _ -> return $ Just (tr lang "Usage: /ask-timeout <seconds>")
-
-executeCommand lang _ _ _ (ReasoningLanguage arg) = do
-  cfg <- resolveConfig defaultCLIConfig
-  case arg of
-    Nothing -> return $ Just $ tr lang "Reasoning language: " <> configReasoningLanguage cfg
-    Just code -> do
-      let v = T.strip code
-          low = T.toLower v
-      if low `elem` ["auto", "zh-hans", "zh-hant", "en", "fr", "es", "ru", "th", "my", "bo", "ii"]
-        then do
-          saveConfig (cfg { configReasoningLanguage = low })
-          return $ Just $ tr lang "Reasoning language: " <> low
-        else return $ Just $ tr lang "Usage: /reasoning-language [auto|zh-Hans|zh-Hant|en]"
-
-executeCommand lang _ _ _ (Currency arg) = do
-  now <- getCurrentTime
-  let ts = T.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" now)
-  table <- loadCurrency
-  let usage = tr lang "Usage: /currency set <CODE> <rate> | /currency base <CODE>"
-  case T.words (T.strip arg) of
-    [] -> return $ Just $ T.unlines $
-      [ tr lang "Currency (base " <> ctBase table <> "):"
-      , "  updatedAt: " <> fromMaybe (tr lang "never") (ctUpdatedAt table)
-      ] ++ [ "  " <> k <> "  " <> T.pack (show v) | (k, v) <- Map.toList (ctRates table) ]
-    ["set", code, rate] -> case reads (T.unpack rate) :: [(Double, String)] of
-      [(v, "")] | v > 0 -> do
-        let table' = table
-              { ctRates = Map.insert (T.toUpper code) v (ctRates table)
-              , ctUpdatedAt = Just ts }
-        saveCurrency table'
-        return $ Just $ tr lang "Currency updated: " <> T.toUpper code
-          <> " = " <> T.pack (show v)
-      _ -> return $ Just usage
-    ["base", code] -> do
-      let table' = table { ctBase = T.toUpper code, ctUpdatedAt = Just ts }
-      saveCurrency table'
-      return $ Just $ tr lang "Currency base: " <> T.toUpper code
-    _ -> return $ Just usage
 
 executeCommand lang bridge _ _ (SwitchProvider Nothing) = do
   r <- listProviders bridge
@@ -536,18 +416,6 @@ executeCommand lang _ _ _ (Paste text) = do
     Just path -> tr lang "Image saved: " <> T.pack path
       <> (if T.null (T.strip text) then "" else " (" <> T.strip text <> ")")
 
-executeCommand lang _ _ _ (OutputStyle arg) = do
-  cfg <- resolveConfig defaultCLIConfig
-  case arg of
-    Nothing -> return $ Just $ tr lang "Output style: " <> configOutputStyle cfg
-    Just name ->
-      let v = T.toLower (T.strip name)
-      in if v `elem` ["default", "concise", "detailed"]
-           then do
-             saveConfig (cfg { configOutputStyle = v })
-             return $ Just $ tr lang "Output style: " <> v
-           else return $ Just $ tr lang "Usage: /output-style [default|concise|detailed]"
-
 executeCommand lang _ _ _ ShowPresets =
   return $ Just $ T.unlines
     ( tr lang "Provider presets:" :
@@ -575,29 +443,12 @@ executeCommand lang _ _ _ (SetLanguage (Just code)) = do
   saveConfig (cfg { configLang = langName l })
   return $ Just (tr l "Language: " <> langName l)
 
-executeCommand lang _ _ _ (SetSetting "" _) =
-  return $ Just (tr lang "Usage: /settings <key> <value>")
-
-executeCommand lang _ _ _ (SetSetting key raw)
-  | T.null key || T.null (T.strip raw) =
-      return $ Just (tr lang "Usage: /settings <key> <value>")
-  | otherwise = runSettingsCommand lang (key <> " " <> raw)
-
 executeCommand lang bridge sessionRef modelRef (RunCustom name args) = do
   cmds <- loadCustomCommands
   case [ cc | cc <- cmds, ccName cc == name ] of
     (cc : _) -> executeCommand lang bridge sessionRef modelRef
                   (SendMessage (renderCustomCommand cc args))
     [] -> return $ Just $ tr lang "Unknown command: /" <> name
-
-executeCommand _ _ _ _ Sandbox = do
-  enabled <- lookupEnv "TRHA_SANDBOX"
-  let state = case fmap (T.toLower . T.strip . T.pack) enabled of
-        Just v | v `elem` ["on", "1", "true", "enforce"] -> "on"
-        _ -> "off"
-  let label = if state == "on" then "enabled" else "disabled"
-  return $ Just ("SandBox: " <> label
-    <> " (TUI: /sandbox opens the panel; the scheduler reads TRHA_SANDBOX)")
 
 executeCommand _ _ _ _ cmd =
   return $ Just ("Command not available in this front-end: " <> T.pack (show cmd))
