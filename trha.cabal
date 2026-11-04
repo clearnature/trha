@@ -320,6 +320,7 @@ executable trha
     UI.Brick.DialogActivate
     UI.Brick.Palette
     UI.Brick.InputOps
+    UI.Brick.ChatKeys
     UI.Brick.Apply
     UI.Render.ToolSummary
     UI.Render.Message
