@@ -12,6 +12,7 @@ module UI.Brick.RunControl
   , escapeHierarchy
   , escapeWithoutApproval
   , runShellCommand
+  , approveAndRun
   ) where
 
 import Brick (EventM, get, gets, halt, modify)
@@ -24,12 +25,18 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
 
-import Bridge.Scheduler (decidePlan, interruptSession)
+import Bridge.Scheduler
+  ( SchedulerBridge, decidePlan, decideStep, interruptSession, reportStep
+  , sendMessage )
 import Core.RunState (stopAll, stopResultText)
+import Core.Types
+  ( CLIError, PlanStepView(..), PlanView, SessionId, StreamChunk(..)
+  , planStepOut )
 import System.Exit (ExitCode(..))
 import UI.Brick.DialogKeys (scrollBottom)
 import UI.Brick.MessageOps (appendMsg, now)
 import UI.Commands (runLocalShell)
+import UI.Event (AppEvent(..))
 import UI.Dialog
   ( Dialog(..), EscFlags(..), EscOutcome(..), escWiring, resolveEscape
   , stackNull, stackPop, stackPush )
@@ -143,3 +150,26 @@ runShellCommand cmd = do
             ExitFailure n -> "\n(exit " <> T.pack (show n) <> ")"
       appendMsg (mkMsg "shell" (body <> suffix) t)
   scrollBottom
+
+-- | 放行计划的一个步骤：decide → 执行 → 回报，把新状态与回复一起交回。
+--
+-- 三级都可能是 Left（内核拒绝 / 发送失败 / 回报失败），逐层短路；
+-- 「没有下一步」是正常终止，返回 @Right (pv, Nothing)@。
+approveAndRun :: SchedulerBridge -> SessionId -> IO (Either CLIError (PlanView, Maybe Text))
+approveAndRun bridge sid = do
+  approved <- decideStep bridge sid "approve"
+  case approved of
+    Left e -> pure (Left e)
+    Right pv -> case planStepOut pv of
+      Nothing -> pure (Right (pv, Nothing))
+      Just step -> do
+        ran <- sendMessage bridge sid (psvTitle step)
+        let ok = either (const False) (const True) ran
+            reply = either (const Nothing) (Just . chunkText) ran
+        reported <- reportStep bridge sid (psvId step) ok
+        pure $ case reported of
+          Left e    -> Left e
+          Right pv' -> Right (pv', reply)
+  where
+    chunkText (ChunkDelta t) = t
+    chunkText _              = ""

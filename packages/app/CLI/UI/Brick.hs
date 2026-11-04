@@ -85,8 +85,8 @@ import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
 import UI.Brick.SessionView (blocksToMessages, localSessionLines)
 import UI.Brick.RunControl
-  ( decideApprovalNow, escapeHierarchy, escapeWithoutApproval, requestInterrupt
-  , requestStopServices, runShellCommand, stopServicesAndHalt )
+  ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
+  , requestInterrupt, requestStopServices, runShellCommand, stopServicesAndHalt )
 import UI.Brick.MessageOps (appendMsg, now)
 import UI.Brick.Draw.Messages
   ( cardHidden, diffWidget, drawHome, drawInput, drawMessage, drawMessages
@@ -1987,24 +1987,7 @@ toolCardMsg ev t = toolMsg "tool" card t
 -- honest version of that job is asking the agent with the step's title, and
 -- then telling the kernel how it went — otherwise the kernel's progress would
 -- be a guess.
-approveAndRun :: SchedulerBridge -> SessionId -> IO (Either CLIError (PlanView, Maybe Text))
-approveAndRun bridge sid = do
-  approved <- decideStep bridge sid "approve"
-  case approved of
-    Left e -> pure (Left e)
-    Right pv -> case planStepOut pv of
-      Nothing -> pure (Right (pv, Nothing))
-      Just step -> do
-        ran <- sendMessage bridge sid (psvTitle step)
-        let ok = either (const False) (const True) ran
-            reply = either (const Nothing) (Just . chunkText) ran
-        reported <- reportStep bridge sid (psvId step) ok
-        pure $ case reported of
-          Left e    -> Left e
-          Right pv' -> Right (pv', reply)
-  where
-    chunkText (ChunkDelta t) = t
-    chunkText _              = ""
+-- | approveAndRun 见 UI.Brick.RunControl。
 
 -- | Status text for the footer/status line.
 statusTagOf :: ToolRunStatus -> Text
