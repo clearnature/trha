@@ -89,7 +89,8 @@ import UI.Brick.SessionView
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.Slash (handleSlash)
 import UI.Brick.Wizard
-  ( commitWizard, finishWizard, invalidJson, refreshWizardInput )
+  ( commitWizard, finishWizard, invalidJson, refreshWizardInput
+  , startWizard )
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
   , requestInterrupt, requestStopServices, runShellCommand, stopServicesAndHalt )
@@ -1161,28 +1162,7 @@ refreshProviderEfforts p = do
         writeBChan chan (EvProviderSaved saved)
       Left e -> writeBChan chan (EvProviderSaved (Left e))
 
-startWizard :: Maybe ProviderInfo -> EventM ResourceName AppState ()
-startWizard existing = do
-  let w = case existing of
-        Nothing -> ProviderWizard 0 "" "openai" "" "" "" "" "" "" "yes" "no" "" "" "" "" ""
-        Just p  -> ProviderWizard 0 (piName p) (piKind p) (piBaseUrl p)
-                     (T.intercalate "," (piModels p)) (piDefault p) ""
-                     (piEffort p)
-                     (T.intercalate "," (piVision p))
-                     (if piAuthHeader p then "yes" else "no")
-                     (if piNoProxy p then "yes" else "no")
-                     (maybe "" (TE.decodeUtf8 . BL.toStrict . encode) (piHeaders p))
-                     (maybe "" (TE.decodeUtf8 . BL.toStrict . encode) (piExtraBody p))
-                     (piThinking p)
-                     (piResponsesMode p)
-                     (maybe "" (T.pack . show) (piContextWindow p))
-  modify $ \s -> s { appWizard = Just w
-                   , appDialogs = stackPop (appDialogs s)
-                   , appPalette = Nothing
-                   , appInput = editorText InputArea (Just 1) ""
-                   , appStatus = tr (appLang s) "Provider wizard 1/6: "
-                       <> head wizardPrompts }
-  refreshWizardInput w
+-- | startWizard 见 UI.Brick.Wizard。
 
 -- | Put the current field's value in the editor so the user can edit it.
 -- | refreshWizardInput 见 UI.Brick.Wizard。
