@@ -360,6 +360,7 @@ executable trha
     UI.Brick.AppEvent.Session
     UI.Brick.AppEvent.Sidebar
     UI.Brick.AppEvent.Status
+    UI.Brick.AppEvent.Stream
     UI.Brick.AppEvent.Toast
     UI.Brick.Stream
     UI.Brick.ToolCardMsg

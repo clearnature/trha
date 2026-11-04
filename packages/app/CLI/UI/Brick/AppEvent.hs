@@ -98,6 +98,7 @@ import UI.Brick.Chat (handleChatWith)
 import UI.Brick.AppEvent.Model (handleModelEvent)
 import UI.Brick.AppEvent.Plan (handlePlanEvent)
 import UI.Brick.AppEvent.Session (handleSessionEvent)
+import UI.Brick.AppEvent.Stream (handleStreamEvent)
 import UI.Brick.AppEvent.Sidebar (handleSidebarEvent)
 import UI.Brick.AppEvent.Status (handleStatusEvent)
 import UI.Brick.AppEvent.Toast (handleToastEvent)
@@ -179,121 +180,9 @@ handleAppEvent :: AppEvent -> EventM ResourceName AppState ()
 -- | 认领式分派：Sidebar/Status/Toast 三个域先试，未命中再落到下方各等式。
 handleAppEvent ev = fromMaybe (pure ()) $
   msum [ handleModelEvent ev, handlePlanEvent ev, handleSessionEvent ev, handleSidebarEvent ev
+         , handleStreamEvent ev
          , handleStatusEvent ev, handleToastEvent ev ]
 
-handleAppEvent (EvResponse result) = case result of
-  Right chunk -> case chunk of
-    ChunkDelta text    -> do
-      -- The first delta ends the TTFT window; the pure-decode rate is measured
-      -- from here, to the final usage.  Recorded once per turn.
-      first <- gets appFirstToken
-      when (isNothing first) $ do
-        t <- liftIO getCurrentTime
-        modify $ \s -> s { appFirstToken = Just t }
-      appendDelta text
-      scrollBottom
-    ChunkToolCall n as -> addToolLine n as >> scrollBottom
-    ChunkDone usage    -> do
-      let real = usageTotalTokens usage > 0
-          hit = usageCacheHitTokens usage
-          miss = usageCacheMissTokens usage
-          cacheSeen = real && hit + miss > 0
-      st0 <- get
-      t1 <- liftIO getCurrentTime
-      let elapsed = maybe 0 (\t0 -> realToFrac (diffUTCTime t1 t0)) (appTurnStart st0)
-                    :: Double
-          tps = if real && elapsed > 0 && usageCompletionTokens usage > 0
-                  then Just (fromIntegral (usageCompletionTokens usage) / elapsed)
-                  else appLastTps st0
-          -- Same numerator, but the clock starts at the first token: this is
-          -- the number a provider's own dashboard reports as "t/s".
-          decodeTps = case (appFirstToken st0, usageCompletionTokens usage) of
-            (Just tFirst, n) | real && n > 0 ->
-              let d = realToFrac (diffUTCTime t1 tFirst) :: Double
-              in if d > 0.02 then Just (fromIntegral n / d) else Nothing
-            _ -> appLastDecodeTps st0
-      modify $ \s -> s { appLastUsage = Just (usageTotalTokens usage)
-                       , appUsage = if real then Just usage else appUsage s
-                       , appCacheNow = if cacheSeen then Just (hit, miss) else appCacheNow s
-                       , appCacheSum = if cacheSeen
-                                         then let (h0, m0) = appCacheSum s
-                                              in (h0 + hit, m0 + miss)
-                                         else appCacheSum s
-                       , appCacheTurns = if cacheSeen
-                                           then appCacheTurns s + 1
-                                           else appCacheTurns s
-                       , appCtxUsed = if usagePromptTokens usage > 0
-                                        then Just (usagePromptTokens usage
-                                                   + usageCompletionTokens usage)
-                                        else appCtxUsed s
-                       , appLastTps = tps
-                       , appLastDecodeTps = decodeTps
-                       , appCostSum = appCostSum s + estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
-                       , appLastCost = estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
-                       , appSessTokens = appSessTokens s + usageTotalTokens usage
-                       , appFirstToken = Nothing
-                       , appTurnStart = Nothing }
-      flushPending (if real then Just usage else Nothing)
-      st3 <- get
-      let summary = turnSummary (pricesOf (appModel st3) (appEffCfg st3)) usage (usageReasoningTokens usage) t1
-      appendMsg (mkMsg "stats" summary "")
-      bell <- gets (configBell . appEffCfg)
-      when bell $ liftIO (putStr "\a" >> hFlush stdout)
-      scrollBottom
-  Left err -> do
-    flushPending Nothing -- keep whatever partial content already arrived
-    t <- liftIO now
-    let msg = T.pack (show err)
-        staleSession = "not found" `T.isInfixOf` T.toLower msg
-    lang0 <- gets appLang
-    if staleSession
-      then do
-        -- The scheduler keeps sessions in memory; a restart (or a session
-        -- deleted elsewhere) turns the id the TUI holds into a 404.  Drop it
-        -- so the next message creates a fresh session instead of 404-ing.
-        appendMsg (mkMsg "system"
-          (tr lang0 "The session no longer exists on the scheduler; the next message creates a new one.") t)
-        modify $ \st -> st { appSessionId = Nothing
-                           , appStatus = tr (appLang st) "Session expired"
-                           , appCacheNow = Nothing
-                           , appCacheSum = (0, 0)
-                           , appCacheTurns = 0
-                           , appLastCost = 0
-                           , appSessTokens = 0
-                           , appLastDecodeTps = Nothing
-                           , appFirstToken = Nothing }
-      else appendMsg (mkMsg "error" ("Error: " <> msg) t)
-    bell <- gets (configBell . appEffCfg)
-    when bell $ liftIO (putStr "\a" >> hFlush stdout)
-    modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
-    scrollBottom
-handleAppEvent (EvNotice notice) = case notice of
-  ReasoningDelta text -> appendReasoningDelta text >> scrollBottom
-  StepStarted rnd msgs tools -> do
-    -- A new model round starts.  Close whatever the previous round left in
-    -- the streaming block so the separator lands in the right place, then
-    -- restore the turn's busy/status (flushPending is a turn-end action).
-    st0 <- get
-    when (isJust (appPending st0)) $ do
-      flushPending Nothing
-      modify $ \s -> s { appBusy = appBusy st0, appStatus = appStatus st0 }
-    t <- liftIO now
-    appendMsg (mkMsg "step"
-      ("round " <> T.pack (show rnd) <> " · " <> T.pack (show msgs)
-        <> " msgs · " <> T.pack (show tools) <> " tools") t)
-    scrollBottom
-  ContextCompacted trigger saved -> do
-    t <- liftIO now
-    appendMsg (mkMsg "compact"
-      ("context compacted (" <> trigger <> ") · saved "
-        <> T.pack (show saved) <> " tokens") t)
-    scrollBottom
-  RetryScheduled attempt delayMs reason -> do
-    t <- liftIO now
-    appendMsg (mkMsg "retry"
-      ("retry " <> T.pack (show attempt) <> "/3 in "
-        <> T.pack (show delayMs) <> "ms — " <> reason) t)
-    scrollBottom
 
 
 
@@ -354,14 +243,3 @@ handleAppEvent (EvToggleToolFold mid) = do
   modify $ \s -> s { appFolds =
     Map.alter (Just . toggleFold . fromMaybe FoldCollapsed) mid (appFolds s) }
   scrollBottom
-handleAppEvent (EvFinalReply text) = do
-  -- The step reply is authoritative: replace whatever the preview has
-  -- accumulated (a dropped delta must not truncate the answer).
-  st <- get
-  t <- liftIO now
-  let pm = fromMaybe (newPending t) (appPending st)
-  modify $ \s -> s { appPending = Just pm { pmContent = text } }
-  scrollBottom
-
--- | Tool-card message from a completed lifecycle event (with output
--- preview lines from the kernel tail).
