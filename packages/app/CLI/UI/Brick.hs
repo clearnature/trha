@@ -74,6 +74,8 @@ import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Selection (inSelRange)
+import UI.Brick.DialogKeys
+  ( dialogAppend, dialogDelete, modifyTop, withCommands )
 import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
 import UI.Brick.Draw.Messages
@@ -987,39 +989,7 @@ handleDialogKey _ = return ()
 
 -- | Editing keys apply only to the command dialog (approval/confirm have
 -- no query row).
-dialogAppend :: Char -> Dialog -> Dialog
-dialogAppend c d = case d of
-  DialogCommands{} -> dialogCommandsAppend c d
-  DialogSkills{}   -> dialogSkillsAppend c d
-  DialogModels{}   -> dialogModelsAppend c d
-  DialogSessions{} -> dialogSessionsAppend c d
-  _                -> d
-
-dialogDelete :: Dialog -> Dialog
-dialogDelete d = case d of
-  DialogCommands{} -> dialogCommandsDelete d
-  DialogSkills{}   -> dialogSkillsDelete d
-  DialogModels{}   -> dialogModelsDelete d
-  DialogSessions{} -> dialogSessionsDelete d
-  _                -> d
-
-withCommands :: (Dialog -> Dialog) -> EventM ResourceName AppState ()
-withCommands f = do
-  st <- get
-  case stackTop (appDialogs st) of
-    Just DialogCommands{} -> modifyTop f
-    Just DialogSkills{}   -> modifyTop f
-    -- 模型/会话列表也可过滤：字符输入进查询行，而不是被丢掉。
-    Just DialogModels{}   -> modifyTop f
-    Just DialogSessions{} -> modifyTop f
-    _                     -> return ()
-
--- | Apply a pure transformation to the top dialog of the stack.
-modifyTop :: (Dialog -> Dialog) -> EventM ResourceName AppState ()
-modifyTop f = modify $ \s -> s { appDialogs =
-  case stackTop (appDialogs s) of
-    Just d  -> stackPush (f d) (stackPop (appDialogs s))
-    Nothing -> appDialogs s }
+-- | dialogAppend / dialogDelete / withCommands / modifyTop 见 UI.Brick.DialogKeys。
 
 -- | Activate the entry under the top dialog's cursor.
 -- | Adopt a provider: remember it and make sure the current model belongs
