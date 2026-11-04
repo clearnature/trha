@@ -55,6 +55,8 @@ import Data.IORef (newIORef, readIORef)
 import Data.List (intersperse, find)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust, isNothing, listToMaybe)
+import UI.Brick.Settings.Pure
+  ( clampSel, editingNow, moveTab, nextOption, seedEdit, settingsListWidth )
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -271,18 +273,7 @@ applySetting key raw = do
 
 -- | Move the tab by a delta (wraps around the tab list).
 
-moveTab :: Int -> SettingsTab -> SettingsTab
-moveTab d t = toEnum (mod (fromEnum t + d) (fromEnum (maxBound :: SettingsTab) + 1))
--- | Keys while the settings panel is open (three-zone focus model, mirroring
--- the reference dialog: tabs -> search -> list -> editing).
--- | handleSettingsKey 见 UI.Brick.KeyDispatch。
 
-editingNow :: AppState -> Bool
-editingNow st = case appSettings st of
-  Just p | Just _ <- spEdit p -> True
-  _ -> False
-
--- | Tab-bar switching shared by left/right keys.
 
 moveTabBy :: Int -> EventM ResourceName AppState ()
 moveTabBy d = modify $ \s -> s { appSettings = (\p -> p { spTab = moveTab d (spTab p)
@@ -300,44 +291,6 @@ moveListSel d = do
   modify $ \s -> s { appSettings = (\p -> p { spSel = if n <= 0 then 0 else mod (spSel p + d + n) n }) <$> appSettings s }
 -- | Initial edit buffer: current value, except secrets which start empty.
 
-seedEdit :: SettingsEntry -> Text
-seedEdit e
-  | seKey e == "token" = ""
-  | otherwise = seVal e
-
--- | Widget for the settings panel (tab bar + content).
--- | drawSettingsPanel 见 UI.Brick.Draw.Settings（随 settingsRows/visibleRows 一起迁出）。
-
--- | Clamp a selection into @[0, n-1]@.
-
-clampSel :: Int -> Int -> Int
-clampSel n sel
-  | n <= 0 = 0
-  | otherwise = max 0 (min sel (n - 1))
-
--- | Two-column rendering of the Status rows (label column padded).
--- | renderStatusRows / computeStatsBlocks / renderStatsBlocks 见 UI.Render.Settings。
 
 
--- | Next element in a cycle (wraps to the head); falls back to the head
--- when the current value is not one of the options.
 
-nextOption :: [Text] -> Text -> Text
-nextOption opts cur = case break (== cur) opts of
-  (_, [])     -> case opts of
-    (x : _) -> x
-    []      -> ""
-  (_, x : rest) -> case rest of
-    (nxt : _) -> nxt
-    []        -> case opts of
-      (h : _) -> h
-      []      -> x
-
--- | Maximum panel row width (kept below the 80-column window).
-
-settingsListWidth :: Int
-settingsListWidth = 96
-
--- | Current git branch name, or a short SHA when detached, or "—".  Asking
--- git itself resolves worktrees, packed refs and detached HEAD correctly;
--- reading @.git/refs/heads/<branch>@ returns the commit SHA, not the name.

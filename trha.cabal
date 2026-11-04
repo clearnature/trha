@@ -364,6 +364,7 @@ executable trha
     UI.Brick.ChatSubmit
     UI.Brick.KeyDispatch
     UI.Brick.SettingsKeys
+    UI.Brick.Settings.Pure
     UI.Brick.AppEvent
     UI.Brick.AppEvent.Model
     UI.Brick.AppEvent.Plan
