@@ -22,6 +22,7 @@ test-suite trha-cli-test
     Config.SettingsSpec
     Core.Args
     Core.Sandbox
+    Core.Sandbox.Report
     Core.ArgsSpec
     Core.HTTP
     Core.HTTPSpec
