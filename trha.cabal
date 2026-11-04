@@ -361,6 +361,7 @@ executable trha
     UI.Brick.Palette
     UI.Brick.InputOps
     UI.Brick.ChatKeys
+    UI.Brick.ChatEditor
     UI.Brick.ChatSubmit
     UI.Brick.KeyDispatch
     UI.Brick.SettingsKeys
