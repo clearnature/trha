@@ -88,7 +88,7 @@ import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.Slash (handleSlash)
-import UI.Brick.Wizard (invalidJson, refreshWizardInput)
+import UI.Brick.Wizard (finishWizard, invalidJson, refreshWizardInput)
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
   , requestInterrupt, requestStopServices, runShellCommand, stopServicesAndHalt )
@@ -1215,61 +1215,7 @@ commitWizard = do
 -- | invalidJson 见 UI.Brick.Wizard。
 
 -- | Validate and POST the draft; the kernel answers with the new store.
-finishWizard :: ProviderWizard -> EventM ResourceName AppState ()
-finishWizard w = do
-  st <- get
-  let name = T.strip (pwName w)
-      base = T.strip (pwBaseUrl w)
-      kind0 = T.toLower (T.strip (pwKind w))
-      kind = if kind0 `elem` ["openai", "anthropic", "responses"] then kind0 else "openai"
-      models = [ T.strip m | m <- T.splitOn "," (pwModels w)
-               , not (T.null (T.strip m)) ]
-      def = if T.null (T.strip (pwDefault w))
-              then fromMaybe "" (listToMaybe models)
-              else T.strip (pwDefault w)
-      authHeader = T.toLower (T.strip (pwAuthHeader w)) `notElem` ["no", "false", "0"]
-      noProxy = T.toLower (T.strip (pwNoProxy w)) `elem` ["yes", "true", "1"]
-      effort = T.strip (pwEffort w)
-      vision = [ T.strip v | v <- T.splitOn "," (pwVision w)
-               , not (T.null (T.strip v)) ]
-      jsonOf t | T.null (T.strip t) = Nothing
-               | otherwise = decode (BL.fromStrict (TE.encodeUtf8 t))
-      headersV = jsonOf (pwHeaders w)
-      extraBodyV = jsonOf (pwExtraBody w)
-      -- thinking.type is an Anthropic-wire field; the OpenAI/Responses wires
-      -- ignore it, so do not persist a value that can never take effect.
-      thinking0 = T.strip (pwThinking w)
-      thinking = if kind == "anthropic" then thinking0 else ""
-      responsesMode = T.strip (pwResponsesMode w)
-      ctxWindow = case reads (T.unpack (T.strip (pwCtxWindow w))) :: [(Int, String)] of
-        [(n, "")] | n > 0 -> Just n
-        _                 -> Nothing
-  if T.null name || T.null base
-    then modify $ \s -> s { appWizard = Nothing
-                           , appInput = editorText InputArea (Just 1) ""
-                           , appStatus = tr (appLang s) "Provider needs a name and a base URL" }
-    else do
-      modify $ \s -> s { appWizard = Nothing
-                       , appInput = editorText InputArea (Just 1) ""
-                       , appStatus = tr (appLang s) "Saving provider..." }
-      let bridge = appBridge st
-          chan = appChan st
-      void $ liftIO $ async $ do
-        -- Probe first: a reachable endpoint tells us its models, default,
-        -- effort ladder and vision models.  Anything the user typed wins;
-        -- an unreachable endpoint still saves (the draft is manual).
-        probe <- probeProvider bridge base (T.strip (pwKey w))
-        let (models', def', effort', vision', efforts') = case probe of
-              Right p -> ( if null models then ppModels p else models
-                         , if T.null def then ppDefault p else def
-                         , if T.null effort then ppEffort p else effort
-                         , if null vision then ppVision p else vision
-                         , ppEfforts p )
-              Left _  -> (models, def, effort, vision, [])
-        r <- saveProvider bridge name kind base (T.strip (pwKey w)) models' def'
-                            authHeader noProxy effort' vision' efforts'
-                            headersV extraBodyV thinking responsesMode ctxWindow
-        writeBChan chan (EvProviderSaved r)
+-- | finishWizard 见 UI.Brick.Wizard。
 
 -- | Select a skill in the palette: write the trigger into the editor and
 -- stop there.  MiMo's @DialogSkill@ does exactly this (@setText("/"+name+" ")@,
