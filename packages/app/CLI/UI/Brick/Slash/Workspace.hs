@@ -153,56 +153,65 @@ import UI.Theme
 
 handleWorkspaceSlash :: CmdCtx -> Maybe (EventM ResourceName AppState ())
 handleWorkspaceSlash cx = case cxCmd cx of
-    "/home" -> Just $ do
-      cwd <- liftIO getCurrentDirectory
-      local <- liftIO (listLocalSessionsIn cwd)
-      modify $ \s -> s { appRoute = RouteHome, appRecent = local
-                       , appStatus = tr (appLang s) "Home" }
+  "/home" -> Just $ slashHome cx
+  "/workspace" -> Just $ slashWorkspace cx
+  "/stash" -> Just $ slashStash cx
+  _ -> Nothing
+
+slashHome :: CmdCtx -> EventM ResourceName AppState ()
+slashHome cx = do
+  cwd <- liftIO getCurrentDirectory
+  local <- liftIO (listLocalSessionsIn cwd)
+  modify $ \s -> s { appRoute = RouteHome, appRecent = local
+                   , appStatus = tr (appLang s) "Home" }
     -- Human channel: move the session's workspace.  No tool reaches this
     -- endpoint, so an agent cannot widen its own sandbox root.
-    "/workspace" -> Just $ do
-      st2 <- get
-      let arg = T.strip (T.drop (T.length "/workspace") (cxInput cx))
-      case appSessionId st2 of
-        Nothing -> appendMsg (mkMsg "system" (tr (cxLang cx) "No active session.") (cxTime cx))
-        Just sid
-          | T.null arg ->
-              appendMsg (mkMsg "system"
-                (tr (cxLang cx) "Usage: /workspace <absolute-path>  (shows the sandbox root)") (cxTime cx))
-          | otherwise -> do
-              r <- liftIO (setSessionCwd (appBridge st2) sid (T.unpack arg))
-              case r of
-                Left e -> appendMsg (mkMsg "error"
-                            (tr (cxLang cx) "Error: " <> T.pack (show e)) (cxTime cx))
-                Right p -> do
-                  modify $ \s -> s { appCwd = Just (T.pack p) }
-                  appendMsg (mkMsg "system" ("Workspace: " <> T.pack p) (cxTime cx))
-    "/stash" -> Just $ do
-      st2 <- get
-      let rest = T.strip (T.drop 6 (cxInput cx))
-          entries = stashEntries (appStash st2)
-      case T.words rest of
-        [] -> case T.strip (editorValue st2) of
-          "" -> appendMsg (mkMsg "system"
-                  (tr (cxLang cx) "stash: " <> T.pack (show (length entries)) <> tr (cxLang cx) " drafts") (cxTime cx))
-          draft -> do
-            let st' = stashPush draft (appStash st2)
-            liftIO (saveStash st')
-            modify $ \s -> s { appStash = st', appInput = editorText InputArea (Just 1) "" }
-            showToast (tr (cxLang cx) "Draft stashed")
-        ("pop" : _) -> case stashPop (appStash st2) of
-          Nothing -> appendMsg (mkMsg "system" (tr (cxLang cx) "stash is empty") (cxTime cx))
-          Just (draft, st') -> do
-            liftIO (saveStash st')
-            modify $ \s -> s { appStash = st', appInput = editorText InputArea (Just 1) draft }
-            showToast (tr (cxLang cx) "Draft restored")
-        ("list" : _) -> appendMsg (mkMsg "system" (stashListing (cxLang cx) entries) (cxTime cx))
-        _ -> do
-          let st' = stashPush rest (appStash st2)
-          liftIO (saveStash st')
-          modify $ \s -> s { appStash = st' }
-          showToast (tr (cxLang cx) "Draft stashed")
-    _ -> Nothing
+
+slashWorkspace :: CmdCtx -> EventM ResourceName AppState ()
+slashWorkspace cx = do
+  st2 <- get
+  let arg = T.strip (T.drop (T.length "/workspace") (cxInput cx))
+  case appSessionId st2 of
+    Nothing -> appendMsg (mkMsg "system" (tr (cxLang cx) "No active session.") (cxTime cx))
+    Just sid
+      | T.null arg ->
+          appendMsg (mkMsg "system"
+            (tr (cxLang cx) "Usage: /workspace <absolute-path>  (shows the sandbox root)") (cxTime cx))
+      | otherwise -> do
+          r <- liftIO (setSessionCwd (appBridge st2) sid (T.unpack arg))
+          case r of
+            Left e -> appendMsg (mkMsg "error"
+                        (tr (cxLang cx) "Error: " <> T.pack (show e)) (cxTime cx))
+            Right p -> do
+              modify $ \s -> s { appCwd = Just (T.pack p) }
+              appendMsg (mkMsg "system" ("Workspace: " <> T.pack p) (cxTime cx))
+
+slashStash :: CmdCtx -> EventM ResourceName AppState ()
+slashStash cx = do
+  st2 <- get
+  let rest = T.strip (T.drop 6 (cxInput cx))
+      entries = stashEntries (appStash st2)
+  case T.words rest of
+    [] -> case T.strip (editorValue st2) of
+      "" -> appendMsg (mkMsg "system"
+              (tr (cxLang cx) "stash: " <> T.pack (show (length entries)) <> tr (cxLang cx) " drafts") (cxTime cx))
+      draft -> do
+        let st' = stashPush draft (appStash st2)
+        liftIO (saveStash st')
+        modify $ \s -> s { appStash = st', appInput = editorText InputArea (Just 1) "" }
+        showToast (tr (cxLang cx) "Draft stashed")
+    ("pop" : _) -> case stashPop (appStash st2) of
+      Nothing -> appendMsg (mkMsg "system" (tr (cxLang cx) "stash is empty") (cxTime cx))
+      Just (draft, st') -> do
+        liftIO (saveStash st')
+        modify $ \s -> s { appStash = st', appInput = editorText InputArea (Just 1) draft }
+        showToast (tr (cxLang cx) "Draft restored")
+    ("list" : _) -> appendMsg (mkMsg "system" (stashListing (cxLang cx) entries) (cxTime cx))
+    _ -> do
+      let st' = stashPush rest (appStash st2)
+      liftIO (saveStash st')
+      modify $ \s -> s { appStash = st' }
+      showToast (tr (cxLang cx) "Draft stashed")
 
 
 -- | 草稿列表的编号预览（每行一条）。
