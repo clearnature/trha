@@ -90,7 +90,7 @@ import UI.Brick.Chat (handleChatWith)
 import UI.Brick.Slash (handleSlash)
 import UI.Brick.Wizard
   ( commitWizard, finishWizard, invalidJson, refreshWizardInput
-  , startWizard )
+  , startWizard, startWizardPreset )
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
   , requestInterrupt, requestStopServices, runShellCommand, stopServicesAndHalt )
@@ -1097,20 +1097,7 @@ runPaletteItem = do
 -- | Persist the active provider/model so the next launch starts there.
 -- | persistSelection 见 UI.Brick.DialogKeys。
 
--- | Begin adding (Nothing) or editing (Just provider) a provider.
-startWizardPreset :: Preset -> EventM ResourceName AppState ()
-startWizardPreset p = do
-  st <- get
-  let w = ProviderWizard 0 (preName p) (preKind p) (preBaseUrl p)
-            (T.intercalate "," (preModels p))
-            (fromMaybe "" (listToMaybe (preModels p))) "" "" "" "yes" "no" "" "" "" "" ""
-  modify $ \s -> s { appWizard = Just w
-                   , appDialogs = stackPop (appDialogs s)
-                   , appPalette = Nothing
-                   , appInput = editorText InputArea (Just 1) ""
-                   , appStatus = tr (appLang st) "Provider wizard 1/6: "
-                       <> head wizardPrompts }
-  refreshWizardInput w
+-- | startWizardPreset 见 UI.Brick.Wizard。
 
 -- | Re-probe a saved provider and write its effort ladder back (a relay may
 -- have gained or lost a model's depth levels since it was saved).

@@ -12,6 +12,7 @@ module UI.Brick.Wizard
   , finishWizard
   , commitWizard
   , startWizard
+  , startWizardPreset
   ) where
 
 import Brick
@@ -270,3 +271,17 @@ startWizard existing = do
                    , appStatus = tr (appLang s) "Provider wizard 1/6: "
                        <> head wizardPrompts }
   refreshWizardInput w
+
+-- | Begin adding (Nothing) or editing (Just provider) a provider.
+startWizardPreset :: Preset -> EventM ResourceName AppState ()
+startWizardPreset p = do
+  st <- get
+  let w = ProviderWizard 0 (preName p) (preKind p) (preBaseUrl p)
+            (T.intercalate "," (preModels p))
+            (fromMaybe "" (listToMaybe (preModels p))) "" "" "" "yes" "no" "" "" "" "" ""
+  modify $ \s -> s { appWizard = Just w
+                   , appDialogs = stackPop (appDialogs s)
+                   , appPalette = Nothing
+                   , appInput = editorText InputArea (Just 1) ""
+                   , appStatus = tr (appLang st) "Provider wizard 1/6: "
+                       <> head wizardPrompts }
