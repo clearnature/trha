@@ -89,6 +89,7 @@ import UI.Brick.Slash.Info (handleInfoSlash)
 import UI.Brick.Slash.Lifecycle (handleLifecycleSlash)
 import UI.Brick.Slash.Session (handleSessionSlash)
 import UI.Brick.Slash.Config (handleConfigSlash)
+import UI.Brick.Slash.Integration (handleIntegrationSlash)
 import UI.Brick.Slash.Workspace (handleWorkspaceSlash)
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.RunControl
@@ -172,7 +173,7 @@ handleSlash input = do
       cx     = CmdCtx t st input cmd bridge chan lang
   case cmd of
     _ | Just act <- msum [ handleLifecycleSlash cx, handleInfoSlash cx, handleConfigSlash cx
-         , handleSessionSlash cx, handleWorkspaceSlash cx ] -> act
+         , handleIntegrationSlash cx, handleSessionSlash cx, handleWorkspaceSlash cx ] -> act
     _ | cmd == "/delete" || "/delete " `T.isPrefixOf` cmd -> do
       let sid = T.strip (T.drop (T.length "/delete") input)
       if T.null sid
@@ -304,30 +305,6 @@ handleSlash input = do
           modify $ \s -> s { appDialogs = stackPush (DialogModels [] "" 0) (appDialogs s) }
           void $ liftIO $ async $
             listModels bridge >>= writeBChan chan . EvModels
-    "/todo" -> do
-      st2 <- get
-      t2 <- liftIO now
-      let items = appTodos st2
-      appendMsg (mkMsg "system"
-        (if null items then tr lang "No tasks"
-         else T.unlines [ "  " <> todoGlyph (todoStatus i) <> " " <> todoSubject i | i <- items ]) t2)
-    "/tree" -> do
-      st2 <- get
-      t2 <- liftIO now
-      let as = appAgents st2
-      appendMsg (mkMsg "system"
-        (if null as then tr lang "no agents"
-         else T.unlines (agentTreeLines (fmap T.pack (appSessionId st2)) as)) t2)
-    "/agents" -> do
-      st2 <- get
-      if null (appAgents st2)
-        then appendMsg (mkMsg "system" (tr lang "no agents") t)
-        else modify $ \s -> s { appDialogs =
-               stackPush (DialogAgents (appAgents st2) 0) (appDialogs s) }
-    "/skills" -> do
-      st2 <- get
-      modify $ \s -> s { appDialogs =
-        stackPush (DialogSkills (appSkills st2) "" 0) (appDialogs s) }
     "/provider" -> do
       modify $ \s -> s { appDialogs = stackPush (DialogProviders [] 0) (appDialogs s) }
       void $ liftIO $ async $
@@ -379,17 +356,6 @@ handleSlash input = do
                 writeBChan chan (EvPlanState (fmap ((, Nothing)) r))
             _ -> appendMsg (mkMsg "system"
                    (tr lang "Nothing to deny — no pending plan or approval.") t)
-    "/plugins" -> do
-      t <- liftIO now
-      result <- liftIO (listPlugins bridge)
-      case result of
-        Right [] -> appendMsg (mkMsg "system" "No plugins registered." t)
-        Right ps -> appendMsg (mkMsg "system"
-                      ("Plugins:\n" <> T.unlines
-                        [ "  - " <> pluginName p <> " " <> pluginVersion p
-                            <> "  —  " <> pluginDescription p
-                        | p <- ps ]) t)
-        Left err -> appendMsg (mkMsg "error" (T.pack (show err)) t)
     "/resume" -> do
       cwd <- liftIO getCurrentDirectory
       local <- liftIO (listLocalSessionsIn cwd)
