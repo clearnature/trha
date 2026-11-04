@@ -76,6 +76,7 @@ import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Selection (inSelRange)
 import UI.Brick.DialogKeys
   ( dialogAppend, dialogDelete, modifyTop, withCommands )
+import UI.Brick.Apply (applyLanguage, applyTheme)
 import UI.Brick.Toast (showToast)
 import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
@@ -515,27 +516,7 @@ setWindowTitle t = do
 
 -- | pricesOf 见 UI.Brick.Draw.Status。
 
--- | Apply a named theme (switch at runtime + persist in settings).
-applyLanguage :: Lang -> EventM ResourceName AppState ()
-applyLanguage l = do
-  st <- get
-  let cfg' = (appEffCfg st) { configLang = langName l }
-  liftIO $ saveConfig cfg'
-  modify $ \s -> s { appLang = l, appEffCfg = cfg'
-                   , appDialogs = stackPop (appDialogs s)
-                   , appStatus = tr l "Language: " <> langName l }
-
-applyTheme :: Text -> EventM ResourceName AppState ()
-applyTheme name = do
-  st2 <- get
-  let th = resolveTheme name
-  if T.toLower (themeName th) /= T.toLower name
-    then showToast ("Unknown theme: " <> name)
-    else do
-      let cfg' = (appEffCfg st2) { configTheme = themeName th }
-      liftIO $ saveConfig cfg'
-      modify $ \s -> s { appTheme = th, appEffCfg = cfg' }
-      showToast ("Theme: " <> themeName th)
+-- | applyLanguage / applyTheme 见 UI.Brick.Apply。
 
 -- | Numbered listing of local sessions (mirrors the REPL format).
 localSessionLines :: Lang -> [SessionSummary] -> [Text]
