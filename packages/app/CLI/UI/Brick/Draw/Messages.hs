@@ -102,6 +102,11 @@ messageBody :: Bool -> Text -> Text -> Maybe ToolCard -> ToolFold -> Widget Reso
 messageBody md role content tool fold
   | role == "stats" =
       padLeft (Pad 2) $ withAttr (attrName "timestamp") $ strWrap (T.unpack content)
+  -- 工具轨迹是**独立行**（role == "tool"），与 Reasonix 的 ItemKind.ItemTool 同构：
+  -- 分派依据是 role，而不是 msgTool 字段——后者只在 role == "tool" 时有值，
+  -- 是这条行的 payload。这样「只看对话 / 只看轨迹」可以纯按 role 过滤实现。
+  | role == "tool" =
+      maybe emptyWidget (\card -> renderToolBody card fold) tool
   | otherwise =
       case tool of
     Just card -> renderToolBody card fold
