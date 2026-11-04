@@ -339,6 +339,8 @@ executable trha
     UI.Brick.SessionView
     UI.Brick.Chat
     UI.Brick.Slash
+    UI.Brick.Slash.Ctx
+    UI.Brick.Slash.Lifecycle
     UI.Brick.Wizard
     UI.Brick.DialogActivate
     UI.Brick.Palette

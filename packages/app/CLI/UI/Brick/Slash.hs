@@ -55,6 +55,7 @@ import Config.Settings (resolveConfig, saveConfig)
 import Data.IORef (newIORef, readIORef)
 import Data.List (intersperse, find)
 import qualified Data.Map.Strict as Map
+import Data.Foldable (msum)
 import Data.Maybe (fromMaybe, isJust, isNothing, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -83,6 +84,8 @@ import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
 import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
+import UI.Brick.Slash.Ctx (CmdCtx(..))
+import UI.Brick.Slash.Lifecycle (handleLifecycleSlash)
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
@@ -162,7 +165,9 @@ handleSlash input = do
       bridge = appBridge st
       chan   = appChan st
       lang   = appLang st
+      cx     = CmdCtx t st input cmd bridge chan lang
   case cmd of
+    _ | Just act <- msum [handleLifecycleSlash cx] -> act
     "/help" ->
       appendMsg (mkMsg "system" (helpTextFor (appLang st)) t)
     _ | cmd == "/delete" || "/delete " `T.isPrefixOf` cmd -> do
@@ -466,8 +471,6 @@ handleSlash input = do
           case r of
             Right _ -> showToast (tr lang "Switched to " <> arg)
             Left e  -> appendMsg (mkMsg "error" (T.pack (show e)) t)
-    "/quit" -> halt
-    "/exit" -> halt
     "/status" ->
       appendMsg (mkMsg "system" (statusLine st) t)
     "/approve" -> do
