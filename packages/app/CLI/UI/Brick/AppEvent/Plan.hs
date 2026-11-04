@@ -165,7 +165,14 @@ import UI.Frecency (Frecency(..), emptyFrecency, recordUse, rankItems, loadFrece
 
 -- | 认领 EvMode / EvPlan / EvPlanState / EvVerdict。
 handlePlanEvent :: AppEvent -> Maybe (EventM ResourceName AppState ())
-handlePlanEvent (EvMode result) = Just $ case result of
+handlePlanEvent (EvMode result) = Just $ onModeResult result
+handlePlanEvent (EvPlan result) = Just $ onPlanResult result
+handlePlanEvent (EvPlanState result) = Just $ onPlanStateResult result
+handlePlanEvent (EvVerdict result) = Just $ onVerdictResult result
+handlePlanEvent _ = Nothing
+
+onModeResult :: Either CLIError SessionMode -> EventM ResourceName AppState ()
+onModeResult result = case result of
   Right m -> do
     lang0 <- gets appLang
     -- 左侧 modeTag 已经显示模式名，appStatus 再写一遍就是「Read only ·
@@ -175,7 +182,8 @@ handlePlanEvent (EvMode result) = Just $ case result of
     showToast (tr lang0 "Mode: " <> smLabel m)
   Left e  -> modify $ \s -> s { appStatus = "Mode: " <> T.pack (show e) }
 
-handlePlanEvent (EvPlan result) = Just $ do
+onPlanResult :: Either CLIError PlanSubmit -> EventM ResourceName AppState ()
+onPlanResult result = do
   t <- liftIO now
   case result of
     Right (PlanAwaiting preview) ->
@@ -185,7 +193,8 @@ handlePlanEvent (EvPlan result) = Just $ do
       modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
   scrollBottom
 
-handlePlanEvent (EvPlanState result) = Just $ do
+onPlanStateResult :: Either CLIError (PlanView, Maybe Text) -> EventM ResourceName AppState ()
+onPlanStateResult result = do
   lang <- gets appLang
   t <- liftIO now
   case result of
@@ -202,7 +211,8 @@ handlePlanEvent (EvPlanState result) = Just $ do
       modify $ \st -> st { appStatus = tr lang "Error", appBusy = False }
   scrollBottom
 
-handlePlanEvent (EvVerdict result) = Just $ do
+onVerdictResult :: Either CLIError PlanVerdict -> EventM ResourceName AppState ()
+onVerdictResult result = do
   lang <- gets appLang
   t <- liftIO now
   case result of
@@ -217,4 +227,3 @@ handlePlanEvent (EvVerdict result) = Just $ do
       appendMsg (mkMsg "error" (T.pack (show err)) t)
       modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
   scrollBottom
-handlePlanEvent _ = Nothing
