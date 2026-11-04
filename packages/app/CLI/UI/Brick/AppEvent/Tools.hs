@@ -186,38 +186,45 @@ handleToolEvent (EvTool result) = Just $ do
         modify $ \st -> st { appAskTool = Just (teName ev, teArgs ev)
                            , appAskAt = Just asked }
       case teStatus ev of
-        ToolRunRunning -> do
-          -- A long tool call used to be invisible until it finished: the card
-          -- only existed once the closing event arrived. Open the card now and
-          -- remember which message it is, so `end` can rewrite it.
-          appendMsg (toolCardMsg ev t)
-          st <- get
-          -- `appendMsg` appends, so the message just added is the last one and
-          -- its id is (length - 1); `listToMaybe` would hand back the oldest.
-          let mid = length (appMessages st) - 1
-          when (not (T.null (teCallId ev))) $
-            modify $ \s -> s { appRunningTools =
-              Map.insert (teCallId ev) mid (appRunningTools s) }
-        _ -> do
-          st <- get
-          let running = Map.lookup (teCallId ev) (appRunningTools st)
-          case running of
-            Just mid -> do
-              -- Rewrite the opening card in place: one call, one card.
-              modify $ \s -> s
-                { appMessages = map (\m -> if msgId m == mid then toolCardMsg ev t else m)
-                                  (appMessages s)
-                , appRunningTools = Map.delete (teCallId ev) (appRunningTools s)
-                }
-            Nothing -> appendMsg (toolCardMsg ev t)
+        ToolRunRunning -> onToolRunning ev t
+        _              -> onToolFinished ev t
     Left err -> do
       appendMsg (mkMsg "error" (tr lang "SSE: " <> T.pack (show err)) t)
       modify $ \st -> st { appStatus = tr (appLang st) "Error" }
   scrollBottom
-
 handleToolEvent (EvToggleToolFold mid) = Just $ do
   -- Flip the fold state of the tool message with the given id.
   modify $ \s -> s { appFolds =
     Map.alter (Just . toggleFold . fromMaybe FoldCollapsed) mid (appFolds s) }
   scrollBottom
 handleToolEvent _ = Nothing
+
+-- | 工具开始运行：先开卡并记住消息 id，完成事件到达时就地改写。
+onToolRunning :: ToolEvent -> Text -> EventM ResourceName AppState ()
+onToolRunning ev t = do
+      -- A long tool call used to be invisible until it finished: the card
+      -- only existed once the closing event arrived. Open the card now and
+      -- remember which message it is, so `end` can rewrite it.
+      appendMsg (toolCardMsg ev t)
+      st <- get
+      -- `appendMsg` appends, so the message just added is the last one and
+      -- its id is (length - 1); `listToMaybe` would hand back the oldest.
+      let mid = length (appMessages st) - 1
+      when (not (T.null (teCallId ev))) $
+        modify $ \s -> s { appRunningTools =
+          Map.insert (teCallId ev) mid (appRunningTools s) }
+
+-- | 工具结束：有对应开卡就改写它，否则追加一张新卡。
+onToolFinished :: ToolEvent -> Text -> EventM ResourceName AppState ()
+onToolFinished ev t = do
+      st <- get
+      let running = Map.lookup (teCallId ev) (appRunningTools st)
+      case running of
+        Just mid -> do
+          -- Rewrite the opening card in place: one call, one card.
+          modify $ \s -> s
+            { appMessages = map (\m -> if msgId m == mid then toolCardMsg ev t else m)
+                              (appMessages s)
+            , appRunningTools = Map.delete (teCallId ev) (appRunningTools s)
+            }
+        Nothing -> appendMsg (toolCardMsg ev t)
