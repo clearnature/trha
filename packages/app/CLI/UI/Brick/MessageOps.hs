@@ -7,12 +7,15 @@
 module UI.Brick.MessageOps
   ( now
   , appendMsg
+  , setWindowTitle
   ) where
 
 import Brick (EventM, modify)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.LocalTime (getCurrentTimeZone)
+import System.IO (hFlush, hPutStr, stdout)
 
 import UI.State (AppState(..), ChatMessage(..), ResourceName(..))
 import UI.TimeStamp (clockWithZone)
@@ -33,3 +36,12 @@ appendMsg msg = modify $ \st ->
   let i = appNextMsgId st
   in st { appMessages = appMessages st ++ [msg { msgId = i }]
         , appNextMsgId = i + 1 }
+
+-- | 用 OSC 0 设置终端窗口标题（@session + busy@，仿 MiMo）。
+--
+-- 直接写 stdout 而不经 vty：窗口标题是终端自身的通道，与渲染无关。
+-- 注意用 @\\BEL@ 收尾而不是换行——否则会污染 TUI 的画面。
+setWindowTitle :: Text -> IO ()
+setWindowTitle t = do
+  hPutStr stdout ("\ESC]0;" <> T.unpack t <> "\BEL")
+  hFlush stdout

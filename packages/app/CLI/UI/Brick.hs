@@ -89,7 +89,7 @@ import UI.Brick.SessionView
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
   , requestInterrupt, requestStopServices, runShellCommand, stopServicesAndHalt )
-import UI.Brick.MessageOps (appendMsg, now)
+import UI.Brick.MessageOps (appendMsg, now, setWindowTitle)
 import UI.Brick.Draw.Messages
   ( cardHidden, diffWidget, drawHome, drawInput, drawMessage, drawMessages
   , drawPending, drawPlanCard, drawToast, drawUI, messageBody, messageHeader
@@ -519,10 +519,7 @@ resumeSession selText = do
         refreshSidebar (appBridge st) (appChan st) (ssId s)
       scrollBottom
 
--- | OSC 0: set the terminal window title ("session + busy" per MiMo).setWindowTitle :: Text -> IO ()
-setWindowTitle t = do
-  hPutStr stdout ("\ESC]0;" <> T.unpack t <> "\BEL")
-  hFlush stdout
+-- | setWindowTitle 见 UI.Brick.MessageOps。
 
 -- | pricesOf 见 UI.Brick.Draw.Status。
 
