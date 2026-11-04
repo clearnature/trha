@@ -76,6 +76,7 @@ import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Selection (inSelRange)
 import UI.Brick.DialogKeys
   ( dialogAppend, dialogDelete, modifyTop, withCommands )
+import UI.Brick.Toast (showToast)
 import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
 import UI.Brick.Draw.Messages
@@ -1701,14 +1702,7 @@ modeAction body = do
 
 -- | Show a transient notice and schedule its dismissal.  The stamp keeps a
 -- late timer from clearing a newer toast.
-showToast :: Text -> EventM ResourceName AppState ()
-showToast msg = do
-  t <- liftIO getCurrentTime
-  st <- get
-  modify $ \s -> s { appToast = Just (msg, t) }
-  void $ liftIO $ async $ do
-    threadDelay 3000000
-    writeBChan (appChan st) (EvToastExpire t)
+-- | showToast 见 UI.Brick.Toast。
 
 -- | Pull the session's posture (after creation/restore).
 refreshMode :: SchedulerBridge -> SessionId -> BChan AppEvent -> IO ()
