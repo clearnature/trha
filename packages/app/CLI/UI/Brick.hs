@@ -76,7 +76,8 @@ import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Selection (inSelRange)
 import UI.Brick.Draw.Messages
   ( cardHidden, diffWidget, drawInput, drawMessage, drawMessages, drawPending
-  , messageBody, messageHeader, renderBlocks, renderToolBody, roleStyle )
+  , drawPlanCard, messageBody, messageHeader, renderBlocks, renderToolBody
+  , roleStyle )
 import UI.Brick.Draw.Settings (drawSettingsPanel, settingsListMax, settingsRows, visibleRows)
 import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar, sidebarDataFor)
 import UI.Brick.Draw.Status
@@ -698,36 +699,7 @@ blocksToMessages blocks =
 --
 -- Marks: @[x]@ done, @[!]@ failed, @[-]@ skipped, @[+]@ approved (out with the
 -- host), @[·]@ pending. The pending step is the one a decision applies to.
-drawPlanCard :: PlanView -> Widget ResourceName
-drawPlanCard pv =
-  withAttr (attrName "plan") $
-    borderWithLabel (withAttr (attrName "plan") $ str " Plan ") $
-      vBox $
-        [ padLeftRight 1 $ withAttr (attrName "status") $
-            str (T.unpack (phaseLabel (pvPhase pv)))
-        ]
-        ++ zipWith (\n st -> padLeftRight 1 . str . T.unpack $ renderStep pv (n, st))
-                   [1 :: Int ..] (pvSteps pv)
-        ++ [ padLeftRight 1 $ withAttr (attrName "status") $ str (T.unpack hints)
-           | not (T.null hints) ]
-  where
-    phaseLabel "executing_step" = "running a step…"
-    phaseLabel "planning"       = "waiting for a decision"
-    phaseLabel other            = other
-    hints :: Text
-    hints
-      | pvPhase pv == "planning" = "/approve · /skip · /reject · /abandon"
-      | otherwise                = "/abandon"
-    renderStep p (n, st) =
-      let mark = case psvStatus st of
-            "done"     -> "[x]"
-            "failed"   -> "[!]"
-            "skipped"  -> "[-]"
-            "approved" -> "[+]"
-            "rejected" -> "[r]"
-            _          -> "[·]"
-          here = if pvPending pv == Just (psvId st) then "  ←" else ""
-      in T.pack (show (n :: Int)) <> ". " <> mark <> " " <> psvTitle st <> here
+-- | drawPlanCard 见 UI.Brick.Draw.Messages。
 
 -- | 状态栏的纯文本源（statusSandboxTag / statusClock / statusModelLine /
 -- statusGitLine / statusPeak / statusStatsLine …）已整体迁到

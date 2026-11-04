@@ -16,6 +16,7 @@ module UI.Brick.Draw.Messages
   , drawMessage
   , drawMessages
   , drawInput
+  , drawPlanCard
   , drawPending
   ) where
 
@@ -29,7 +30,7 @@ import qualified Data.Map.Strict as Map
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (^.))
 
-import Core.Types (CLIConfig(..), PlanView(..))
+import Core.Types (CLIConfig(..), PlanStepView(..), PlanView(..))
 import Brick.Widgets.Edit (getEditContents, renderEditor)
 import UI.Event (PendingMsg(..), RunState(..), runState)
 import UI.Render.Diff
@@ -362,3 +363,44 @@ drawInput st =
 
 -- | Braille spinner frames 见 UI.Render.Spans.spinnerFrame。
 
+
+drawPlanCard :: PlanView -> Widget ResourceName
+drawPlanCard pv =
+  withAttr (attrName "plan") $
+    borderWithLabel (withAttr (attrName "plan") $ str " Plan ") $
+      vBox $
+        [ padLeftRight 1 $ withAttr (attrName "status") $
+            str (T.unpack (phaseLabel (pvPhase pv)))
+        ]
+        ++ zipWith (\n st -> padLeftRight 1 . str . T.unpack $ renderStep pv (n, st))
+                   [1 :: Int ..] (pvSteps pv)
+        ++ [ padLeftRight 1 $ withAttr (attrName "status") $ str (T.unpack hints)
+           | not (T.null hints) ]
+  where
+    phaseLabel "executing_step" = "running a step…"
+    phaseLabel "planning"       = "waiting for a decision"
+    phaseLabel other            = other
+    hints :: Text
+    hints
+      | pvPhase pv == "planning" = "/approve · /skip · /reject · /abandon"
+      | otherwise                = "/abandon"
+    renderStep p (n, st) =
+      let mark = case psvStatus st of
+            "done"     -> "[x]"
+            "failed"   -> "[!]"
+            "skipped"  -> "[-]"
+            "approved" -> "[+]"
+            "rejected" -> "[r]"
+            _          -> "[·]"
+          here = if pvPending pv == Just (psvId st) then "  ←" else ""
+      in T.pack (show (n :: Int)) <> ". " <> mark <> " " <> psvTitle st <> here
+
+-- | 状态栏的纯文本源（statusSandboxTag / statusClock / statusModelLine /
+-- statusGitLine / statusPeak / statusStatsLine …）已整体迁到
+-- UI.Brick.Draw.Status。本模块只保留 Widget 装配。
+
+-- | 统计工具（statusCommas / statusShortK / statusPct / statusOneDec /
+-- statusUsable / statusCtxPct / statusTurnsSuffix）见 UI.Brick.Draw.Status。
+
+-- | 状态栏第 2 行的统计段：缓存 / 上下文 / 压缩 / 吞吐 / token / 成本 / 余额 / 峰谷。
+--
