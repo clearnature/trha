@@ -346,6 +346,8 @@ executable trha
     UI.Brick.ChatKeys
     UI.Brick.KeyDispatch
     UI.Brick.AppEvent
+    UI.Brick.Stream
+    UI.Brick.ToolCardMsg
     UI.Brick.Apply
     UI.Render.ToolSummary
     UI.Render.Message
