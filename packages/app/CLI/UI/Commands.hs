@@ -71,6 +71,7 @@ import UI.Render.Sidebar (agentTreeLines)
 import System.Directory (getCurrentDirectory)
 import UI.Commands.Env (CmdEnv(..), dispatch)
 import UI.Commands.Meta (runMeta)
+import UI.Commands.Plan (approvePlanStep, decidePlanStep, runPlan)
 import UI.Commands.Session (friendlyDenyError, resumeMessages, resumeSessions, runSession)
 import UI.I18n (Lang(..), langName, parseLang, tr)
 import Config.Settings (resolveConfig, saveConfig)
@@ -123,19 +124,9 @@ runLocalShell cmd = do
 
 executeCommand :: Lang -> SchedulerBridge -> IORef (Maybe SessionId) -> IORef Text -> Command -> IO (Maybe Text)
 -- | Parse a loop interval: @30s@, @5m@, @1h@, or plain seconds.
-parseInterval :: Text -> Maybe Int
-parseInterval raw = case T.unsnoc (T.toLower (T.strip raw)) of
-  Just (num, 's') -> (* 1000) <$> readInt num
-  Just (num, 'm') -> (* 60000) <$> readInt num
-  Just (num, 'h') -> (* 3600000) <$> readInt num
-  _               -> readInt (T.strip raw)
-  where
-    readInt s = case reads (T.unpack s) :: [(Int, String)] of
-      [(n, "")] | n > 0 -> Just n
-      _                 -> Nothing
 
 executeCommand lang bridge sessionRef modelRef cmd
-  | Just act <- dispatch [runMeta, runSession] env cmd = act
+  | Just act <- dispatch [runMeta, runSession, runPlan] env cmd = act
   where env = CmdEnv lang bridge sessionRef modelRef
 
 
@@ -486,30 +477,6 @@ executeCommand lang bridge sessionRef _ Graph = do
     ++ [ "  - " <> T.pack nm <> " x" <> T.pack (show n) | (nm, n) <- counts ]
     ++ tree
 
-executeCommand lang bridge sessionRef _ (Loop arg) = do
-  cur <- readIORef sessionRef
-  case cur of
-    Nothing -> return $ Just (tr lang "No active session.")
-    Just sid
-      | T.toLower (T.strip arg) == "stop" -> do
-          r <- stopLoops bridge sid
-          return $ Just $ case r of
-            Left e -> tr lang "Error: " <> T.pack (show e)
-            Right n -> tr lang "Stopped " <> T.pack (show n) <> tr lang " loop(s)."
-      | T.null (T.strip arg) -> do
-          r <- fetchLoops bridge sid
-          return $ Just $ case r of
-            Left e -> tr lang "Error: " <> T.pack (show e)
-            Right [] -> tr lang "No active loops."
-            Right ls -> T.unlines (tr lang "Loops:" : map ("  - " <>) ls)
-      | otherwise -> case T.words (T.strip arg) of
-          (iv : rest) | Just ms <- parseInterval iv, not (null rest) -> do
-            r <- startLoop bridge sid ms (T.unwords rest)
-            return $ Just $ case r of
-              Left e -> tr lang "Error: " <> T.pack (show e)
-              Right lid -> tr lang "Loop started: " <> lid
-          _ -> return $ Just (tr lang "Usage: /loop <30s|5m|1h> <prompt> | /loop stop")
-
 executeCommand lang bridge _ _ (SwitchProvider Nothing) = do
   r <- listProviders bridge
   return $ Just $ case r of
@@ -539,59 +506,6 @@ executeCommand lang bridge sessionRef _ GoalView = do
           , tr lang "Todos: " <> T.pack (show (length (siTodos si)))
           ]
 
-executeCommand lang bridge sessionRef _ (Rewind arg) = do
-  cur <- readIORef sessionRef
-  case cur of
-    Nothing -> return $ Just (tr lang "No active session.")
-    Just sid -> case readMaybe (T.unpack (T.strip arg)) :: Maybe Int of
-      Just n | n > 0 -> do
-        r <- forkSession bridge sid (Just n)
-        case r of
-          Left e -> return $ Just (tr lang "Error: " <> T.pack (show e))
-          Right newSid -> do
-            writeIORef sessionRef (Just newSid)
-            return $ Just $ tr lang "Rewound to turn " <> T.pack (show n)
-                             <> tr lang ": " <> T.pack newSid
-      _ -> return $ Just (tr lang "Usage: /rewind <n> (turn number, 1 = first)")
-
--- | @/restore [n]@：从 @~/.trha/file-history@ 还原一次写前快照。
---
--- 快照文件名是 @&lt;stamp&gt;-&lt;sha1(路径)前8位&gt;-&lt;basename&gt;@，没有完整路径，
--- 所以在当前目录树里按 basename 回找，唯一命中才写回（多个命中就列出来让人选）。
-executeCommand lang _ _ _ (Restore arg) = do
-  home <- getHomeDirectory
-  let dir = home </> ".trha" </> "file-history"
-  present <- doesDirectoryExist dir
-  if not present
-    then return $ Just (tr lang "No file history yet (~/.trha/file-history).")
-    else do
-      names <- reverse . sort <$> listDirectory dir
-      case readMaybe (T.unpack (T.strip arg)) :: Maybe Int of
-        Just n | n >= 1 && n <= length names -> do
-          let snap = names !! (n - 1)
-          case snapshotBase snap of
-            Nothing -> return $ Just (tr lang "Unrecognised snapshot: " <> T.pack snap)
-            Just base -> do
-              cwd <- getCurrentDirectory
-              hits <- findFilesNamed cwd base
-              case hits of
-                [target] -> do
-                  body <- TIO.readFile (dir </> snap)
-                  TIO.writeFile target body
-                  return $ Just $ tr lang "Restored " <> T.pack snap
-                                   <> tr lang " -> " <> T.pack target
-                [] -> return $ Just $ tr lang "No file named " <> T.pack base
-                                   <> tr lang " under " <> T.pack cwd
-                many -> return $ Just $ T.unlines
-                  (tr lang "Several candidates — cd into the right tree and retry:"
-                   : map (T.pack . ("  - " <>)) many)
-        _ -> return $ Just $ T.unlines
-          (tr lang "Recent snapshots (newest first):"
-           : [ "  " <> T.pack (show i) <> ". " <> T.pack name
-             | (i, name) <- zip [1 :: Int ..] (take 20 names) ])
-          <> tr lang "Use /restore <n>."
-
--- | @/auth@：provider 的 key 状态；@/auth check <name>@ 让内核探测一次端点。
 executeCommand lang bridge _ _ (Auth arg) = do
   ps <- listProviders bridge
   case ps of
@@ -732,70 +646,6 @@ executeCommand lang bridge sessionRef modelRef (Review arg) = do
                (SendMessage ("请审阅以下未提交的改动，指出问题与改进点：\n\n```diff\n"
                              <> clipped <> "\n```"))
 
-executeCommand lang bridge sessionRef _ (Steer prompt)
-  | T.null (T.strip prompt) = return $ Just (tr lang "Usage: /steer <prompt>")
-  | otherwise = do
-      cur <- readIORef sessionRef
-      case cur of
-        Nothing -> return $ Just (tr lang "No active session.")
-        Just sid -> do
-          r <- steerSession bridge sid (T.strip prompt)
-          return $ Just $ case r of
-            Left e -> tr lang "Error: " <> T.pack (show e)
-            Right n -> tr lang "Steered (" <> T.pack (show n) <> tr lang " pending)"
-
-executeCommand lang bridge sessionRef _ (Queue Nothing) = do
-  cur <- readIORef sessionRef
-  case cur of
-    Nothing -> return $ Just (tr lang "No active session.")
-    Just sid -> do
-      r <- fetchQueue bridge sid
-      return $ Just $ case r of
-        Left e -> tr lang "Error: " <> T.pack (show e)
-        Right [] -> tr lang "Queue is empty."
-        Right ms -> T.unlines (tr lang "Queued:" : map ("  - " <>) ms)
-
-executeCommand lang bridge sessionRef _ (Queue (Just text))
-  | T.null (T.strip text) = return $ Just (tr lang "Usage: /queue <message>")
-  | otherwise = do
-      cur <- readIORef sessionRef
-      case cur of
-        Nothing -> return $ Just (tr lang "No active session.")
-        Just sid -> do
-          r <- queueMessage bridge sid (T.strip text)
-          return $ Just $ case r of
-            Left e -> tr lang "Error: " <> T.pack (show e)
-            Right n -> tr lang "Queued (" <> T.pack (show n) <> tr lang " pending)"
-
-executeCommand lang bridge sessionRef _ Recap = do
-  cur <- readIORef sessionRef
-  case cur of
-    Nothing -> return $ Just (tr lang "No active session.")
-    Just sid -> do
-      r <- recapSession bridge sid
-      return $ Just $ case r of
-        Left e -> tr lang "Error: " <> T.pack (show e)
-        Right summary
-          | T.null (T.strip summary) -> tr lang "Nothing to recap yet."
-          | otherwise -> summary
-
-executeCommand lang bridge sessionRef _ (Btw question) = do
-  cur <- readIORef sessionRef
-  case cur of
-    Nothing -> return $ Just (tr lang "No active session.")
-    Just sid
-      | T.null (T.strip question) -> return $ Just (tr lang "Usage: /btw <question>")
-      | otherwise -> do
-          r <- btwAsk bridge sid (T.strip question)
-          return $ Just $ case r of
-            Left e -> tr lang "Error: " <> T.pack (show e)
-            Right answer -> answer
-
--- | Change the session's workspace.
---
--- The *human* channel: the model has no tool that reaches this endpoint — its
--- `cd` is clamped to the current workspace — so only a person typing this can
--- move the sandbox root.
 executeCommand lang bridge sessionRef _ (Workspace mdir) = do
   cur <- readIORef sessionRef
   case cur of
@@ -808,38 +658,12 @@ executeCommand lang bridge sessionRef _ (Workspace mdir) = do
           Left e  -> tr lang "Error: " <> T.pack (show e)
           Right p -> tr lang "Workspace: " <> T.pack p
 
-executeCommand lang bridge sessionRef _ Retry = do
-  cur <- readIORef sessionRef
-  case cur of
-    Nothing -> return $ Just (tr lang "No active session.")
-    Just sid -> do
-      r <- retrySession bridge sid
-      return $ Just $ case r of
-        Left e -> tr lang "Error: " <> T.pack (show e)
-        Right reply -> reply
-
 executeCommand lang _ _ _ (Paste text) = do
   r <- saveClipboardImage
   return $ Just $ case r of
     Nothing -> tr lang "No image in clipboard"
     Just path -> tr lang "Image saved: " <> T.pack path
       <> (if T.null (T.strip text) then "" else " (" <> T.strip text <> ")")
-
-executeCommand lang _ _ _ EditPrompt = do
-  tmp <- getTemporaryDirectory
-  (path, h) <- openTempFile tmp "trha-edit.txt"
-  hClose h
-  ed <- do
-    v <- lookupEnv "EDITOR"
-    case v of
-      Just e | not (null e) -> pure e
-      _ -> fromMaybe "vi" <$> lookupEnv "VISUAL"
-  (code, _, err) <- readProcessWithExitCode ed [path] ""
-  body <- TIO.readFile path `catch` \(_ :: IOException) -> pure ""
-  removeFile path `catch` \(_ :: IOException) -> pure ()
-  return $ Just $ if code /= ExitSuccess
-    then tr lang "Editor failed: " <> T.pack err
-    else body
 
 executeCommand lang _ _ _ (OutputStyle arg) = do
   cfg <- resolveConfig defaultCLIConfig
@@ -925,136 +749,12 @@ executeCommand lang bridge _ _ Plugins = do
       | p <- ps ]
     Left err -> tr lang "Error: " <> T.pack (show err)
 
-executeCommand lang _ _ _ (Unknown cmd) =
-  return $ Just $ tr lang "Unknown command: " <> cmd <> tr lang " — try /help"
-
--- | Submit a plan. One line goes through the single-command gate; two or more
--- (separated by @;@ or newlines) become a stepwise plan in the kernel, decided
--- one step at a time.
-executeCommand lang bridge sessionRef _ (Plan planText) = do
-  if T.null (T.strip planText)
-    then return $ Just (tr lang "Usage: /plan <what to do>")
-    else do
-      session <- readIORef sessionRef
-      case session of
-        Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
-        Just sid -> do
-          recordUser sid planText
-          let steps = splitPlanSteps planText
-          if length steps >= 2
-            then do
-              result <- submitPlan bridge sid steps
-              return $ Just $ case result of
-                Right pv -> T.unlines
-                  [ tr lang "Plan submitted — decide each step with /approve, /skip, /reject or /abandon."
-                  , renderPlanBrief pv ]
-                Left err -> tr lang "Error: " <> T.pack (show err)
-            else do
-              result <- planStep bridge sid planText
-              return $ Just $ case result of
-                Right (PlanAwaiting preview) ->
-                  T.unlines [ tr lang "⏸ Plan submitted — awaiting your decision (/approve or /deny)."
-                            , tr lang "Plan: " <> preview ]
-                Left err -> tr lang "Error: " <> T.pack (show err)
-
--- | Skip / reject the pending step, or drop the whole plan.
-executeCommand lang bridge sessionRef _ SkipStep = decidePlanStep lang bridge sessionRef "skip"
-executeCommand lang bridge sessionRef _ RejectStep = decidePlanStep lang bridge sessionRef "reject"
-executeCommand lang bridge sessionRef _ AbandonPlan = decidePlanStep lang bridge sessionRef "abandon"
-
--- | Approve. If a multi-step plan is active in the kernel, approve its pending
--- step, run it as a normal agent turn, then report the result; otherwise the
--- single-command gate answers.
-executeCommand lang bridge sessionRef _ Approve = do
-  session <- readIORef sessionRef
-  case session of
-    Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
-    Just sid -> do
-      mplan <- fetchPlan bridge sid
-      case mplan of
-        Right pv | pvPhase pv == "planning" -> approvePlanStep lang bridge sid
-        _ -> do
-          result <- approvePlan bridge sid
-          case result of
-            Right (PlanApproved reply) -> do
-              recordChunk sid (Right (ChunkDelta reply))
-              return $ Just reply
-            Right PlanDenied -> return $ Just (tr lang "Plan was not approved.")
-            Left err -> return $ Just $ tr lang "Error: " <> T.pack (show err)
-
-executeCommand lang bridge sessionRef _ (DenyWith reason) = do
-  session <- readIORef sessionRef
-  case session of
-    Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
-    Just sid -> do
-      result <- denyPlanWithReason bridge sid reason
-      return $ Just $ case result of
-        Right PlanDenied -> tr lang "Plan denied."
-        Right (PlanApproved _) -> tr lang "Plan was approved (unexpected)."
-        Left err -> friendlyDenyError lang err
-
--- | Deny: on a plan that means rejecting the pending step.
-executeCommand lang bridge sessionRef _ Deny = do
-  session <- readIORef sessionRef
-  case session of
-    Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
-    Just sid -> do
-      mplan <- fetchPlan bridge sid
-      case mplan of
-        Right pv | pvPhase pv == "planning" -> decidePlanStep lang bridge sessionRef "reject"
-        _ -> do
-          result <- denyPlan bridge sid
-          return $ Just $ case result of
-            Right PlanDenied -> tr lang "Plan denied."
-            Right (PlanApproved _) -> tr lang "Plan was approved (unexpected)."
-            Left err -> friendlyDenyError lang err
-
--- | List local sessions (from ~/.trha transcript index).
 executeCommand lang bridge sessionRef modelRef (RunCustom name args) = do
   cmds <- loadCustomCommands
   case [ cc | cc <- cmds, ccName cc == name ] of
     (cc : _) -> executeCommand lang bridge sessionRef modelRef
                   (SendMessage (renderCustomCommand cc args))
     [] -> return $ Just $ tr lang "Unknown command: /" <> name
-
-executeCommand lang bridge sessionRef modelRef (SendMessage msg) = do
-  session <- readIORef sessionRef
-  case session of
-    Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
-    Just sid -> do
-      recordUser sid msg
-      model <- readIORef modelRef
-      recordModelRequest sid model
-      toolRef <- newIORef ([] :: [ToolEvent])
-      cancel <- subscribeSessionEvents bridge sid $ \ev -> case ev of
-        Right tev -> do
-          recordToolEvent sid tev
-          modifyIORef' toolRef (tev :)
-        Left _ -> return ()
-      cfg <- resolveConfig defaultCLIConfig
-      let eff = if T.toLower (configEffort cfg) == "auto"
-                  then Nothing else Just (configEffort cfg)
-      cfg <- resolveConfig defaultCLIConfig
-      let mlang = effectiveReasoningLanguage cfg
-      result <- sendMessageWithEffort bridge sid eff mlang msg
-      threadDelay 100000 -- drain trailing tool events before tearing down
-      cancel
-      recordChunk sid (fst <$> result)
-      tools <- readIORef toolRef
-      let toolLines = T.unlines
-            [ T.unlines (toolCardWithStatus (T.pack (teName ev)) (teArgs ev)
-                           (toCardStatus (teStatus ev)) (teDurationMs ev))
-            | ev <- reverse tools
-            , teStatus ev /= ToolRunRunning
-            ]
-      prices <- pricesFromEnv
-      nowT <- getCurrentTime
-      return $ Just $ case result of
-        Right (chunk, _) -> toolLines <> case chunk of
-          ChunkDelta text -> text
-          ChunkToolCall name args -> "[Tool call: " <> T.pack name <> " " <> T.unwords args <> "]"
-          ChunkDone usage -> turnSummary prices usage (usageReasoningTokens usage) nowT
-        Left err -> toolLines <> tr lang "Error: " <> T.pack (show err)
 
 executeCommand _ _ _ _ Sandbox = do
   enabled <- lookupEnv "TRHA_SANDBOX"
@@ -1071,45 +771,13 @@ executeCommand lang bridge _ _ Agents = do
     Left err -> tr lang "Error: " <> T.pack (show err)
     Right as -> T.unlines (tr lang "Agents:" : [ "  - " <> aeId a | a <- as ])
 
-executeCommand lang bridge sessionRef _ SkipStep = decidePlanStep lang bridge sessionRef "skip"
-executeCommand lang bridge sessionRef _ RejectStep = decidePlanStep lang bridge sessionRef "reject"
-executeCommand lang bridge sessionRef _ AbandonPlan = decidePlanStep lang bridge sessionRef "reject"
-
--- Catch-all: a command registered only for the TUI must not crash the REPL with
--- a non-exhaustive pattern match.
 executeCommand _ _ _ _ cmd =
   return $ Just ("Command not available in this front-end: " <> T.pack (show cmd))
 
 -- | 快照文件名 @&lt;stamp&gt;-&lt;sha1前8位&gt;-&lt;basename&gt;@ 里取 basename。
 -- stamp 自己也含 @-@，所以按「第一个 8 位十六进制段」定位分隔点。
-snapshotBase :: FilePath -> Maybe FilePath
-snapshotBase name =
-  let parts = T.splitOn "-" (T.pack name)
-      isDigest p = T.length p == 8 && T.all isHexDigit p
-  in case break isDigest parts of
-       (_, _ : rest@(_ : _)) -> Just (T.unpack (T.intercalate "-" rest))
-       _ -> Nothing
 
 -- | 在 root 下按文件名找文件（跳过 .git/依赖目录，深度上限 6）。
-findFilesNamed :: FilePath -> FilePath -> IO [FilePath]
-findFilesNamed root name = go root (0 :: Int)
-  where
-    skip = [".git", "node_modules", "dist-newstyle", ".dist-newstyle", "3rdparty", "archive"]
-    go d depth
-      | depth > 6 = return []
-      | otherwise = do
-          isDir <- doesDirectoryExist d
-          if not isDir
-            then return []
-            else do
-              entries <- listDirectory d
-              fmap concat (mapM (visit d depth) entries)
-    visit d depth e
-      | e == name = return [d </> e]
-      | e `elem` skip || take 1 e == "." = return []
-      | otherwise = do
-          isDir <- doesDirectoryExist (d </> e)
-          if isDir then go (d </> e) (depth + 1) else return []
 
 -- | 从 @~/.trha/provider-keys.json@ 读一个 provider 的 key（只在本机进程内用）。
 readProviderKey :: Text -> IO (Maybe Text)
@@ -1165,63 +833,5 @@ initSkeleton = T.unlines
   ]
 
 -- | Map the wire tool status to the card status type.
-toCardStatus :: ToolRunStatus -> ToolStatus
-toCardStatus s = case s of
-  ToolRunRunning   -> ToolRunning
-  ToolRunSucceeded -> ToolSucceeded
-  ToolRunFailed e  -> ToolFailed e
 
 -- | One plan decision, rendered as a compact list.
-decidePlanStep :: Lang -> SchedulerBridge -> IORef (Maybe SessionId) -> Text -> IO (Maybe Text)
-decidePlanStep lang bridge sessionRef action = do
-  session <- readIORef sessionRef
-  case session of
-    Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
-    Just sid -> do
-      -- /skip /reject /abandon 在没有待审批计划时应当直接说清楚，而不是把
-      -- 请求打到内核换回一条 502。
-      plan <- fetchPlan bridge sid
-      case plan of
-        Right pv | pvPhase pv /= "planning" ->
-          return $ Just (tr lang "No pending plan — submit one with /plan first.")
-        Left _ ->
-          return $ Just (tr lang "No pending plan — submit one with /plan first.")
-        _ -> do
-          result <- decideStep bridge sid action
-          return $ Just $ case result of
-            Right pv -> renderPlanBrief pv
-            Left err -> tr lang "Error: " <> T.pack (show err)
-
--- | Release the pending plan step, run it, and report back — the same shape the
--- TUI and Desktop use, so all three shells tell the kernel the truth.
-approvePlanStep :: Lang -> SchedulerBridge -> SessionId -> IO (Maybe Text)
-approvePlanStep lang bridge sid = do
-  approved <- decideStep bridge sid "approve"
-  case approved of
-    Left err -> return $ Just $ tr lang "Error: " <> T.pack (show err)
-    Right pv -> case planStepOut pv of
-      Nothing -> return $ Just (renderPlanBrief pv)
-      Just step -> do
-        ran <- sendMessage bridge sid (psvTitle step)
-        let ok = either (const False) (const True) ran
-            reply = either (const "") chunkText ran
-        recorded <- reportStep bridge sid (psvId step) ok
-        case recorded of
-          Left err -> return $ Just $ tr lang "Error: " <> T.pack (show err)
-          Right pv' -> do
-            recordChunk sid (Right (ChunkDelta reply))
-            return $ Just (reply <> "\n" <> renderPlanBrief pv')
-  where
-    chunkText (ChunkDelta t) = t
-    chunkText _              = ""
-
--- | Prices from @TRHA_PRICE_INPUT@ / @TRHA_PRICE_CACHED@ / @TRHA_PRICE_OUTPUT@
--- (CNY per 1M tokens).  Zero when unset, which renders as @≈¥—@.
-pricesFromEnv :: IO Prices
-pricesFromEnv = do
-  i <- lookupEnv "TRHA_PRICE_INPUT"
-  c <- lookupEnv "TRHA_PRICE_CACHED"
-  o <- lookupEnv "TRHA_PRICE_OUTPUT"
-  pure (Prices (readD i) (readD c) (readD o))
-  where
-    readD = maybe 0 (\s -> maybe 0 id (readMaybe s))
