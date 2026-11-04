@@ -232,4 +232,6 @@ handleSessionSlash cx = case cxCmd cx of
               appendMsg (mkMsg "system" ("exported → " <> T.pack path) (cxTime cx))
               showToast ("exported → " <> T.pack path)
             Left e   -> appendMsg (mkMsg "error" ("export failed: " <> T.pack (show e)) (cxTime cx))
+    _ | "/resume " `T.isPrefixOf` (cxCmd cx) ->
+          Just $ resumeSession (T.strip (T.drop 8 (cxInput cx)))
     _ -> Nothing

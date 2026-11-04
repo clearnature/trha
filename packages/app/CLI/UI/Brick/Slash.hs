@@ -188,7 +188,6 @@ handleSlash input = do
           appendMsg (mkMsg "system" ("Local sessions:\n" <> T.unlines (localSessionLines (appLang st) local)) t)
           appendMsg (mkMsg "system" (tr lang "Resume with /resume <number-or-id>  (/resume --all for every project).") t)
     _ 
-      | "/resume " `T.isPrefixOf` cmd -> resumeSession (T.strip (T.drop 8 input))
       | cmd == "/plan" ->
           appendMsg (mkMsg "system" (tr lang "Usage: /plan <what to do>") t)
       | "/plan " `T.isPrefixOf` cmd -> do
