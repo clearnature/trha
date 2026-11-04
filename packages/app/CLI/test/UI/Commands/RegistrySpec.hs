@@ -42,7 +42,8 @@ spec = do
                                     , "/todo", "/tree", "/agents", "/sandbox", "/rename", "/tag", "/quit", "/exit", "/stop"
                                     , "/rewind", "/restore", "/auth", "/update", "/reload-plugins"
                                     , "/init", "/review", "/compress"
-                                    , "/cd", "/tools", "/permissions", "/history", "/about", "/summary", "/forget" ])
+                                    , "/cd", "/tools", "/permissions", "/history", "/about", "/summary", "/forget"
+                                    , "/ctx", "/effort" ])
 
     -- 一致性不变量：注册表是「命令存在」的唯一真相，那么每条注册命令都必须
     -- 能被 parseCommand 认出来。落到 Unknown 就说明「声明了却没接线」——
@@ -58,18 +59,15 @@ spec = do
     -- 另一侧：TUI 分派里出现、但注册表没声明的命令 = 孤儿命令。
     -- 它们能被响应，却不会出现在 /help 与补全里，用户无从发现。
     --
-    -- 已知例外（2026-11-04 实测）：/ctx 与 /effort 只在 UI.Brick.handleSlash
-    -- 有实现，UI.Commands.parseCommand 会把它们解析成 Unknown，REPL 与
-    -- executeCommand 完全没有对应路径。补进注册表需要先给 Command 加构造子、
-    -- 在 executeCommand 里实现同等逻辑（约 80 行），属于独立一步，故列为显式
-    -- 例外而不是悄悄放过。新增例外必须在此登记并写明原因。
+    -- /ctx 与 /effort 曾被登记为「已知例外」：那时它们只在 UI.Brick.handleSlash
+    -- 有实现，parseCommandBase 从没解析出对应的 Command 构造子（SetCtx / Effort
+    -- 其实早就存在、executeCommand 也早有实现，只是没有解析入口）。补齐解析后
+    -- 例外清零——本条断言现在要求「零孤儿」。
     it "handleSlash 里出现的命令都在注册表中（无孤儿命令）" $ do
       src <- readFile "UI/Brick.hs"
-      let knownOrphans = ["/ctx", "/effort"]
-          registered   = map scCommand slashRegistry
-          orphans      = [ c | c <- slashCommandsIn (T.pack src)
-                             , c `notElem` registered
-                             , c `notElem` knownOrphans ]
+      let registered = map scCommand slashRegistry
+          orphans    = [ c | c <- slashCommandsIn (T.pack src)
+                           , c `notElem` registered ]
       orphans `shouldBe` []
 
   describe "pickerItems" $ do

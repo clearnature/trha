@@ -204,6 +204,8 @@ zhDict = M.fromList
   , ("Version, workspace and runtime info", "版本、工作区与运行时信息")
   , ("Summarize the conversation so far (alias of /recap)", "概括当前会话（/recap 的别名）")
   , ("Delete remembered notes matching the text (usage: /forget <text>)", "删除匹配的备注（用法：/forget <文本>）")
+  , ("Show or set the context window size (usage: /ctx [tokens])", "显示或设置上下文窗口大小（用法：/ctx [token 数]）")
+  , ("Show or set the reasoning effort level (usage: /effort [level])", "显示或设置推理强度（用法：/effort [等级]）")
   , ("Stop the kernel and scheduler? Every shell (TUI, Desktop, Web) disconnects.", "停止内核与调度器？所有外壳（TUI、Desktop、Web）都会断开。")
   , ("Stopping services...", "正在停止服务...")
   , ("This stops the kernel and scheduler and exits. Type /stop confirm to proceed."

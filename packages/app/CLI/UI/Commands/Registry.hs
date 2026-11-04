@@ -251,6 +251,8 @@ slashRegistry =
   , SlashCommand "/about"    False True  "Version, workspace and runtime info"
   , SlashCommand "/summary"  False True  "Summarize the conversation so far (alias of /recap)"
   , SlashCommand "/forget"   True  True  "Delete remembered notes matching the text (usage: /forget <text>)"
+  , SlashCommand "/ctx"      True  False "Show or set the context window size (usage: /ctx [tokens])"
+  , SlashCommand "/effort"   True  False "Show or set the reasoning effort level (usage: /effort [level])"
   ]
 
 -- | Parse a command from raw input.  Unknown slash commands become
@@ -302,9 +304,9 @@ groupMembers =
                , "/goal", "/todo", "/tree", "/agents", "/graph", "/workflow"
                , "/loop", "/queue", "/steer" ])
   , (GModel,   [ "/model", "/models", "/provider", "/switch", "/fav", "/preset"
-               , "/auth" ])
+               , "/auth", "/effort" ])
   , (GContext, [ "/context", "/usage", "/memory", "/remember", "/btw", "/workspace"
-               , "/recap", "/retry", "/diff", "/forget" ])
+               , "/recap", "/retry", "/diff", "/forget", "/ctx" ])
   , (GTools,   [ "/shell", "/mcp", "/lsp", "/hooks", "/plugins", "/skills", "/doctor"
                , "/currency", "/update", "/reload-plugins", "/init", "/review"
                , "/tools", "/permissions" ])
@@ -364,6 +366,8 @@ parseCommandBase input = case T.words (T.strip input) of
   ("/about" : _) -> About
   ("/summary" : _) -> Recap
   ("/forget" : args) -> Forget (T.unwords args)
+  ("/ctx" : args) -> SetCtx (T.unwords args)
+  ("/effort" : args) -> Effort (T.unwords args)
   ("/sessions" : _) -> Sessions
   ("/new" : _)   -> CreateSession
   ("/delete" : [])   -> DeleteSession ""

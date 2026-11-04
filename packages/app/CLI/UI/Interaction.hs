@@ -156,6 +156,8 @@ layerTable =
     ("/help", CmdReply)
   , ("/status", CmdReply)
   , ("/context", CmdReply)
+  , ("/ctx", CmdReply)
+  , ("/effort", CmdReply)
   , ("/stats", CmdReply)
   , ("/transcript", CmdReply)
   , ("/todo", CmdReply)
