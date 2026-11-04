@@ -15,6 +15,7 @@ module UI.Brick.Draw.Messages
   , diffWidget
   , drawMessage
   , drawMessages
+  , drawInput
   , drawPending
   ) where
 
@@ -28,15 +29,17 @@ import qualified Data.Map.Strict as Map
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (^.))
 
-import Core.Types (CLIConfig(..))
-import UI.Event (PendingMsg(..))
+import Core.Types (CLIConfig(..), PlanView(..))
+import Brick.Widgets.Edit (getEditContents, renderEditor)
+import UI.Event (PendingMsg(..), RunState(..), runState)
 import UI.Render.Diff
   ( DiffClass(..), DiffLayout(..), DiffRow(..), diffClass, diffLayout
   , looksLikeDiff, numberDiff, renderDiffRow )
 import UI.Render.FilePart (filePartsOf, filePartLine, stripFileTokens)
 import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
 import UI.Render.Message (classifyError, errorHint, errorLabel)
-import UI.Render.Spans (SpanTok(..), diffAttrOf, fillLines, spanToks, truncLine)
+import UI.Render.Spans
+  ( SpanTok(..), diffAttrOf, fillLines, spanToks, spinnerFrame, truncLine )
 import UI.Render.ToolCard
   ( ToolCard, ToolFold(..), tcDur, tcOutput, tcStatus, toolStatusLine )
 import UI.Render.ToolSummary
@@ -328,3 +331,34 @@ drawMessages st =
 -- ——否则测试套件会被迫引入 brick。
 inSel :: AppState -> Int -> Bool
 inSel st = inSelRange (appSelStart st) (appSelEnd st)
+
+drawInput :: AppState -> Widget ResourceName
+drawInput st =
+  withAttr (attrName "border") $
+    borderWithLabel busyLabel $
+      withAttr (attrName "input") $
+        -- One row: this is a text input, not a multi-line editor (the user
+        -- asked for minHeight=1; shortcuts live on Ctrl+… only).
+        vLimit 1 $
+          renderEditor (str . T.unpack . T.unlines) True (appInput st)
+  where
+    visibleRows = max 1 (min 6 (length (getEditContents (appInput st))))
+    -- No timer thread: streaming deltas drive redraws, so the frame index
+    -- derives from the accumulated length — it animates exactly while the
+    -- reply is actually moving (a frozen spinner honestly shows a stall).
+    awaitingStep = isJust (appApproval st)
+                   || case appPlan st of
+                        Just pv -> isJust (pvPending pv)
+                        Nothing -> False
+    busyLabel = case runState (appBusy st) awaitingStep of
+      RunIdle -> str " Input "
+      RunAwaiting ->
+        withAttr (attrName "plan") $ str " ⏸ Awaiting approval… "
+      RunRunning ->
+        withAttr (attrName "busy") $ str $
+          case appPending st of
+            Just pm -> " " <> T.unpack (spinnerFrame (T.length (pmContent pm))) <> " Streaming… "
+            Nothing -> " ⏳ Thinking… "
+
+-- | Braille spinner frames 见 UI.Render.Spans.spinnerFrame。
+

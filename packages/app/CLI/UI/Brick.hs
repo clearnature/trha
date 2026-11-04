@@ -75,8 +75,8 @@ import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Selection (inSelRange)
 import UI.Brick.Draw.Messages
-  ( cardHidden, diffWidget, drawMessage, drawMessages, drawPending, messageBody
-  , messageHeader, renderBlocks, renderToolBody, roleStyle )
+  ( cardHidden, diffWidget, drawInput, drawMessage, drawMessages, drawPending
+  , messageBody, messageHeader, renderBlocks, renderToolBody, roleStyle )
 import UI.Brick.Draw.Settings (drawSettingsPanel, settingsListMax, settingsRows, visibleRows)
 import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar, sidebarDataFor)
 import UI.Brick.Draw.Status
@@ -690,33 +690,7 @@ blocksToMessages blocks =
 
 -- | drawPending 见 UI.Brick.Draw.Messages。
 
-drawInput :: AppState -> Widget ResourceName
-drawInput st =
-  withAttr (attrName "border") $
-    borderWithLabel busyLabel $
-      withAttr (attrName "input") $
-        -- One row: this is a text input, not a multi-line editor (the user
-        -- asked for minHeight=1; shortcuts live on Ctrl+… only).
-        vLimit 1 $
-          renderEditor (str . T.unpack . T.unlines) True (appInput st)
-  where
-    visibleRows = max 1 (min 6 (length (getEditContents (appInput st))))
-    -- No timer thread: streaming deltas drive redraws, so the frame index
-    -- derives from the accumulated length — it animates exactly while the
-    -- reply is actually moving (a frozen spinner honestly shows a stall).
-    awaitingStep = isJust (appApproval st)
-                   || case appPlan st of
-                        Just pv -> isJust (pvPending pv)
-                        Nothing -> False
-    busyLabel = case runState (appBusy st) awaitingStep of
-      RunIdle -> str " Input "
-      RunAwaiting ->
-        withAttr (attrName "plan") $ str " ⏸ Awaiting approval… "
-      RunRunning ->
-        withAttr (attrName "busy") $ str $
-          case appPending st of
-            Just pm -> " " <> T.unpack (spinnerFrame (T.length (pmContent pm))) <> " Streaming… "
-            Nothing -> " ⏳ Thinking… "
+-- | drawInput 见 UI.Brick.Draw.Messages。
 
 -- | Braille spinner frames 见 UI.Render.Spans.spinnerFrame。
 
