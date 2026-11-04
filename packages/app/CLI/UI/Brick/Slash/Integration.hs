@@ -155,39 +155,54 @@ import UI.Theme
 
 handleIntegrationSlash :: CmdCtx -> Maybe (EventM ResourceName AppState ())
 handleIntegrationSlash cx = case cxCmd cx of
-    "/todo" -> Just $ do
-      st2 <- get
-      t2 <- liftIO now
-      let items = appTodos st2
-      appendMsg (mkMsg "system"
-        (if null items then tr (cxLang cx) "No tasks"
-         else T.unlines [ "  " <> todoGlyph (todoStatus i) <> " " <> todoSubject i | i <- items ]) t2)
-    "/tree" -> Just $ do
-      st2 <- get
-      t2 <- liftIO now
-      let as = appAgents st2
-      appendMsg (mkMsg "system"
-        (if null as then tr (cxLang cx) "no agents"
-         else T.unlines (agentTreeLines (fmap T.pack (appSessionId st2)) as)) t2)
-    "/agents" -> Just $ do
-      st2 <- get
-      if null (appAgents st2)
-        then appendMsg (mkMsg "system" (tr (cxLang cx) "no agents") (cxTime cx))
-        else modify $ \s -> s { appDialogs =
-               stackPush (DialogAgents (appAgents st2) 0) (appDialogs s) }
-    "/skills" -> Just $ do
-      st2 <- get
-      modify $ \s -> s { appDialogs =
-        stackPush (DialogSkills (appSkills st2) "" 0) (appDialogs s) }
-    "/plugins" -> Just $ do
-      t <- liftIO now
-      result <- liftIO (listPlugins (cxBridge cx))
-      case result of
-        Right [] -> appendMsg (mkMsg "system" "No plugins registered." (cxTime cx))
-        Right ps -> appendMsg (mkMsg "system"
-                      ("Plugins:\n" <> T.unlines
-                        [ "  - " <> pluginName p <> " " <> pluginVersion p
-                            <> "  —  " <> pluginDescription p
-                        | p <- ps ]) (cxTime cx))
-        Left err -> appendMsg (mkMsg "error" (T.pack (show err)) (cxTime cx))
-    _ -> Nothing
+  "/todo" -> Just $ slashTodo cx
+  "/tree" -> Just $ slashTree cx
+  "/agents" -> Just $ slashAgents cx
+  "/skills" -> Just $ slashSkills cx
+  "/plugins" -> Just $ slashPlugins cx
+  _ -> Nothing
+
+slashTodo :: CmdCtx -> EventM ResourceName AppState ()
+slashTodo cx = do
+  st2 <- get
+  t2 <- liftIO now
+  let items = appTodos st2
+  appendMsg (mkMsg "system"
+    (if null items then tr (cxLang cx) "No tasks"
+     else T.unlines [ "  " <> todoGlyph (todoStatus i) <> " " <> todoSubject i | i <- items ]) t2)
+
+slashTree :: CmdCtx -> EventM ResourceName AppState ()
+slashTree cx = do
+  st2 <- get
+  t2 <- liftIO now
+  let as = appAgents st2
+  appendMsg (mkMsg "system"
+    (if null as then tr (cxLang cx) "no agents"
+     else T.unlines (agentTreeLines (fmap T.pack (appSessionId st2)) as)) t2)
+
+slashAgents :: CmdCtx -> EventM ResourceName AppState ()
+slashAgents cx = do
+  st2 <- get
+  if null (appAgents st2)
+    then appendMsg (mkMsg "system" (tr (cxLang cx) "no agents") (cxTime cx))
+    else modify $ \s -> s { appDialogs =
+           stackPush (DialogAgents (appAgents st2) 0) (appDialogs s) }
+
+slashSkills :: CmdCtx -> EventM ResourceName AppState ()
+slashSkills cx = do
+  st2 <- get
+  modify $ \s -> s { appDialogs =
+    stackPush (DialogSkills (appSkills st2) "" 0) (appDialogs s) }
+
+slashPlugins :: CmdCtx -> EventM ResourceName AppState ()
+slashPlugins cx = do
+  t <- liftIO now
+  result <- liftIO (listPlugins (cxBridge cx))
+  case result of
+    Right [] -> appendMsg (mkMsg "system" "No plugins registered." (cxTime cx))
+    Right ps -> appendMsg (mkMsg "system"
+                  ("Plugins:\n" <> T.unlines
+                    [ "  - " <> pluginName p <> " " <> pluginVersion p
+                        <> "  —  " <> pluginDescription p
+                    | p <- ps ]) (cxTime cx))
+    Left err -> appendMsg (mkMsg "error" (T.pack (show err)) (cxTime cx))
