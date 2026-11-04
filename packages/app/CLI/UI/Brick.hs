@@ -88,7 +88,7 @@ import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.Chat (handleChatWith)
 import UI.Brick.Slash (handleSlash)
-import UI.Brick.Wizard (refreshWizardInput)
+import UI.Brick.Wizard (invalidJson, refreshWizardInput)
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
   , requestInterrupt, requestStopServices, runShellCommand, stopServicesAndHalt )
@@ -1212,12 +1212,7 @@ commitWizard = do
           refreshWizardInput w' { pwStep = n }
 
 -- | A non-blank field that does not decode as JSON.
-invalidJson :: Text -> Bool
-invalidJson t
-  | T.null (T.strip t) = False
-  | otherwise = case (decode (BL.fromStrict (TE.encodeUtf8 t)) :: Maybe Value) of
-      Just _  -> False
-      Nothing -> True
+-- | invalidJson 见 UI.Brick.Wizard。
 
 -- | Validate and POST the draft; the kernel answers with the new store.
 finishWizard :: ProviderWizard -> EventM ResourceName AppState ()

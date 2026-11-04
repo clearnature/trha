@@ -8,6 +8,7 @@
 -- ProviderWizard 状态机，所以作为一个模块推进。
 module UI.Brick.Wizard
   ( refreshWizardInput
+  , invalidJson
   ) where
 
 import Brick
@@ -154,3 +155,11 @@ refreshWizardInput w = do
                    , appInput = editorText InputArea (Just 1) (wizardValue w (pwStep w)) }
 
 -- | Take the editor's text as the current field and advance (or save).
+
+-- | 判断一段文本是否是「非空但 JSON 非法」——向导用它拦住不合法的 extra body。
+invalidJson :: Text -> Bool
+invalidJson t
+  | T.null (T.strip t) = False
+  | otherwise = case (decode (BL.fromStrict (TE.encodeUtf8 t)) :: Maybe Value) of
+      Just _  -> False
+      Nothing -> True
