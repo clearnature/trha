@@ -86,6 +86,7 @@ import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
 import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar )
+import UI.Brick.Chat (handleChatWith)
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
   , requestInterrupt, requestStopServices, runShellCommand, stopServicesAndHalt )
@@ -2539,88 +2540,7 @@ expandFileReferences input
 -- | 'handleChat' with a separate visible text.  A skill sends its instructions
 -- as the model turn while the transcript/UI keeps the @/skill:<name>@ trigger
 -- (MiMo's split: visible message + body injected as context).
-handleChatWith :: Text -> Text -> EventM ResourceName AppState ()
-handleChatWith display sendText = do
-  t <- liftIO now
-  t0 <- liftIO getCurrentTime
-  appendMsg (mkMsg "user" display t)
-  modify $ \st -> st { appBusy = True, appStatus = tr (appLang st) "Thinking..."
-                     , appTurnStart = Just t0 }
-  st <- get
-  case appSessionId st of
-    Just sid -> liftIO $ setWindowTitle ("● trha · " <> T.take 8 (T.pack sid))
-    Nothing  -> return ()
-
-  st <- get
-  let bridge = appBridge st
-      chan   = appChan st
-      model  = appModel st
-      provider = appProvider st
-      runStepWithTools sid = do
-        -- The step reply is the authoritative text; SSE deltas are a live
-        -- preview.  Finalizing therefore does not depend on the stream — a
-        -- flaky or blocked SSE connection cannot leave the turn busy.
-        doneVar <- liftIO newEmptyMVar
-        cancel <- subscribeSessionEventsWithTerminal bridge sid (toolSink chan sid)
-                    (\t -> writeBChan chan (EvResponse (Right (ChunkDelta t))))
-                    (void (tryPutMVar doneVar ()))
-                    (writeBChan chan . EvNotice)
-        cfg <- liftIO (resolveConfig defaultCLIConfig)
-        let eff = if T.toLower (configEffort cfg) == "auto"
-                    then Nothing else Just (configEffort cfg)
-            mlang = effectiveReasoningLanguage cfg
-        result <- sendMessageWithTargetEffort bridge sid provider (Just model) eff mlang sendText
-        -- Give the stream a bounded moment to deliver trailing tool events,
-        -- then stop it.  The reply itself is already in hand.
-        _ <- liftIO $ timeout 250000 (takeMVar doneVar)
-        liftIO cancel
-        case result of
-          Right (c, musage) -> do
-            recordChunk sid (Right c)
-            case c of
-              ChunkDelta reply -> writeBChan chan (EvFinalReply reply)
-              _                -> return ()
-            -- Always finalize: a missing usage echo must not leave the
-            -- spinner running.
-            writeBChan chan (EvResponse (Right (ChunkDone (fromMaybe zero musage))))
-          Left err -> do
-            -- 调度层崩了会让长任务直接断掉：这里尝试拉起一次。会话与
-            -- 历史由 scheduler 从 stateDir 恢复，用户重发即可继续。
-            case err of
-              ConnectionError _ -> do
-                started <- ensureBackend (appEffCfg st)
-                writeBChan chan . EvResponse . Left $
-                  if null started
-                    then err
-                    else ServerError (tr (appLang st)
-                           "The scheduler stopped and has been restarted; resend to continue.")
-              _ -> writeBChan chan (EvResponse (Left err))
-        refreshSidebar bridge chan sid
-      zero = mkUsage 0 0 0
-  void $ liftIO $ async $ case appSessionId st of
-    Just sid -> do
-      recordUser sid display
-      runStepWithTools sid
-    Nothing -> do
-      -- 首次发消息自动建会话时，同样要把当前姿态带上：否则服务端按缺省
-      -- read-only 建会话，界面显示 YOLO 但工具仍被拒。
-      sessResult <- createSession bridge (smMode <$> appMode st)
-      writeBChan chan (EvSession sessResult)
-      case sessResult of
-        Right sid -> do
-          recordSession sid model
-          recordUser sid display
-          runStepWithTools sid
-        Left _ ->
-          return ()
-  scrollBottom
-  where
-    -- Record every tool event; completed/failed ones also go to the UI.
-    toolSink chan sid ev = case ev of
-      Right toolEv -> do
-        recordToolEvent sid toolEv
-        writeBChan chan (EvTool (Right toolEv))
-      Left err -> writeBChan chan (EvTool (Left err))
+-- | handleChatWith 见 UI.Brick.Chat。
 
 -- | Numbered preview of the stash (one line per draft).
 stashListing :: Lang -> [Text] -> Text
