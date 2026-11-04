@@ -74,7 +74,7 @@ import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard, wizardSummary)
 import UI.Brick.Draw.Messages
-  ( cardHidden, diffWidget, messageBody, messageHeader, renderBlocks
+  ( cardHidden, diffWidget, drawMessage, messageBody, messageHeader, renderBlocks
   , renderToolBody, roleStyle )
 import UI.Brick.Draw.Settings (drawSettingsPanel, settingsListMax, settingsRows, visibleRows)
 import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar, sidebarDataFor)
@@ -690,31 +690,7 @@ drawMessages st =
 -- through the Markdown renderer, or plain wrapped text.
 -- | messageBody / renderToolBody 见 UI.Brick.Draw.Messages。
 
-drawMessage :: CLIConfig -> Bool -> ToolFold -> ChatMessage -> Widget ResourceName
-drawMessage cfg focused fold msg
-  | msgRole msg == "thinking" =
-      padLeftRight 1 $ vBox $
-        [ hBox
-            [ clickable (ThinkToggle (msgId msg)) $
-                withAttr (attrName "system")
-                  (str (if fold == FoldCollapsed then "▸ " else "▾ "))
-            , withAttr (attrName "system")
-                (str (T.unpack (fromMaybe "思考 (Ctrl+O)" (msgMeta msg))))
-            ]
-        ] ++ [ padLeft (Pad 2) $ withAttr (attrName "system")
-                 $ strWrap (T.unpack (msgContent msg))
-             | fold == FoldExpanded ]
-  | otherwise =
-  padLeftRight 1 $
-    padTopBottom 1 $
-      vBox $
-        [ hBox
-            [ if focused then withAttr (attrName "selection") (str "▶ ") else emptyWidget
-            , messageHeader (configTimestamps cfg) (msgRole msg) (msgContent msg) (msgTime msg) ]
-        , messageBody (configMarkdown cfg) (msgRole msg) (msgContent msg) (msgTool msg) fold
-        ]
-          ++ [ padLeft (Pad 2) $ withAttr (attrName "timestamp") (str (T.unpack m))
-             | Just m <- [msgMeta msg] ]
+-- | drawMessage 见 UI.Brick.Draw.Messages。
 
 -- | Render a parsed Markdown document as widgets.
 -- Paragraph spans re-wrap at the context width with styling preserved

@@ -13,18 +13,20 @@ module UI.Brick.Draw.Messages
   , renderToolBody
   , renderBlocks
   , diffWidget
+  , drawMessage
   ) where
 
 import Brick
 import Brick.Widgets.Border
 import Brick.Widgets.Core
-import Data.Maybe (isJust)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (^.))
 
+import Core.Types (CLIConfig(..))
 import UI.Render.Diff
   ( DiffClass(..), DiffLayout(..), DiffRow(..), diffClass, diffLayout
   , looksLikeDiff, numberDiff, renderDiffRow )
@@ -229,3 +231,41 @@ spanWrap spans = Widget Greedy Fixed $ do
 -- | Render a diff-shaped tool output: line numbers appear once the terminal
 -- is wide enough, and each line keeps its add/remove/hunk colour.
 -- | diffWidget 见 UI.Brick.Draw.Messages。
+
+drawMessage :: CLIConfig -> Bool -> ToolFold -> ChatMessage -> Widget ResourceName
+drawMessage cfg focused fold msg
+  | msgRole msg == "thinking" =
+      padLeftRight 1 $ vBox $
+        [ hBox
+            [ clickable (ThinkToggle (msgId msg)) $
+                withAttr (attrName "system")
+                  (str (if fold == FoldCollapsed then "▸ " else "▾ "))
+            , withAttr (attrName "system")
+                (str (T.unpack (fromMaybe "思考 (Ctrl+O)" (msgMeta msg))))
+            ]
+        ] ++ [ padLeft (Pad 2) $ withAttr (attrName "system")
+                 $ strWrap (T.unpack (msgContent msg))
+             | fold == FoldExpanded ]
+  | otherwise =
+  padLeftRight 1 $
+    padTopBottom 1 $
+      vBox $
+        [ hBox
+            [ if focused then withAttr (attrName "selection") (str "▶ ") else emptyWidget
+            , messageHeader (configTimestamps cfg) (msgRole msg) (msgContent msg) (msgTime msg) ]
+        , messageBody (configMarkdown cfg) (msgRole msg) (msgContent msg) (msgTool msg) fold
+        ]
+          ++ [ padLeft (Pad 2) $ withAttr (attrName "timestamp") (str (T.unpack m))
+             | Just m <- [msgMeta msg] ]
+
+-- | Render a parsed Markdown document as widgets.
+-- Paragraph spans re-wrap at the context width with styling preserved
+-- (see 'spanWrap'); fenced code blocks get a bordered card labelled with
+-- their language; headings and list items render on one line.
+-- | renderBlocks 见 UI.Brick.Draw.Messages。
+
+-- | Word-wrap a paragraph of styled inline spans at the available width,
+-- preserving each span's attribute on every wrapped line.
+--
+-- brick 3.0 removed the widget-level 'wrap'; this mirrors the render-time
+-- reflow technique of 'txtWrapWith' (measure against the context width,
