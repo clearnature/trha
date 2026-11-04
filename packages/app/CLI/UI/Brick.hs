@@ -84,7 +84,8 @@ import UI.Brick.Selection
   ( beginSel, extendSel, copySelectionText, finishSel, copyToClipboard )
 import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
-import UI.Brick.SessionView (blocksToMessages, localSessionLines)
+import UI.Brick.SessionView
+  ( blocksToMessages, localSessionLines, refreshSidebar )
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
   , requestInterrupt, requestStopServices, runShellCommand, stopServicesAndHalt )
@@ -2495,21 +2496,7 @@ handleSlash input = do
 -- | Refresh the sidebar's TODO list and title for a session.  Best effort:
 -- a scheduler that does not expose @teamTasks@ yields an empty list, and a
 -- missing local transcript yields no title.
-refreshSidebar :: SchedulerBridge -> BChan AppEvent -> SessionId -> IO ()
-refreshSidebar bridge chan sid = do
-  info <- fetchSessionInfo bridge sid
-  writeBChan chan (EvSessionInfo info)
-  agents <- fetchAgents bridge
-  writeBChan chan (EvAgents agents)
-  (lspLines, mcpLines) <- fetchServiceStatus bridge
-  writeBChan chan (EvServices lspLines mcpLines)
-  local <- listLocalSessions
-  let summary = find ((== sid) . ssId) local
-  -- Keep the per-project index current (title/last-used) while the session runs.
-  forM_ summary $ \s -> do
-    cwd <- getCurrentDirectory
-    recordProjectSession cwd s
-  writeBChan chan (EvSessionTitle (ssTitle <$> summary))
+-- | refreshSidebar 见 UI.Brick.SessionView。
 
 -- | Send a chat message: create session lazily, send async, never block UI.
 -- While the step runs, tool lifecycle events arrive over SSE; they are

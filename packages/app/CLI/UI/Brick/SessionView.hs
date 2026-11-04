@@ -7,13 +7,24 @@
 module UI.Brick.SessionView
   ( localSessionLines
   , blocksToMessages
+  , refreshSidebar
   ) where
 
+import Brick.BChan (BChan, writeBChan)
+import Control.Monad (forM_)
+import Data.List (find)
 import Data.Text (Text)
 import qualified Data.Text as T
+import System.Directory (getCurrentDirectory)
 
+import Bridge.Scheduler
+  ( SchedulerBridge, fetchAgents, fetchServiceStatus, fetchSessionInfo )
+import Core.ProjectStore (recordProjectSession)
 import Core.Replay (ReplayBlock(..))
 import Core.SessionSummary (SessionSummary(..))
+import Core.Transcript (listLocalSessions)
+import Core.Types (SessionId)
+import UI.Event (AppEvent(..))
 import UI.I18n (Lang, tr)
 import UI.Render.ToolCard (ToolCard(..))
 import UI.State (ChatMessage(..), mkMsg, toolMsg)
@@ -45,3 +56,23 @@ blocksToMessages blocks =
       Just (name, args) ->
         toolMsg "tool" (ToolCard name args Nothing Nothing [] "") (maybe "" id (rbTime b))
       Nothing           -> mkMsg (rbRole b) (rbContent b) (maybe "" id (rbTime b))
+
+-- | 刷新侧栏所需的三类数据：会话信息、agent 列表、服务状态，外加标题索引。
+--
+-- 全是 best-effort：调度层没暴露的接口返回空，不影响主流程；
+-- 顺手把「项目 → 会话」索引更新一次，侧栏的标题/最近使用才不会过期。
+refreshSidebar :: SchedulerBridge -> BChan AppEvent -> SessionId -> IO ()
+refreshSidebar bridge chan sid = do
+  info <- fetchSessionInfo bridge sid
+  writeBChan chan (EvSessionInfo info)
+  agents <- fetchAgents bridge
+  writeBChan chan (EvAgents agents)
+  (lspLines, mcpLines) <- fetchServiceStatus bridge
+  writeBChan chan (EvServices lspLines mcpLines)
+  local <- listLocalSessions
+  let summary = find ((== sid) . ssId) local
+  -- Keep the per-project index current (title/last-used) while the session runs.
+  forM_ summary $ \s -> do
+    cwd <- getCurrentDirectory
+    recordProjectSession cwd s
+  writeBChan chan (EvSessionTitle (ssTitle <$> summary))
