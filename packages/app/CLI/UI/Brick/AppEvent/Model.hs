@@ -112,7 +112,14 @@ import UI.Frecency (Frecency(..), emptyFrecency, recordUse, rankItems, loadFrece
 
 -- | 认领 EvModels / EvProviders / EvSkills / EvProviderSaved。
 handleModelEvent :: AppEvent -> Maybe (EventM ResourceName AppState ())
-handleModelEvent (EvModels result) = Just $ do
+handleModelEvent (EvModels result) = Just $ onModelsListed result
+handleModelEvent (EvProviders result) = Just $ onProvidersListed result
+handleModelEvent (EvSkills result) = Just $ onSkillsListed result
+handleModelEvent (EvProviderSaved result) = Just $ onProviderSaved result
+handleModelEvent _ = Nothing
+
+onModelsListed :: Either CLIError [ModelInfo] -> EventM ResourceName AppState ()
+onModelsListed result = do
   lang <- gets appLang
   t <- liftIO now
   case result of
@@ -132,7 +139,8 @@ handleModelEvent (EvModels result) = Just $ do
       appendMsg (mkMsg "error" (tr lang "Error: " <> T.pack (show err)) t)
   scrollBottom
 
-handleModelEvent (EvProviders (Right ps)) = Just $ do
+onProvidersListed :: Either CLIError [ProviderInfo] -> EventM ResourceName AppState ()
+onProvidersListed (Right ps) = do
   modify $ \s -> s { appProviders = ps }
   -- The dialog is pushed empty while the fetch is in flight; fill it in
   -- place so the user does not have to reopen it.
@@ -140,18 +148,17 @@ handleModelEvent (EvProviders (Right ps)) = Just $ do
   case stackTop (appDialogs st) of
     Just (DialogProviders _ _) -> modifyTop (const (DialogProviders ps 0))
     _                          -> return ()
+onProvidersListed (Left _) = return ()
 
-handleModelEvent (EvProviders (Left _)) = Just $ return ()
-
-handleModelEvent (EvSkills skills) = Just $ do
+onSkillsListed :: [Skill] -> EventM ResourceName AppState ()
+onSkillsListed skills = do
   modify $ \s -> s { appSkills = skills }
 
-handleModelEvent (EvProviderSaved (Right ps)) = Just $ do
+onProviderSaved :: Either CLIError [ProviderInfo] -> EventM ResourceName AppState ()
+onProviderSaved (Right ps) = do
   modify $ \s -> s { appProviders = ps
                    , appStatus = tr (appLang s) "Provider saved" }
   lang <- gets appLang
   showToast (tr lang "Provider saved")
-
-handleModelEvent (EvProviderSaved (Left e)) = Just $ do
+onProviderSaved (Left e) = do
   modify $ \s -> s { appStatus = "Provider save failed: " <> T.pack (show e) }
-handleModelEvent _ = Nothing
