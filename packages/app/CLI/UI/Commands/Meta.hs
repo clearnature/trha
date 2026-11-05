@@ -36,13 +36,24 @@ runMeta env = go
     sessionRef = ceSession env
     modelRef   = ceModel env
 
-    go Help = Just (pure (Just (registryHelp lang)))
-    go Quit = Just (pure Nothing)
-    go StopRequest =
-      Just . pure . Just $
-        tr lang "This stops the kernel and scheduler and exits. Type /stop confirm to proceed."
-    go StopConfirmed = Just (pure Nothing)
-    go About = Just $ do
+    -- 分派：一个命令一条 go 等式。
+    go Help = Just $ cmdHelp
+    go Quit = Just $ cmdQuit
+    go StopRequest = Just $ cmdStopRequest
+    go StopConfirmed = Just $ cmdStopConfirmed
+    go About = Just $ cmdAbout
+    go Status = Just $ cmdStatus
+    go Doctor = Just $ cmdDoctor
+    go (Auth arg) = Just $ cmdAuth arg
+    go (Update arg) = Just $ cmdUpdate arg
+    go _ = Nothing
+
+    -- 每个函数实现一个命令，共享外层的 lang / bridge / sessionRef / modelRef。
+    cmdHelp = pure (Just (registryHelp lang))
+    cmdQuit = pure Nothing
+    cmdStopRequest = pure (Just (tr lang "This stops the kernel and scheduler and exits. Type /stop confirm to proceed."))
+    cmdStopConfirmed = pure Nothing
+    cmdAbout = do
       cwd <- getCurrentDirectory
       home <- getHomeDirectory
       (lspLines, mcpLines) <- fetchServiceStatus bridge
@@ -53,8 +64,7 @@ runMeta env = go
         , tr lang "LSP: " <> T.intercalate ", " lspLines
         , tr lang "MCP: " <> T.intercalate ", " mcpLines
         ]
-
-    go Status = Just $ do
+    cmdStatus = do
       session <- readIORef sessionRef
       model <- readIORef modelRef
       return $ Just $ T.unlines
@@ -62,8 +72,7 @@ runMeta env = go
         , tr lang "  Current session: " <> maybe (tr lang "none") T.pack session
         , tr lang "  Current model: " <> model
         ]
-
-    go Doctor = Just $ do
+    cmdDoctor = do
       sessions <- listSessions bridge
       providers <- listProviders bridge
       cfg <- resolveConfig defaultCLIConfig
@@ -80,8 +89,7 @@ runMeta env = go
         , tr lang "  context: " <> maybe (tr lang "model default") (T.pack . show) (configCtxSize cfg)
         , tr lang "  font: " <> fontLine
         ]
-
-    go (Auth arg) = Just $ do
+    cmdAuth arg = do
       ps <- listProviders bridge
       case ps of
         Left e -> return $ Just (tr lang "Error: " <> T.pack (show e))
@@ -106,7 +114,7 @@ runMeta env = go
           _ -> return $ Just (tr lang "Usage: /auth [check <name>]")
 
     -- | @/update@：本地源码部署下和 origin/main 比对；@/update pull@ 快进。
-    go (Update arg) = Just $ do
+    cmdUpdate arg = do
       cwd <- getCurrentDirectory
       let git xs = readCreateProcessWithExitCode (proc "git" ("-C" : cwd : xs)) ""
       top <- git ["rev-parse", "--show-toplevel"]
@@ -131,5 +139,3 @@ runMeta env = go
                   [ tr lang "Behind origin/main: " <> gitCount behind
                   , tr lang "Ahead of origin/main: " <> gitCount ahead
                   , tr lang "Run /update pull to fast-forward." ]
-
-    go _ = Nothing
