@@ -187,6 +187,25 @@ handleCtrlDKey = do
 -- | 提交路径（submitSkill/commitEditor/editExternally）见 UI.Brick.ChatKeys。
 
 
+-- | Esc 的退出层级：设置面板 → 向导 → 自动补全 → 命令面板 → 全局层级。
+--
+-- 顺序有讲究：自动补全要最先关，且关它不能触发中断的双击判定
+-- （否则连按两次 Esc 会误停当前轮次）。
+handleEscape :: EventM ResourceName AppState ()
+handleEscape = do
+  st <- get
+  case appSettings st of
+    Just _  -> handleSettingsKey (EvKey KEsc [])
+    Nothing | isJust (appWizard st) ->
+      modify $ \s -> s { appWizard = Nothing
+                       , appInput = editorText InputArea (Just 1) ""
+                       , appStatus = tr (appLang s) "Ready" }
+    Nothing -> case appComp st of
+      Just _  -> modify $ \s -> s { appComp = Nothing, appEscLast = Nothing }
+      Nothing -> case appPalette st of
+        Just _  -> modify $ \s -> s { appPalette = Nothing, appEscLast = Nothing }
+        Nothing -> escapeHierarchy
+
 handleEvent :: BrickEvent ResourceName AppEvent -> EventM ResourceName AppState ()
 handleEvent (AppEvent ev) = handleAppEvent ev
 -- Shift+Tab is a global posture shortcut: handle it before dialogs/settings/
@@ -208,22 +227,7 @@ handleEvent (VtyEvent (EvKey (KChar 'q') ms))
   | MCtrl `elem` ms && (MMeta `elem` ms || MAlt `elem` ms) = requestStopServices
 handleEvent (VtyEvent (EvKey (KChar 'c') [MCtrl])) = handleCtrlCKey
 handleEvent (VtyEvent (EvKey (KChar 'd') [MCtrl])) = handleCtrlDKey
-handleEvent (VtyEvent (EvKey KEsc _)) = do
-  st <- get
-  case appSettings st of
-    Just _  -> handleSettingsKey (EvKey KEsc [])
-    Nothing | isJust (appWizard st) ->
-      modify $ \s -> s { appWizard = Nothing
-                       , appInput = editorText InputArea (Just 1) ""
-                       , appStatus = tr (appLang s) "Ready" }
-    Nothing -> case appComp st of
-      -- MiMo's hierarchy: the autocomplete popup closes before anything
-      -- else, and closing it must not arm the interrupt double-press.
-      Just _  -> modify $ \s -> s { appComp = Nothing, appEscLast = Nothing }
-      Nothing -> case appPalette st of
-        -- Esc dismisses the command palette without touching the input.
-        Just _  -> modify $ \s -> s { appPalette = Nothing, appEscLast = Nothing }
-        Nothing -> escapeHierarchy
+handleEvent (VtyEvent (EvKey KEsc _)) = handleEscape
 -- Mouse drag selects whole messages (brick exposes no per-cell text map);
 -- releasing copies them, so terminal row-copy is not needed.
 handleEvent (MouseDown (ThinkToggle i) BLeft _ _) =
