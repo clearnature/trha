@@ -66,7 +66,30 @@ runPlan env = go
     sessionRef = ceSession env
     modelRef   = ceModel env
 
-    go (Loop arg) = Just $ do
+    -- 分派：一个命令一条 go 等式。
+    go (Loop arg) = Just $ planLoop arg
+    go (Rewind arg) = Just $ planRewind arg
+    go (Restore arg) = Just $ planRestore arg
+    go (Queue Nothing) = Just $ planQueueShow
+    go Recap = Just $ planRecap
+    go (Btw question) = Just $ planBtw question
+    go Retry = Just $ planRetry
+    go EditPrompt = Just $ planEditPrompt
+    go (Unknown cmd) = Just $ planUnknown cmd
+    go (Plan planText) = Just $ planSubmit planText
+    go SkipStep = Just $ planSkip
+    go RejectStep = Just $ planReject
+    go AbandonPlan = Just $ planAbandon
+    go Approve = Just $ planApprove
+    go (DenyWith reason) = Just $ planDenyWith reason
+    go Deny = Just $ planDeny
+    go (SendMessage msg) = Just $ planSend msg
+    go (Steer prompt) = Just $ planSteer prompt
+    go (Queue (Just text)) = Just $ planQueuePush text
+    go _ = Nothing
+
+    -- 每个函数实现一个命令，共享外层的 lang/bridge/sessionRef/modelRef。
+    planLoop arg = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -89,8 +112,7 @@ runPlan env = go
                   Left e -> tr lang "Error: " <> T.pack (show e)
                   Right lid -> tr lang "Loop started: " <> lid
               _ -> return $ Just (tr lang "Usage: /loop <30s|5m|1h> <prompt> | /loop stop")
-
-    go (Rewind arg) = Just $ do
+    planRewind arg = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -109,8 +131,7 @@ runPlan env = go
     --
     -- 快照文件名是 @&lt;stamp&gt;-&lt;sha1(路径)前8位&gt;-&lt;basename&gt;@，没有完整路径，
     -- 所以在当前目录树里按 basename 回找，唯一命中才写回（多个命中就列出来让人选）。
-
-    go (Restore arg) = Just $ do
+    planRestore arg = do
       home <- getHomeDirectory
       let dir = home </> ".trha" </> "file-history"
       present <- doesDirectoryExist dir
@@ -144,8 +165,7 @@ runPlan env = go
               <> tr lang "Use /restore <n>."
 
     -- | @/auth@：provider 的 key 状态；@/auth check <name>@ 让内核探测一次端点。
-
-    go (Queue Nothing) = Just $ do
+    planQueueShow = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -155,8 +175,7 @@ runPlan env = go
             Left e -> tr lang "Error: " <> T.pack (show e)
             Right [] -> tr lang "Queue is empty."
             Right ms -> T.unlines (tr lang "Queued:" : map ("  - " <>) ms)
-
-    go Recap = Just $ do
+    planRecap = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -167,8 +186,7 @@ runPlan env = go
             Right summary
               | T.null (T.strip summary) -> tr lang "Nothing to recap yet."
               | otherwise -> summary
-
-    go (Btw question) = Just $ do
+    planBtw question = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -185,8 +203,7 @@ runPlan env = go
     -- The *human* channel: the model has no tool that reaches this endpoint — its
     -- `cd` is clamped to the current workspace — so only a person typing this can
     -- move the sandbox root.
-
-    go Retry = Just $ do
+    planRetry = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -195,8 +212,7 @@ runPlan env = go
           return $ Just $ case r of
             Left e -> tr lang "Error: " <> T.pack (show e)
             Right reply -> reply
-
-    go EditPrompt = Just $ do
+    planEditPrompt = do
       tmp <- getTemporaryDirectory
       (path, h) <- openTempFile tmp "trha-edit.txt"
       hClose h
@@ -211,15 +227,13 @@ runPlan env = go
       return $ Just $ if code /= ExitSuccess
         then tr lang "Editor failed: " <> T.pack err
         else body
-
-    go (Unknown cmd) = Just $
+    planUnknown cmd = 
       return $ Just $ tr lang "Unknown command: " <> cmd <> tr lang " — try /help"
 
     -- | Submit a plan. One line goes through the single-command gate; two or more
     -- (separated by @;@ or newlines) become a stepwise plan in the kernel, decided
     -- one step at a time.
-
-    go (Plan planText) = Just $ do
+    planSubmit planText = do
       if T.null (T.strip planText)
         then return $ Just (tr lang "Usage: /plan <what to do>")
         else do
@@ -246,18 +260,16 @@ runPlan env = go
                     Left err -> tr lang "Error: " <> T.pack (show err)
 
     -- | Skip / reject the pending step, or drop the whole plan.
+    planSkip = decidePlanStep lang bridge sessionRef "skip"
 
-    go SkipStep = Just $ decidePlanStep lang bridge sessionRef "skip"
+    planReject = decidePlanStep lang bridge sessionRef "reject"
 
-    go RejectStep = Just $ decidePlanStep lang bridge sessionRef "reject"
-
-    go AbandonPlan = Just $ decidePlanStep lang bridge sessionRef "abandon"
+    planAbandon = decidePlanStep lang bridge sessionRef "abandon"
 
     -- | Approve. If a multi-step plan is active in the kernel, approve its pending
     -- step, run it as a normal agent turn, then report the result; otherwise the
     -- single-command gate answers.
-
-    go Approve = Just $ do
+    planApprove = do
       session <- readIORef sessionRef
       case session of
         Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
@@ -273,8 +285,7 @@ runPlan env = go
                   return $ Just reply
                 Right PlanDenied -> return $ Just (tr lang "Plan was not approved.")
                 Left err -> return $ Just $ tr lang "Error: " <> T.pack (show err)
-
-    go (DenyWith reason) = Just $ do
+    planDenyWith reason = do
       session <- readIORef sessionRef
       case session of
         Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
@@ -286,8 +297,7 @@ runPlan env = go
             Left err -> friendlyDenyError lang err
 
     -- | Deny: on a plan that means rejecting the pending step.
-
-    go Deny = Just $ do
+    planDeny = do
       session <- readIORef sessionRef
       case session of
         Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
@@ -303,8 +313,7 @@ runPlan env = go
                 Left err -> friendlyDenyError lang err
 
     -- | List local sessions (from ~/.trha transcript index).
-
-    go (SendMessage msg) = Just $ do
+    planSend msg = do
       session <- readIORef sessionRef
       case session of
         Nothing -> return $ Just (tr lang "No active session. Use /new to create one.")
@@ -345,10 +354,9 @@ runPlan env = go
 
     -- Catch-all: a command registered only for the TUI must not crash the REPL with
     -- a non-exhaustive pattern match.
-
-    go (Steer prompt)
-      | T.null (T.strip prompt) = Just $ return $ Just (tr lang "Usage: /steer <prompt>")
-      | otherwise = Just $ do
+    planSteer prompt
+      | T.null (T.strip prompt) = return $ Just (tr lang "Usage: /steer <prompt>")
+      | otherwise = do
           cur <- readIORef sessionRef
           case cur of
             Nothing -> return $ Just (tr lang "No active session.")
@@ -357,11 +365,9 @@ runPlan env = go
               return $ Just $ case r of
                 Left e -> tr lang "Error: " <> T.pack (show e)
                 Right n -> tr lang "Steered (" <> T.pack (show n) <> tr lang " pending)"
-
-
-    go (Queue (Just text))
-      | T.null (T.strip text) = Just $ return $ Just (tr lang "Usage: /queue <message>")
-      | otherwise = Just $ do
+    planQueuePush text
+      | T.null (T.strip text) = return $ Just (tr lang "Usage: /queue <message>")
+      | otherwise = do
           cur <- readIORef sessionRef
           case cur of
             Nothing -> return $ Just (tr lang "No active session.")
@@ -370,9 +376,6 @@ runPlan env = go
               return $ Just $ case r of
                 Left e -> tr lang "Error: " <> T.pack (show e)
                 Right n -> tr lang "Queued (" <> T.pack (show n) <> tr lang " pending)"
-
-
-    go _ = Nothing
 
 decidePlanStep :: Lang -> SchedulerBridge -> IORef (Maybe SessionId) -> Text -> IO (Maybe Text)
 decidePlanStep lang bridge sessionRef action = do
