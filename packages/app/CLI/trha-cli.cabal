@@ -103,6 +103,7 @@ test-suite trha-cli-test
     UI.Dialog.Stack
     UI.Dialog.Selection
     UI.Dialog.Editing
+    UI.Dialog.Escape
     UI.PasteFold
     UI.DialogSpec
     UI.PasteFoldSpec
