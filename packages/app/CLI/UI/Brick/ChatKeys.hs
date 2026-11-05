@@ -121,18 +121,7 @@ handleChatKey (EvKey KPageUp []) =
 handleChatKey (EvKey KPageDown []) =
   vScrollBy (viewportScroll MessageArea) 10
 -- | ctrl+o expands/collapses the focused tool card (newest one first).
-handleChatKey (EvKey (KChar 'o') [MCtrl]) = do
-  st <- get
-  -- One turn has many reasoning blocks: Ctrl+O expands them all (or folds
-  -- them all when every one is already open).  Tool cards otherwise.
-  let ids = [ msgId m | m <- appMessages st, msgRole m == "thinking" ]
-      folds = appFolds st
-      anyCollapsed = any (\i -> Map.lookup i folds /= Just FoldExpanded) ids
-      target = if anyCollapsed then FoldExpanded else FoldCollapsed
-  if null ids
-    then toggleFocusedCard
-    else modify $ \s -> s
-      { appFolds = foldl (\mp i -> Map.insert i target mp) (appFolds s) ids }
+handleChatKey (EvKey (KChar 'o') [MCtrl]) = toggleThinkingFold
 -- | Ctrl+Y toggles YOLO (Reasonix's danger-full-access preset).
 handleChatKey (EvKey (KChar 'y') [MCtrl]) = modeAction (object ["action" .= ("yolo" :: Text)])
 -- | Ctrl+V attaches a clipboard image (saved under ~/.trha/paste).
@@ -235,6 +224,20 @@ handleChatKey ev = do
     else editDefaultKey ev >> refreshCompletion >> refreshPalette
 
 -- | Enter outside the wizard: popups, palette, then submit.
+-- | Ctrl+O：一轮里可能有多个 reasoning 块——全部展开，或（全都已展开时）
+-- 全部折叠；若这一轮没有 thinking 块，则退回「切换聚焦的工具卡」。
+toggleThinkingFold :: EventM ResourceName AppState ()
+toggleThinkingFold = do
+  st <- get
+  let ids = [ msgId m | m <- appMessages st, msgRole m == "thinking" ]
+      folds = appFolds st
+      anyCollapsed = any (\i -> Map.lookup i folds /= Just FoldExpanded) ids
+      target = if anyCollapsed then FoldExpanded else FoldCollapsed
+  if null ids
+    then toggleFocusedCard
+    else modify $ \s -> s
+      { appFolds = foldl (\mp i -> Map.insert i target mp) (appFolds s) ids }
+
 handleChatEnter :: AppState -> EventM ResourceName AppState ()
 handleChatEnter st
   -- Home: a non-empty submission starts the session view and is sent there.
