@@ -27,6 +27,8 @@ escPress :: Bool -> Bool -> (Bool, Bool)
 escPress withinWindow armed = (fired, armed')
   where
     fired = armed && withinWindow
+    -- 任何一次未 fire 的按键都会留下 arm（含窗口外的「重新开始」），
+    -- 只有 fire 本身才清空。
     armed' = not (withinWindow && armed)
 
 -- | Wiring-level escape decision.  Only a running turn can be interrupted;
