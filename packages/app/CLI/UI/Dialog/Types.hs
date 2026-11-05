@@ -16,6 +16,7 @@ module UI.Dialog.Types
   , EscOutcome(..)
   ) where
 
+import Brick.Escape (EscFlags(..), EscOutcome(..))
 import Data.Text (Text)
 
 import Core.SessionSummary (SessionSummary)
@@ -73,21 +74,6 @@ data Dialog
 type DialogStack = [Dialog]
 -- | Options offered by an approval card, in display order.
 data ApprovalOption = ApprovalOnce | ApprovalAlways | ApprovalReject
-  deriving (Show, Eq)
--- | Signals the escape key consults, in MiMo's priority order.
-data EscFlags = EscFlags
-  { efSelection :: Bool -- ^ text selection active (copy it first)
-  , efStack     :: Bool -- ^ a dialog is open (pop it)
-  , efShell     :: Bool -- ^ shell mode active (exit it)
-  , efComplete  :: Bool -- ^ autocomplete popup open (close it)
-  } deriving (Show, Eq)
-
-data EscOutcome
-  = EscClearSelection
-  | EscPopDialog
-  | EscExitShell
-  | EscCloseComplete
-  | EscApprovalDeny -- ^ MiMo's permission page: escape = reject (see below)
   deriving (Show, Eq)
 
 -- | MiMo's escape hierarchy: selection → dialog stack → shell →
