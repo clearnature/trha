@@ -16,7 +16,6 @@ import Brick
   ( Widget, attrName, emptyWidget, fill, hBox, padLeftRight, str, vBox, withAttr )
 import Brick.Widgets.Border (borderWithLabel)
 import Brick.Widgets.Core (vLimit)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Graphics.Vty as V
 

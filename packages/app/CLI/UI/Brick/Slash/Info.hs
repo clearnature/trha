@@ -9,7 +9,6 @@ module UI.Brick.Slash.Info
 
 import Brick (EventM, get)
 import Control.Monad.IO.Class (liftIO)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.FilePath ((</>))

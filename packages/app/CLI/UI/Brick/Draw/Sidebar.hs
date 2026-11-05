@@ -13,7 +13,6 @@ module UI.Brick.Draw.Sidebar
   , sidebarDataFor
   ) where
 
-import Data.Text (Text)
 import qualified Data.Text as T
 
 import Brick
@@ -23,7 +22,6 @@ import Brick.Widgets.Border (borderWithLabel)
 
 import UI.Brick.Draw.Status (modelLabel)
 import UI.Completion (CompletionState(..), compPath, csItems, csSel)
-import UI.I18n (tr)
 import UI.Render.Sidebar
   ( SidebarData(..), SidebarLine(..), sidebarHint, sidebarLines, truncateTo )
 import UI.State (AppState(..), ResourceName(..))

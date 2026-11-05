@@ -11,7 +11,6 @@ import Core.Client
 import UI.Terminal
 import UI.Session
 import UI.Model
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 

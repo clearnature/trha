@@ -51,7 +51,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Lens.Micro ((^.))
-import Numeric (showFFloat)
 import System.FilePath (takeFileName)
 
 import Core.Types (SessionMode(..))
@@ -67,8 +66,7 @@ import Core.Types
   , configPriceInput, configPriceOutput, usageCompletionTokens, usagePromptTokens
   , usageTotalTokens )
 import UI.Dialog (ssEnabled)
-import UI.I18n (Lang, tr)
-import UI.Render.Footer (parseMetrics)
+import UI.I18n (tr)
 import UI.State (AppState(..))
 import UI.TimeStamp (clockWithZone)
 

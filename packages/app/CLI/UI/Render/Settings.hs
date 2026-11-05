@@ -13,7 +13,6 @@ module UI.Render.Settings
 
 import Brick (Widget, attrName, hBox, padLeftRight, str, vBox, withAttr)
 import Brick.Widgets.Core (vLimit)
-import Data.Text (Text)
 import qualified Data.Text as T
 
 import qualified UI.TextWidth as TW

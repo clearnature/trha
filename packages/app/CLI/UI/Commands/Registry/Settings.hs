@@ -20,8 +20,7 @@ import Data.Aeson (Value(..), object, toJSON, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text.Encoding as TE
-import Data.List (minimumBy, sortOn)
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.List (minimumBy)
 import Data.Ord (comparing)
 import Data.Text (Text)
 import qualified Data.Text as T

@@ -41,9 +41,7 @@ import Data.Aeson (Value(..), object, toJSON, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text.Encoding as TE
-import Data.List (minimumBy, sortOn)
-import Data.Maybe (fromMaybe, listToMaybe)
-import Data.Ord (comparing)
+import Data.List (sortOn)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Core.Types (CLIConfig(..), defaultCLIConfig)
@@ -51,7 +49,7 @@ import UI.Commands.Registry.Table (SlashCommand(..), slashRegistry)
 import UI.Commands.Registry.Types
   ( Command(..), CommandGroup(..), commandGroups, groupKey, groupMembers
   , groupOf, groupTitle )
-import UI.Commands.Registry.Parser (parseCommand, parseCommandBase, parseCommandWith)
+import UI.Commands.Registry.Parser (parseCommand, parseCommandWith)
 import UI.Commands.Registry.Settings
   ( defaultFor, formatSettings, parseSettingValue, settingKeyDocs, settingKeys
   , suggestSettingKey, settingsSchemaJson )

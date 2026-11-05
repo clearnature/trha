@@ -13,43 +13,23 @@ import Data.Aeson (Object, Value(..), decode, object, (.=))
 import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as BSL
-import Data.Char (isHexDigit)
 import Core.Types
 import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, fetchUsageStats, UsageRow(..), compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setSessionCwd, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus, probeProvider, listTools, fetchPermissions, getMessages)
 import UI.ProviderPresets (presets, preBaseUrl, preKind, preName)
 import Core.Currency (CurrencyTable(..), loadCurrency, saveCurrency)
 import Core.Replay (ReplayBlock(..), renderReplay, renderReplayText)
-import Core.Export (exportMarkdown, exportJson, defaultExportName)
 import Core.TurnStats (Prices(..), pricesForModel, turnSummary)
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
-import Core.Memory (allMemories, forgetText, rememberText)
 import Core.ProjectStore (ProjectSession(..), projectSessions)
-import Core.Transcript (listLocalSessions, listLocalSessionsIn, loadTranscript, recordChunk, recordModelRequest, recordSession, recordToolEvent, recordUser)
-import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, catch, try)
 import qualified Data.Map as Map
 import Data.IORef
-import Data.List (partition, sort)
 import Data.Text (Text)
 import qualified Data.Text as T
-import System.IO (hClose, hFlush, hPutStr, openTempFile, stdout)
-import System.Environment (lookupEnv, getEnvironment)
-import Data.Maybe (fromMaybe)
-import Core.Clipboard (saveClipboardImage)
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getHomeDirectory, getTemporaryDirectory, listDirectory, removeFile)
 import System.FilePath ((</>))
 import System.Exit (ExitCode(..))
-import System.Process (readProcessWithExitCode, readCreateProcessWithExitCode, proc, env)
-import System.Timeout (timeout)
+import System.Process (env)
 import qualified Data.Text.IO as TIO
-import Data.Time.Clock (getCurrentTime)
-import Data.Time.LocalTime (getCurrentTimeZone, utcToZonedTime)
-import Data.Time.Format (defaultTimeLocale, formatTime)
-import System.Directory (createDirectoryIfMissing, getHomeDirectory)
-import System.Environment (lookupEnv)
-import Text.Read (readMaybe)
 import System.FilePath ((</>), takeDirectory)
-import System.Process (callCommand)
 import UI.Render.ToolCard (ToolStatus(..), toolCardWithStatus)
 import UI.Commands.Env (CmdEnv(..))
 import UI.Commands.Registry
@@ -59,8 +39,6 @@ import UI.Skills (Skill(..), scanSkills, skillDirs)
 import UI.InputHistory (HistState(..), loadHistory)
 import UI.CustomCommands (CustomCommand(..), loadCustomCommands, renderCustomCommand)
 import UI.Theme (Theme(..), themes, themeNames, resolveTheme)
-import UI.Render.Sidebar (agentTreeLines)
-import System.Directory (getCurrentDirectory)
 import UI.I18n (Lang(..), langName, parseLang, tr)
 import Config.Settings (resolveConfig, saveConfig)
 

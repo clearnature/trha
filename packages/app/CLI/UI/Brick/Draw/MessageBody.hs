@@ -11,26 +11,17 @@ module UI.Brick.Draw.MessageBody
 
 import Brick
 import Brick.Widgets.Border
-import Brick.Widgets.Center (centerLayer)
 import Brick.Widgets.Core
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time.Clock (UTCTime)
 import qualified Data.Map.Strict as Map
 import qualified Graphics.Vty as V
 import Lens.Micro ((&), (%~), (.~), (^.))
 
 import Core.SessionSummary (SessionSummary(..))
 import Core.Types (CLIConfig(..), PlanStepView(..), PlanView(..))
-import Brick.Widgets.Edit (getEditContents, renderEditor)
-import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard)
-import UI.Brick.Draw.Settings (drawSettingsPanel)
-import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar)
-import UI.Brick.Draw.Status (drawStatus)
-import UI.Dialog (stackTop)
 import UI.Event (PendingMsg(..), Route(..), RunState(..), runState)
-import UI.I18n (tr)
 import UI.Layout (SidebarRender(..), messageWidth, sidebarRender)
 import UI.Render.Diff
   ( DiffClass(..), DiffLayout(..), DiffRow(..), diffClass, diffLayout
@@ -44,7 +35,6 @@ import UI.Render.ToolCard
   ( ToolCard, ToolFold(..), tcDur, tcOutput, tcStatus, toolStatusLine )
 import UI.Render.ToolSummary
   ( presentCard, shouldHideTool, toolDetailLines, toolHeadline )
-import UI.Selection (inSelRange)
 import UI.State (AppState(..), ChatMessage(..), ResourceName(..))
 
 roleStyle :: Text -> Text -> (AttrName, Text)

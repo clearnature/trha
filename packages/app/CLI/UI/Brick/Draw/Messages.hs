@@ -27,7 +27,6 @@ import Brick
 import Brick.Widgets.Border
 import Brick.Widgets.Center (centerLayer)
 import Brick.Widgets.Core
-import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock (UTCTime)
@@ -37,7 +36,6 @@ import Lens.Micro ((&), (%~), (.~), (^.))
 
 import Core.SessionSummary (SessionSummary(..))
 import Core.Types (CLIConfig(..), PlanStepView(..), PlanView(..))
-import Brick.Widgets.Edit (getEditContents, renderEditor)
 import UI.Brick.Draw.Dialog (drawDialog, drawPalette, drawWizard)
 import UI.Brick.Draw.Home (drawHome, drawPlanCard)
 import UI.Brick.Draw.Input (drawInput)
@@ -51,21 +49,17 @@ import UI.Brick.Draw.Sidebar (drawCompletion, drawSidebar)
 import UI.Brick.Draw.Status (drawStatus)
 import UI.Dialog (stackTop)
 import UI.Event (PendingMsg(..), Route(..), RunState(..), runState)
-import UI.I18n (tr)
 import UI.Layout (SidebarRender(..), messageWidth, sidebarRender)
 import UI.Render.Diff
   ( DiffClass(..), DiffLayout(..), DiffRow(..), diffClass, diffLayout
   , looksLikeDiff, numberDiff, renderDiffRow )
-import UI.Render.FilePart (filePartsOf, filePartLine, stripFileTokens)
 import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
-import UI.Render.Message (classifyError, errorHint, errorLabel)
 import UI.Render.Spans
   ( SpanTok(..), diffAttrOf, fillLines, spanToks, spinnerFrame, truncLine )
 import UI.Render.ToolCard
   ( ToolCard, ToolFold(..), tcDur, tcOutput, tcStatus, toolStatusLine )
 import UI.Render.ToolSummary
   ( presentCard, shouldHideTool, toolDetailLines, toolHeadline )
-import UI.Selection (inSelRange)
 import UI.State (AppState(..), ChatMessage(..), ResourceName(..))
 
 -- | 工具卡是否折叠隐藏（verbose 模式全展开；否则看用户折叠状态）。

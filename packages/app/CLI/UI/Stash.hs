@@ -19,7 +19,6 @@ module UI.Stash
   ) where
 
 import Control.Exception (IOException, try)
-import Control.Monad (when)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO

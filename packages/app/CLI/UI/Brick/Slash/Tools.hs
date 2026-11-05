@@ -8,7 +8,6 @@ module UI.Brick.Slash.Tools
   ) where
 
 import Brick (EventM)
-import Data.Text (Text)
 import qualified Data.Text as T
 
 import UI.Brick.MessageOps (appendMsg)
