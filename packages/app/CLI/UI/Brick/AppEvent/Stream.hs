@@ -116,7 +116,12 @@ import UI.Frecency (Frecency(..), emptyFrecency, recordUse, rankItems, loadFrece
 
 -- | 认领 EvResponse / EvNotice / EvFinalReply。
 handleStreamEvent :: AppEvent -> Maybe (EventM ResourceName AppState ())
-handleStreamEvent (EvResponse result) = Just $ case result of
+handleStreamEvent (EvResponse result) = Just $ onStreamResponse result
+handleStreamEvent (EvNotice notice) = Just $ onStreamNotice notice
+handleStreamEvent (EvFinalReply text) = Just $ onFinalReply text
+handleStreamEvent _ = Nothing
+
+onStreamResponse result = case result of
   Right chunk -> case chunk of
     ChunkDelta text    -> do
       -- The first delta ends the TTFT window; the pure-decode rate is measured
@@ -157,7 +162,7 @@ handleStreamEvent (EvResponse result) = Just $ case result of
     modify $ \st -> st { appStatus = tr (appLang st) "Error", appBusy = False }
     scrollBottom
 
-handleStreamEvent (EvNotice notice) = Just $ case notice of
+onStreamNotice notice = case notice of
   ReasoningDelta text -> appendReasoningDelta text >> scrollBottom
   StepStarted rnd msgs tools -> do
     -- A new model round starts.  Close whatever the previous round left in
@@ -185,7 +190,7 @@ handleStreamEvent (EvNotice notice) = Just $ case notice of
         <> T.pack (show delayMs) <> "ms — " <> reason) t)
     scrollBottom
 
-handleStreamEvent (EvFinalReply text) = Just $ do
+onFinalReply text = do
   -- The step reply is authoritative: replace whatever the preview has
   -- accumulated (a dropped delta must not truncate the answer).
   st <- get
@@ -196,7 +201,6 @@ handleStreamEvent (EvFinalReply text) = Just $ do
 
 -- | Tool-card message from a completed lifecycle event (with output
 -- preview lines from the kernel tail).
-handleStreamEvent _ = Nothing
 
 -- | 回合收尾：把累积的用量/耗时/缓存换算成统计字段，落盘并输出摘要。
 -- 从 handleStreamEvent 的 ChunkDone 分支提取——它是一个完整业务动作，
