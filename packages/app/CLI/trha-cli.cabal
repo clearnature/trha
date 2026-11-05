@@ -131,7 +131,6 @@ test-suite trha-cli-test
     UI.Render.SidebarSpec
     TestHome
   build-depends:    base ^>=4.22
-                  , brick >= 3.0
                   , process
                   , trha:trha-infra
                   , hspec >= 2.10
