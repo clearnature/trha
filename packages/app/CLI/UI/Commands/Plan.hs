@@ -343,12 +343,6 @@ runPlan env = go
               ChunkDone usage -> turnSummary prices usage (usageReasoningTokens usage) nowT
             Left err -> toolLines <> tr lang "Error: " <> T.pack (show err)
 
-    go SkipStep = Just $ decidePlanStep lang bridge sessionRef "skip"
-
-    go RejectStep = Just $ decidePlanStep lang bridge sessionRef "reject"
-
-    go AbandonPlan = Just $ decidePlanStep lang bridge sessionRef "reject"
-
     -- Catch-all: a command registered only for the TUI must not crash the REPL with
     -- a non-exhaustive pattern match.
 
