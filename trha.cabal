@@ -308,6 +308,7 @@ executable trha
     UI.InputHistory
     UI.Dialog
     UI.Dialog.Types
+    UI.Dialog.Stack
     UI.PasteFold
     UI.Interaction
     UI.Layout

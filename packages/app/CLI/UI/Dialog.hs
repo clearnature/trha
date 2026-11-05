@@ -73,33 +73,9 @@ import UI.Render.Picker
 import Data.Text (Text)
 import qualified Data.Text as T
 
+import UI.Dialog.Stack
 import UI.Dialog.Types
 
-emptyStack :: DialogStack
-emptyStack = []
-
--- | Open a dialog on top of the stack.
-stackPush :: Dialog -> DialogStack -> DialogStack
-stackPush = (:)
-
--- | Close the top dialog; popping an empty stack is a no-op.
-stackPop :: DialogStack -> DialogStack
-stackPop (_ : rest) = rest
-stackPop []         = []
-
--- | The topmost dialog, if any.
-stackTop :: DialogStack -> Maybe Dialog
-stackTop (d : _) = Just d
-stackTop []      = Nothing
-
--- | Whether the stack is empty (no dialog open).
-stackNull :: DialogStack -> Bool
-stackNull = null
-
--- | Filtered item count of a dialog.
--- | 对话框标题。**12 个构造子必须齐全**——非穷尽 case 不会编译失败，只会在
--- 运行时 pattern match failure（`DialogPresets` 就这样漏过一次，见
--- docs/reference/brick-split-incident-2026-11-04.md）。
 dialogTitle :: Lang -> Dialog -> Text
 dialogTitle lang d = case d of
   DialogModels{}     -> tr lang " Models "
