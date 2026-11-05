@@ -1,0 +1,3 @@
+[submodule "3rdparty/brick"]
+	path = 3rdparty/brick
+	url = https://github.com/clearnature/brick.git

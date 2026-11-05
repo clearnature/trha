@@ -15,7 +15,7 @@
 | `wgpu-native/` | **构建依赖** | `trha.cabal` 的 `include-dirs`、`extra-lib-dirs-static`（Windows/Linux 各一份） | `68b932a` 2026-09-13 |
 | `fonts/` | **运行时数据** | `packages/app/CLI/Core/Fonts.hs:31`（`./3rdparty/fonts`，含 `NotoSansYi-Regular.ttf`） | `00ba4cc` 2026-10-27 |
 | `corpus/` | **参考语料** | 无代码引用（本目录自带 `README.md` 说明） | `00ba4cc` 2026-10-27 |
-| `brick-3.0/` | **参考源码** | `docs/plans/ide-information-architecture.md:225` | `9e4b7c3` 2026-10-25 |
+| `brick/` | **构建依赖（submodule，可改）** | `cabal.project` 的 `packages:` | `59bedd7`（fork `clearnature/brick`） |
 | `llama-webgpu/` | **参考源码** | `docs/plans/webgpu-wiring-plan.md`（WGSL 写法对照，41 个 shader） | `68b932a` 2026-09-13 |
 | `llama-vulkan/` | **参考源码** | `docs/architecture/project-overview.md:97` | `1697316` 2026-09-13 |
 
@@ -31,7 +31,7 @@ extra-lib-dirs-static: 3rdparty/wgpu-native/lib/windows  # Windows
 
 没有它 `trha-webgpu` 链接不过。
 
-**`brick-3.0` 不在构建里。** CLI 用的是 Hackage 的 `brick >= 3.0`（`trha.cabal:412`），
+**`brick/` 现在是构建依赖。** CLI 用的是 Hackage 的 `brick >= 3.0`（`trha.cabal:412`），
 `dist-newstyle/cache/plan.json` 记录其来源为 `repo-tar` + `hackage.haskell.org`。
 这里的源码只用于查 API（trha 用到 `customMain` / `appFor` / `appStartEvent` 等 3.x 接口）。
 

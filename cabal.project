@@ -20,3 +20,4 @@ packages:
   -- 「第二个实现无等价证明」。此处是相对路径依赖（trha 与 math 为兄弟目录）；
   -- 若 sov-math 迁移目录，只改这一行。
   ../math/hs/sov-math
+  3rdparty/brick

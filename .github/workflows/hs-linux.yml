@@ -45,6 +45,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 1
 
     - name: checkout sov-math (kernel math dependency)
       uses: actions/checkout@v4
