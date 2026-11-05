@@ -12,6 +12,7 @@ module UI.Brick.Apply
   ) where
 
 import Brick (EventM, get, modify)
+import Brick.Focus (focusRing)
 import Brick.BChan (writeBChan)
 import Control.Concurrent.Async (async)
 import Control.Monad (void)
@@ -68,7 +69,7 @@ openSettingsPanel = do
   _ <- liftIO $ async $ do
     rows <- collectStatusInfo cfg mSid model
     writeBChan chan (EvStatusInfo rows)
-  modify $ \s -> s { appSettings = Just (SettingsPanel TabSettings FocusList 0 "" Nothing Nothing)
+  modify $ \s -> s { appSettings = Just (SettingsPanel (focusRing ([minBound .. maxBound] :: [SettingsTab])) FocusList 0 "" Nothing Nothing)
                     , appEffCfg = cfg }
 
 -- | 切换权限姿态（read-only → ask → auto → yolo → plan，循环）。

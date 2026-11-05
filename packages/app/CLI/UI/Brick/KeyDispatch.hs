@@ -54,7 +54,7 @@ import qualified Graphics.Vty as V
 import Lens.Micro ((&), (.~), (%~), (^.))
 import UI.Brick.SettingsKeys
   ( applySetting, clampSel, closeSettingsPanel, editingNow, handleSettingsKey
-  , moveListSel, moveTab, moveTabBy, nextOption, seedEdit, settingsListWidth )
+  , moveListSel, moveTabBy, nextOption, seedEdit, settingsListWidth )
 import UI.Brick.DialogKeys
   ( chooseProvider, dialogAppend, dialogDelete, modifyTop, persistSelection
   , scrollBottom, selectSkill, withCommands )

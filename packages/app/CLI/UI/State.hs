@@ -31,6 +31,7 @@ import Core.Types
     ( AgentEntry, Balance, CLIConfig, PlanView, ProviderInfo, SessionId
     , SessionMode, TodoItem, Usage )
 import qualified Data.Map as Map
+import Brick.Focus (FocusRing)
 import Data.Text (Text)
 import Data.Time.Clock (UTCTime)
 import Data.Time.LocalTime (TimeZone)
@@ -265,7 +266,7 @@ data SettingsFocus
 
 -- | Panel state: active tab, focus region, list selection/query/edit.
 data SettingsPanel = SettingsPanel
-  { spTab   :: SettingsTab
+  { spTabRing :: FocusRing SettingsTab
   , spFocus :: SettingsFocus
   , spSel   :: Int            -- ^ selected index within the filtered rows
   , spQuery :: Text           -- ^ live filter (typed while the list is focused)

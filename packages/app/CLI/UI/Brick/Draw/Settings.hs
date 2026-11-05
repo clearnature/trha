@@ -14,6 +14,7 @@ module UI.Brick.Draw.Settings
 
 import Brick
   ( Widget, attrName, emptyWidget, fill, hBox, padLeftRight, str, vBox, withAttr )
+import Brick.Focus (focusGetCurrent, focusRing)
 import Brick.Widgets.Border (borderWithLabel)
 import Brick.Widgets.Core (vLimit)
 import qualified Data.Text as T
@@ -48,7 +49,7 @@ drawSettingsPanel st =
     lang = appLang st
     p = case appSettings st of
       Just x  -> x
-      Nothing -> SettingsPanel TabSettings FocusList 0 "" Nothing Nothing
+      Nothing -> SettingsPanel (focusRing tabList) FocusList 0 "" Nothing Nothing
     -- make one row span the full dialog width (fill absorbs the rest)
     fullRow w = vLimit 1 $ hBox [padLeftRight 1 w, fill ' ']
     fullRowAny w = hBox [padLeftRight 1 w, fill ' '] -- single line vs. multi-line content
@@ -58,7 +59,7 @@ drawSettingsPanel st =
       , withAttr (attrName "status") (str (T.unpack hintText))
       ]
     tabWidget t =
-      let active = spTab p == t
+      let active = focusGetCurrent (spTabRing p) == Just t
           label = " " <> tabLabel lang t <> " "
           attr  = if active then attrName "tool" else attrName "timestamp"
       in withAttr attr (str (T.unpack label))
@@ -69,11 +70,12 @@ drawSettingsPanel st =
         Just _  -> tr lang "Enter save · Esc cancel"
         Nothing -> tr lang "↑/↓ move · Enter edit · Esc close"
           <> "  " <> tr lang "←/→ to switch tabs"
-    contentRows = case spTab p of
-      TabSettings -> settingsListRows
-      TabStatus   -> [fullRowAny (renderStatusRows lang (appSysRows st))]
-      TabStats    -> [fullRowAny (vLimit 22 (renderStatsBlocks lang (computeStatsBlocks st)))]
-      TabProviders -> providerListRows
+    contentRows = case focusGetCurrent (spTabRing p) of
+      Just TabSettings -> settingsListRows
+      Just TabStatus   -> [fullRowAny (renderStatusRows lang (appSysRows st))]
+      Just TabStats    -> [fullRowAny (vLimit 22 (renderStatsBlocks lang (computeStatsBlocks st)))]
+      Just TabProviders -> providerListRows
+      Nothing -> []
     settingsListRows = fullRow (searchRow st p) : map fullRow rowsShown ++ [fullRow descRow, fullRow statusRow]
     -- Providers 页签（tui-port L290）：registry 一览；选中行支持
     -- Enter=选为当前 provider、t=思考开关、d=删除确认。

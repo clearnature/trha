@@ -5,12 +5,13 @@
 -- 从 "UI.Brick.KeyDispatch" 拆出。全局键位（leader / Ctrl+C / Ctrl+D）留在
 -- KeyDispatch，它只在这里调一次 handleSettingsKey。
 module UI.Brick.SettingsKeys
-  ( handleSettingsKey, closeSettingsPanel, applySetting, moveTab, editingNow
+  ( handleSettingsKey, closeSettingsPanel, applySetting, editingNow
   , moveTabBy, moveListSel, seedEdit, clampSel, nextOption, settingsListWidth
   ) where
 
 import Brick
 import Brick.BChan
+import Brick.Focus (focusGetCurrent, focusNext, focusPrev)
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
 import Control.Monad.IO.Class (liftIO)
@@ -40,7 +41,7 @@ import UI.I18n (Lang(..), langName, parseLang, tr)
 import Config.Settings (resolveConfig)
 import qualified Data.Map.Strict as Map
 import UI.Brick.Settings.Pure
-  ( clampSel, editingNow, moveTab, nextOption, seedEdit, settingsListWidth )
+  ( clampSel, editingNow, nextOption, seedEdit, settingsListWidth )
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -143,7 +144,7 @@ handleSettingsKey (EvKey KUp []) = do
 handleSettingsKey (EvKey KDown []) = do
   st <- get
   case appSettings st of
-    Just p | spFocus p == FocusTabs && spTab p == TabSettings ->
+    Just p | spFocus p == FocusTabs && focusGetCurrent (spTabRing p) == Just TabSettings ->
       modify $ \s -> s { appSettings = Just p { spFocus = FocusSearch } }
     Just p | spFocus p == FocusSearch ->
       modify $ \s -> s { appSettings = Just p { spFocus = FocusList } }
@@ -158,17 +159,18 @@ handleSettingsKey (EvKey KEnter []) = do
       case drop (spSel p) rows of
         e : _ -> applySetting (seKey e) buf
         []    -> return ()
-    Just p -> case (spTab p, spFocus p) of
-      (TabStatus, _)  -> return ()  -- read-only content
-      (TabStats, _)   -> return ()
-      (TabProviders, FocusList) -> case drop (spSel p) (appProviders st) of
+    Just p -> case (focusGetCurrent (spTabRing p), spFocus p) of
+      (Just TabStatus, _)  -> return ()  -- read-only content
+      (Just TabStats, _)   -> return ()
+      (Just TabProviders, FocusList) -> case drop (spSel p) (appProviders st) of
         (p2 : _) -> chooseProvider p2
         []       -> return ()
-      (TabSettings, FocusTabs) ->
+      (Just TabSettings, FocusTabs) ->
         modify $ \s -> s { appSettings = Just p { spFocus = FocusSearch } }
-      (TabSettings, FocusSearch) ->
+      (Just TabSettings, FocusSearch) ->
         modify $ \s -> s { appSettings = Just p { spFocus = FocusList } }
-      (TabSettings, FocusList) -> do
+      (Nothing, _) -> return ()
+      (Just TabSettings, FocusList) -> do
         let rows = visibleRows st
         case drop (spSel p) rows of
           e : _ | seKind e == "bool" -> applySetting (seKey e) (if seVal e == "true" then "false" else "true")
@@ -182,11 +184,11 @@ handleSettingsKey (EvKey (KChar c) []) = do
   case appSettings st of
     Just p | Just buf <- spEdit p ->
       modify $ \s -> s { appSettings = Just p { spEdit = Just (buf <> T.singleton c) } }
-    Just p | spTab p == TabSettings && spFocus p == FocusSearch, o >= 32 && o < 127 ->
+    Just p | focusGetCurrent (spTabRing p) == Just TabSettings && spFocus p == FocusSearch, o >= 32 && o < 127 ->
       modify $ \s -> s { appSettings = Just p { spQuery = queryAppend (spQuery p) c, spSel = 0 } }
-    Just p | spTab p == TabSettings && spFocus p == FocusList, o >= 32 && o < 127 ->
+    Just p | focusGetCurrent (spTabRing p) == Just TabSettings && spFocus p == FocusList, o >= 32 && o < 127 ->
       modify $ \s -> s { appSettings = Just p { spQuery = queryAppend (spQuery p) c, spSel = 0 } }
-    Just p | spTab p == TabProviders && spFocus p == FocusList, o >= 32 && o < 127 ->
+    Just p | focusGetCurrent (spTabRing p) == Just TabProviders && spFocus p == FocusList, o >= 32 && o < 127 ->
       -- Providers 页签的动作键（tui-port L290）：t=思考开关、d=删除确认
       --（复用 DialogProviders 的同款逻辑）。
       case (c, drop (spSel p) (appProviders st)) of
@@ -230,7 +232,7 @@ applySetting key raw = do
 
 
 moveTabBy :: Int -> EventM ResourceName AppState ()
-moveTabBy d = modify $ \s -> s { appSettings = (\p -> p { spTab = moveTab d (spTab p)
+moveTabBy d = modify $ \s -> s { appSettings = (\p -> p { spTabRing = (if d > 0 then focusNext else focusPrev) (spTabRing p)
                                                            , spSel = 0, spQuery = "", spEdit = Nothing, spError = Nothing }) <$> appSettings s }
 
 -- | Move the list selection by a delta, wrapping around (qwen behaviour:
@@ -240,7 +242,7 @@ moveListSel :: Int -> EventM ResourceName AppState ()
 moveListSel d = do
   st <- get
   let n = case appSettings st of
-        Just p | spTab p == TabProviders -> length (appProviders st)
+        Just p | focusGetCurrent (spTabRing p) == Just TabProviders -> length (appProviders st)
         _                                -> length (visibleRows st)
   modify $ \s -> s { appSettings = (\p -> p { spSel = if n <= 0 then 0 else mod (spSel p + d + n) n }) <$> appSettings s }
 -- | Initial edit buffer: current value, except secrets which start empty.

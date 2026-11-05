@@ -3,7 +3,7 @@
 -- | 设置面板的纯函数层：页签移动、编辑态判定、取值种子、下标钳制、选项循环、
 -- 列表宽度。全部无副作用（不碰 EventM），因此可以从 SettingsKeys 里单独拆出并单测。
 module UI.Brick.Settings.Pure
-  ( moveTab, editingNow, seedEdit, clampSel, nextOption, settingsListWidth
+  ( editingNow, seedEdit, clampSel, nextOption, settingsListWidth
   ) where
 
 import Data.Text (Text)
@@ -12,8 +12,6 @@ import qualified Data.Text as T
 import UI.SettingsView (SettingsEntry(..))
 import UI.State (AppState, SettingsPanel(..), SettingsTab(..), appSettings)
 
-moveTab :: Int -> SettingsTab -> SettingsTab
-moveTab d t = toEnum (mod (fromEnum t + d) (fromEnum (maxBound :: SettingsTab) + 1))
 -- | Keys while the settings panel is open (three-zone focus model, mirroring
 -- the reference dialog: tabs -> search -> list -> editing).
 -- | handleSettingsKey 见 UI.Brick.KeyDispatch。
