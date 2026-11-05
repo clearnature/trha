@@ -63,15 +63,37 @@ runSession env = go
     sessionRef = ceSession env
     modelRef   = ceModel env
 
-    go Sessions = Just $ do
+    -- 分派：一个命令一条 go 等式。
+    go Sessions = Just $ cmdSessions
+    go CreateSession = Just $ cmdCreateSession
+    go Clear = Just $ cmdClear
+    go (Export args) = Just $ cmdExport args
+    go (StashDraft args) = Just $ cmdStashDraft args
+    go Home = Just $ cmdHome
+    go (Rename title) = Just $ cmdRename title
+    go (Tag tags) = Just $ cmdTag tags
+    go Cls = Just $ cmdCls
+    go (Fork _title) = Just $ cmdFork _title
+    go Branch = Just $ cmdBranch
+    go SessionInfoView = Just $ cmdSessionInfoView
+    go TranscriptView = Just $ cmdTranscriptView
+    go ShowAttachments = Just $ cmdShowAttachments
+    go ClearAttachments = Just $ cmdClearAttachments
+    go (Compact _focus) = Just $ cmdCompact _focus
+    go ResumeList = Just $ cmdResumeList
+    go (ResumeSelect sel) = Just $ cmdResumeSelect sel
+    go (DeleteSession sid) = Just $ cmdDeleteSession sid
+    go _ = Nothing
+
+    -- 每个函数实现一个命令，共享外层的 lang / bridge / sessionRef / modelRef。
+    cmdSessions = do
       result <- listSessions bridge
       return $ Just $ case result of
         Right sessions -> if null sessions
           then tr lang "No active sessions"
           else (tr lang "Sessions:" <> "\n") <> T.unlines (map (\s -> "  - " <> T.pack s) sessions)
         Left err -> tr lang "Error: " <> T.pack (show err)
-
-    go CreateSession = Just $ do
+    cmdCreateSession = do
       result <- createSession bridge Nothing
       case result of
         Right sid -> do
@@ -80,12 +102,10 @@ runSession env = go
           recordSession sid model
           return $ Just $ tr lang "Session created: " <> T.pack sid
         Left err -> return $ Just $ tr lang "Error: " <> T.pack (show err)
-
-    go Clear = Just $ do
+    cmdClear = do
       callCommand "clear"
       return Nothing
-
-    go (Export args) = Just $ do
+    cmdExport args = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No session to export")
@@ -118,8 +138,7 @@ runSession env = go
           return $ Just $ case written of
             Right () -> "exported → " <> T.pack path
             Left e   -> "export failed: " <> T.pack (show e)
-
-    go (StashDraft args) = Just $ do
+    cmdStashDraft args = do
       s <- loadStash
       let listing st = case stashEntries st of
             [] -> "stash is empty"
@@ -138,32 +157,27 @@ runSession env = go
           let s' = stashPush (T.strip args) s
           saveStash s'
           return $ Just "draft stashed"
-
-    go Home = Just $
+    cmdHome = do
       return $ Just "Home is the TUI launch screen (run: trha tui)"
-
-    go (Rename title) = Just $ do
+    cmdRename title = do
       msid <- readIORef sessionRef
       case msid of
         Nothing -> return $ Just (tr lang "No active session.")
         Just sid -> do
           r <- renameSession bridge sid title
           return $ Just $ either (T.pack . show) (const ("renamed: " <> title)) r
-
-    go (Tag tags) = Just $ do
+    cmdTag tags = do
       msid <- readIORef sessionRef
       case msid of
         Nothing -> return $ Just (tr lang "No active session.")
         Just sid -> do
           r <- tagSession bridge sid (T.words tags)
           return $ Just $ either (T.pack . show) (const ("tags: " <> tags)) r
-
-    go Cls = Just $ do
+    cmdCls = do
       -- The REPL clears the terminal; the TUI treats it as "clear the view".
       callCommand "clear" `catch` \(_ :: IOException) -> pure ()
       return $ Just (tr lang "Cleared (history is kept).")
-
-    go (Fork _title) = Just $ do
+    cmdFork _title = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -174,8 +188,7 @@ runSession env = go
             Right newSid -> do
               writeIORef sessionRef (Just newSid)
               return $ Just (tr lang "Forked: " <> T.pack newSid)
-
-    go Branch = Just $ do
+    cmdBranch = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -189,8 +202,7 @@ runSession env = go
 
     -- | @/rewind <n>@：把会话回退到第 n 轮。fork 是无损的——新会话只带前 n 轮，
     -- 原会话原样留着，随时可以 @/resume@ 回去。
-
-    go SessionInfoView = Just $ do
+    cmdSessionInfoView = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -206,8 +218,7 @@ runSession env = go
               , tr lang "  todos: " <> T.pack (show (length (siTodos si)))
               ] ++ [ "  - " <> todoSubject t <> " [" <> T.pack (show (todoStatus t)) <> "]"
                    | t <- siTodos si ]
-
-    go TranscriptView = Just $ do
+    cmdTranscriptView = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -216,8 +227,7 @@ runSession env = go
           if null rows
             then return $ Just (tr lang "No transcript for this session yet.")
             else return $ Just (renderReplayText (renderReplay rows))
-
-    go ShowAttachments = Just $ do
+    cmdShowAttachments = do
       home <- getHomeDirectory
       let dir = home </> ".trha" </> "paste"
       ok <- doesDirectoryExist dir
@@ -228,8 +238,7 @@ runSession env = go
           return $ Just $ if null fs
             then tr lang "No attachments."
             else T.unlines (tr lang "Attachments:" : map T.pack fs)
-
-    go ClearAttachments = Just $ do
+    cmdClearAttachments = do
       home <- getHomeDirectory
       let dir = home </> ".trha" </> "paste"
       ok <- doesDirectoryExist dir
@@ -239,8 +248,7 @@ runSession env = go
           fs <- listDirectory dir
           mapM_ (removeFile . (dir </>)) fs
           return $ Just $ tr lang "Cleared " <> T.pack (show (length fs)) <> tr lang " attachments."
-
-    go (Compact _focus) = Just $ do
+    cmdCompact _focus = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -251,8 +259,7 @@ runSession env = go
             Right (trigger, saved) ->
               tr lang "Compacted (" <> trigger <> tr lang "): saved "
                 <> T.pack (show saved) <> tr lang " tokens"
-
-    go ResumeList = Just $ do
+    cmdResumeList = do
       cwd <- getCurrentDirectory
       -- Only this project's transcripts: another project's conversation resumed
       -- here would pull in its workspace and its files.
@@ -275,8 +282,7 @@ runSession env = go
     -- | Resume a local session by list number or id: replay its transcript
     -- and set it as the active session (continuing works while the
     -- orchestration layer still holds it).
-
-    go (ResumeSelect sel) = Just $ do
+    cmdResumeSelect sel = do
       sessions <- resumeSessions bridge
       case pickLocalSession sel sessions of
         Nothing -> return $ Just $ tr lang "No local session matches: " <> T.pack sel
@@ -302,8 +308,7 @@ runSession env = go
                then tr lang "Resumed " <> T.pack (ssId s) <> tr lang " (empty transcript)"
                else tr lang "Resumed " <> T.pack (ssId s) <> ":\n" <> body)
             <> "\n" <> note
-
-    go (DeleteSession sid) = Just $ do
+    cmdDeleteSession sid = do
       if null sid
         then return $ Just (tr lang "Usage: /delete <session-id>")
         else do
@@ -315,8 +320,6 @@ runSession env = go
           return $ Just $ case result of
             Right () -> tr lang "Session deleted: " <> T.pack sid
             Left err -> tr lang "Error: " <> T.pack (show err)
-
-    go _ = Nothing
 
 resumeSessions :: SchedulerBridge -> IO [SessionSummary]
 resumeSessions bridge = do
