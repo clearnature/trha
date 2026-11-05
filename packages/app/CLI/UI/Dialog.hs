@@ -73,52 +73,7 @@ import UI.Render.Picker
 import Data.Text (Text)
 import qualified Data.Text as T
 
--- | Runtime sandbox knobs shown by @/sandbox@.  Enter persists through
--- PUT /api/sandbox/config: sandbox.yaml is written and the scheduler's
--- runtime switch flips, so the panel controls real execution.
-data SandboxSettings = SandboxSettings
-  { ssEnabled :: Bool
-  , ssPolicy  :: Text   -- ^ workspace-write | read-only
-  , ssNetwork :: Bool
-  , ssScratch :: Text
-  } deriving (Show, Eq)
-
-defaultSandboxSettings :: SandboxSettings
-defaultSandboxSettings = SandboxSettings
-  { ssEnabled = False
-  , ssPolicy = "workspace-write"
-  , ssNetwork = False
-  , ssScratch = "~/.trha/sandbox-scratch"
-  }
-
--- | Apply the row at @index@ to the settings (enter on the /sandbox panel).
-sandboxApply :: Int -> SandboxSettings -> SandboxSettings
-sandboxApply 0 s = s { ssEnabled = not (ssEnabled s) }
-sandboxApply 1 s = s { ssPolicy =
-  if ssPolicy s == "workspace-write" then "read-only" else "workspace-write" }
-sandboxApply 2 s = s { ssNetwork = not (ssNetwork s) }
-sandboxApply _ s = s
-
--- | One modal overlay.  Selection dialogs carry their filtered list plus
--- the selected index; the command dialog carries the full registry (so
--- query edits can re-filter) plus the query and the selection.
-data Dialog
-  = DialogModels [ModelInfo] Text Int       -- ^ /models: all models, query, selected
-  | DialogSessions [SessionSummary] Text Int -- ^ /sessions: all sessions, query, selected
-  | DialogCommands [PickerItem] Text Int    -- ^ full registry, query, selected
-  | DialogProviders [ProviderInfo] Int      -- ^ /provider: providers, selected
-  | DialogPresets [Preset] Int             -- ^ /provider: preset vendors, selected
-  | DialogSkills [Skill] Text Int           -- ^ /skills: skills, query, selected
-  | DialogAgents [AgentEntry] Int           -- ^ /agents: session tree, selected
-  | DialogThemes [Theme] Int                -- ^ /theme: built-in themes, selected
-  | DialogLanguages [Lang] Int              -- ^ /language: interface languages, selected
-  | DialogApproval Text String [Text] Int   -- ^ ask message, tool, args, selected
-  | DialogConfirm Text Int                  -- ^ "always" confirmation, selected (0=yes)
-  | DialogSandbox SandboxSettings Int       -- ^ /sandbox: settings, selected row
-  deriving (Show, Eq)
-
--- | Stack of open dialogs; the head is the topmost (owns keys).
-type DialogStack = [Dialog]
+import UI.Dialog.Types
 
 emptyStack :: DialogStack
 emptyStack = []
@@ -205,10 +160,6 @@ dialogCount (DialogLanguages ls _)   = length ls
 dialogCount (DialogApproval _ name args _) = length (approvalOptions name args)
 dialogCount (DialogConfirm _ _)      = 2  -- yes / no
 dialogCount (DialogSandbox _ _)      = 4  -- enabled / policy / network / scratch
-
--- | Options offered by an approval card, in display order.
-data ApprovalOption = ApprovalOnce | ApprovalAlways | ApprovalReject
-  deriving (Show, Eq)
 
 -- | MiMo parity: destructive shell commands get no "always" option — a
 -- permanent allow on @rm -rf@ is not a mistake the UI should make easy.
@@ -363,27 +314,6 @@ dialogCommandsItems (DialogCommands all0 q _) = filterItems q all0
 dialogCommandsInitialSel :: [PickerItem] -> Text -> Int
 dialogCommandsInitialSel all0 q = firstSelectable (filterItems q all0)
 
--- | Signals the escape key consults, in MiMo's priority order.
-data EscFlags = EscFlags
-  { efSelection :: Bool -- ^ text selection active (copy it first)
-  , efStack     :: Bool -- ^ a dialog is open (pop it)
-  , efShell     :: Bool -- ^ shell mode active (exit it)
-  , efComplete  :: Bool -- ^ autocomplete popup open (close it)
-  } deriving (Show, Eq)
-
-data EscOutcome
-  = EscClearSelection
-  | EscPopDialog
-  | EscExitShell
-  | EscCloseComplete
-  | EscApprovalDeny -- ^ MiMo's permission page: escape = reject (see below)
-  deriving (Show, Eq)
-
--- | MiMo's escape hierarchy: selection → dialog stack → shell →
--- autocomplete → approval.  Escape on the approval page is a reject
--- (MiMo's permission page binds escapeKey to reject); interrupting a
--- running session needs a double escape within 5 seconds — see
--- 'escPress'.
 resolveEscape :: EscFlags -> EscOutcome
 resolveEscape f
   | efSelection f = EscClearSelection
