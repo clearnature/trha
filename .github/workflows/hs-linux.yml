@@ -28,6 +28,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 静态检查：被遮蔽的重复等式（死代码）。
+  # Haskell 多等式按顺序匹配，被前面等式遮挡的定义永远不执行，而编译器默认
+  # 不报告（-Woverlapping-patterns 需 -Wall，且只提示「模式重叠」而非「死代码」）。
+  # 实例：Commands/Plan.hs 的 go AbandonPlan 曾重复定义，后一条把 "abandon"
+  # 写成 "reject"，因被遮蔽而永久不生效。见 docs/plans/import-cleanup-2026-11-05.md。
+  check-duplicate-equations:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: 扫描被遮蔽的重复等式
+      run: python3 scripts/check-duplicate-equations.py
+
   hs-linux-build-test:
     runs-on: ubuntu-latest
 
