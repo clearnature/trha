@@ -1,3 +1,6 @@
 [submodule "3rdparty/brick"]
 	path = 3rdparty/brick
 	url = https://github.com/clearnature/brick.git
+[submodule "3rdparty/commonmark"]
+	path = 3rdparty/commonmark
+	url = https://github.com/clearnature/commonmark-hs.git

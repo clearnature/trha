@@ -20,4 +20,9 @@ packages:
   -- 「第二个实现无等价证明」。此处是相对路径依赖（trha 与 math 为兄弟目录）；
   -- 若 sov-math 迁移目录，只改这一行。
   ../math/hs/sov-math
+  -- 2026-11-05 fork 并 vendor：Markdown 渲染进 brick 需要 AST 解析能力。
+  -- 与 sov-math 同理——不重写，用上游实现（submodule，PR 可回溯到 jgm/commonmark-hs）。
+  -- 只导 commonmark 与 commonmark-extensions（表格）；pandoc/cli 两条不引入。
+  3rdparty/commonmark/commonmark
+  3rdparty/commonmark/commonmark-extensions
   3rdparty/brick
