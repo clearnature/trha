@@ -55,15 +55,36 @@ runIntegration env = go
     sessionRef = ceSession env
     modelRef   = ceModel env
 
-    go Skills = Just $ do
+    -- 分派：一个命令一条 go 等式。
+    go Skills = Just $ cmdSkills
+    go Todo = Just $ cmdTodo
+    go Tree = Just $ cmdTree
+    go ShowMemory = Just $ cmdShowMemory
+    go (Workflow arg) = Just $ cmdWorkflow arg
+    go Graph = Just $ cmdGraph
+    go GoalView = Just $ cmdGoalView
+    go (Forget text) = Just $ cmdForget text
+    go ReloadPlugins = Just $ cmdReloadPlugins
+    go InitProject = Just $ cmdInitProject
+    go (Review arg) = Just $ cmdReview arg
+    go ShowMcp = Just $ cmdShowMcp
+    go ShowLsp = Just $ cmdShowLsp
+    go ShowHooks = Just $ cmdShowHooks
+    go (Remember text) = Just $ cmdRemember text
+    go Plugins = Just $ cmdPlugins
+    go Agents = Just $ cmdAgents
+    go _ = Nothing
+
+    -- 每个函数实现一个命令。统一用 cmd 前缀：直接叫 runXxx 会撞上
+    -- Core.RunState 导出的同名函数（runWorkflow 等）。
+    cmdSkills = do
       cwd <- getCurrentDirectory
       dirs <- skillDirs cwd
       skills <- scanSkills dirs
       return $ Just $ if null skills
         then "No skills found (put SKILL.md under .agents/skills or .trha/skills)."
         else T.unlines [ "  • " <> skName s <> " — " <> skDescription s | s <- skills ]
-
-    go Todo = Just $ do
+    cmdTodo = do
       msid <- readIORef sessionRef
       case msid of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -79,22 +100,19 @@ runIntegration env = go
         glyph TodoPending    = "○"
         glyph TodoInProgress = "◐"
         glyph TodoDone       = "●"
-
-    go Tree = Just $ do
+    cmdTree = do
       r <- fetchAgents bridge
       return $ Just $ case r of
         Right [] -> "no agents"
         Right as -> T.unlines (agentTreeLines Nothing as)
         Left e   -> T.pack (show e)
-
-    go ShowMemory = Just $ do
+    cmdShowMemory = do
       entries <- allMemories
       if null entries
         then return $ Just $ tr lang "No memory notes yet (use /remember <text>)."
         else return $ Just $ T.intercalate "\n\n"
                [ "# " <> name <> "\n" <> body | (name, body) <- entries ]
-
-    go (Workflow arg) = Just $ do
+    cmdWorkflow arg = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -111,8 +129,7 @@ runIntegration env = go
             return $ Just $ case r of
               Left e -> tr lang "Error: " <> T.pack (show e)
               Right reply -> reply
-
-    go Graph = Just $ do
+    cmdGraph = do
       agents <- fetchAgents bridge
       cur <- readIORef sessionRef
       rows <- maybe (pure []) loadTranscript cur
@@ -126,8 +143,7 @@ runIntegration env = go
         [ tr lang "Graph:", tr lang "  session: " <> maybe "-" T.pack cur ]
         ++ [ "  - " <> T.pack nm <> " x" <> T.pack (show n) | (nm, n) <- counts ]
         ++ tree
-
-    go GoalView = Just $ do
+    cmdGoalView = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
@@ -139,23 +155,20 @@ runIntegration env = go
               [ tr lang "Goal: " <> fromMaybe (tr lang "none") (siGoal si)
               , tr lang "Todos: " <> T.pack (show (length (siTodos si)))
               ]
-
-    go (Forget text)
-      | T.null (T.strip text) = Just $ return $ Just (tr lang "Usage: /forget <text>")
-      | otherwise = Just $ do
+    cmdForget text
+      | T.null (T.strip text) = return $ Just (tr lang "Usage: /forget <text>")
+      | otherwise = do
           n <- forgetText (T.strip text)
           return $ Just $ tr lang "Forgot " <> T.pack (show n) <> tr lang " note line(s)."
 
     -- | @/reload-plugins@：重扫用户命令；scheduler 的插件目录本来就有 watcher。
-
-    go ReloadPlugins = Just $ do
+    cmdReloadPlugins = do
       cmds <- loadCustomCommands
       return $ Just $ tr lang "Reloaded user commands: " <> T.pack (show (length cmds))
                        <> tr lang " (scheduler plugins hot-reload automatically)"
 
     -- | @/init@：项目里没有 AGENTS.md 时写一份骨架；已有就不动它。
-
-    go InitProject = Just $ do
+    cmdInitProject = do
       cwd <- getCurrentDirectory
       let target = cwd </> "AGENTS.md"
       exists <- doesFileExist target
@@ -167,8 +180,7 @@ runIntegration env = go
                            <> tr lang " — fill in build, test and conventions."
 
     -- | @/review [path]@：把工作区（含已暂存）的 diff 交给模型评审。
-
-    go (Review arg) = Just $ do
+    cmdReview arg = do
       cwd <- getCurrentDirectory
       let git xs = readCreateProcessWithExitCode (proc "git" ("-C" : cwd : xs)) ""
           paths = map T.unpack (T.words arg)
@@ -188,16 +200,13 @@ runIntegration env = go
                    runPlan env
                      (SendMessage ("请审阅以下未提交的改动，指出问题与改进点：\n\n```diff\n"
                                    <> clipped <> "\n```"))
-
-    go ShowMcp = Just $ do
+    cmdShowMcp = do
       (_, mcp) <- fetchServiceStatus bridge
       return $ Just $ T.unlines (tr lang "MCP:" : map ("  " <>) mcp)
-
-    go ShowLsp = Just $ do
+    cmdShowLsp = do
       (lsp, _) <- fetchServiceStatus bridge
       return $ Just $ T.unlines (tr lang "LSP:" : map ("  " <>) lsp)
-
-    go ShowHooks = Just $ do
+    cmdShowHooks = do
       home <- getHomeDirectory
       let dir = home </> ".trha" </> "hooks"
       ok <- doesDirectoryExist dir
@@ -208,15 +217,13 @@ runIntegration env = go
           return $ Just $ if null fs
             then tr lang "No hooks."
             else T.unlines (tr lang "Hooks:" : map T.pack fs)
-
-    go (Remember text) = Just $
+    cmdRemember text = 
       if T.null (T.strip text)
         then return $ Just $ tr lang "Usage: /remember <text>"
         else do
           rememberText text
           return $ Just $ tr lang "Remembered: " <> T.strip text
-
-    go Plugins = Just $ do
+    cmdPlugins = do
       result <- listPlugins bridge
       return $ Just $ case result of
         Right [] -> tr lang "No plugins registered."
@@ -225,14 +232,11 @@ runIntegration env = go
               <> maybe "" (\d -> "  —  " <> d) (Just (pluginDescription p))
           | p <- ps ]
         Left err -> tr lang "Error: " <> T.pack (show err)
-
-    go Agents = Just $ do
+    cmdAgents = do
       r <- fetchAgents bridge
       return $ Just $ case r of
         Left err -> tr lang "Error: " <> T.pack (show err)
         Right as -> T.unlines (tr lang "Agents:" : [ "  - " <> aeId a | a <- as ])
-
-    go _ = Nothing
 
 -- | @/init@ 写出的 AGENTS.md 骨架。
 initSkeleton :: Text
