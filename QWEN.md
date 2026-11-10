@@ -4,172 +4,196 @@ Microkernel agent harness in Haskell with TypeScript orchestration, multi-protoc
 
 ## Project Overview
 
-**trha** is a multi-layer agent framework inspired by the Cordis plugin architecture. The core engine is written in Haskell (GHC, type-driven design with Free monad plugins) and exposes a multi-protocol API server (OpenAI / Anthropic / Responses-compatible). A TypeScript scheduler layer handles parallel sub-agent orchestration, and an Electron + React desktop app provides the UI.
+**trha** is a microkernel agent framework inspired by the Cordis plugin architecture. The core engine is written in Haskell (GHC, type-driven design) and exposes a multi-protocol API server (OpenAI / Anthropic / Responses-compatible). A TypeScript scheduler layer handles parallel sub-agent orchestration, and shell apps (brick TUI/CLI, Electron + React Desktop, Web) provide the UI. Product-wise the goal is a self-developed **agent IDE**; the four porting upstreams are qwen code, MiMo-Code, reasonix, and deepseek-harness (see `docs/reference/`).
 
 ### Architecture Layers
 
 | Layer | Tech | Location |
 |---|---|---|
-| **Core** | Haskell, Free monad, STM | `src/core/Core/` |
-| **LLM Adapters** | Haskell, http-client | `src/llm/LLM/` |
+| **Math foundation (L0)** | Haskell, external path dep `sov-math` | `../math/hs/sov-math` (sibling repo, relative path dep in `cabal.project`) |
+| **Core** | Haskell, STM | `src/core/` (`Sov.*`, `Core.{Session,Agent,Tools,Event,Cache}.*`, `Kernel.Carrier`) |
+| **LLM Adapters** | Haskell, http-client | `src/llm/LLM/` (DeepSeek, OpenAI) |
 | **API Server** | Haskell, Servant, Warp | `src/api/API/` |
 | **Infrastructure** | Haskell (SQLite, HTTP, Sandbox) | `src/infra/Infrastructure/` |
-| **WebGPU Backend** | Haskell FFI → wgpu-native (Vulkan) | `src/webgpu/Infrastructure/WebGPU/` |
-| **Scheduler Bridge** | TypeScript HTTP client to the kernel | `packages/scheduler/src/Bridge/` |
-| **CPU Backend** | Haskell (SIMD/BLAS/Inference) | `src/llm/Infrastructure/CPU/` |
+| **WebGPU Backend** | Haskell FFI → wgpu-native | `src/webgpu/Infrastructure/WebGPU/` |
 | **Scheduler** | TypeScript, Express, Zod, Winston | `packages/scheduler/` |
-| **SDK** | Haskell | `packages/sdk/` |
-| **Desktop App** | Electron + React | `packages/app/Desktop/` |
-| **CLI App** | Haskell | `packages/app/CLI/` |
+| **SDK** | Haskell client face | `packages/sdk/` |
+| **CLI/TUI App** | Haskell, brick + vty | `packages/app/CLI/` (entry: root `executable trha`) |
+| **Desktop App** | Electron 44 + React | `packages/app/Desktop/` |
+| **Web App** | Vite + React + zustand | `packages/app/Web/` |
+
+Archived out of the build (do not resurrect without a ruling): `archive/inference-kernel/` (GPU/CPU inference model, 2026-10-28 — the kernel no longer depends on the inference model), `archive/haskell-plugin/` (`Core.Plugin.*`), `archive/orchestration/`, `archive/go-haskell-bridge/`, `archive/haskell-network/`, `archive/sdk-legacy/`, `archive/webgpu-legacy/`, `archive/cpu-backend-legacy/`.
 
 ### Key Design Patterns
 
-- **Free Monad Plugins**: `Core.Plugin.Free` uses `Control.Monad.Free` for composable, testable effect descriptions. Plugins register services, subscribe to events, and acquire resources via `Disposer` pattern.
-- **LLMAdapter abstraction**: All LLM backends implement `LLMAdapter { llmChat, llmEmbed, llmModels }`. Current providers: DeepSeek (real HTTP), OpenAI, and a local CPU inference backend.
-- **Multi-protocol API**: Single Servant server exposes OpenAI-compatible (`/v1/chat/completions`), Anthropic-compatible (`/v1/messages`), and Responses (`/v1/responses`) endpoints, both streaming and non-streaming.
-- **Session/Agent FSM**: `Core.Session.Manager` manages session state; `Core.Agent.StateMachine` implements agent state transitions (Idle → Processing → Done/Error).
+- **Kernel/Shell responsibility split**: the kernel (Haskell) owns judgments and truth (session event log); the orchestration/shell layers (TS) own transactions and UI metadata. See `docs/plans/plan-reconciliation.md` (§架构原则) and `docs/contracts/session-truth.md`.
+- **Session/Agent FSM**: `Core.Session.Manager` manages session state; `Core.Agent.StateMachine` implements agent state transitions. The kernel is an *abstract machine* (not an arithmetic machine) — 2026-10-26 user ruling, see `docs/architecture/architecture-intended-vs-actual.md`.
+- **Kernel carrier**: `Kernel.Carrier` implements the C[A₄] function space + Plancherel inner product; the math itself lives in `sov-math` (zero-float, strongly typed). **Do not vendor or reimplement it** — one implementation with proofs, no "second implementation without an equivalence proof".
+- **LLMAdapter abstraction**: all LLM backends implement `LLMAdapter { llmChat, llmEmbed, llmModels }`. Current providers: DeepSeek (real HTTP) and OpenAI.
+- **Multi-protocol API**: single Servant server exposes OpenAI-compatible (`/v1/chat/completions`), Anthropic-compatible (`/v1/messages`), and Responses (`/v1/responses`) endpoints, streaming and non-streaming.
+- **Kernel stub** (`trha-kernel-stub`, K6): deterministic two-round tool loop for end-to-end development without an API key.
+- **Platform shell contract** (scheduler): every shell spawn goes through `packages/scheduler/src/Server/shell.ts` — POSIX `bash -lc`, win32 `cmd.exe /d /s /c` + `windowsVerbatimArguments` + `NoDefaultCurrentDirectoryInExePath`. Do not hardcode `spawn('bash', …)`. The `bash` *tool name* is platform-independent.
+- **Reads unconfined, writes confined** (scheduler design): read tools may leave the workspace on purpose (`bash` already can); writes must go through `confineWritePath` (`Server/toolGuard.ts`).
 
 ## Building and Running
 
-### Haskell Core Engine
+### Haskell (kernel + CLI + tests; cabal resolves from the repo root)
 
 ```bash
-cabal build              # Build all libraries and executables
-cabal test               # Run Hspec test suite
-cabal run trha -- --help # Show CLI help
-cabal run trha -- cli    # Run CLI REPL
-cabal run trha -- tui    # Run TUI mode
+cabal build all          # root stanza + CLI + sdk + sov-math + 3rdparty
+cabal test trha-test     # kernel suite (Hspec + QuickCheck), ~135s warm
+cabal test trha-cli-test # CLI suite
+cabal test all           # everything (~6.5 min — CI / occasional use only)
 ```
 
-GHC version: requires `base ^>=4.22` (GHC 9.12+). The cabal file defines 5 internal libraries (`trha-core`, `trha-llm`, `trha-api`, `trha-infra`, `trha-webgpu`), merged where needed to work around GHC internal-lib linking bugs. The former `trha-orchestration` library was archived out of the build on 2026-09-13 (see `archive/orchestration/`).
+Notes:
+- GHC requires `base ^>=4.22` (GHC 9.12+). The cabal file defines internal libraries (`trha-core`, `trha-llm`, `trha-api`, `trha-infra`, `trha-webgpu`), merged where needed to work around GHC internal-lib linking bugs.
+- **Per-library source roots**: each internal library owns its own `hs-source-dirs` (see §Development Conventions). The `executable trha` is defined **only** in the root `trha.cabal` (sources in `packages/app/CLI`); `packages/app/CLI/trha-cli.cabal` deliberately defines **no** executable (only `trha-cli-test`) — two same-named executables would make `cabal run trha` pick ambiguously between builds.
+- `sov-math` is a **relative path dependency** (`../math/hs/sov-math`); if that repo moves, only `cabal.project` changes.
+- Build products go to the default `dist-newstyle/`. `builddir:` is not a valid `cabal.project` field — use `cabal build --builddir=...` on the command line instead.
+
+### Running the app
+
+```bash
+trha                 # default: full-screen brick TUI (needs interactive terminal)
+trha cli             # line REPL (pipe/script friendly)
+trha serve           # kernel OpenAI-compatible API, default :19433
+trha status          # pid & liveness of kernel / scheduler
+trha stop            # stop kernel & scheduler (SIGTERM, --force for SIGKILL)
+```
+
+The scheduler listens on **:28433** (Bearer `TRHA_TOKEN`). TUI key semantics: `/quit` or Ctrl+Q exits the shell only; **stopping services** is Ctrl+Alt+Q (confirm; equivalent to `/stop confirm`). When stdin is not a TTY, TUI mode errors explicitly and points to `trha cli`.
+
+`packages/app/CLI-npm` is an npm wrapper that locates the binary via `$TRHA_BIN` → `vendor/trha` → `$TRHA_CABAL_BIN` → `cabal list-bin trha` (see its README).
 
 ### TypeScript Scheduler
 
 ```bash
 cd packages/scheduler
 npm install
-npm run build   # tsc
-npm test        # vitest
-npm run lint    # eslint src
+npm run build     # tsc
+npm test          # vitest (watch); use npx vitest run for one-shot
+npm run typecheck
+npm run lint
+npm run coverage  # used by the pre-push gate
 ```
 
-TypeScript config: ES2022 target, ESNext modules, strict mode. Test framework: Vitest.
+Node >= 22.4; TypeScript 7 strict mode, ESM (`*.js` import suffixes); vitest 5.
 
-### Desktop App (Electron + React)
+### Web / Desktop apps
 
 ```bash
-cd packages/app/Desktop
-npm install
-npm run build
-npm test
+cd packages/app/Web      && npm install && npm run build   # vite; vitest run for tests
+cd packages/app/Desktop  && npm install && npm run typecheck
 ```
+
+### Services (user-level systemd / launchd)
+
+```bash
+make services-install|services-uninstall|services-start|services-stop|services-status|services-logs|services-dry-run
+```
+
+Never invoked by test suites or CI — tests spawn their own short-lived schedulers.
 
 ### Static Binary (Docker)
 
 ```bash
-docker build -f Dockerfile.static -t trha .
+docker build -f Dockerfile.static -t trha .   # Alpine + musl → scratch, single binary
 ```
-
-Produces a single statically-linked binary from `scratch` image via Alpine + musl.
-
-### API Server
-
-The Servant server (`API.Server.startServer`) listens on a configurable port and serves all three protocol families. Configure via environment variables (see `.env.example`).
 
 ## Testing
 
-- **Haskell**: `cabal test` runs `test/Spec.hs` (Hspec + QuickCheck). Tests cover Core plugin system, sessions, agent state machine, tool registry, event bus, cache engine, and LLM adapter creation.
-- **TypeScript**: `cd packages/scheduler && npm test` runs Vitest. Test files in `packages/scheduler/test/`.
-- **Smoke tests**: `benchmarks/` directory contains integration/smoke tests.
-- **测试运行纪律（内存防护，2026-10-25 OOM 事故后确立）**：scheduler 套件会拉起**真实子进程**（browser-tools 测试启动无头 Chrome、`terminal_open` 启动登录 bash、部分用例 spawn 子 scheduler）。
-  1. **单实例**：同一时刻只允许一个 vitest 进程。重跑前先 `pgrep -af vitest`；被中断的运行必须确认已死（中断时 vitest 的 afterEach/afterAll 清理不会执行，Chrome/bash 会变孤儿）。
-  2. **并发上限**：`vitest.config.ts` 已硬限 `pool: 'forks', maxForks: 4`（36 核机器默认会开几十个 worker，每个都加载完整套件并拉起子进程）——不要移除该上限。
-  3. **范围收敛**：开发期只跑受影响的 spec 文件（`npx vitest run test/<file>`）；全量运行每个里程碑最多一次。
-  4. **收尾兜底**：异常退出后 `pkill -f "trha-browser-" ; pkill -f "bash -l"`（无头 Chrome profile / 残留终端）再重跑。
-  5. **边界**：测试产物只落在 `os.tmpdir()` 或 workspace；写路径有 `confineWritePath` 兜底；测试代码不得在 workspace 外写文件。
+- **Haskell suites**: `trha-test` (kernel; includes HTTP end-to-end assembly tests that start a real warp server — needs `-threaded`), `trha-cli-test`, `trha-sandbox-test` (platform-specific spec modules are excluded from the build on Windows, not skipped at runtime), `trha-webgpu-test` (real GPU; reports *pending* on GPU-less CI runners).
+- **Live probe**: `test/DeepSeekCacheSpec.hs` calls api.deepseek.com when `DEEPSEEK_API_KEY` is set (burns tokens). Since commit 9981098 it reports *pending* (via `ctError` content) instead of failing when the account has insufficient balance. Provider errors surface in the `ctError` field, not `ctContent`.
+- **Git hooks**: `.githooks/` via `core.hooksPath` (installed by `scripts/install-hooks.sh` on npm postinstall). `pre-push` runs: `cabal test trha-test`, scheduler coverage, web vitest, desktop coverage. A Mimosa security hook may block commits on static findings — triage them, never bypass the gate silently.
+
+### 测试运行纪律（内存防护，2026-10-25 OOM 事故后确立）
+
+The scheduler suite spawns **real child processes** (headless Chrome in browser-tools tests, login bash in `terminal_open`, scheduler children).
+
+1. **单实例**：同一时刻只允许一个 vitest 进程。重跑前先 `pgrep -af vitest`；被中断的运行必须确认已死（中断时 afterEach/afterAll 清理不会执行，Chrome/bash 会变孤儿）。
+2. **并发上限**：`packages/scheduler/vitest.config.ts` 已硬限 `pool: 'forks', maxForks: 4`——不要移除。
+3. **范围收敛**：开发期只跑受影响的 spec（`npx vitest run test/<file>`）；全量运行每个里程碑最多一次。
+4. **收尾兜底**：异常退出后 `pkill -f "trha-browser-" ; pkill -f "bash -l"` 再重跑。
+5. **边界**：测试产物只落在 `os.tmpdir()` 或 workspace；写路径有 `confineWritePath` 兜底。
 
 ## Development Conventions
 
-- **Language**: Haskell 2010 with GHC extensions (OverloadedStrings, DataKinds, TypeOperators, DeriveGeneric, ScopedTypeVariables). TypeScript with strict mode.
-- **Module naming**: Follows the cabal internal library structure — e.g. `Core.Plugin.Types` lives under `archive/haskell-plugin/Core/Plugin/Types.hs`.
-- **Per-library source directories (2026-10-27 拆分，取代原共享 `src/`)**: each internal library now owns its own `hs-source-dirs`; a module is visible to exactly one library and every other library imports it through `build-depends`:
-  - `src/core/` → **trha-core**：`Core.{Session,Agent,Tools,Event,Cache}.*` + `Kernel.Carrier`（`Core.Plugin.*` 已于 2026-10-27 归档到 `archive/haskell-plugin/`）；
-  - `src/llm/` → **trha-llm**：`LLM.*` + `Infrastructure.CPU.*`；
-  - `src/infra/` → **trha-infra**：`Infrastructure.{Storage,Network,Sandbox,Telemetry}.*` + `Core.HTTPProxy`；
-  - `src/webgpu/` → **trha-webgpu**：`Infrastructure.WebGPU.*`（含 `Raw/*.hsc`）；
+- **Language**: Haskell 2010 with GHC extensions (OverloadedStrings, DataKinds, TypeOperators, DeriveGeneric, ScopedTypeVariables). TypeScript strict mode, ES2022/ESNext modules.
+- **Per-library source dirs (2026-10-27 拆分，2026-10-28 归档推理模型后的现状)**: each internal library owns its own `hs-source-dirs`; a module is visible to exactly one library and every other library imports it through `build-depends`:
+  - `src/core/` → **trha-core**：`Sov.*`、`Core.{Session,Agent,Tools,Event,Cache}.*`、`Kernel.Carrier`；
+  - `src/llm/` → **trha-llm**：`LLM.*`（`cbits/gf27_avx2.c`；OpenMP 仅在非 Windows/非 macOS 启用，Windows/macOS 走标量路径）；
   - `src/api/` → **trha-api**：`API.*` + `Core.Provider.Types`；
-  - `src/gpu-infer/` → **trha-gpu-infer**（一直是独立目录）。
-  **Why the split**：共用 `hs-source-dirs: src` 时，同一个文件会被两个库各编一份，产生 44 处「同名不同类型」（`LLMAdapter` 在 `trha-llm` 与 `trha-api` 互不兼容）。项目第一判据是强类型，类型唯一性优先于构建时间 —— 2026-10-27 用户重新裁定，执行全拆，重复模块归零（`cabal build all` EXIT=0，`trha-test` / `trha-cli-test` 全绿）。
-  **Do not** put two libraries on the same `hs-source-dirs`, and do not add a module to two libraries; that silently reintroduces the duplicate-type problem. Ownership changes must update this table, `docs/architecture/architecture.md` and `docs/architecture/project-overview.md`.
-- **No sed for code edits**: Use the `edit` tool for all code modifications (project convention).
-- **Imports**: Qualified imports preferred for large modules (`Data.Text`, `Data.Map`, `Data.Vector`). Unqualified for small/focused imports.
-- **Test naming**: Hspec `describe` blocks match module names (`Core.Plugin`, `LLM.Adapter`, etc.).
-- **Formatting**: Standard Haskell formatting; no explicit formatter config found. TypeScript uses ESLint.
-- **Secrets**: Never commit API keys. Use `.env` (gitignored) with values from `.env.example`. See `docs/reference/github-secrets-setup.md` and `docs/reference/security-cleanup-guide.md` for CI secret management.
+  - `src/infra/` → **trha-infra**：`Infrastructure.{Storage,Network,Sandbox,Telemetry}.*` + `Core.HTTPProxy`；
+  - `src/webgpu/` → **trha-webgpu**：`Infrastructure.WebGPU.*`（`cbits/wgpu_callback_shim.c`）；
+  - `src/presentation/` — **不在任何 cabal 组件内**（未接线）。
+
+  **Why the split**: a shared `hs-source-dirs` makes GHC compile one file per library and produces same-name-different-type duplicates (44 were removed on 2026-10-27). The project's first criterion is strong typing — type uniqueness outranks build time. **Do not** put two libraries on the same `hs-source-dirs`, and do not add a module to two libraries; the symptom only appears at `cabal build all` link time, not in single-library builds. Ownership changes must update this table, `docs/architecture/architecture.md` and `docs/architecture/project-overview.md`.
+- **3rdparty/**: `brick` (git submodule, PR branch state tracked), `commonmark` (fork of jgm/commonmark-hs, vendored as path deps — only `commonmark` + `commonmark-extensions`, no pandoc/cli), `wgpu-native` (libs + includes, referenced **only** from inside the repo), `llama-vulkan`, `llama-webgpu`, `corpus`, `fonts`.
+- **Module naming / tests**: Hspec `describe` blocks match module names (`LLM.Adapter`, etc.). Test suite names: `trha-test`, `trha-cli-test`, `trha-sandbox-test`, `trha-webgpu-test`.
+- **No sed for code edits**: use the `edit` tool for all code modifications (project convention; security hooks scan candidates).
+- **Imports**: qualified imports preferred for large modules (`Data.Text`, `Data.Map`, `Data.Vector`). Unqualified for small/focused imports.
+- **Formatting**: standard Haskell formatting; `.hlint.yaml` at root (`npm run lint:hs`). TypeScript uses oxlint (`npm run lint`).
+- **Commits**: Conventional Commits with Chinese subjects (`feat(scheduler): …`).
+- **Push after commit（2026-10-31 事故后立的规矩）**: every local commit must be pushed immediately. Criterion: `git rev-list --count origin/main..HEAD` == 0. Unpushed commits equal unwritten work (a lost sandbox cost ~900 lines of Haskell once).
+- **Secrets**: never commit API keys. Use `.env` (gitignored) with values from `.env.example`. See `docs/reference/github-secrets-setup.md` and `docs/reference/security-cleanup-guide.md`.
 
 ## Environment Variables
 
-Key variables from `.env.example`:
+Key variables (see `.env.example` and `packages/scheduler/README.md`):
 
 | Variable | Purpose |
 |---|---|
-| `DEEPSEEK_API_KEY` | DeepSeek API authentication |
-| `OPENAI_API_KEY` | OpenAI API authentication |
-| `SERVER_PORT` | API server port (default: 3000) |
-| `DATABASE_URL` | SQLite database path |
-| `CACHE_SIZE` / `CACHE_TTL` | In-memory cache configuration |
-| `LOG_LEVEL` / `LOG_FORMAT` | Logging configuration |
+| `TRHA_TOKEN` | scheduler auth (Bearer), scheduler default port :28433 |
+| `TRHA_PORT` / `TRHA_WORKSPACE` | scheduler port / workspace |
+| `TRHA_PROXY` | kernel outbound proxy (loopback is always direct) |
+| `TRHA_BROWSER` | browser used by browser tools |
+| `TRHA_LSP_COMMAND` | LSP server command |
+| `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` | DeepSeek API |
+| `MIMO_API_KEY` / `MIMO_BASE_URL` / `MIMO_MODEL` | MiMo API |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI API |
+| `SERVER_PORT` | legacy API server port from `.env.example` (kernel `trha serve` defaults to :19433) |
+| `DATABASE_URL`, `CACHE_SIZE` / `CACHE_TTL`, `LOG_LEVEL` / `LOG_FORMAT` | infra configuration |
 
 ## CI/CD
 
 Three GitHub Actions workflows in `.github/workflows/`:
-- `ci.yml` — Main CI pipeline
-- `smoke-tests.yml` — Smoke/integration tests
-- `static-build.yml` — Static binary build
+- `ci.yml` — main CI pipeline
+- `smoke-tests.yml` — smoke/integration tests
+- `static-build.yml` — static binary build
+
+Repo-root scripts also verify these locally: `npm run verify:ci` (workflow wiring), `npm run verify:docs` (doc links), `npm run lint` (oxlint).
 
 ## Documentation
 
-`docs/` is organised by document lifecycle (reorganised 2026-09-13; see `docs/plans/code-docs-reconciliation.md` §5 for the classification rationale).
+`docs/` is organised by document lifecycle; **full index and reading order: `docs/README.md`** (browsing guide). Structural authority = this file (§Architecture Layers / §Development Conventions / §Documentation) + `docs/architecture/architecture.md`; `docs/README.md` says so explicitly and defers to QWEN.md on conflict.
 
 **Structure authority & project intent — `docs/architecture/`**
-- `docs/architecture/project-overview.md` — **Tech stack · architecture · plan completion** in one page: layer/tech table with measured sizes, build topology (cabal stanzas + what is *not* in the root build), dependency lists, `3rdparty/` contents, actual-state architecture diagram, kernel/shell responsibility split, cross-end protocol summary, per-plan completion ledger, explicit not-done / not-verified lists, a **documentation-drift list** (claim vs measured) and the reproducible check commands plus gate receipt ids. Entry point for a whole-project view; it is a *view*, not an authority.
-- `docs/architecture/architecture-intended-vs-actual.md` — **Project intent vs actual state**: spec base (Agda「律算合一」→ pyBitNet《架构宪法》→ this repo's CPU layer) → intended architecture → actual architecture (✅/⚠️/❌) → deviations D-1…D-9 → status tiers A–E. **Read this first**: the project intent (kernel as a *reasoning hub* with type-theoretic/causal constraints) had never been documented, which caused a serious misread.
-- `docs/architecture/architecture.md` — System architecture overview. ⚠️ §6 package layout is out of date (see `docs/plans/code-docs-reconciliation.md` §6)
-- `docs/architecture/presentation-layer.md` — Presentation layer (Desktop/Web/TUI) design
-- `docs/architecture/event-matrix.md` — Event producer / consumer / persistence matrix
-- `docs/architecture/agent-lifecycle-notes.md` — One step → rounds → tool execution
-- `docs/architecture/dsh-capability-seams.md` — Capability seams (registration points)
+- `project-overview.md` — one-page tech stack / build topology / per-plan completion ledger / not-done & not-verified lists / doc-drift list / reproducible check commands. Entry point for a whole-project view (a *view*, not an authority).
+- `architecture-snapshot-2026-10-27.md` — measured current-state layered diagram, per-layer modules, one-turn data flow, problem index (S1–S3 / C1–C3 / D1–D4).
+- `architecture-intended-vs-actual.md` — **project intent vs actual state** (spec chain: Agda「律算合一」→ pyBitNet《架构宪法》→ this repo), deviations D-1…D-9, status tiers. **Read this first** — the project intent had never been documented once and that caused a serious misread.
+- `architecture.md` — system overview. ⚠️ §6 package layout is out of date.
+- `presentation-layer.md` (code not wired), `event-matrix.md`, `agent-lifecycle-notes.md`, `dsh-capability-seams.md`.
 
 **Protocol contracts — `docs/contracts/`**
-- `docs/contracts/protocol-shell-kernel.md` — Shell ↔ Scheduler ↔ Kernel protocol ledger (Phase 3 baseline)
-- `docs/contracts/desktop-port-contract.md` — UI ↔ backend `Port` contract (no direct `fetch` in components)
-- `docs/contracts/desktop-host-contract.md` — Desktop ↔ Scheduler host contract (v1)
+- `protocol-shell-kernel.md` — shell ↔ scheduler (:28433, Bearer) ↔ kernel (:19433) endpoint/SSE/credential ledger.
+- `session-truth.md` — **session truth contract (2026-10-27)**: A-class "model-visible history" = kernel event log; B-class UI metadata = scheduler `stateStore`; CLI `transcript.jsonl` is read-only replay.
+- `desktop-port-contract.md` — UI ↔ backend `Port` contract (no direct `fetch` in components).
+- `desktop-host-contract.md` — Desktop ↔ Scheduler host contract v1.
 
-**Active plans — `docs/plans/`**
-- `docs/plans/desktop-provider-design.md` — Provider system (P1–P8, A1–A5; A6 self-hosted CPU inference: M1–M2 done, M3–M6 not started)
-- `docs/plans/desktop-ui-execution-plan.md`, `desktop-ui-port-plan.md`, `desktop-ui-progress.md` — Desktop UI port (T1–T12; `T5b` resume and `T12a` cleanup open)
-- `docs/plans/pybitnet-ternary-inference-blueprint.md` — CPU ternary inference (M1–M21, all done)
-- `docs/plans/webgpu-wiring-plan.md` — WebGPU backend wiring (W1–W7 / T1–T4 all done; **not wired into the production inference path**)
-- `docs/plans/verification-criteria.md` — **What counts as evidence**: criteria C1–C5 (algebra ↔ Agda, compile-time type invariants, cross-implementation equality, causal semantics, constraint ↔ external API). Performance is explicitly *not* a criterion.
-- `docs/plans/file-completion-tracking.md` — Per-**file** completion status with verification method and evidence
-- `docs/plans/plan-reconciliation.md` — Plan vs reality (feature scope)
-- `docs/plans/code-docs-reconciliation.md` — Code vs docs (build / wiring / usage scope). ⚠️ §2's WebGPU "not in any cabal component" is stale — see `docs/architecture/project-overview.md` §5
-- `docs/plans/electron-44-upgrade.md` — Electron 28 → 44 upgrade: done (deps + binary verified) / pending (`chrome-sandbox` SUID, live-launch check, electron binary mirror config, uncommitted)
-- `docs/plans/typescript-7-toolchain-migration.md` — TypeScript 7 toolchain migration memo: vitest 5 / vite 7 / electron 44.9.3 / audit zero, compat matrix all green; **no self-made TS-API shim** — wait for typescript-eslint PR #12803 + 7.1 stable (triggers & checklist inside)
-- `docs/plans/tui-port-plan.md` — TUI port plan (MiMo-Code shapes → trha CLI): M0 streaming foundation fully TDD-detailed, M1-M4 milestone contracts; facts in `docs/reference/mimocode-tui-analysis.md`
-- `docs/plans/windows-shell-port-plan.md` — Windows shell support port (shell.ts abstraction + cmd.exe/PowerShell semantics; gaps G1-G7 vs Reasonix/harness): M0 fully TDD-detailed, M1-M2 contracts
+**Active plans — `docs/plans/`** (uncompleted items are *not* implemented; see `plan-reconciliation.md`)
+- `compact-weights-plan.md` — compact weights (P-12 done; measured 2.5s/token, RSS 8.6GB via `trha-cpu-braintoken`).
+- `sandbox-decisions.md` (ADR-001–007, frozen 2026-10-29), `sandbox-architecture.md` (design baseline, §5.7 interface freeze), `sandbox-delivery-plan.md` (M0–M5 + WBS 48 items), `sandbox-handoff.md` — **read the handoff doc before starting sandbox work**.
+- `remote-access-bot-plan.md` — remote access / IM bot (chosen: IM long-connection, zero inbound ports; not implemented).
+- `improvement-plan-2026-10-27.md` — improvement plan P-01..P-13 (incl. the per-library source split).
+- `desktop-provider-design.md` (P1–P8/A1–A5 done; A6 CPU inference M1–M2 done, M3–M6 not started), `desktop-ui-execution-plan.md` / `desktop-ui-port-plan.md` / `desktop-ui-progress.md` (T1–T12; T5b/T12a open), `electron-44-upgrade.md`.
+- `verification-criteria.md` — **what counts as evidence**: C1–C5 (algebra ↔ Agda, compile-time type invariants, cross-implementation equality, causal semantics, constraint ↔ external API). **Performance is not a criterion.**
+- `file-completion-tracking.md`, `code-docs-reconciliation.md` (⚠️ §2 WebGPU claim stale — see `architecture/project-overview.md` §5), `pybitnet-ternary-inference-blueprint.md`, `webgpu-wiring-plan.md` (W1–W7/T1–T4 done, **not wired into production inference**), markdown-rendering plan (8cb9d51/a008158), `typescript-7-toolchain-migration.md`, `tui-port-plan.md`, `windows-shell-port-plan.md`.
 
-**Reference — `docs/reference/`**
-- `docs/reference/source-code-analysis.md`, `reasonix-architecture-analysis.md`, `reasonix-cli-tui-architecture-analysis.md`, `cordis-plugin-notes.md`, `dsh-docs-alignment-plan.md`, `electron-desktop-plan.md`, `layer-integration-report.md`
-- `docs/reference/trha-architecture-review.md` — **external independent review** (2026-09-21): measured build topology (41 modules compiled twice ⇒ 41 same-name-different-type pairs; ~13.6k lines of Haskell outside the root build; `go-haskell-bridge` referenced 0 times; `Presentation/` dead code; 36 executables with no aggregated exit code) + per-subsystem tech-stack assessment + prioritised recommendations. ⚠️ Its criterion is **engineering maintainability**, *not* the project's C1–C5 (mathematical correctness) — do not conflate.
-- `docs/reference/cangjie-replacement-feasibility.md` + `docs/reference/cangjie-typing-probes/` — feasibility of replacing Haskell with Cangjie (2026-09-21). Includes the compiler-verified Cangjie type-system capability table (phantom-type category isolation ✅; HKT / associated types / GADTs / type-level params ❌; no STM) and the measured GHC-dependency surface of the kernel (`class` used twice, both in the FFI layer; `type family` zero times; the only HKT dependency is the Free-monad plugin DSL, for which Cangjie's native effect handlers are the direct analogue). Probes are runnable: `bash docs/reference/cangjie-typing-probes/run.sh`.
-- `docs/reference/github-secrets-setup.md`, `security-cleanup-guide.md` — CI / secrets operations
+**Reference — `docs/reference/`**: upstream porting sources and analyses (`trha-port-sources.md` memory table: hs `/data/work/functional-programming/hs`, MiMo-Code, qwen-code, deepseek-harness, DeepSeek-Reasonix + codex/gemini/ratatui/opencode), `microkernel-lineage.md`, `trha-architecture-review.md` (external, engineering-maintainability criterion — do not conflate with C1–C5), `trha-architecture-benchmark-review.md` (A1–A8), `cangjie-replacement-feasibility.md` + probes, `windows-dev-notes.md`, CI/secrets ops docs.
 
-**Archive — `docs/archive/`** (completed or superseded plans)
-- `docs/archive/implementation-plan-cli-tui.md`, `implementation-plan-phase2.md`, `plan-phase2-s2-s3-atomic.md`, `kernel-tool-execution-plan.md`
-- `docs/archive/implementation-plan-shell-sharing.md`, `shell-sharing-design.md`, `reasonix-shell-sharing-analysis.md`, `execution-discipline-acceptance.md`
-- `docs/archive/implementation-roadmap.md`, `code-migration-plan.md`, `pi-integration-plan.md`
+**Archive — `docs/archive/`**: completed or superseded plans — do not follow.
 
-Other component docs:
-- `packages/scheduler/README.md` — Scheduler documentation
-- `packages/app/Desktop/README.md` — Desktop app documentation
+Component docs: `packages/scheduler/README.md`, `packages/app/Desktop/README.md`, `packages/app/CLI/README.md`, `packages/sdk/docs/sdk-api.md`, `3rdparty/README.md`.
+
+**Maintenance conventions for docs/** (see `docs/README.md`): archive rather than delete; new docs go in a lifecycle subdirectory, never the `docs/` root; structure changes sync **this file's §Documentation** + `docs/README.md`; moving a doc requires grepping and fixing references; intent changes update `architecture-intended-vs-actual.md` first.
