@@ -473,6 +473,7 @@ test-suite trha-test
   main-is:          Spec.hs
   other-modules:    CoreContractSpec, SessionPersistSpec, ApprovalSpec, PlanSpec
                   , GoldenGF27Spec
+                  , GoldenCrossSpec
                   , GoldenT6Spec
                   , DeepSeekCacheSpec
                   , StreamToolCallsSpec

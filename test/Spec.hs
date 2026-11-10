@@ -15,6 +15,7 @@ import Kernel.Carrier
   , spinFiberCard, spinTotalCard, phaseAct )
 import qualified Sov.Math.Trit as MT
 import Sov.Math.Eis (eisOne, eisZero)
+import qualified GoldenCrossSpec
 import Sov.Types (GF27, Trit, gf27ToInt, mkGF27, mkTrit, tritToInt)
 import Sov.ConstraintVerdict
   ( VerdictStatus (..), ConstraintVerdict (..)
@@ -123,6 +124,7 @@ testSuite = do
   approvalSpec
   planSpec
   goldenGF27Spec
+  GoldenCrossSpec.goldenCrossSpec
   goldenT6Spec
   deepSeekCacheSpec
   streamToolCallsSpec
