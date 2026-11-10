@@ -34,6 +34,10 @@ export function messagesFromEvents(events: KernelEvent[]): SessionMessage[] {
       case 'assistant_message':
         out.push({ role: 'assistant', content: e.text ?? '' });
         break;
+      case 'rejected_assistant':
+        // Ruling ② (2026-11-11): a kernel-rejected candidate was NOT adopted —
+        // it is an audit trail in the log, not part of model-visible history.
+        break;
       case 'system':
         out.push({ role: 'system', content: e.text ?? '' });
         break;

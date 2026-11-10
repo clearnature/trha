@@ -26,6 +26,7 @@ run() {
 }
 
 echo "pre-push:"
+run "ternary verdict gate" sh scripts/check-ternary-verdict.sh
 run "cabal test trha-test" cabal test trha-test
 run "scheduler coverage" sh -c 'cd packages/scheduler && npm run --silent coverage'
 run "web vitest" sh -c 'cd packages/app/Web && ./node_modules/.bin/vitest run'

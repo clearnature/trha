@@ -30,6 +30,10 @@ type SessionId = String
 data SessionEvent
   = UserMessage Text
   | AssistantMessage Text
+  -- | 内核三值判定的**否决**（裁定② 2026-11-11）：候选输出被约束原语否决，**不采纳**。
+  -- 留在日志里是审计痕迹，但**不进模型可见历史**（A 类真相的投影规则见
+  -- docs/contracts/session-truth.md）—— 被否决的输出不是模型说过的话。
+  | RejectedAssistant Text
   | ToolCall String Value
   | ToolResult String Value
   | SystemEvent String
@@ -42,6 +46,7 @@ data SessionEvent
 instance ToJSON SessionEvent where
   toJSON (UserMessage t)      = object ["kind" .= ("user_message" :: Text), "text" .= t]
   toJSON (AssistantMessage t) = object ["kind" .= ("assistant_message" :: Text), "text" .= t]
+  toJSON (RejectedAssistant t) = object ["kind" .= ("rejected_assistant" :: Text), "text" .= t]
   toJSON (ToolCall n p)       = object ["kind" .= ("tool_call" :: Text), "tool" .= n, "payload" .= p]
   toJSON (ToolResult n p)     = object ["kind" .= ("tool_result" :: Text), "tool" .= n, "payload" .= p]
   toJSON (SystemEvent s)      = object ["kind" .= ("system" :: Text), "text" .= s]
@@ -56,6 +61,7 @@ instance FromJSON SessionEvent where
     case kind of
       "user_message"      -> UserMessage <$> o .: "text"
       "assistant_message" -> AssistantMessage <$> o .: "text"
+      "rejected_assistant" -> RejectedAssistant <$> o .: "text"
       "tool_call"         -> ToolCall <$> o .: "tool" <*> o .: "payload"
       "tool_result"       -> ToolResult <$> o .: "tool" <*> o .: "payload"
       "system"            -> SystemEvent <$> o .: "text"

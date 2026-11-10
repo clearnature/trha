@@ -47,14 +47,24 @@ describe('StatusBar', () => {
     expect(badge.getAttribute('data-constraint')).toBe('pass');
   });
 
-  it('shows a warn badge (and the reason) when the kernel says warn', async () => {
+  it('shows a hold badge (and the reason) when the kernel says hold', async () => {
     mount();
     await act(async () => {
-      store.setState({ constraint: { status: 'warn', reason: 'berry drift' } as Record<string, unknown> });
+      store.setState({ constraint: { status: 'hold', reason: 'berry drift' } as Record<string, unknown> });
     });
-    const badge = screen.getByText(/warn/);
-    expect(badge.getAttribute('data-constraint')).toBe('warn');
+    const badge = screen.getByText(/hold/);
+    expect(badge.getAttribute('data-constraint')).toBe('hold');
     expect(badge.getAttribute('title')).toBe('berry drift');
+  });
+
+  it('shows a reject badge when the kernel rejects (not adopted)', async () => {
+    mount();
+    await act(async () => {
+      store.setState({ constraint: { status: 'reject', reason: 'T6 unreachable' } as Record<string, unknown> });
+    });
+    const badge = screen.getByText(/reject/);
+    expect(badge.getAttribute('data-constraint')).toBe('reject');
+    expect(badge.getAttribute('title')).toBe('T6 unreachable');
   });
 
   it('shows no badge before any constrained step (does not fabricate a verdict)', () => {

@@ -26,6 +26,20 @@
 | **CLI 重启 / resume** | 向 scheduler 拉取会话；`transcript.jsonl` 仅用于离线回放，**不参与恢复** |
 | **三处同时存在** | A 类以内核为准；若 scheduler 的 `messages` 与内核日志不一致，以内核重建结果覆盖并记录告警 |
 
+### 2.1 被否决的候选输出（裁定② 2026-11-11）
+
+内核约束判定自裁定②起为**三值**（`Sov.ConstraintVerdict`：pass / hold / reject，值域 GF(3) Trit，
+判定层禁制 `scripts/check-ternary-verdict.sh` 把关布尔二值）。其中 **reject（否决）** 的
+采纳语义与本契约的交点：
+
+- 否决的候选输出以 **`rejected_assistant`** 事件留在内核事件日志里（审计痕迹，可回放）；
+- 但它**不属于 A 类「模型可见历史」**：`Core.Session.Projection.eventsToMessages`
+  与 scheduler `Core/SessionTruth.ts` 的 `messagesFromEvents` 都**显式跳过**该事件——
+  被否决的输出不是模型说过的话，后续轮次的模型上下文里没有它；
+- 判定依据随响应的 `trha_constraint` 字段（status/t6/reach/edges/reason）与
+  session 投影 `constraint` 记录；`t6` / `reach` 的线上值域是 trit 系数 **0/1/2**（非布尔）；
+- pass（采纳）与 hold（保留为草稿，标注待复核）都记 `assistant_message`，进模型可见历史。
+
 ---
 
 ## 3. 一致性要求

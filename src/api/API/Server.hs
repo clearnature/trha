@@ -91,6 +91,7 @@ import qualified LLM.Stream as Stream
 import Sov.ConstraintVerdict
   ( ConstraintVerdict (..), T6State (..), VerdictStatus (..)
   , verdictOf, verdictOfWithState )
+import Sov.Types (tritToInt)
 
 --------------------------------------------------------------------------------
 -- 1. Full API type: custom + OpenAI + Anthropic + Responses (stream + non-stream)
@@ -605,9 +606,12 @@ agentStepHandler adapter sessionsVar stateDir req = do
       stBefore <- liftIO $ getAgentState session
       stAfter  <- liftIO $ advanceAgent session (StartCommand (T.unpack (srSessionId req)))
       -- 事件日志：这一步发生了什么（先入内存日志，再随 checkpoint 一起落盘）
+      -- 裁定②（2026-11-11）：assistant 事件由三值判定决定 —— pass/hold 记
+      -- AssistantMessage（hold 在 constraint 投影里标注待复核）；reject 记
+      -- RejectedAssistant（不采纳，不进模型可见历史）。
       let events =
             [ UserMessage (srMessage req)
-            , AssistantMessage reply
+            , verdictEvent (cvStatus verdict) reply
             , AgentStateChanged stAfter
             ]
       liftIO $ mapM_ (appendEvent session) events
@@ -754,9 +758,21 @@ touchKernelSession sessionsVar stateDir body replyText =
               st <- advanceAgent session (StartCommand (T.unpack sid))
               -- Same two events as /agent/step: this path advances the FSM too,
               -- and a log that omitted it would misreport the session.
-              let events = [AssistantMessage replyText, AgentStateChanged st]
+              -- 裁定②：事件种类由三值判定决定（reject → RejectedAssistant）。
+              let events = [verdictEvent (cvStatus verdict) replyText, AgentStateChanged st]
               mapM_ (appendEvent session) events
               persistStep stateDir session events
+
+-- | 裁定②（2026-11-11）：三值判定的**采纳语义**落到事件种类上。
+--
+--   * 'VerdictPass'   → 'AssistantMessage'  采纳，入模型可见历史；
+--   * 'VerdictHold'   → 'AssistantMessage'  保留为草稿（内容照常返回/入日志，
+--     待复核的标注在 constraint 投影与响应字段里）；
+--   * 'VerdictReject' → 'RejectedAssistant' 否决：审计留痕，但**不进**模型
+--     可见历史 —— 被否决的输出不是模型说过的话。
+verdictEvent :: VerdictStatus -> Text -> SessionEvent
+verdictEvent VerdictReject t = RejectedAssistant t
+verdictEvent _            t = AssistantMessage t
 
 
 -- | Write the persistable slice after it changed. Best effort: a failed
@@ -822,17 +838,20 @@ parseOpenAIRequest val = parseMaybe parser val
 --
 -- 作用点在**响应侧** —— 外部模型是黑盒（不能改其权重/采样），约束不可能作用于它的
 -- 内部计算，只能作用于"哪些输出被采纳"。这里把候选输出投影到约束输入空间，过一遍
--- T⁶ / 6×6 因果图 / 五行四步链。判定**总是**产出（用户裁定①：标注而非拒绝、不降级）；
+-- T⁶ / 6×6 因果图 / 五行四步链。判定**总是**产出，且是**三值**（裁定② 2026-11-11：
+-- pass 采纳 / hold 保留 / reject 否决；取代旧裁定①「标注而非拒绝」）；
 -- 草稿（本地）与外部输出共用这一条路径（裁定③：同一机制的两面）。
+-- 线上值域：t6 / reach 是 trit 的系数 0/1/2（不是布尔 true/false）。
 constraintField :: Text -> Pair
 constraintField content =
   "trha_constraint"
     .= object
       [ "status" .= (case cvStatus v of
-                       VerdictPass -> "pass" :: Text
-                       VerdictWarn -> "warn")
-      , "t6"     .= cvT6 v
-      , "reach"  .= cvReach v
+                       VerdictPass   -> "pass" :: Text
+                       VerdictHold   -> "hold"
+                       VerdictReject -> "reject")
+      , "t6"     .= tritToInt (cvT6 v)
+      , "reach"  .= map tritToInt (cvReach v)
       , "edges"  .= cvEdges v
       , "reason" .= T.pack (cvReason v)
       ]
@@ -945,7 +964,8 @@ anthropicMessagesHandler adapter body =
       -- C5(D-1)：约束的**作用点 = 响应侧的采纳判定**。
       -- 外部模型是黑盒（不能改其权重/采样），约束不可能作用于其内部计算，只能作用于
       -- "哪些输出被采纳"。这里把候选输出投影到约束输入空间，过一遍 T⁶ / 6×6 因果图 /
-      -- 五行四步链；判定**总是**随响应返回（用户裁定①：标注而非拒绝，不降级）。
+      -- 五行四步链；判定**总是**随响应返回，且是三值（裁定② 2026-11-11：
+      -- pass 采纳 / hold 保留 / reject 否决，取代旧裁定①「标注而非拒绝」）。
       let verdict = verdictOf (T.unpack content)
       let usage = case [u | LLM.ChunkDone u <- chunks] of
             (u:_) -> u
@@ -997,7 +1017,8 @@ responsesHandler adapter body =
       -- C5(D-1)：约束的**作用点 = 响应侧的采纳判定**。
       -- 外部模型是黑盒（不能改其权重/采样），约束不可能作用于其内部计算，只能作用于
       -- "哪些输出被采纳"。这里把候选输出投影到约束输入空间，过一遍 T⁶ / 6×6 因果图 /
-      -- 五行四步链；判定**总是**随响应返回（用户裁定①：标注而非拒绝，不降级）。
+      -- 五行四步链；判定**总是**随响应返回，且是三值（裁定② 2026-11-11：
+      -- pass 采纳 / hold 保留 / reject 否决，取代旧裁定①「标注而非拒绝」）。
       let verdict = verdictOf (T.unpack content)
       let usage = case [u | LLM.ChunkDone u <- chunks] of
             (u:_) -> u
@@ -1330,7 +1351,8 @@ openaiStreamHandler adapter body =
       -- C5(D-1)：约束的**作用点 = 响应侧的采纳判定**。
       -- 外部模型是黑盒（不能改其权重/采样），约束不可能作用于其内部计算，只能作用于
       -- "哪些输出被采纳"。这里把候选输出投影到约束输入空间，过一遍 T⁶ / 6×6 因果图 /
-      -- 五行四步链；判定**总是**随响应返回（用户裁定①：标注而非拒绝，不降级）。
+      -- 五行四步链；判定**总是**随响应返回，且是三值（裁定② 2026-11-11：
+      -- pass 采纳 / hold 保留 / reject 否决，取代旧裁定①「标注而非拒绝」）。
       let verdict = verdictOf (T.unpack content)
       let toolCalls = streamedToolCalls (reverse events)
       let usage = case [u | Stream.SEVUsageFull u <- events] of
@@ -1357,13 +1379,15 @@ openaiStreamHandler adapter body =
             ]]
         , "usage"   .= usage
         , "stream_events" .= length events
-        -- 约束判定：status 为 pass / warn；**总是**存在（warn 时仍返回内容，仅标注）。
+        -- 约束判定：status 为 pass / hold / reject（三值，裁定② 2026-11-11）；
+        -- **总是**存在。hold = 保留待复核（内容仍返回），reject = 否决不采纳。
         , "trha_constraint" .= object
             [ "status" .= (case cvStatus verdict of
-                             VerdictPass -> "pass" :: Text
-                             VerdictWarn -> "warn")
-            , "t6"     .= cvT6 verdict
-            , "reach"  .= cvReach verdict
+                             VerdictPass   -> "pass" :: Text
+                             VerdictHold   -> "hold"
+                             VerdictReject -> "reject")
+            , "t6"     .= tritToInt (cvT6 verdict)
+            , "reach"  .= map tritToInt (cvReach verdict)
             , "edges"  .= cvEdges verdict
             , "reason" .= T.pack (cvReason verdict)
             ]
@@ -1416,7 +1440,8 @@ anthropicStreamHandler adapter body =
       -- C5(D-1)：约束的**作用点 = 响应侧的采纳判定**。
       -- 外部模型是黑盒（不能改其权重/采样），约束不可能作用于其内部计算，只能作用于
       -- "哪些输出被采纳"。这里把候选输出投影到约束输入空间，过一遍 T⁶ / 6×6 因果图 /
-      -- 五行四步链；判定**总是**随响应返回（用户裁定①：标注而非拒绝，不降级）。
+      -- 五行四步链；判定**总是**随响应返回，且是三值（裁定② 2026-11-11：
+      -- pass 采纳 / hold 保留 / reject 否决，取代旧裁定①「标注而非拒绝」）。
       let verdict = verdictOf (T.unpack content)
       let toolCalls = streamedToolCalls (reverse events)
       return $ object
@@ -1431,13 +1456,15 @@ anthropicStreamHandler adapter body =
         , "model"       .= model
         , "stop_reason" .= (if null toolCalls then "end_turn" else "tool_use" :: Text)
         , "stream_events" .= length events
-        -- 约束判定：status 为 pass / warn；**总是**存在（warn 时仍返回内容，仅标注）。
+        -- 约束判定：status 为 pass / hold / reject（三值，裁定② 2026-11-11）；
+        -- **总是**存在。hold = 保留待复核（内容仍返回），reject = 否决不采纳。
         , "trha_constraint" .= object
             [ "status" .= (case cvStatus verdict of
-                             VerdictPass -> "pass" :: Text
-                             VerdictWarn -> "warn")
-            , "t6"     .= cvT6 verdict
-            , "reach"  .= cvReach verdict
+                             VerdictPass   -> "pass" :: Text
+                             VerdictHold   -> "hold"
+                             VerdictReject -> "reject")
+            , "t6"     .= tritToInt (cvT6 verdict)
+            , "reach"  .= map tritToInt (cvReach verdict)
             , "edges"  .= cvEdges verdict
             , "reason" .= T.pack (cvReason verdict)
             ]
@@ -1495,7 +1522,8 @@ responsesStreamHandler adapter body =
       -- C5(D-1)：约束的**作用点 = 响应侧的采纳判定**。
       -- 外部模型是黑盒（不能改其权重/采样），约束不可能作用于其内部计算，只能作用于
       -- "哪些输出被采纳"。这里把候选输出投影到约束输入空间，过一遍 T⁶ / 6×6 因果图 /
-      -- 五行四步链；判定**总是**随响应返回（用户裁定①：标注而非拒绝，不降级）。
+      -- 五行四步链；判定**总是**随响应返回，且是三值（裁定② 2026-11-11：
+      -- pass 采纳 / hold 保留 / reject 否决，取代旧裁定①「标注而非拒绝」）。
       let verdict = verdictOf (T.unpack content)
       let toolCalls = streamedToolCalls (reverse events)
       return $ object
@@ -1524,13 +1552,15 @@ responsesStreamHandler adapter body =
                    ] | (_, id0, n, a) <- toolCalls ])
         , "status"     .= ("completed" :: Text)
         , "stream_events" .= length events
-        -- 约束判定：status 为 pass / warn；**总是**存在（warn 时仍返回内容，仅标注）。
+        -- 约束判定：status 为 pass / hold / reject（三值，裁定② 2026-11-11）；
+        -- **总是**存在。hold = 保留待复核（内容仍返回），reject = 否决不采纳。
         , "trha_constraint" .= object
             [ "status" .= (case cvStatus verdict of
-                             VerdictPass -> "pass" :: Text
-                             VerdictWarn -> "warn")
-            , "t6"     .= cvT6 verdict
-            , "reach"  .= cvReach verdict
+                             VerdictPass   -> "pass" :: Text
+                             VerdictHold   -> "hold"
+                             VerdictReject -> "reject")
+            , "t6"     .= tritToInt (cvT6 verdict)
+            , "reach"  .= map tritToInt (cvReach verdict)
             , "edges"  .= cvEdges verdict
             , "reason" .= T.pack (cvReason verdict)
             ]

@@ -17,8 +17,9 @@ export function StatusBar() {
 
   const state = busy ? 'processing' : lastError ? 'error' : 'ready';
   const sessionLabel = currentId ? currentId.slice(0, 8) : t('status.noSession');
-  // The kernel only ever answers `pass` or `warn` (there is no "reject"
-  // constructor), so anything else is shown verbatim rather than guessed at.
+  // The kernel's verdict is three-valued (裁定② 2026-11-11): `pass` (adopted),
+  // `hold` (kept as draft, review pending) or `reject` (not adopted). Anything
+  // else is shown verbatim rather than guessed at.
   const verdict = typeof constraint?.status === 'string' ? constraint.status : null;
 
   return (
@@ -34,7 +35,7 @@ export function StatusBar() {
           data-constraint={verdict}
           title={typeof constraint?.reason === 'string' ? constraint.reason : undefined}
         >
-          {verdict === 'pass' ? '🛡 pass' : `⚠ ${verdict}`}
+          {verdict === 'pass' ? '🛡 pass' : verdict === 'reject' ? '⛔ reject' : `⚠ ${verdict}`}
         </span>
       )}
       <span className="status-usage" aria-label="token usage">{t('status.tokens')}</span>

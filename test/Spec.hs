@@ -15,6 +15,10 @@ import Kernel.Carrier
   , spinFiberCard, spinTotalCard, phaseAct )
 import qualified Sov.Math.Trit as MT
 import Sov.Math.Eis (eisOne, eisZero)
+import Sov.Types (GF27, Trit, gf27ToInt, mkGF27, mkTrit, tritToInt)
+import Sov.ConstraintVerdict
+  ( VerdictStatus (..), ConstraintVerdict (..)
+  , verdictFromReach, verdictTrit, reachTrit, verdictOf, projectToGF27 )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.IO (hSetEncoding, stdout, stderr, utf8)
 import Data.Maybe (fromMaybe, isJust)
@@ -48,7 +52,7 @@ import Data.IORef
 import Data.Dynamic
 import qualified Data.Text as T
 import Data.Aeson (Value(..), decode, encode, object, parseJSON, toJSON, withObject, (.:), (.=))
-import Data.Aeson.Types (parseMaybe)
+import qualified Data.Aeson.Types as Aeson (Result (..), parseMaybe, fromJSON)
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text.Encoding as TE
 import qualified Data.Vector as V
@@ -611,3 +615,55 @@ testSuite = do
       spinTotalCard `shouldBe` 6561
       phaseAct 4 (MT.T1, MT.T0) `shouldBe` (MT.T1, MT.T0)   -- 阶 4
       phaseAct 2 (MT.T1, MT.T0) `shouldBe` (MT.T2, MT.T0)   -- α² = −I：v ↦ −v
+
+  -- 裁定②（2026-11-11）：内核判定是**三值**的 —— 值域落在 GF(3) 的 Trit 上
+  -- （系数 0/1/2），二值布尔（pass/warn）从判定词汇表废止。判定层禁制由
+  -- scripts/check-ternary-verdict.sh 把关（禁 Bool/VerdictWarn/&&/||）。
+  describe "Sov.ConstraintVerdict (三值判定, 裁定②)" $ do
+
+    it "判定状态在 GF(3) 上的像：pass↔T1, hold↔T0, reject↔T2（系数 0/1/2，无 ± 记法）" $ do
+      tritToInt (verdictTrit VerdictPass) `shouldBe` 1
+      tritToInt (verdictTrit VerdictHold) `shouldBe` 0
+      tritToInt (verdictTrit VerdictReject) `shouldBe` 2
+
+    it "三值归纳：逐步可达性全 T1 → pass（n=1/2 全枚举）" $ do
+      verdictFromReach [mkTrit 1, mkTrit 1] `shouldBe` VerdictPass
+      verdictFromReach [mkTrit 1] `shouldBe` VerdictPass
+
+    it "三值归纳：全 T2 → reject；空输入 → reject（无据可依即否决）" $ do
+      verdictFromReach [mkTrit 2, mkTrit 2] `shouldBe` VerdictReject
+      verdictFromReach [mkTrit 2] `shouldBe` VerdictReject
+      verdictFromReach [] `shouldBe` VerdictReject
+
+    it "三值归纳：混合 → hold（二元对立落不到的中间态）" $ do
+      verdictFromReach [mkTrit 1, mkTrit 2] `shouldBe` VerdictHold
+      verdictFromReach [mkTrit 2, mkTrit 1] `shouldBe` VerdictHold
+
+    it "QuickCheck：任意可达性序列上, status 与 t6 在 GF(3) 上同像（三值 Cmp 一致性）" $
+      property $ \xs ->
+        let ts = [ mkTrit (if ok then 1 else 2) | ok <- xs :: [Bool] ]
+        in verdictTrit (verdictFromReach ts) `shouldBe` reachTrit ts
+
+    it "判定不采用启发式打分：同一输入判定可复现（规范性桥 + 确定性权重）" $ do
+      let v1 = verdictOf "把约束原语作用到这个候选输出上"
+          v2 = verdictOf "把约束原语作用到这个候选输出上"
+      v1 `shouldBe` v2
+
+    it "投影桥是规范的：字符序数 mod 3 → trit，3 个 trit 合成 GF(27)，不足补零" $ do
+      -- "a"：ord 97 mod 3 = 1 → 单 trit 1 → GF(27) 元素 1；补零到 dim
+      map gf27ToInt (take 2 (projectToGF27 2 "a")) `shouldBe` [1, 0]
+      -- 空输入 → 全零投影
+      map gf27ToInt (projectToGF27 2 "") `shouldBe` [0, 0]
+
+    it "三值判定随响应可见：reason 依据与 status 一致（非启发式文案）" $ do
+      let v = verdictOf "任意候选"
+      case cvStatus v of
+        VerdictPass   -> cvReason v `shouldContain` "constraint pass"
+        VerdictHold   -> cvReason v `shouldContain` "constraint hold"
+        VerdictReject -> cvReason v `shouldContain` "constraint reject"
+
+    it "事件词汇表：被否决的候选记 RejectedAssistant，可 JSON 往返" $ do
+      let ev = RejectedAssistant "被内核否决的候选输出"
+          enc = toJSON ev
+      enc `shouldBe` object ["kind" .= ("rejected_assistant" :: String), "text" .= ("被内核否决的候选输出" :: String)]
+      (Aeson.fromJSON enc :: Aeson.Result SessionEvent) `shouldBe` Aeson.Success ev

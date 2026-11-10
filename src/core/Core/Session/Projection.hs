@@ -33,11 +33,16 @@ data SessionMessage = SessionMessage
 -- | Pure projection.  State/plan/approval events are not messages and are
 -- skipped; the FSM state is a fold over the same log
 -- ('SessionSnapshot.snapshotEventCount' tells recovery where to resume).
+--
+-- 裁定②（2026-11-11）：'RejectedAssistant'（内核三值判定的否决）**不进**模型可见
+-- 历史 —— 被否决的输出不是模型说过的话；它只作为审计痕迹留在事件日志里。
 eventsToMessages :: [SessionEvent] -> [SessionMessage]
 eventsToMessages = foldr step []
   where
     step (UserMessage t)      acc = SessionMessage "user" t Nothing Nothing : acc
     step (AssistantMessage t) acc = SessionMessage "assistant" t Nothing Nothing : acc
+    -- 否决的候选：显式跳过（不采纳）。事件本身留在日志里供审计。
+    step (RejectedAssistant _) acc = acc
     step (SystemEvent s)      acc = SessionMessage "system" (T.pack s) Nothing Nothing : acc
     step (ToolCall n p)       acc =
       SessionMessage "assistant" ""

@@ -41,7 +41,7 @@ export interface SessionUiState {
   tools: PortToolSpec[];
   version: StudioVersion | null;
   lastError: string | null;
-  /** Kernel causal-constraint verdict of the last step (D-1 / P3): pass | warn | null. */
+  /** Kernel causal-constraint verdict of the last step (D-1 / P3): pass | hold | reject | null (three-valued, ruling ② 2026-11-11). */
   constraint: Record<string, unknown> | null;
 
   loadCatalog(): Promise<void>;
