@@ -79,7 +79,9 @@ library trha-llm
   c-sources:        src/llm/cbits/gf27_avx2.c
   -- Windows 上 GHC 自带 clang/mingw 既没有 omp.h 也没有 libomp 运行时，
   -- 因此只在非 Windows 启用 OpenMP；C 侧已用 #ifdef _OPENMP 包住 include。
-  if os(windows)
+  -- macOS 的 Apple clang 同样不支持 -fopenmp（需外部 libomp），且 arm64 上
+  -- AVX2 路径根本走不到——与 Windows 同待遇，走标量路径。
+  if os(windows) || os(darwin)
     cc-options:     -O2
   else
     cc-options:     -O2 -fopenmp
