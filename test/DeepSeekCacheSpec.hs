@@ -50,22 +50,36 @@ deepSeekCacheSpec = describe "DeepSeek prefix cache (live API)" $ do
               | t <- take (i - 1) turns ]
             msgs = ChatSystem stablePrefix : history ++ [ChatUser turn]
         turn' <- llmChatTools adapter msgs [] defaultGenParams
-        case ctUsage turn' of
-          Nothing -> expectationFailure "provider returned no usage" >> pure (0, 0)
-          Just u  -> pure (usageCacheHitTokens u, usageCacheMissTokens u + usageCacheHitTokens u)
+        pure $ case ctUsage turn' of
+          -- 余额不足等账户状态错误走 ctError（HTTP 4xx 原文内联），无 usage
+          -- 可言——这是账户状态，不是缓存判据失效，应跳过而不是把 live
+          -- 探针记成失败。无 usage 且无账户错误仍算失败。
+          _ | Just err <- ctError turn'
+            , "Insufficient Balance" `T.isInfixOf` err ->
+              Left "DeepSeek account has insufficient balance"
+          Nothing -> Left "provider returned no usage (not a balance error)"
+          Just u  -> Right (usageCacheHitTokens u, usageCacheMissTokens u + usageCacheHitTokens u)
+      case [e | Left e <- usages] of
+        (e : _) | e == "DeepSeek account has insufficient balance" -> pendingWith e
+        (e : _) -> expectationFailure e
+        [] -> pure ()
+      let usageOf u = case u of
+            Right p -> p
+            Left e  -> error ("unreachable: skipped via pendingWith: " <> e)
+          usages' = map usageOf usages
 
       let ratio (hit, total) = if total <= 0 then 0 else fromIntegral hit / fromIntegral total :: Double
-          warm = drop 1 usages
+          warm = drop 1 usages'
           aggregate = ratio (sum (map fst warm), sum (map snd warm))
           pct x = T.pack (show (fromIntegral (round (x * 10000) :: Int) / 100 :: Double)) <> "%"
 
       putStrLn $ "  per-request hit ratio: "
         <> T.unpack (T.intercalate " · "
              [ "req" <> T.pack (show i) <> "=" <> pct (ratio u)
-             | (i, u) <- zip [1 :: Int ..] usages ])
+             | (i, u) <- zip [1 :: Int ..] usages' ])
       putStrLn $ "  steady-state aggregate: " <> T.unpack (pct aggregate)
 
       -- The first request has nothing to hit; every later one must be ≥99%.
-      mapM_ ((\u -> ratio u `shouldSatisfy` (>= 0.99)) . snd) (drop 1 (zip [1 :: Int ..] usages))
+      mapM_ ((\u -> ratio u `shouldSatisfy` (>= 0.99)) . snd) (drop 1 (zip [1 :: Int ..] usages'))
       -- and the warm aggregate carries the headline claim
       aggregate `shouldSatisfy` (>= 0.99)
