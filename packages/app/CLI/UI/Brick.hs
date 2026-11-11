@@ -311,6 +311,23 @@ vtyFg c = fg $ case c of
   BrightWhite  -> brightWhite
   RGB r g b    -> rgbColor r g b
 
+-- | Fetch the provider balance, retrying briefly.
+--
+-- The CLI can start before the scheduler has bound its port.  A single attempt
+-- then leaves @余额 —@ on screen for the whole session, which is exactly what
+-- happened after the scheduler's start moved a second behind the shell.
+fetchBalanceWithRetry :: SchedulerBridge -> Int -> IO (Either CLIError Balance)
+fetchBalanceWithRetry bridge attempts = go (max 1 attempts)
+  where
+    go n = do
+      r <- fetchBalance bridge
+      case r of
+        Right _ -> pure r
+        Left _ | n > 1 -> threadDelay 1000000 >> go (n - 1)
+        Left e -> do
+          logLine ("probe balance failed: " <> T.pack (show e))
+          pure (Left e)
+
 -- | Run the TUI with the named theme (unknown names fall back to default).
 runTUI :: SchedulerBridge -> CLIConfig -> IO ()
 runTUI bridge cfg = do
@@ -332,7 +349,7 @@ runTUI bridge cfg = do
     writeBChan chan (EvMetrics [("workspace", T.pack ws), ("git", gb)])
     stat <- gitStatText
     writeBChan chan (EvGitStat stat)
-    balance <- fetchBalance bridge
+    balance <- fetchBalanceWithRetry bridge 8
     writeBChan chan (EvBalance balance)
     models <- listModels bridge
     forM_ models $ \ms ->

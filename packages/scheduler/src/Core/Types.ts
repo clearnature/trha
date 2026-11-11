@@ -48,6 +48,8 @@ export interface Usage {
   totalTokens: number;
   /** Latest request's prompt size; absent means "same as promptTokens". */
   contextPromptTokens?: number;
+  /** Thinking subset of completionTokens; zero when the model does not think. */
+  reasoningTokens?: number;
 }
 
 // Stream chunk types

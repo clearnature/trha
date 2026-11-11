@@ -309,6 +309,7 @@ export class HaskellBridge {
               totalTokens: u.total_tokens,
               cacheHitTokens: u.prompt_cache_hit_tokens,
               cacheMissTokens: u.prompt_cache_miss_tokens,
+              reasoningTokens: u.reasoning_tokens,
             };
           }
           const delta = (parsed.choices as { delta?: {

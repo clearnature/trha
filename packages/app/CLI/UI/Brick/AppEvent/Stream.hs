@@ -14,7 +14,8 @@ import Brick
 import Brick.BChan
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
-import Control.Monad (when)
+import Control.Concurrent.Async (async)
+import Control.Monad (void, when)
 import Control.Monad.IO.Class (liftIO)
 import Core.Types
 import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider)
@@ -246,15 +247,22 @@ finishTurn usage = do
                             else appCtxUsed s
                    , appLastTps = tps
                    , appLastDecodeTps = decodeTps
-                   , appCostSum = appCostSum s + estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
-                   , appLastCost = estimateCost (pricesOf (appModel s) (appEffCfg s)) usage
+                   , appCostSum = appCostSum s + estimateCost (pricesOf (appModel s) (appEffCfg s) t1) usage
+                   , appLastCost = estimateCost (pricesOf (appModel s) (appEffCfg s) t1) usage
                    , appSessTokens = appSessTokens s + usageTotalTokens usage
                    , appFirstToken = Nothing
                    , appTurnStart = Nothing }
   flushPending (if real then Just usage else Nothing)
   st3 <- get
-  let summary = turnSummary (pricesOf (appModel st3) (appEffCfg st3)) usage (usageReasoningTokens usage) t1
+  let summary = turnSummary (pricesOf (appModel st3) (appEffCfg st3) t1) usage (usageReasoningTokens usage) t1
   appendMsg (mkMsg "stats" summary "")
   bell <- gets (configBell . appEffCfg)
   when bell $ liftIO (putStr "\a" >> hFlush stdout)
   scrollBottom
+  -- The wallet moves between turns, not inside one: re-read it after the
+  -- footer so the next screen shows what this turn just spent.  A failed read
+  -- keeps the last good number (see handleStatusEvent's Left branch).
+  st4 <- get
+  void $ liftIO $ async $ do
+    b <- fetchBalance (appBridge st4)
+    writeBChan (appChan st4) (EvBalance b)

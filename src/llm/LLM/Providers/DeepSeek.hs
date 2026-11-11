@@ -166,7 +166,7 @@ parseDeepSeekChatTurn v =
         Nothing -> pure 0
       hit <- o .:? "prompt_cache_hit_tokens" .!= nested
       miss <- o .:? "prompt_cache_miss_tokens" .!= max 0 (p - hit)
-      pure $ Usage p c t hit miss
+      pure $ Usage p c t hit miss 0
 
 -- | Insert @reasoning_effort@ from the environment, when set.
 --
@@ -235,7 +235,7 @@ createDeepSeekProvider apiKey = do
                     []    -> "No response"
               let usage = case crUsage cr of
                     Just u  -> Usage (ruPromptTokens u) (ruCompletionTokens u) (ruTotalTokens u)
-                                     (ruCacheHitTokens u) (ruCacheMissTokens u)
+                                     (ruCacheHitTokens u) (ruCacheMissTokens u) 0
                     Nothing -> mkUsage 0 0 0
               return [ChunkDelta content, ChunkDone usage]
             Nothing -> return [ChunkError "Failed to parse DeepSeek response"]

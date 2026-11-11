@@ -14,6 +14,8 @@ module Core.TurnStats
   , noPrices
   , hasPrices
   , pricesForModel
+  , pricesPeakForModel
+  , pricesAt
   , estimateCost
   , isOffPeak
   , shortCount
@@ -23,9 +25,11 @@ module Core.TurnStats
 import Core.Types (Usage(..))
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Calendar (Day, DayOfWeek(..), dayOfWeek, fromGregorian)
 import Data.Time.Clock (UTCTime)
 import Data.Time.LocalTime
-  ( hoursToTimeZone, localTimeOfDay, todHour, todMin, utcToZonedTime, zonedTimeToLocalTime )
+  ( hoursToTimeZone, localDay, localTimeOfDay, todHour, todMin, utcToZonedTime
+  , zonedTimeToLocalTime )
 import Numeric (showFFloat)
 
 -- | Prices per million tokens (CNY), mirroring the provider's billing table.
@@ -42,13 +46,35 @@ noPrices = Prices 0 0 0
 hasPrices :: Prices -> Bool
 hasPrices p = priceInput p > 0 && priceCached p > 0 && priceOutput p > 0
 
--- | Built-in CNY prices per 1M tokens (DeepSeek's public list).  Unknown
+-- | Built-in CNY prices per 1M tokens: DeepSeek's **off-peak** card.  Unknown
 -- models fall back to 'noPrices' so the line shows @≈¥—@ instead of a guess.
+--
+-- DeepSeek publishes two cards (09:00–12:00 and 14:00–18:00 Beijing are the
+-- peak hours); 'pricesPeakForModel' carries the second one and 'pricesAt'
+-- picks by the turn's clock.  Applying the peak card around the clock — or
+-- the old 0.5 cached rate — overstates a cached turn by an order of magnitude.
 pricesForModel :: Text -> Prices
 pricesForModel model
-  | "deepseek" `T.isPrefixOf` m = Prices 2 0.5 8
+  | "deepseek-v4-pro" `T.isPrefixOf` m = Prices 3 0.025 6
+  | "deepseek" `T.isPrefixOf` m = Prices 1 0.02 4
   | otherwise = noPrices
   where m = T.toLower (T.strip model)
+
+-- | The vendors' peak card, when they publish one.  'Nothing' means the model
+-- bills a single rate all day.
+pricesPeakForModel :: Text -> Maybe Prices
+pricesPeakForModel model
+  | "deepseek-v4-pro" `T.isPrefixOf` m = Just (Prices 9 0.3 27)
+  | "deepseek" `T.isPrefixOf` m = Just (Prices 2 0.04 8)
+  | otherwise = Nothing
+  where m = T.toLower (T.strip model)
+
+-- | The card that applies at @at@: the peak one inside the vendor's window,
+-- the base one otherwise.
+pricesAt :: UTCTime -> Prices -> Maybe Prices -> Prices
+pricesAt at base mpeak
+  | not (isOffPeak at), Just peak <- mpeak = peak
+  | otherwise = base
 
 -- | Estimated cost in CNY.  Without cache fields the whole prompt is billed
 -- at the miss price.
@@ -61,12 +87,23 @@ estimateCost p u =
     cacheSeen = usageCacheHitTokens u + usageCacheMissTokens u > 0
     miss = if cacheSeen then usageCacheMissTokens u else usagePromptTokens u
 
--- | Provider off-peak window: 00:30–08:30 at UTC+8.
+-- | DeepSeek's peak window: 09:00–12:00 and 14:00–18:00 Beijing time.  The
+-- vendor's clock decides, never the reader's.  Weekends are off-peak from
+-- 2026-08-23; the statutory-holiday table is deliberately not encoded here —
+-- a stale holiday list would silently misprice a day.
 isOffPeak :: UTCTime -> Bool
 isOffPeak t =
   let lt = zonedTimeToLocalTime (utcToZonedTime (hoursToTimeZone 8) t)
       mins = todHour (localTimeOfDay lt) * 60 + todMin (localTimeOfDay lt)
-  in mins >= 30 && mins < 8 * 60 + 30
+      peak = (mins >= 9 * 60 && mins < 12 * 60)
+          || (mins >= 14 * 60 && mins < 18 * 60)
+  in weekendOff (localDay lt) || not peak
+
+-- | Saturdays and Sundays stop paying the peak card from 2026-08-23.
+weekendOff :: Day -> Bool
+weekendOff day =
+  day >= fromGregorian 2026 8 23
+    && dayOfWeek day `elem` [Saturday, Sunday]
 
 -- | Compact token counts: @770@, @507.9K@, @1.5M@.
 shortCount :: Int -> Text

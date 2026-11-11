@@ -274,6 +274,8 @@ interface SchedulerSession {
   cacheHitTokens?: number;
   cacheMissTokens?: number;
   completionTokens?: number;
+  /** Thinking subset of completionTokens, accumulated per turn too. */
+  reasoningTokens?: number;
   /** How many times context maintenance rewrote the prefix (each one is a cache miss). */
   prefixResets?: number;
   lastMaintenance?: { trigger: string; savedTokens: number } | null;
@@ -1978,6 +1980,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           session.cacheHitTokens = (session.cacheHitTokens ?? 0) + (response.usage.cacheHitTokens ?? 0);
           session.cacheMissTokens = (session.cacheMissTokens ?? 0) + (response.usage.cacheMissTokens ?? 0);
           session.completionTokens = (session.completionTokens ?? 0) + (response.usage.completionTokens ?? 0);
+          session.reasoningTokens = (session.reasoningTokens ?? 0) + (response.usage.reasoningTokens ?? 0);
         }
       } catch {
         // Kernel unreachable: demo tool lifecycle + mode-context echo
@@ -2201,6 +2204,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       hit: session.cacheHitTokens ?? 0,
       miss: session.cacheMissTokens ?? 0,
       comp: session.completionTokens ?? 0,
+      rsn: session.reasoningTokens ?? 0,
     };
     const reply = await withSessionLock(session.id, () =>
       runTurn(session, message, { provider, model, genParams, reasoningLanguage },
@@ -2215,6 +2219,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       promptTokens: session.turnPromptTokens ?? session.lastPromptTokens ?? 0,
       contextPromptTokens: session.lastPromptTokens ?? 0,
       completionTokens: (session.completionTokens ?? 0) - beforeTokens.comp,
+      reasoningTokens: (session.reasoningTokens ?? 0) - beforeTokens.rsn,
       cacheHitTokens: (session.cacheHitTokens ?? 0) - beforeTokens.hit,
       cacheMissTokens: (session.cacheMissTokens ?? 0) - beforeTokens.miss,
       cumulativeTokens: (session.cacheHitTokens ?? 0) + (session.cacheMissTokens ?? 0)

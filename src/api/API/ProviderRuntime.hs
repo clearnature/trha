@@ -29,6 +29,7 @@ module API.ProviderRuntime
   , StreamCall
   -- * Usage parsing (kept exported so the wire shapes are unit-testable)
   , cachedPromptTokens
+  , reasoningTokensOf
   , usageFromResponses
   , usageFromAnthropic
   ) where
@@ -253,26 +254,41 @@ cachedPromptTokens u = listToMaybe $ catMaybes
       Just (Object d) -> jsonInt child d
       _               -> Nothing
 
+-- | @output_tokens_details.reasoning_tokens@ from a Responses usage object.
+-- The count is a subset of the completion (the thinking share), which is why
+-- the footer can show it without adding it to the bill.
+reasoningTokensOf :: Object -> Maybe Int
+reasoningTokensOf u = case field "output_tokens_details" u of
+  Just (Object d) -> jsonInt "reasoning_tokens" d
+  _               -> Nothing
+
 -- | Usage from an OpenAI Responses-style object.  @input_tokens@ is the whole
--- prompt — cached tokens included — so the miss is the difference.
-usageFromResponses :: Maybe Int -> Maybe Int -> Maybe Int -> Usage
-usageFromResponses mi mo mhit = case (mi, mhit) of
+-- prompt — cached tokens included — so the miss is the difference.  Reasoning
+-- lives in @output_tokens_details.reasoning_tokens@ and is a subset of the
+-- completion, not an extra charge.
+usageFromResponses :: Maybe Int -> Maybe Int -> Maybe Int -> Maybe Int -> Usage
+usageFromResponses mi mo mhit mreason = case (mi, mhit) of
   (Just p, Just h) ->
     let hit = max 0 (min h p)
     in Usage p (fromMaybe 0 mo) (p + fromMaybe 0 mo) hit (p - hit)
-  _ -> usageOf mi mo
+             (max 0 (fromMaybe 0 mreason))
+  _ -> withReasoning (usageOf mi mo) mreason
 
 -- | Usage from an Anthropic Messages object.  There @input_tokens@ is the
 -- uncached remainder; cache reads and 5m/1h writes are reported separately,
--- so the prompt is their sum.
+-- so the prompt is their sum.  Thinking tokens are inside the completion and
+-- have no separate field.
 usageFromAnthropic :: Maybe Int -> Maybe Int -> Maybe Int -> Maybe Int -> Usage
 usageFromAnthropic mi mo mread mwrite =
   case (mi, mread, mwrite) of
     (Just p, r, w) | r /= Nothing || w /= Nothing ->
       let hit  = max 0 (fromMaybe 0 r)
           miss = max 0 p + max 0 (fromMaybe 0 w)
-      in Usage (hit + miss) (fromMaybe 0 mo) (hit + miss + fromMaybe 0 mo) hit miss
+      in Usage (hit + miss) (fromMaybe 0 mo) (hit + miss + fromMaybe 0 mo) hit miss 0
     _ -> usageOf mi mo
+
+withReasoning :: Usage -> Maybe Int -> Usage
+withReasoning u mreason = u { usageReasoningTokens = max 0 (fromMaybe 0 mreason) }
 
 --------------------------------------------------------------------------------
 -- Streaming (A2): the wire decides, not the adapter
@@ -511,7 +527,8 @@ responsesStream bypassProxy baseUrl apiKey model extraHs extraBody meffort mode 
                     Just (Object u) -> onEvent (ChunkDone (usageFromResponses
                       (jsonInt "input_tokens" u)
                       (jsonInt "output_tokens" u)
-                      (cachedPromptTokens u)))
+                      (cachedPromptTokens u)
+                      (reasoningTokensOf u)))
                     _ -> pure ()
                   case responsesResponseId (Object r) of
                     Just rid -> modifyIORef' ridRef (Map.insert skey rid)
@@ -969,12 +986,14 @@ parseResponsesTurn v = case v of
                             (str "name" it) (str "arguments" it)
                 | Object it <- items
                 , Just (String ty) <- [field "type" it], ty == "function_call" ]
-        (mi, mo, mhit) = case field "usage" o of
+        (mi, mo, mhit, mreason) = case field "usage" o of
           Just (Object u) ->
-            (int "input_tokens" u, int "output_tokens" u, cachedPromptTokens u)
-          _ -> (Nothing, Nothing, Nothing)
+            ( int "input_tokens" u, int "output_tokens" u
+            , cachedPromptTokens u, reasoningTokensOf u )
+          _ -> (Nothing, Nothing, Nothing, Nothing)
     Right (ChatTurn (T.concat texts) calls
-                    (Just (usageFromResponses mi mo mhit)) Nothing Nothing Nothing)
+                    (Just (usageFromResponses mi mo mhit mreason))
+                    Nothing Nothing Nothing)
   _ -> Left "malformed Responses response"
   where
     str k o = case field k o of

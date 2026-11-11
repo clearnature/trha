@@ -14,8 +14,8 @@ import qualified Data.Text as T
 import UI.Brick.Status.Format
   ( statusCommas, statusCtxPct, statusOneDec, statusPct, statusShortK
   , statusTurnsSuffix )
-import UI.Brick.Status.Shared (pricesOf)
-import Core.TurnStats (hasPrices, isOffPeak)
+import UI.Brick.Status.Shared (hasPricesFor)
+import Core.TurnStats (isOffPeak)
 import Numeric (showFFloat)
 import UI.Render.Footer (parseMetrics)
 import UI.State
@@ -57,11 +57,11 @@ statusStatsLine st = T.intercalate "  "
           <> " / out " <> statusShortK (usageCompletionTokens u)
           <> " / 合计 " <> statusShortK (usageTotalTokens u)
       _ -> ""
-    prices = pricesOf (appModel st) (appEffCfg st)
-    costSessionSeg = if hasPrices prices
+    pricesKnown = hasPricesFor (appModel st) (appEffCfg st)
+    costSessionSeg = if pricesKnown
                 then "会话 ¥" <> T.pack (showFFloat (Just 4) (appCostSum st) "")
                 else "会话 ¥—"
-    costTurnSeg = if hasPrices prices && appLastCost st > 0
+    costTurnSeg = if pricesKnown && appLastCost st > 0
                 then "本次 ¥" <> T.pack (showFFloat (Just 4) (appLastCost st) "")
                 else ""
     outSeg = case appUsage st of

@@ -13,7 +13,7 @@ import qualified Data.ByteString.Lazy as BL
 import Test.Hspec
 
 import API.ProviderRuntime
-  ( cachedPromptTokens, usageFromAnthropic, usageFromResponses )
+  ( cachedPromptTokens, reasoningTokensOf, usageFromAnthropic, usageFromResponses )
 import LLM.Adapter.Types (Usage (..))
 
 -- | A usage object decoded from the exact JSON a provider sends, so nested
@@ -46,21 +46,35 @@ usageParseSpec = describe "provider usage parsing" $ do
 
   describe "Responses wire" $ do
     it "keeps the cached subset out of the miss" $ do
-      let u = usageFromResponses (Just 6334) (Just 504) (Just 6000)
+      let u = usageFromResponses (Just 6334) (Just 504) (Just 6000) Nothing
       usagePromptTokens u `shouldBe` 6334
       usageCacheHitTokens u `shouldBe` 6000
       usageCacheMissTokens u `shouldBe` 334
       usageCompletionTokens u `shouldBe` 504
 
     it "leaves hit/miss at zero when no split is reported" $ do
-      let u = usageFromResponses (Just 100) (Just 20) Nothing
+      let u = usageFromResponses (Just 100) (Just 20) Nothing Nothing
       usageCacheHitTokens u `shouldBe` 0
       usageCacheMissTokens u `shouldBe` 0
 
     it "never bills a cached count larger than the prompt" $ do
-      let u = usageFromResponses (Just 10) (Just 1) (Just 99)
+      let u = usageFromResponses (Just 10) (Just 1) (Just 99) Nothing
       usageCacheHitTokens u `shouldBe` 10
       usageCacheMissTokens u `shouldBe` 0
+
+    it "keeps reasoning separate from the completion" $ do
+      let u = usageFromResponses (Just 100) (Just 50) Nothing (Just 24)
+      usageReasoningTokens u `shouldBe` 24
+      usageCompletionTokens u `shouldBe` 50
+
+  describe "reasoningTokensOf" $ do
+    it "reads output_tokens_details.reasoning_tokens" $
+      reasoningTokensOf
+        (usageObj "{\"output_tokens\":100,\"output_tokens_details\":{\"reasoning_tokens\":24}}")
+        `shouldBe` Just 24
+
+    it "reports Nothing when the field is absent" $
+      reasoningTokensOf (usageObj "{\"output_tokens\":100}") `shouldBe` Nothing
 
   describe "Anthropic wire" $ do
     it "counts cache reads as hits and input+writes as the miss" $ do

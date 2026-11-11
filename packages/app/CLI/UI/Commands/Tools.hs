@@ -22,7 +22,9 @@ import Core.Types
 import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, fetchUsageStats, UsageRow(..), compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setSessionCwd, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus, probeProvider, listTools, fetchPermissions, getMessages)
 import Core.Currency (CurrencyTable(..), loadCurrency, saveCurrency)
 import Core.Replay (ReplayBlock(..), renderReplay, renderReplayText)
-import Core.TurnStats (Prices(..), pricesForModel, turnSummary)
+import Core.TurnStats
+  ( Prices(..), pricesAt, pricesForModel, pricesPeakForModel, turnSummary )
+import Data.Time.Clock (getCurrentTime)
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import Core.ProjectStore (ProjectSession(..), projectSessions)
 import Control.Exception (IOException, try)
@@ -88,6 +90,7 @@ runTools env = go
           | otherwise -> T.take 4000 (T.pack out)
 
     go ShowStats = Just $ do
+      now <- getCurrentTime
       rows <- fetchUsageStats bridge
       cur <- readIORef sessionRef
       home <- getHomeDirectory
@@ -108,26 +111,26 @@ runTools env = go
           ( tr lang "Usage per session mode (hit% = cache hit / (hit + miss), same split the invoice uses):"
             : ("mode" `pad` 10 <> "requests" `pad` 9 <> "prompt" `pad` 14
                  <> "hit%" `pad` 8 <> "out" `pad` 10 <> "resets" `pad` 8 <> "cost")
-            : map fmtRow rs
+            : map (fmtRow now) rs
           ) <> transcript
       where
         pad t n = T.justifyLeft n ' ' t
-        fmtRow r = pad (urMode r) 10
+        fmtRow now r = pad (urMode r) 10
           <> pad (T.pack (show (urRequests r))) 9
           <> pad (T.pack (show (urPrompt r))) 14
           <> pad (pct (urHitRatio r)) 8
           <> pad (T.pack (show (urCompletion r))) 10
           <> pad (T.pack (show (urResets r))) 8
-          <> costText r
+          <> costText now r
         pct ratio = T.pack (show (fromIntegral (round (ratio * 10000) :: Int) / 100 :: Double)) <> "%"
         -- The scheduler only prices a row when TRHA_PRICE_* is configured. Fall
         -- back to the built-in DeepSeek table and mark it as an estimate (≈), so a
         -- missing env var never makes the number look authoritative.
-        costText r
-          | urCost r == "—" || T.null (urCost r) = "≈¥" <> money (estimateCost r)
+        costText now r
+          | urCost r == "—" || T.null (urCost r) = "≈¥" <> money (estimateCost now r)
           | otherwise = "¥" <> urCost r
-        estimateCost r =
-          let p = pricesForModel "deepseek"
+        estimateCost now r =
+          let p = pricesAt now (pricesForModel "deepseek") (pricesPeakForModel "deepseek")
           in ( fromIntegral (urCacheMiss r) * priceInput p
                + fromIntegral (urCacheHit r) * priceCached p
                + fromIntegral (urCompletion r) * priceOutput p ) / 1e6

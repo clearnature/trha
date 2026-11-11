@@ -97,11 +97,12 @@ data Usage = Usage
   , usageTotalTokens      :: Int
   , usageCacheHitTokens   :: Int   -- ^ prompt tokens served from the prefix cache
   , usageCacheMissTokens  :: Int   -- ^ prompt tokens that had to be processed
+  , usageReasoningTokens  :: Int   -- ^ thinking subset of the completion
   } deriving (Show, Eq)
 
--- | Usage without cache accounting.
+-- | Usage without cache or reasoning accounting.
 mkUsage :: Int -> Int -> Int -> Usage
-mkUsage p c t = Usage p c t 0 0
+mkUsage p c t = Usage p c t 0 0 0
 
 -- | Share of prompt tokens served from cache (0 when nothing was reported).
 usageCacheHitRatio :: Usage -> Double
@@ -116,7 +117,8 @@ instance FromJSON Usage where
     t <- o .:? "total_tokens" .!= (p + c)
     hit <- o .:? "prompt_cache_hit_tokens" .!= 0
     miss <- o .:? "prompt_cache_miss_tokens" .!= max 0 (p - hit)
-    pure (Usage p c t hit miss)
+    rsn <- o .:? "reasoning_tokens" .!= 0
+    pure (Usage p c t hit miss rsn)
 
 instance ToJSON Usage where
   toJSON u = object
@@ -125,6 +127,7 @@ instance ToJSON Usage where
     , "total_tokens"             .= usageTotalTokens u
     , "prompt_cache_hit_tokens"  .= usageCacheHitTokens u
     , "prompt_cache_miss_tokens" .= usageCacheMissTokens u
+    , "reasoning_tokens"         .= usageReasoningTokens u
     ]
 
 --------------------------------------------------------------------------------
