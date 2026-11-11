@@ -75,6 +75,7 @@ import DeepSeekCacheSpec (deepSeekCacheSpec)
 import StreamToolCallsSpec (streamToolCallsSpec)
 import HTTPProxySpec (spec)
 import WireGuardsSpec (wireGuardsSpec)
+import UsageParseSpec (usageParseSpec)
 import StreamTimeoutSpec (streamTimeoutSpec)
 import SessionGateSpec (sessionGateSpec)
 import ServerBindSpec (serverBindSpec)
@@ -130,6 +131,7 @@ testSuite = do
   streamToolCallsSpec
   HTTPProxySpec.spec
   wireGuardsSpec
+  usageParseSpec
   streamTimeoutSpec
   sessionGateSpec
   serverBindSpec

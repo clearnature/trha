@@ -27,6 +27,10 @@ module API.ProviderRuntime
   , anthropicTools
   , toolChangesBeta
   , StreamCall
+  -- * Usage parsing (kept exported so the wire shapes are unit-testable)
+  , cachedPromptTokens
+  , usageFromResponses
+  , usageFromAnthropic
   ) where
 
 import Control.Concurrent.MVar (MVar, newMVar, modifyMVar, modifyMVar_, withMVar)
@@ -35,7 +39,7 @@ import Data.Aeson.Key (fromText, toText)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as BLC
-import Data.Maybe (fromMaybe, isNothing)
+import Data.Maybe (catMaybes, fromMaybe, isNothing, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -231,6 +235,44 @@ thinkingField t
 
 usageOf :: Maybe Int -> Maybe Int -> Usage
 usageOf mi mo = mkUsage (fromMaybe 0 mi) (fromMaybe 0 mo) (fromMaybe 0 mi + fromMaybe 0 mo)
+
+-- | The cached subset of a prompt, in every shape the wires use: the flat
+-- @prompt_cache_hit_tokens@ DeepSeek sends and the nested
+-- @{input,prompt}_tokens_details.cached_tokens@ OpenAI and its clones send.
+-- 'Nothing' means the provider reported no split at all — callers must keep
+-- hit/miss at zero then, rather than turning an unobservable ratio into a
+-- fabricated 0%.
+cachedPromptTokens :: Object -> Maybe Int
+cachedPromptTokens u = listToMaybe $ catMaybes
+  [ jsonInt "prompt_cache_hit_tokens" u
+  , nested "input_tokens_details" "cached_tokens"
+  , nested "prompt_tokens_details" "cached_tokens"
+  ]
+  where
+    nested parent child = case field parent u of
+      Just (Object d) -> jsonInt child d
+      _               -> Nothing
+
+-- | Usage from an OpenAI Responses-style object.  @input_tokens@ is the whole
+-- prompt — cached tokens included — so the miss is the difference.
+usageFromResponses :: Maybe Int -> Maybe Int -> Maybe Int -> Usage
+usageFromResponses mi mo mhit = case (mi, mhit) of
+  (Just p, Just h) ->
+    let hit = max 0 (min h p)
+    in Usage p (fromMaybe 0 mo) (p + fromMaybe 0 mo) hit (p - hit)
+  _ -> usageOf mi mo
+
+-- | Usage from an Anthropic Messages object.  There @input_tokens@ is the
+-- uncached remainder; cache reads and 5m/1h writes are reported separately,
+-- so the prompt is their sum.
+usageFromAnthropic :: Maybe Int -> Maybe Int -> Maybe Int -> Maybe Int -> Usage
+usageFromAnthropic mi mo mread mwrite =
+  case (mi, mread, mwrite) of
+    (Just p, r, w) | r /= Nothing || w /= Nothing ->
+      let hit  = max 0 (fromMaybe 0 r)
+          miss = max 0 p + max 0 (fromMaybe 0 w)
+      in Usage (hit + miss) (fromMaybe 0 mo) (hit + miss + fromMaybe 0 mo) hit miss
+    _ -> usageOf mi mo
 
 --------------------------------------------------------------------------------
 -- Streaming (A2): the wire decides, not the adapter
@@ -433,7 +475,11 @@ anthropicEvent v = case v of
         _               -> Nothing
       _ -> Nothing
     Just (String "message_delta") -> case field "usage" o of
-      Just (Object u) -> Just (Right (usageOf (jsonInt "input_tokens" u) (jsonInt "output_tokens" u)))
+      Just (Object u) -> Just (Right (usageFromAnthropic
+        (jsonInt "input_tokens" u)
+        (jsonInt "output_tokens" u)
+        (jsonInt "cache_read_input_tokens" u)
+        (jsonInt "cache_creation_input_tokens" u)))
       _               -> Nothing
     _ -> Nothing
   _ -> Nothing
@@ -456,9 +502,21 @@ responsesStream bypassProxy baseUrl apiKey model extraHs extraBody meffort mode 
           -- response.completed carries the id the next turn continues from.
           case v of
             Object o | field "type" o == Just (String "response.completed") ->
-              case field "response" o >>= responsesResponseId of
-                Just rid -> modifyIORef' ridRef (Map.insert skey rid)
-                Nothing  -> pure ()
+              case field "response" o of
+                Just (Object r) -> do
+                  -- The terminal frame carries the only usage the Responses
+                  -- wire reports; dropping it left every streamed turn with
+                  -- zero tokens and, worse, no cache split to bill from.
+                  case field "usage" r of
+                    Just (Object u) -> onEvent (ChunkDone (usageFromResponses
+                      (jsonInt "input_tokens" u)
+                      (jsonInt "output_tokens" u)
+                      (cachedPromptTokens u)))
+                    _ -> pure ()
+                  case responsesResponseId (Object r) of
+                    Just rid -> modifyIORef' ridRef (Map.insert skey rid)
+                    Nothing  -> pure ()
+                _ -> pure ()
             _ -> pure ()
           case responsesDelta v of
             Just txt | not (T.null txt) -> onEvent (ChunkDelta txt)
@@ -765,13 +823,18 @@ parseAnthropicTurn v = case v of
         signature = case [ sig | (_, sig) <- thinking, not (T.null sig) ] of
           (sig : _) -> Just sig
           []        -> Nothing
-        (mi, mo) = case field "usage" o of
-          Just (Object u) -> (int "input_tokens" u, int "output_tokens" u)
-          _               -> (Nothing, Nothing)
+        (mi, mo, mread, mwrite) = case field "usage" o of
+          Just (Object u) ->
+            ( int "input_tokens" u
+            , int "output_tokens" u
+            , int "cache_read_input_tokens" u
+            , int "cache_creation_input_tokens" u )
+          _ -> (Nothing, Nothing, Nothing, Nothing)
     -- 第 4 个字段是 ctError，不是 stop_reason：这里曾把 @stop_reason@ 原样
     -- 传进去，于是每个正常结束的 Anthropic 回合都会变成
     -- “[provider error] end_turn”。
-    Right (ChatTurn (T.concat texts) calls (Just (usageOf mi mo)) Nothing
+    Right (ChatTurn (T.concat texts) calls
+                    (Just (usageFromAnthropic mi mo mread mwrite)) Nothing
                     (if T.null reasoning then Nothing else Just reasoning) signature)
   _ -> Left "malformed Anthropic response"
   where
@@ -906,10 +969,12 @@ parseResponsesTurn v = case v of
                             (str "name" it) (str "arguments" it)
                 | Object it <- items
                 , Just (String ty) <- [field "type" it], ty == "function_call" ]
-        (mi, mo) = case field "usage" o of
-          Just (Object u) -> (int "input_tokens" u, int "output_tokens" u)
-          _               -> (Nothing, Nothing)
-    Right (ChatTurn (T.concat texts) calls (Just (usageOf mi mo)) Nothing Nothing Nothing)
+        (mi, mo, mhit) = case field "usage" o of
+          Just (Object u) ->
+            (int "input_tokens" u, int "output_tokens" u, cachedPromptTokens u)
+          _ -> (Nothing, Nothing, Nothing)
+    Right (ChatTurn (T.concat texts) calls
+                    (Just (usageFromResponses mi mo mhit)) Nothing Nothing Nothing)
   _ -> Left "malformed Responses response"
   where
     str k o = case field k o of

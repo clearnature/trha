@@ -207,7 +207,9 @@ spec = do
             , "cacheMissTokens" .= (10 :: Int)
             , "cumulativeTokens" .= (99 :: Int) ]
       case fromJSON v of
-        Success u -> u `shouldBe` Usage 10 5 99 0 10 0
+        -- no contextPromptTokens: the latest-request gauge falls back to the
+        -- billable prompt count.
+        Success u -> u `shouldBe` Usage 10 5 99 0 10 0 10
         Error e -> expectationFailure e
 
     it "derives prompt+completion when no total is present" $ do
@@ -222,5 +224,15 @@ spec = do
             , "totalTokens" .= (3 :: Int) ]
       case fromJSON v of
         Success u -> u `shouldBe` mkUsage 1 2 3
+        Error e -> expectationFailure e
+
+    it "keeps the latest-request context separate from the turn bill" $ do
+      let v = object
+            [ "promptTokens" .= (250 :: Int), "contextPromptTokens" .= (150 :: Int)
+            , "completionTokens" .= (15 :: Int) ]
+      case fromJSON v of
+        Success u -> do
+          usagePromptTokens u `shouldBe` 250
+          usageContextPromptTokens u `shouldBe` 150
         Error e -> expectationFailure e
 

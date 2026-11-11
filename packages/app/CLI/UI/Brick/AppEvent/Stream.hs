@@ -235,10 +235,15 @@ finishTurn usage = do
                    , appCacheTurns = if cacheSeen
                                        then appCacheTurns s + 1
                                        else appCacheTurns s
-                   , appCtxUsed = if usagePromptTokens usage > 0
-                                    then Just (usagePromptTokens usage
-                                               + usageCompletionTokens usage)
-                                    else appCtxUsed s
+                   , appCtxUsed =
+                       -- The gauge measures the latest request's context, not
+                       -- the turn's bill: a tool loop repeats the history.
+                       let ctx = if usageContextPromptTokens usage > 0
+                                   then usageContextPromptTokens usage
+                                   else usagePromptTokens usage
+                       in if ctx > 0
+                            then Just (ctx + usageCompletionTokens usage)
+                            else appCtxUsed s
                    , appLastTps = tps
                    , appLastDecodeTps = decodeTps
                    , appCostSum = appCostSum s + estimateCost (pricesOf (appModel s) (appEffCfg s)) usage

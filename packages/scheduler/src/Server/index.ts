@@ -264,8 +264,13 @@ interface SchedulerSession {
   createdAt: Date;
   /** When a `time-context` reading was last injected into this history. */
   lastTimeContextAt?: number;
-  /** Provider-reported prompt tokens of the previous request (ground truth). */
+  /** Provider-reported prompt tokens of the previous request (ground truth).
+   *  Context gauges read this; it is the latest request's size, not the bill. */
   lastPromptTokens?: number;
+  /** Prompt tokens billed across every model call in the current turn.  The
+   *  cache split and completion counters are turn totals, so the prompt side
+   *  must be too — otherwise a tool loop bills only its last round. */
+  turnPromptTokens?: number;
   cacheHitTokens?: number;
   cacheMissTokens?: number;
   completionTokens?: number;
@@ -1818,6 +1823,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     onDelta?: (text: string) => void,
   ): Promise<string> => {
     session.lastRequest = { message, ...target };
+    // Per-turn billing resets here; the session counters below it are
+    // lifetime totals.
+    session.turnPromptTokens = 0;
     const mode = MODES[session.mode] ?? MODES.standard;
     // Plugins may intercept the whole step (approval / short-circuit) by
     // bailing on 'agent:step:before' with a reply.
@@ -1966,6 +1974,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
               + ` msgs=${session.messages.length} (${session.id})`);
           }
           session.lastPromptTokens = response.usage.promptTokens;
+          session.turnPromptTokens = (session.turnPromptTokens ?? 0) + response.usage.promptTokens;
           session.cacheHitTokens = (session.cacheHitTokens ?? 0) + (response.usage.cacheHitTokens ?? 0);
           session.cacheMissTokens = (session.cacheMissTokens ?? 0) + (response.usage.cacheMissTokens ?? 0);
           session.completionTokens = (session.completionTokens ?? 0) + (response.usage.completionTokens ?? 0);
@@ -2196,11 +2205,15 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     const reply = await withSessionLock(session.id, () =>
       runTurn(session, message, { provider, model, genParams, reasoningLanguage },
         text => events.emit('agent:delta', { sessionId: session.id, text })));
-    // Usage echo for shell footers: `promptTokens` is the provider's own
-    // last prompt size (in, incl. cache), the deltas are this turn's out,
+    // Usage echo for shell footers.  `promptTokens` is the billable total for
+    // this turn (every model call in the tool loop), matching the cache and
+    // completion deltas next to it.  `contextPromptTokens` is the latest
+    // request's prompt size, which is what a context gauge must show —
+    // conflating the two made a multi-round tool turn look cheaper than it was.
     // `cumulativeTokens` is the session total (cacheHit+cacheMiss+completion).
     const usage = {
-      promptTokens: session.lastPromptTokens ?? 0,
+      promptTokens: session.turnPromptTokens ?? session.lastPromptTokens ?? 0,
+      contextPromptTokens: session.lastPromptTokens ?? 0,
       completionTokens: (session.completionTokens ?? 0) - beforeTokens.comp,
       cacheHitTokens: (session.cacheHitTokens ?? 0) - beforeTokens.hit,
       cacheMissTokens: (session.cacheMissTokens ?? 0) - beforeTokens.miss,

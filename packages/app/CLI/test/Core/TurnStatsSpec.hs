@@ -28,7 +28,7 @@ spec = do
 
   describe "turnSummary" $ do
     it "renders the full Reasonix line" $ do
-      let u = Usage 507900 543 508443 507130 770 50
+      let u = Usage 507900 543 508443 507130 770 50 507900
           p = Prices 2 0.2 8
       turnSummary p u 50 (utc 2026 10 26 16 40 0)
         `shouldBe` "本轮 508.4K tok · in 507.9K · cached 507.1K · new 770 · out 543 · reasoning 50 · ≈¥0.1073 · 低峰"

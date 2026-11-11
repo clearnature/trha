@@ -238,4 +238,43 @@ describe('tool-loop history invariants', () => {
     const result = afterQuestion[afterQuestion.indexOf(q) + 1]!;
     expect(result).toMatchObject({ role: 'tool', tool_call_id: 'call_q' });
   });
+
+  it('bills every model call in the tool loop, not only the last round', async () => {
+    // A `ls` is two provider calls.  The footer's `in` used to read the second
+    // one alone, so a tool turn looked cheaper than the bill it produced.
+    const base = await boot([
+      {
+        calls: [{ id: 'call_u', name: 'todo_write', args: { todos: [] } }],
+        usage: {
+          prompt_tokens: 100, completion_tokens: 10, total_tokens: 110,
+          prompt_cache_hit_tokens: 80, prompt_cache_miss_tokens: 20,
+        },
+      },
+      {
+        answer: 'done',
+        usage: {
+          prompt_tokens: 150, completion_tokens: 5, total_tokens: 155,
+          prompt_cache_hit_tokens: 120, prompt_cache_miss_tokens: 30,
+        },
+      },
+    ]);
+    const sessionId = await start(base);
+    const step = await fetch(`${base}/api/agent/step`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ sessionId, message: 'list it' }),
+    });
+    const body = await step.json() as {
+      usage: {
+        promptTokens: number; contextPromptTokens: number;
+        completionTokens: number; cacheHitTokens: number; cacheMissTokens: number;
+      };
+    };
+
+    // 100 + 150: both rounds are billed, matching the cache/completion totals
+    expect(body.usage.promptTokens).toBe(250);
+    expect(body.usage.cacheHitTokens).toBe(200);
+    expect(body.usage.cacheMissTokens).toBe(50);
+    expect(body.usage.completionTokens).toBe(15);
+    // the context gauge still reads the latest request's occupancy
+    expect(body.usage.contextPromptTokens).toBe(150);
+  });
 });

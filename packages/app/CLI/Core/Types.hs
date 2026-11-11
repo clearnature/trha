@@ -143,11 +143,14 @@ data Usage = Usage
   , usageCacheHitTokens   :: Int
   , usageCacheMissTokens  :: Int
   , usageReasoningTokens  :: Int -- ^ thinking tokens inside the completion
+  , usageContextPromptTokens :: Int
+    -- ^ latest request's prompt size (context gauge); 'usagePromptTokens' is
+    -- the turn's billable total, which differs once a tool loop runs >1 round
   } deriving (Show, Eq, Generic)
 
 -- | Usage without cache accounting (older kernels / tests).
 mkUsage :: Int -> Int -> Int -> Usage
-mkUsage p c t = Usage p c t 0 0 0
+mkUsage p c t = Usage p c t 0 0 0 p
 
 instance ToJSON Usage
 -- The scheduler echoes provider numbers as promptTokens/completionTokens
@@ -164,7 +167,9 @@ instance FromJSON Usage where
     hit <- o .:? "cacheHitTokens" .!= 0
     miss <- o .:? "cacheMissTokens" .!= 0
     rsn <- o .:? "reasoningTokens" .!= 0
-    pure $ Usage p c (fromMaybe (p + c) (t <|> cum)) hit miss rsn
+    -- Older schedulers send only one prompt count: use it for both.
+    ctx <- o .:? "contextPromptTokens" .!= p
+    pure $ Usage p c (fromMaybe (p + c) (t <|> cum)) hit miss rsn ctx
 
 -- | Session permission posture (Shift+Tab cycle / Ctrl+Y YOLO).
 data SessionMode = SessionMode

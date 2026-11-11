@@ -46,6 +46,8 @@ export interface Usage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Latest request's prompt size; absent means "same as promptTokens". */
+  contextPromptTokens?: number;
 }
 
 // Stream chunk types
