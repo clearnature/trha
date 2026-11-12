@@ -180,6 +180,7 @@ Repo-root scripts also verify these locally: `npm run verify:ci` (workflow wirin
 - `desktop-host-contract.md` — Desktop ↔ Scheduler host contract v1 (scheduler-side semantics still live).
 
 **Active plans — `docs/plans/`** (uncompleted items are *not* implemented; see `plan-reconciliation.md`)
+- `commands-completion-plan.md` — slash-command completion (2026-11-12, not started): 10 REPL-side partial commands → real implementations, T1–T12 atoms with acceptance criteria; dead code explicitly excluded (see `docs/reference/dead-code-report-2026-11-12.md`).
 - `compact-weights-plan.md` — compact weights (P-12 done; measured 2.5s/token, RSS 8.6GB via `trha-cpu-braintoken`).
 - `sandbox-decisions.md` (ADR-001–007, frozen 2026-10-29), `sandbox-architecture.md` (design baseline, §5.7 interface freeze), `sandbox-delivery-plan.md` (M0–M5 + WBS 48 items), `sandbox-handoff.md` — **read the handoff doc before starting sandbox work**.
 - `remote-access-bot-plan.md` — remote access / IM bot (chosen: IM long-connection, zero inbound ports; not implemented).
@@ -188,7 +189,7 @@ Repo-root scripts also verify these locally: `npm run verify:ci` (workflow wirin
 - `verification-criteria.md` — **what counts as evidence**: C1–C5 (algebra ↔ Agda, compile-time type invariants, cross-implementation equality, causal semantics, constraint ↔ external API). **Performance is not a criterion.**
 - `file-completion-tracking.md`, `code-docs-reconciliation.md` (⚠️ §2 WebGPU claim stale — see `architecture/project-overview.md` §5), `pybitnet-ternary-inference-blueprint.md`, `webgpu-wiring-plan.md` (W1–W7/T1–T4 done, **not wired into production inference**), markdown-rendering plan (8cb9d51/a008158), `typescript-7-toolchain-migration.md`, `tui-port-plan.md`, `windows-shell-port-plan.md`.
 
-**Reference — `docs/reference/`**: upstream porting sources and analyses (`trha-port-sources.md` memory table: hs `/data/work/functional-programming/hs`, MiMo-Code, qwen-code, deepseek-harness, DeepSeek-Reasonix + codex/gemini/ratatui/opencode), `commands-tools-cross-benchmark-2026-11-12.md` (seven-way commands/tools census — trha 91 commands/107 tools vs six upstreams, interaction-layer comparison, adoption list), `microkernel-lineage.md`, `trha-architecture-review.md` (external, engineering-maintainability criterion — do not conflate with C1–C5), `trha-architecture-benchmark-review.md` (A1–A8), `cangjie-replacement-feasibility.md` + probes, `windows-dev-notes.md`, CI/secrets ops docs.
+**Reference — `docs/reference/`**: upstream porting sources and analyses (`trha-port-sources.md` memory table: hs `/data/work/functional-programming/hs`, MiMo-Code, qwen-code, deepseek-harness, DeepSeek-Reasonix + codex/gemini/ratatui/opencode), `commands-tools-cross-benchmark-2026-11-12.md` (seven-way commands/tools census — trha 91 commands/107 tools vs six upstreams, interaction-layer comparison, adoption list), `dead-code-report-2026-11-12.md` (dead-code & ledger-drift findings, report-only pending ruling), `microkernel-lineage.md`, `trha-architecture-review.md` (external, engineering-maintainability criterion — do not conflate with C1–C5), `trha-architecture-benchmark-review.md` (A1–A8), `cangjie-replacement-feasibility.md` + probes, `windows-dev-notes.md`, CI/secrets ops docs.
 
 **Archive — `docs/archive/`**: completed or superseded plans — do not follow.
 
