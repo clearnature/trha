@@ -12,6 +12,7 @@ module Core.Memory
   , defaultMemoryFile
   , rememberText
   , forgetText
+  , countMatchingNotes
   , memoryFiles
   , allMemories
   ) where
@@ -76,6 +77,17 @@ forgetText needle = do
           pure (length gone)
 
 -- | Every non-empty @*.md@ under a directory, sorted by file name.
+-- | How many note lines 'forgetText' would delete for @needle@ right now
+-- (same case-insensitive infix semantics; used by the /forget confirm flow).
+countMatchingNotes :: Text -> IO Int
+countMatchingNotes needle = do
+  files <- allMemories
+  let needleL = T.toLower (T.strip needle)
+      matches body = length
+        [ () | l <- T.lines body
+             , not (T.null needleL), needleL `T.isInfixOf` T.toLower l ]
+  pure (sum [ matches body | (_, body) <- files ])
+
 memoryFiles :: FilePath -> IO [(Text, Text)]
 memoryFiles dir = do
   ok <- doesDirectoryExist dir

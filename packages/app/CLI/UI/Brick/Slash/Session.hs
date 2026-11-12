@@ -60,7 +60,7 @@ import UI.Brick.Selection
 import UI.Brick.Input
   ( alwaysConfirmText, editorCursor, editorValue, promptIsEmpty )
 import UI.Brick.SessionView
-  ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
+  ( blocksToMessages, refreshSidebar, resumeSession )
 import UI.Brick.Slash.Ctx (CmdCtx(..))
 import UI.Brick.RunControl
   ( approveAndRun, decideApprovalNow, escapeHierarchy, escapeWithoutApproval
@@ -77,7 +77,7 @@ import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics, branchFrom
 import UI.Render.Spans
   ( SpanTok(..), boolText, diffAttrOf, fillLines, isCompactionMark
   , spanToks, splitAtWidth, spinnerFrame, todoGlyph, truncLine )
-import System.Directory (getCurrentDirectory, createDirectoryIfMissing, getHomeDirectory)
+import System.Directory (getCurrentDirectory, createDirectoryIfMissing, getHomeDirectory, listDirectory, doesDirectoryExist, removeFile)
 import System.FilePath ((</>), takeDirectory, takeFileName)
 import System.Exit (ExitCode(..))
 import Control.Exception (IOException, try)
@@ -119,6 +119,7 @@ handleSessionSlash cx = case cxCmd cx of
   _ | "/resume " `T.isPrefixOf` (cxCmd cx) -> Just $ slashResumeSession cx
   _ | "/delete " `T.isPrefixOf` (cxCmd cx) -> Just $ slashDeleteSession cx
   "/resume" -> Just $ slashResumeList cx
+  "/clear-attachments" -> Just $ slashClearAttachmentsConfirm cx
   _ -> Nothing
 
 -- | @?@
@@ -256,6 +257,25 @@ slashResumeList cx = do
     then do
       appendMsg (mkMsg "system" (tr (cxLang cx) "No local sessions in this directory yet.") (cxTime cx))
       appendMsg (mkMsg "system" (tr (cxLang cx) "/resume --all shows sessions from other (or older) projects.") (cxTime cx))
+    else -- 与 /sessions 同一选择器：选中即恢复，不再打印编号清单让人手敲
+      modify $ \s -> s { appDialogs = stackPush (DialogSessions local "" 0) (appDialogs s) }
+
+-- | @/clear-attachments@：删除 @~/.trha/paste@ 下的附件文件前先确认
+-- （dead-code-report 同批的通用确认槽用户）。
+slashClearAttachmentsConfirm :: CmdCtx -> EventM ResourceName AppState ()
+slashClearAttachmentsConfirm cx = do
+  home <- liftIO getHomeDirectory
+  let dir = home </> ".trha" </> "paste"
+  exists <- liftIO (doesDirectoryExist dir)
+  fs <- if exists then liftIO (listDirectory dir) else pure []
+  if null fs
+    then appendMsg (mkMsg "system" (tr (cxLang cx) "No attachments.") (cxTime cx))
     else do
-      appendMsg (mkMsg "system" ("Local sessions:\n" <> T.unlines (localSessionLines (appLang (cxState cx)) local)) (cxTime cx))
-      appendMsg (mkMsg "system" (tr (cxLang cx) "Resume with /resume <number-or-id>  (/resume --all for every project).") (cxTime cx))
+      let chan = cxChan cx
+          act = do
+            mapM_ (removeFile . (dir </>)) fs
+            writeBChan chan (EvToast (T.pack (show (length fs)) <> " attachment(s) cleared."))
+      modify $ \s -> s
+        { appDialogs = stackPush (DialogConfirm (tr (cxLang cx) (T.pack (show (length fs)) <> " attachment file(s) to delete?")) 1)
+                                 (appDialogs s)
+        , appPendingConfirm = Just ("clear-attachments", act) }

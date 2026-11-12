@@ -108,6 +108,7 @@ handleModelSlash :: CmdCtx -> Maybe (EventM ResourceName AppState ())
 handleModelSlash cx = case cxCmd cx of
   "/models" -> Just $ slashModels cx
   "/provider" -> Just $ slashProvider cx
+  "/preset" -> Just $ slashPreset cx
   _ | (cxCmd cx) == "/switch" || "/switch " `T.isPrefixOf` (cxCmd cx) -> Just $ slashSwitch cx
   _ | (cxCmd cx) == "/ctx" || "/ctx " `T.isPrefixOf` (cxCmd cx) -> Just $ slashCtx cx
   _ | (cxCmd cx) == "/effort" || "/effort " `T.isPrefixOf` (cxCmd cx) -> Just $ slashEffort cx
@@ -115,6 +116,12 @@ handleModelSlash cx = case cxCmd cx of
   _ | (cxCmd cx) == "/model" -> Just $ slashModelShow cx
   _ | "/model " `T.isPrefixOf` (cxCmd cx) -> Just $ slashModelSet cx
   _ -> Nothing
+
+-- | @/preset@：内置供应商预设选择器（此前只有 Providers 对话框内按 @a@ 可达，
+-- 命令入口形同虚设——DialogPresets 组件现成，接上即可）。
+slashPreset :: CmdCtx -> EventM ResourceName AppState ()
+slashPreset _cx =
+  modify $ \s -> s { appDialogs = stackPush (DialogPresets presets 0) (appDialogs s) }
 
 slashModels :: CmdCtx -> EventM ResourceName AppState ()
 slashModels cx = do

@@ -45,7 +45,7 @@ import UI.StatusInfo (StatusRow(..), collectStatusInfo)
 import UI.StatsView (StatsBlock(..), buildStatsBlocks)
 import UI.I18n (Lang(..), langName, parseLang, tr)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Graphics.Vty.Attributes
@@ -170,8 +170,8 @@ dialogActivate = do
             st2 <- get
             if appPendingStop st2
               then stopServicesAndHalt
-              else case (appPendingProviderRemove st2, appPendingDelete st2) of
-                (Just pname, _) -> do
+              else case (appPendingProviderRemove st2, appPendingDelete st2, appPendingConfirm st2) of
+                (Just pname, _, _) -> do
                   modify $ \s -> s { appDialogs = stackPop (appDialogs s)
                                    , appPendingProviderRemove = Nothing
                                    , appStatus = tr (appLang s) "Removing..." }
@@ -182,7 +182,7 @@ dialogActivate = do
                     writeBChan chan (case r of
                       Right ps -> EvProviders (Right ps)   -- registry refresh
                       Left e   -> EvToast (T.pack ("Error: " <> show e)))
-                (Nothing, Just sid) -> do
+                (Nothing, Just sid, _) -> do
                   modify $ \s -> s { appDialogs = stackPop (appDialogs s)
                                    , appPendingDelete = Nothing
                                    , appStatus = tr (appLang s) "Deleting..." }
@@ -193,7 +193,13 @@ dialogActivate = do
                     writeBChan chan (EvToast (case r of
                       Right () -> "Session deleted: " <> T.pack sid
                       Left e   -> "Error: " <> T.pack (show e)))
-                (Nothing, Nothing) -> do  -- persist the rule, then approve once
+                (Nothing, Nothing, Just (_, act)) -> do
+                  -- 通用确认槽（/forget、/clear-attachments、/update pull …）：
+                  -- action 自带回执（toast / 事件），这里只负责弹栈与执行。
+                  modify $ \s -> s { appDialogs = stackPop (appDialogs s)
+                                   , appPendingConfirm = Nothing }
+                  void $ liftIO $ async act
+                (Nothing, Nothing, Nothing) -> do  -- persist the rule, then approve once
                   modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
                   let (name, args) = fromMaybe ("", []) (appAskTool st2)
                       bridge = appBridge st2
@@ -207,17 +213,20 @@ dialogActivate = do
                                                            -- still allows this once
                         r <- decidePlan bridge sid True
                         writeBChan chan (EvVerdict r)
-          _ -> do  -- no: cancel the pending stop, or go back to the approval card
+          _ -> do  -- no: cancel the pending stop / generic confirm, or go back to the approval card
             st2 <- get
             if appPendingStop st2
               then modify $ \s -> s { appPendingStop = False }
-              else do
-                modify $ \s -> s { appPendingDelete = Nothing, appPendingProviderRemove = Nothing }
-                st3 <- get
-                case (appApproval st3, appAskTool st3) of
-                  (Just msg, Just (name, args)) ->
-                    modifyTop (const (DialogApproval msg name args 0))
-                  _ -> modify $ \s2 -> s2 { appDialogs = stackPop (appDialogs s2) }
+              else if isJust (appPendingConfirm st2)
+                then modify $ \s -> s { appPendingConfirm = Nothing
+                                       , appDialogs = stackPop (appDialogs s) }
+                else do
+                  modify $ \s -> s { appPendingDelete = Nothing, appPendingProviderRemove = Nothing }
+                  st3 <- get
+                  case (appApproval st3, appAskTool st3) of
+                    (Just msg, Just (name, args)) ->
+                      modifyTop (const (DialogApproval msg name args 0))
+                    _ -> modify $ \s2 -> s2 { appDialogs = stackPop (appDialogs s2) }
 
 -- | Keys in the normal chat view.
 

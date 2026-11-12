@@ -105,7 +105,9 @@ import UI.Theme
 handlePlanSlash :: CmdCtx -> Maybe (EventM ResourceName AppState ())
 handlePlanSlash cx = case cxCmd cx of
   "/approve" -> Just $ slashApprove cx
-  "/deny" -> Just $ slashDeny cx
+  -- /deny <reason>：按首词认领（cxCmd 是整条输入的小写），理由由 slashDeny
+  -- 从输入解析——否则 "/deny xxx" 会漏到文本兜底、DenyWith 丢失。
+  _ | (cxCmd cx) == "/deny" || "/deny " `T.isPrefixOf` (cxCmd cx) -> Just $ slashDeny cx
   _ | (cxCmd cx) == "/plan" -> Just $ slashPlanUsage cx
   _ | "/plan " `T.isPrefixOf` (cxCmd cx) -> Just $ slashPlanSubmit cx
   _ | (cxCmd cx) `elem` ["/skip", "/reject", "/abandon"] -> Just $ slashPlanVerdict cx
@@ -135,17 +137,24 @@ slashDeny cx = do
   let reason = T.strip (T.drop 5 (cxInput cx))
   case cur of
     Nothing -> appendMsg (mkMsg "system" "No session yet — use /new or send a message first." (cxTime cx))
-    Just sid -> do
-      -- 有 planning 计划时拒绝待审批步骤；没有就直接说清楚，
+    Just sid
+      -- 带理由：denyPlanWithReason（计划级拒绝并附理由，与 REPL DenyWith 同语义）。
+      | not (T.null reason) -> void $ liftIO $ async $ do
+          r <- denyPlanWithReason (cxBridge cx) sid reason
+          writeBChan (cxChan cx) (EvToast $ case r of
+            Right PlanDenied        -> tr (cxLang cx) "Plan denied."
+            Right (PlanApproved _) -> tr (cxLang cx) "Plan was approved (unexpected)."
+            Left err                -> T.pack (show err))
+      -- 无理由：planning 阶段拒绝待审批步骤；两者都没有 → 如实提示，
       -- 不要拿内核的 400 "No pending approval" 当反馈。
-      plan <- liftIO (fetchPlan (cxBridge cx) sid)
-      case plan of
-        Right pv | pvPhase pv == "planning" -> do
-          void $ liftIO $ async $ do
-            r <- decideStep (cxBridge cx) sid "reject"
-            writeBChan (cxChan cx) (EvPlanState (fmap ((, Nothing)) r))
-        _ -> appendMsg (mkMsg "system"
-               (tr (cxLang cx) "Nothing to deny — no pending plan or approval.") (cxTime cx))
+      | otherwise -> do
+          plan <- liftIO (fetchPlan (cxBridge cx) sid)
+          case plan of
+            Right pv | pvPhase pv == "planning" -> void $ liftIO $ async $ do
+              r <- decideStep (cxBridge cx) sid "reject"
+              writeBChan (cxChan cx) (EvPlanState (fmap ((, Nothing)) r))
+            _ -> appendMsg (mkMsg "system"
+                   (tr (cxLang cx) "Nothing to deny — no pending plan or approval.") (cxTime cx))
 
 slashPlanUsage :: CmdCtx -> EventM ResourceName AppState ()
 slashPlanUsage cx = do

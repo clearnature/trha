@@ -220,6 +220,7 @@ initialState bridge chan cfg = AppState
   , appPendingDelete = Nothing
   , appPendingStop   = False
   , appPendingProviderRemove = Nothing
+  , appPendingConfirm = Nothing
   , appUsage     = Nothing
   , appCtxSize   = configCtxSize cfg
   , appSidebar   = SidebarAuto

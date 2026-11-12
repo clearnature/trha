@@ -143,8 +143,9 @@ handleSlash input = do
               [] -> appendMsg (mkMsg "system"
                       (tr lang "Unknown command: " <> input <> tr lang " — try /help") t)
           StopRequest ->
-            appendMsg (mkMsg "system"
-              (tr lang "This stops the kernel and scheduler and exits TUI. Type /stop confirm to proceed.") t)
+            -- 与 Ctrl+Alt+Q 同一确认对话框（requestStopServices / appPendingStop），
+            -- 取代「请手敲 /stop confirm」的文本式确认。
+            requestStopServices
           StopConfirmed -> do
             rs <- liftIO (stopAll False)
             let out = T.intercalate "\n"

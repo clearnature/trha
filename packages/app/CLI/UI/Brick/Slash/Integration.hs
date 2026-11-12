@@ -16,6 +16,7 @@ import Control.Monad.IO.Class (liftIO)
 import Core.Types
 import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider)
 import Core.Replay (ReplayBlock(..), renderReplay)
+import Core.Memory (countMatchingNotes, forgetText)
 import Core.TurnStats (Prices(..), turnSummary, estimateCost, hasPrices, isOffPeak, pricesForModel)
 import UI.Event
 import Core.SSE (SseNotice(..))
@@ -104,7 +105,30 @@ handleIntegrationSlash cx = case cxCmd cx of
   "/agents" -> Just $ slashAgents cx
   "/skills" -> Just $ slashSkills cx
   "/plugins" -> Just $ slashPlugins cx
+  -- /forget <text>：破坏性删除，先确认再执行（通用确认槽）。
+  _ | (cxCmd cx) == "/forget" || "/forget " `T.isPrefixOf` (cxCmd cx) -> Just $ slashForgetConfirm cx
   _ -> Nothing
+
+-- | @/forget <text>@：先数命中行数，再弹确认；Yes 才真正删除并 toast 结果。
+slashForgetConfirm :: CmdCtx -> EventM ResourceName AppState ()
+slashForgetConfirm cx = do
+  let pat = T.strip (T.drop (T.length "/forget") (cxInput cx))
+  if T.null pat
+    then appendMsg (mkMsg "system" (tr (cxLang cx) "Usage: /forget <text>") (cxTime cx))
+    else do
+      n <- liftIO (countMatchingNotes pat)
+      if n == 0
+        then appendMsg (mkMsg "system" (tr (cxLang cx) "No remembered notes match that text.") (cxTime cx))
+        else do
+          let chan = cxChan cx
+              act = do
+                gone <- forgetText pat
+                writeBChan chan (EvToast (T.pack (show gone) <> " note line(s) forgotten."))
+          modify $ \s -> s
+            { appDialogs = stackPush (DialogConfirm (tr (cxLang cx) (T.pack (show n) <> " note line(s) match \""
+                                             <> pat <> "\". Forget them?")) 1)
+                                     (appDialogs s)
+            , appPendingConfirm = Just ("forget " <> pat, act) }
 
 slashTodo :: CmdCtx -> EventM ResourceName AppState ()
 slashTodo cx = do

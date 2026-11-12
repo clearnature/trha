@@ -203,6 +203,7 @@ data AppState = AppState
   , appPendingDelete :: Maybe String        -- ^ session id awaiting delete confirmation
   , appPendingStop   :: Bool                -- ^ Ctrl+Alt+Q confirmation is open (service stop)
   , appPendingProviderRemove :: Maybe Text  -- ^ provider name awaiting remove confirmation (tui-port L290)
+  , appPendingConfirm :: Maybe (Text, IO ()) -- ^ generic confirm: label + action to run on Yes (/forget, /clear-attachments, /update pull …)
   , appUsage      :: Maybe Usage        -- ^ real usage echo of the last turn
   , appCtxSize    :: Maybe Int          -- ^ context size of the active model
   , appSidebar    :: SidebarState       -- ^ sidebar open/closed/auto (M4-1)
