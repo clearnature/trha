@@ -196,8 +196,15 @@ spec = do
       formatSettings En defaultCLIConfig `shouldSatisfy` T.isInfixOf ("lang        = " <> configLang defaultCLIConfig)
 
   describe "completions" $ do
-    it "lists every canonical command" $ do
-      completions `shouldBe` map scCommand slashRegistry
+    -- REPL 补全 = 注册表里标了 SRepl 的命令（T4–T8 补全后逐步扩到全表）。
+    it "equals the SRepl-capable subset of the registry (surface-gated)" $ do
+      completions `shouldBe`
+        [ scCommand sc | sc <- slashRegistry, SRepl `elem` scSurfaces sc ]
+    it "REPL 补全不推荐只在 TUI 实现的命令（占位期保护）" $ do
+      completions `shouldNotSatisfy` elem "/home"
+      completions `shouldNotSatisfy` elem "/copy"
+      completions `shouldNotSatisfy` elem "/verbose"
+      completions `shouldNotSatisfy` elem "/clear"
 
   describe "isKnownCommand" $ do
     it "accepts registered commands" $ do
@@ -213,21 +220,21 @@ spec = do
 
   describe "registryHelp" $ do
     it "has a header, one line per group and per command, plus the key section" $ do
-      T.lines (registryHelp En)
+      T.lines (registryHelp STui En)
         `shouldSatisfy` ((== "Commands:") . head)
       -- +1 blank line, + "Keys:" and four key lines
-      length (T.lines (registryHelp En))
+      length (T.lines (registryHelp STui En))
         `shouldBe` 1 + length commandGroups + length slashRegistry + 6
     it "documents the shell keys next to the commands" $ do
-      registryHelp En `shouldSatisfy` T.isInfixOf "Ctrl+C"
-      registryHelp En `shouldSatisfy` T.isInfixOf "Ctrl+D"
-      registryHelp En `shouldSatisfy` T.isInfixOf "/stop"
+      registryHelp STui En `shouldSatisfy` T.isInfixOf "Ctrl+C"
+      registryHelp STui En `shouldSatisfy` T.isInfixOf "Ctrl+D"
+      registryHelp STui En `shouldSatisfy` T.isInfixOf "/stop"
     it "names every group" $
-      mapM_ (\g -> registryHelp En `shouldSatisfy` T.isInfixOf (groupKey g)) commandGroups
+      mapM_ (\g -> registryHelp STui En `shouldSatisfy` T.isInfixOf (groupKey g)) commandGroups
     it "mentions every command and its description" $ do
       mapM_ (\sc -> do
-        registryHelp En `shouldSatisfy` T.isInfixOf (scCommand sc)
-        registryHelp En `shouldSatisfy` T.isInfixOf (scDesc sc))
+        registryHelp STui En `shouldSatisfy` T.isInfixOf (scCommand sc)
+        registryHelp STui En `shouldSatisfy` T.isInfixOf (scDesc sc))
         slashRegistry
 
   describe "command groups" $ do

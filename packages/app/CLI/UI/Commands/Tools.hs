@@ -33,8 +33,8 @@ import Data.IORef
 import Data.Text (Text)
 import qualified Data.Text as T
 import System.Environment (lookupEnv, getEnvironment)
-import Data.Maybe (fromMaybe)
-import Core.Clipboard (saveClipboardImage)
+import Data.Maybe (fromMaybe, listToMaybe)
+import Core.Clipboard (copyToClipboard, saveClipboardImage)
 import System.Directory (doesFileExist, getHomeDirectory)
 import System.FilePath ((</>))
 import System.Exit (ExitCode(..))
@@ -64,6 +64,13 @@ runTools env = go
     sessionRef = ceSession env
     modelRef   = ceModel env
 
+    -- 最近一条 assistant 消息的正文（服务端消息序即会话序，倒着找第一条）。
+    lastAssistantText =
+      listToMaybe
+        . map messageContent
+        . filter ((== "assistant") . messageRole)
+        . reverse
+
     go (RunShell cmd)
       | T.null (T.strip cmd) = Just $ return $ Just "Usage: /shell <cmd>"
       | otherwise = Just $ do
@@ -77,8 +84,21 @@ runTools env = go
                     ExitFailure n -> "\n(exit " <> T.pack (show n) <> ")"
               in "$ " <> cmd <> "\n" <> body <> suffix
 
-    go CopyLast = Just $
-      return $ Just "Copy is available in the TUI (run: trha tui, then /copy)"
+    go CopyLast = Just $ do
+      msid <- readIORef sessionRef
+      case msid of
+        Nothing -> return $ Just (tr lang "No active session to copy from")
+        Just sid -> do
+          r <- getMessages bridge sid
+          case r of
+            Left e -> return $ Just (tr lang "Error: " <> T.pack (show e))
+            Right msgs -> case lastAssistantText msgs of
+              Nothing -> return $ Just (tr lang "No assistant message yet")
+              Just txt -> do
+                ok <- copyToClipboard txt
+                return . Just $ if ok
+                  then tr lang "Copied the last assistant message to the clipboard"
+                  else tr lang "Clipboard unavailable; install wl-copy/xclip/xsel"
 
     go ShowDiff = Just $ do
       r <- try (readProcessWithExitCode "git" ["diff", "--no-color"] "")

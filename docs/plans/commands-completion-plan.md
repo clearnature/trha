@@ -1,6 +1,10 @@
 # 斜杠命令补全计划（REPL 面 10 条部分实现 → 真实现）
 
-> **状态**：进行中（未开工）。定案来源：`docs/reference/commands-tools-cross-benchmark-2026-11-12.md` §2.1 七方审计。
+> **状态**：**M1–M3 已完成（2026-11-12）**——T1–T12 落地，REPL 恒定文案占位清零；
+> `/verbose` `/clear` 落为显式 `scSurfaces = [STui]`（REPL 无该能力，如实声明）。
+> **遗留 T9b（未开工）**：/compact focus 的压缩语义（govern 消费 focus）——
+> 本轮只贯通了管道（CLI→bridge→端点记录/回显），语义设计是独立任务。
+> 定案来源：`docs/reference/commands-tools-cross-benchmark-2026-11-12.md` §2.1 七方审计。
 > **裁定**（用户，2026-11-12）：未实现的命令**补全，不清理**；死代码独立成报告（`docs/reference/dead-code-report-2026-11-12.md`），不在本计划处理。
 > **范围**：91 条斜杠命令中审计判定的 10 条部分实现。工具侧缺口（`append_file` 缺声明行）不在本计划，见死代码报告。
 

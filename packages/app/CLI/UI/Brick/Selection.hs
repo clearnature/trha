@@ -25,6 +25,7 @@ import Control.Monad.IO.Class (liftIO)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust, listToMaybe)
 
+import Core.Clipboard (copyToClipboard)
 import UI.Brick.DialogKeys (scrollBottom)
 import UI.Brick.Draw.Messages (cardHidden)
 import UI.Event (nextCardFocus)
@@ -114,23 +115,8 @@ finishSel y = do
         -- 也还能继续拖选调整。清空只发生在 Ctrl+C 之后。
         else copySelectionText False
 
--- | Try the usual clipboard helpers in order; 'False' when none exists.
-copyToClipboard :: Text -> IO Bool
-copyToClipboard txt = go
-  [ ("wl-copy", [])
-  , ("xclip", ["-selection", "clipboard"])
-  , ("xsel", ["--clipboard", "--input"])
-  , ("pbcopy", [])
-  ]
-  where
-    go [] = return False
-    go ((cmd, args) : rest) = do
-      r <- try (readProcessWithExitCode cmd args (T.unpack txt))
-             :: IO (Either IOException (ExitCode, String, String))
-      case r of
-        Right (ExitSuccess, _, _) -> return True
-        _ -> go rest
-
+-- | copyToClipboard 实现移至 Core.Clipboard（REPL 的 /copy 也要用），
+-- 本模块保留 re-export 以免波及 ~30 个既有点名的导入清单。
 toolCardIds :: AppState -> [Int]
 toolCardIds st = [ msgId m | m <- appMessages st, isJust (msgTool m), not (cardHidden st m) ]
 

@@ -4,7 +4,7 @@ module UI.I18nSpec (spec) where
 
 import Test.Hspec
 import UI.I18n
-import UI.Commands.Registry (slashRegistry, SlashCommand(..), registryHelp)
+import UI.Commands.Registry (slashRegistry, SlashCommand(..), Surface(..), registryHelp)
 import qualified Data.Text as T
 
 spec :: Spec
@@ -77,10 +77,11 @@ spec = do
   describe "command registry coverage" $ do
     it "translates every registered command description in Zh" $ do
       mapM_ (\sc -> tr Zh (scDesc sc) `shouldNotBe` scDesc sc) slashRegistry
+    -- TUI 面的 help 是超集（所有命令都标了 STui）；逐名断言对超集成立。
     it "keeps command names untranslated in the Zh help text" $ do
-      let help = registryHelp Zh
+      let help = registryHelp STui Zh
       mapM_ (\sc -> help `shouldSatisfy` T.isInfixOf (scCommand sc)) slashRegistry
     it "prefixes the Zh help with a Chinese header" $ do
-      T.lines (registryHelp Zh) `shouldSatisfy` ((== "命令：") . head)
+      T.lines (registryHelp STui Zh) `shouldSatisfy` ((== "命令：") . head)
     it "prefixes the En help with the English header" $ do
-      T.lines (registryHelp En) `shouldSatisfy` ((== "Commands:") . head)
+      T.lines (registryHelp STui En) `shouldSatisfy` ((== "Commands:") . head)

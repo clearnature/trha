@@ -224,9 +224,15 @@ runPlan env = go
       (code, _, err) <- readProcessWithExitCode ed [path] ""
       body <- TIO.readFile path `catch` \(_ :: IOException) -> pure ""
       removeFile path `catch` \(_ :: IOException) -> pure ()
-      return $ Just $ if code /= ExitSuccess
-        then tr lang "Editor failed: " <> T.pack err
-        else body
+      if code /= ExitSuccess
+        then return $ Just (tr lang "Editor failed: " <> T.pack err)
+        else if T.null (T.strip body)
+          then return $ Just (tr lang "Edited message is empty — aborted.")
+          else do
+            -- REPL 面没有输入缓冲可回填：编辑完成即作为下一条 user 消息提交
+            -- （commands-completion-plan T10 定案的行为；返回助手答复或确认）。
+            sent <- planSend (T.strip body)
+            return . Just $ fromMaybe (tr lang "Submitted the edited message.") sent
     planUnknown cmd = 
       return $ Just $ tr lang "Unknown command: " <> cmd <> tr lang " — try /help"
 

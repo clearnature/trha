@@ -158,7 +158,15 @@ runSession env = go
           saveStash s'
           return $ Just "draft stashed"
     cmdHome = do
-      return $ Just "Home is the TUI launch screen (run: trha tui)"
+      cwd <- getCurrentDirectory
+      sessions <- listLocalSessionsIn cwd
+      return . Just $ case sessions of
+        [] -> tr lang "No local sessions in this project yet (send a message to start one; /resume lists all projects)."
+        _  -> T.unlines $
+          tr lang "Recent sessions in this project (resume with /resume <id>):"
+            : [ "  " <> T.pack (ssId s) <> "  " <> ssTitle s
+                  <> "  (" <> T.pack (show (ssTurns s)) <> " turns)"
+              | s <- take 8 sessions ]
     cmdRename title = do
       msid <- readIORef sessionRef
       case msid of
@@ -248,12 +256,12 @@ runSession env = go
           fs <- listDirectory dir
           mapM_ (removeFile . (dir </>)) fs
           return $ Just $ tr lang "Cleared " <> T.pack (show (length fs)) <> tr lang " attachments."
-    cmdCompact _focus = do
+    cmdCompact focus = do
       cur <- readIORef sessionRef
       case cur of
         Nothing -> return $ Just (tr lang "No active session.")
         Just sid -> do
-          r <- compactSession bridge sid
+          r <- compactSession bridge sid (T.strip focus)
           return $ Just $ case r of
             Left e -> tr lang "Error: " <> T.pack (show e)
             Right (trigger, saved) ->

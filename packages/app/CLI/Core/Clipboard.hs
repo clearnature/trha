@@ -10,6 +10,7 @@
 module Core.Clipboard
   ( saveClipboardImage
   , readClipboardText
+  , copyToClipboard
   ) where
 
 import Control.Exception (IOException, catch, try)
@@ -41,6 +42,27 @@ readClipboardText = go
         Right (ExitSuccess, out, _)
           | not (T.null (T.strip (T.pack out))) -> pure (Just (T.pack out))
         _ -> go cs
+
+-- | 把**文本**写进系统剪贴板；没有 helper 时返回 'False'。
+--
+-- 与读取共用同一族 helper（wl-copy/xclip/xsel/pbcopy）。REPL 与 TUI 的
+-- @/copy@ 共用这一份实现（原本只在 UI.Brick.Selection，搬来 Core 让
+-- 非 brick 路径也能用）。
+copyToClipboard :: Text -> IO Bool
+copyToClipboard txt = go
+  [ ("wl-copy", [])
+  , ("xclip", ["-selection", "clipboard"])
+  , ("xsel", ["--clipboard", "--input"])
+  , ("pbcopy", [])
+  ]
+  where
+    go [] = return False
+    go ((cmd, args) : rest) = do
+      r <- try (readProcessWithExitCode cmd args (T.unpack txt))
+             :: IO (Either IOException (ExitCode, String, String))
+      case r of
+        Right (ExitSuccess, _, _) -> return True
+        _ -> go rest
 
 -- | Save the clipboard image and return its path, or 'Nothing'.
 saveClipboardImage :: IO (Maybe FilePath)

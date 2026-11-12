@@ -96,6 +96,7 @@ test-suite trha-cli-test
     UI.Commands.Config
     UI.Commands.Model
     UI.Commands.Tools
+    UI.Commands.HandlerCoverageSpec
     UI.InputHistory
     UI.InputHistorySpec
     UI.Dialog

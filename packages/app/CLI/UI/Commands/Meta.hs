@@ -23,7 +23,7 @@ import Bridge.Scheduler (fetchServiceStatus, listProviders, listSessions, probeP
 import Config.Settings (resolveConfig)
 import Core.Types (CLIConfig(..), ProviderInfo(..), defaultCLIConfig)
 import UI.Commands.Env (CmdEnv(..))
-import UI.Commands.Registry (Command(..), registryHelp)
+import UI.Commands.Registry (Command(..), Surface(..), registryHelp)
 import UI.Commands.Tools (gitCount, readProviderKey)
 import UI.I18n (Lang(..), langName, tr)
 
@@ -49,7 +49,7 @@ runMeta env = go
     go _ = Nothing
 
     -- 每个函数实现一个命令，共享外层的 lang / bridge / sessionRef / modelRef。
-    cmdHelp = pure (Just (registryHelp lang))
+    cmdHelp = pure (Just (registryHelp SRepl lang))
     cmdQuit = pure Nothing
     cmdStopRequest = pure (Just (tr lang "This stops the kernel and scheduler and exits. Type /stop confirm to proceed."))
     cmdStopConfirmed = pure Nothing

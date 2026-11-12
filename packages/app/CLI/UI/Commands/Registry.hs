@@ -22,6 +22,7 @@ module UI.Commands.Registry
   , settingKeyDocs
     -- * Registry
   , SlashCommand(..)
+  , Surface(..)
   , slashRegistry
   , CommandGroup(..)
   , commandGroups
@@ -45,7 +46,7 @@ import Data.List (sortOn)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Core.Types (CLIConfig(..), defaultCLIConfig)
-import UI.Commands.Registry.Table (SlashCommand(..), slashRegistry)
+import UI.Commands.Registry.Table (SlashCommand(..), Surface(..), slashRegistry)
 import UI.Commands.Registry.Types
   ( Command(..), CommandGroup(..), commandGroups, groupKey, groupMembers
   , groupOf, groupTitle )
@@ -56,12 +57,13 @@ import UI.Commands.Registry.Settings
 import UI.I18n (Lang(..), tr)
 import UI.Render.Picker (PickerItem(..))
 
--- | Parsed REPL/TUI command.
+-- | Parsed REPL/TUI command.  TUI 面：只列在 TUI 上真实现的命令。
 pickerItems :: Lang -> [PickerItem]
 pickerItems lang =
   [ PickerItem (scCommand sc) (scCommand sc) (tr lang (scDesc sc))
   | sc <- slashRegistry
   , scPicker sc
+  , STui `elem` scSurfaces sc
   ]
 
 -- | Picker items grouped by function, in display order; empty groups are
@@ -71,13 +73,16 @@ pickerItemsGrouped lang =
   [ (g, sortOn (T.toLower . piId) items)
   | g <- commandGroups
   , let items = [ PickerItem (scCommand sc) (scCommand sc) (tr lang (scDesc sc))
-                | sc <- slashRegistry, scPicker sc, groupOf (scCommand sc) == g ]
+                | sc <- slashRegistry, scPicker sc, STui `elem` scSurfaces sc
+                , groupOf (scCommand sc) == g ]
   , not (null items)
   ]
 
--- | Tab-completion candidates (canonical command names).
+-- | Tab-completion candidates (canonical command names).  REPL 面：只补全
+-- 在 REPL 上真实现的命令。
 completions :: [Text]
-completions = map scCommand slashRegistry
+completions =
+  [ scCommand sc | sc <- slashRegistry, SRepl `elem` scSurfaces sc ]
 
 -- | True when the leading word names a registered command (parameterised
 -- commands match both bare and parameterised forms).
@@ -88,15 +93,18 @@ isKnownCommand input =
       any ((== w) . scCommand) slashRegistry
     _ -> False
 
--- | Help text generated from the registry, rendered in the active
--- language (descriptions are translated; command names never are).
-registryHelp :: Lang -> Text
-registryHelp lang = T.unlines $
+-- | Help text generated from the registry, rendered for the given surface
+-- (只列该表面真实现的命令) and language (descriptions are translated;
+-- command names never are).
+registryHelp :: Surface -> Lang -> Text
+registryHelp surface lang = T.unlines $
   (tr lang "Commands:" : concatMap section commandGroups)
   ++ [""] ++ keySection
   where
+    onSurface sc = surface `elem` scSurfaces sc
+    listed = [ sc | sc <- slashRegistry, onSurface sc ]
     maxLen = maximum (map (T.length . scCommand) slashRegistry)
-    section g = case sortOn scCommand [ sc | sc <- slashRegistry, groupOf (scCommand sc) == g ] of
+    section g = case sortOn scCommand [ sc | sc <- listed, groupOf (scCommand sc) == g ] of
       []   -> []
       scs  -> ("  " <> groupTitle lang g) : map (helpLine lang) scs
     helpLine l sc =
@@ -114,7 +122,7 @@ registryHelp lang = T.unlines $
 -- | Canonical setting keys (the fields of CLIConfig a user may persist).
 helpTextFor :: Lang -> Text
 helpTextFor lang = T.unlines $
-  T.lines (registryHelp lang)
+  T.lines (registryHelp STui lang)
     ++ [ ""
        , tr lang "Quick picker:"
        , tr lang "  Type a slash prefix and press Enter to open the command menu;"

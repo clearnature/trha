@@ -100,8 +100,11 @@ runConfig env = go
             Right m  -> tr lang "Mode: " <> smLabel m
             Left e   -> T.pack (show e)
 
+    -- REPL 逐条打印最终答复，没有工具过程输出可折叠；/verbose 的真实
+    -- 作用面是 TUI 的转录视图（已标 scSurfaces = [STui]）。手动敲进来时
+    -- 如实说明，而不是假装切换了。
     go Verbose = Just $
-      return $ Just "Verbose is available in the TUI (/verbose)"
+      return $ Just "Verbose folds tool output in the TUI transcript; the REPL prints final answers only, so there is nothing to toggle here."
 
     go ShowSettings = Just $ runSettingsCommand lang ""
 
@@ -180,8 +183,24 @@ runConfig env = go
             Just v | v `elem` ["on", "1", "true", "enforce"] -> "on"
             _ -> "off"
       let label = if state == "on" then "enabled" else "disabled"
-      return $ Just ("SandBox: " <> label
-        <> " (TUI: /sandbox opens the panel; the scheduler reads TRHA_SANDBOX)")
+      -- 文本化沙箱面板（TUI DialogSandbox 的信息对齐版）：env 开关 +
+      -- 当前会话权限 posture + 指向更细的控制入口。
+      posture <- do
+        msid <- readIORef sessionRef
+        case msid of
+          Nothing -> pure (tr lang "Session posture: (no active session; /new first)")
+          Just sid -> do
+            r <- fetchSessionMode bridge sid
+            pure $ case r of
+              Right m  -> tr lang "Session posture: " <> smLabel m
+                          <> tr lang " (change with /mode)"
+              Left err -> tr lang "Session posture: unavailable ("
+                          <> T.pack (show err) <> ")"
+      return $ Just $ T.unlines
+        [ "SandBox: " <> label <> " (TRHA_SANDBOX=" <> maybe "unset" (T.strip . T.pack) enabled <> ")"
+        , posture
+        , tr lang "Fine-grained rules: /permissions · settings: /settings sandbox …"
+        ]
 
     go (SetLanguage Nothing) = Just $
       return $ Just $ tr lang "Current language: " <> langName lang

@@ -372,9 +372,12 @@ retrySession bridge sid = do
 -- | Compact a session's history through the scheduler's context governor.
 
 -- | Compact a session's history through the scheduler's context governor.
-compactSession :: SchedulerBridge -> SessionId -> IO (Either CLIError (Text, Int))
-compactSession bridge sid = do
-  r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/compact") (object [])
+-- @focus@ 会被服务端记录进 lastMaintenance 并在响应里回显（语义应用
+-- 见 commands-completion-plan T9b；当前压缩策略本身不消费 focus）。
+compactSession :: SchedulerBridge -> SessionId -> Text -> IO (Either CLIError (Text, Int))
+compactSession bridge sid focus = do
+  r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/compact")
+         (object ["focus" .= focus])
   pure $ case r of
     Left e  -> Left e
     Right v -> case parseMaybe (.: "savedTokens") v of

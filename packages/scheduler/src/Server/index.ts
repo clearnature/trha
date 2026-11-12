@@ -278,7 +278,7 @@ interface SchedulerSession {
   reasoningTokens?: number;
   /** How many times context maintenance rewrote the prefix (each one is a cache miss). */
   prefixResets?: number;
-  lastMaintenance?: { trigger: string; savedTokens: number } | null;
+  lastMaintenance?: { trigger: string; savedTokens: number; focus?: string } | null;
   /** Standard-tool state (ported from dsh's standard preset). */
   todos?: Todo[];
   goal?: Goal | null;
@@ -2506,15 +2506,25 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   app.post('/api/session/:id/compact', async (req, res) => {
     const session = sessions.get(req.params.id);
     if (!session) return res.status(404).json({ error: 'no session' });
+    // focus 是调用方的关注点提示：本端点先把它记录进 lastMaintenance 并在
+    // 响应里回显（管道贯通）；压缩策略本身消费 focus 属 T9b 设计任务
+    // （docs/plans/commands-completion-plan.md §3 M3）。
+    const focus = typeof req.body?.focus === 'string' ? req.body.focus.trim() : '';
     const governed = govern(session.messages, session.lastPromptTokens ?? 0, governanceConfig());
     session.messages = governed.messages;
-    session.lastMaintenance = { trigger: governed.trigger, savedTokens: governed.savedTokens };
+    session.lastMaintenance = {
+      trigger: governed.trigger, savedTokens: governed.savedTokens,
+      ...(focus ? { focus } : {}),
+    };
     await persistSession(session);
     events.emit('agent:context', {
       sessionId: session.id, trigger: governed.trigger,
       savedTokens: governed.savedTokens, prefixChanged: governed.prefixChanged,
     });
-    res.json({ trigger: governed.trigger, savedTokens: governed.savedTokens });
+    res.json({
+      trigger: governed.trigger, savedTokens: governed.savedTokens,
+      ...(focus ? { focus } : {}),
+    });
   });
 
   app.post('/api/session/:id/mode', (req, res) => {

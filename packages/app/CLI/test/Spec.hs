@@ -21,6 +21,7 @@ import qualified Core.TypesSpec
 import qualified Core.SessionSummarySpec
 import qualified UI.Commands.RegistrySpec
 import qualified UI.I18nSpec
+import qualified UI.Commands.HandlerCoverageSpec
 import qualified UI.CommandsSpec
 import qualified UI.Render.FooterSpec
 import qualified UI.Render.MarkdownSpec
@@ -85,6 +86,7 @@ testSuite = do
   Core.TypesSpec.spec
   Core.SessionSummarySpec.spec
   UI.Commands.RegistrySpec.spec
+  UI.Commands.HandlerCoverageSpec.spec
   UI.I18nSpec.spec
   UI.CommandsSpec.spec
   UI.Render.FooterSpec.spec

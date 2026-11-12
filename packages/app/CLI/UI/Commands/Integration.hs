@@ -161,11 +161,18 @@ runIntegration env = go
           n <- forgetText (T.strip text)
           return $ Just $ tr lang "Forgot " <> T.pack (show n) <> tr lang " note line(s)."
 
-    -- | @/reload-plugins@：重扫用户命令；scheduler 的插件目录本来就有 watcher。
+    -- | @/reload-plugins@：重扫用户命令，并与 scheduler 侧对账（插件目录
+    -- 有 watcher 热重载，见 scheduler index.ts hotReload 默认开启）——
+    -- 两侧各自报数，不一致即可当场发现。
     cmdReloadPlugins = do
       cmds <- loadCustomCommands
+      side <- listPlugins bridge
+      let schedulerCount = case side of
+            Right ps -> T.pack (show (length ps))
+            Left _   -> "?"
       return $ Just $ tr lang "Reloaded user commands: " <> T.pack (show (length cmds))
-                       <> tr lang " (scheduler plugins hot-reload automatically)"
+                       <> tr lang "; scheduler plugins: " <> schedulerCount
+                       <> tr lang " (hot-reload watcher on)"
 
     -- | @/init@：项目里没有 AGENTS.md 时写一份骨架；已有就不动它。
     cmdInitProject = do
