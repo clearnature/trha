@@ -37,8 +37,8 @@ handleToolsSlash cx
   -- /stats：复用设置面板现成的 TabStats 图形页（批次三 R1），不再打印文本表。
   | cmd == "/stats" = Just $ openSettingsPanelOn TabStats
   | cmd == "/diff" = Just $ do
+      -- 本地 git 同步执行（瞬时完成），不设 Running 状态栏：完成后无处复位。
       st <- get
-      modify $ \s -> s { appStatus = tr (appLang s) "Running /diff…" }
       t <- liftIO now
       cwd <- liftIO getCurrentDirectory
       (code, out, err) <- liftIO $ readCreateProcessWithExitCode

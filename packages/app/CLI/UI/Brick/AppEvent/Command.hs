@@ -19,6 +19,7 @@ import Control.Monad.IO.Class (liftIO)
 import UI.Brick.MessageOps (appendMsg, now)
 import UI.Dialog (Dialog(..), stackPush)
 import UI.Event
+import UI.I18n (tr)
 import UI.State
 
 handleCommandEvent :: AppEvent -> Maybe (EventM ResourceName AppState ())
@@ -27,11 +28,13 @@ handleCommandEvent (EvCommandDone mout msid) = Just $ do
   case mout of
     Just msg -> appendMsg (mkMsg "system" msg t)
     Nothing  -> pure ()
-  -- 与同步路径一致：写回（可能被 /new 改写的）会话 id 并清空命令缓存。
+  -- 与同步路径一致：写回（可能被 /new 改写的）会话 id 并清空命令缓存；
+  -- 同时复位异步兜底设置的「Running …」状态栏。
   modify $ \s -> s { appSessionId = msid
                    , appCacheNow = Nothing
                    , appCacheSum = (0, 0)
-                   , appCacheTurns = 0 }
+                   , appCacheTurns = 0
+                   , appStatus = tr (appLang s) "Ready" }
 handleCommandEvent (EvShowPick title items act) = Just $
   -- 动作随对话框走（不再经 AppState 槽位）：两个选择器并存也互不覆盖。
   modify $ \s -> s { appDialogs = stackPush (DialogPick title items act 0) (appDialogs s) }

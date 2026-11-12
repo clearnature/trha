@@ -33,7 +33,7 @@ import qualified Data.Text.Encoding.Error as TEE
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import UI.Commands.Registry
     ( Command(..), parseCommandWith, pickerItems, pickerItemsGrouped
-    , groupKey, groupTitle, helpTextFor, registryHelp )
+    , groupKey, groupTitle, helpTextFor, registryHelp, isKnownCommand )
 import UI.SettingsView (SettingsEntry(..), settingsEntries, filterEntries, isOverridden, maskSecret)
 import UI.Render.ToolCard (ToolFold(..))
 import UI.State
@@ -261,6 +261,12 @@ handleChatEnter st
            -- the list only writes this trigger (see 'selectSkill').
            Just (name, args) | any ((== name) . skName) (appSkills st) ->
              when (not (appBusy st)) (submitSkill name args)
+           -- 首词精确命中注册表 = 无歧义命令：Enter 直接执行，绝不落到
+           -- palette 的候选选中（filterBy 是 desc 的 infix 匹配，/loop 的
+           -- 用法示例含 "stop" 时 /stop 会让 /loop 也进候选并按序被误跑）。
+           -- brick 的 FilterList 注释言明 exact dispatch 由调用方负责。
+           _ | isKnownCommand input && not (appBusy st) ->
+             commitEditor input >> handleSubmit input
            _ -> case appPalette st of
              -- The inline command palette owns Enter while it has a match.
              Just d | not (null (dialogCommandsItems d)) -> runPaletteItem

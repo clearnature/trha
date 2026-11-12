@@ -30,7 +30,8 @@ import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Encoding.Error as TEE
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import UI.Commands.Registry
-    ( Command(..), parseCommandWith, pickerItems, pickerItemsGrouped
+    ( Command(..)
+    , isKnownCommand, parseCommandWith, pickerItems, pickerItemsGrouped
     , groupKey, groupTitle, helpTextFor, registryHelp )
 import UI.SettingsView (SettingsEntry(..), settingsEntries, filterEntries, isOverridden, maskSecret)
 import UI.Render.Picker (filterItems)
@@ -154,11 +155,16 @@ handleSubmit rawInput = do
     Just cmd -> runShellCommand cmd
     Nothing ->
       if "/" `T.isPrefixOf` input
-        then case filterItems input (allPickerItems st) of
-          []  -> handleSlash input
-          [_] -> handleSlash input
-          _   -> modify $ \s -> s { appDialogs =
-                   stackPush (DialogCommands (allPickerItems st) input 0) (appDialogs s) }
+        then -- 首词精确命中注册表 = 无歧义命令，直接执行（filterItems 的 infix
+             -- 匹配会把 desc 里的字样也算候选，如 /loop 的用法示例含 "stop"，
+             -- 让精确的 /stop 被误判歧义而弹模态、甚至按字母序误执行 /loop）。
+             if isKnownCommand input
+               then handleSlash input
+               else case filterItems input (allPickerItems st) of
+                 []  -> handleSlash input
+                 [_] -> handleSlash input
+                 _   -> modify $ \s -> s { appDialogs =
+                          stackPush (DialogCommands (allPickerItems st) input 0) (appDialogs s) }
         else handleChat input
 
 -- | 粘贴折叠的纯逻辑（判定、占位符、展开）在 UI.PasteFold 里，可单测。
