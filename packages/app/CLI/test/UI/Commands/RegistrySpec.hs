@@ -48,6 +48,13 @@ spec = do
     -- 一致性不变量：注册表是「命令存在」的唯一真相，那么每条注册命令都必须
     -- 能被 parseCommand 认出来。落到 Unknown 就说明「声明了却没接线」——
     -- 用户会在 TUI 里看到命令存在、执行却得到未识别。
+    it "commandArgs 参数表：键都是注册命令且参数词合法（小写词）" $ do
+      mapM_ (\(cmd, args) -> do
+               isKnownCommand cmd `shouldBe` True
+               mapM_ (\(k, _d) ->
+                 T.all (\ch -> ch `elem` ['a'..'z'] || ch == '-' || ch `elem` ['0'..'9']) k
+                   `shouldBe` True) args)
+            commandArgs
     it "/stop parses to StopRequest (tmux 实测曾派发成 Loop——回归钉)" $ do
       parseCommand "/stop" `shouldBe` StopRequest
       parseCommand "/stop confirm" `shouldBe` StopConfirmed

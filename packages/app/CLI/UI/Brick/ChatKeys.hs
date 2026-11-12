@@ -265,7 +265,10 @@ handleChatEnter st
            -- palette 的候选选中（filterBy 是 desc 的 infix 匹配，/loop 的
            -- 用法示例含 "stop" 时 /stop 会让 /loop 也进候选并按序被误跑）。
            -- brick 的 FilterList 注释言明 exact dispatch 由调用方负责。
-           _ | isKnownCommand input && not (appBusy st) ->
+           -- 单 token 精确命中才短路（带空格时 palette 显示的是参数候选，
+           -- Enter 应执行选中项而非把半个参数当命令提交）。
+           _ | isKnownCommand input && not (appBusy st)
+               && not (T.any (== ' ') input) ->
              commitEditor input >> handleSubmit input
            _ -> case appPalette st of
              -- The inline command palette owns Enter while it has a match.

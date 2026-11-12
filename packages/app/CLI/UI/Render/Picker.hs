@@ -7,6 +7,9 @@ module UI.Render.Picker
   ( -- * Items
     PickerItem(..)
     -- * Filtering
+  , MatchTier(..)
+  , matchTier
+  , rankByQuery
   , filterItems
   , buildPalette
   , sectionItem
@@ -86,3 +89,45 @@ queryAppend :: Text -> Char -> Text
 queryAppend = FL.queryAppend
 queryDelete :: Text -> Text
 queryDelete = FL.queryDelete
+
+-- ---------------------------------------------------------------------------
+-- 匹配强度分级与排序（批次四，对标 qwen 的 completion 排序：
+-- EXACT > PREFIX > 其余 infix 命中，frecency 与名字作次级键）
+-- ---------------------------------------------------------------------------
+
+-- | 匹配强度档位：越小越强。
+--
+-- 查询与候选 id 都先去掉首字符 @/@ 并转小写再比较。
+data MatchTier = MExact | MPrefix | MInfix
+  deriving (Show, Eq, Ord)
+
+-- | 候选 id 对查询的匹配档位（调用方已用 infix 过滤，命中者至少是 'MInfix'）。
+matchTier :: Text -> PickerItem -> Int
+matchTier q it
+  | key == q  = 0
+  | q `T.isPrefixOf` key = 1
+  | otherwise = 2
+  where
+    key = T.toLower (T.drop 1 (piId it))
+
+-- | 按 匹配档位 → frecency 次数（降序）→ 名字 排序。
+--
+-- @frec@ 给出命令的使用次数（缺省 0）。空查询全部归 'MInfix' 档，
+-- 等效于纯 frecency 排序。
+-- @q@ 是调用方已去掉斜杠的查询文本（与 Palette.hs 的 query 约定一致）。
+rankByQuery :: Text -> (Text -> Int) -> [PickerItem] -> [PickerItem]
+rankByQuery q frec items
+  -- 空查询：全部候选按 frecency 降序。
+  | T.null ql = sortOn (negate . frec . piId) items
+  -- 非空：infix 过滤（id 或 desc）后按 匹配档位 → frecency → 名字 排序；
+  -- 未命中的候选被丢弃。
+  | otherwise = map (\(_, _, _, it) -> it) $
+      sortOn (\(t, c, n, _) -> (t, c, n))
+        [ (matchTier ql it, negate (frec (piId it)), key it, it)
+        | it <- items, matches it ]
+  where
+    ql = T.toLower (T.strip q)
+    key it = T.toLower (T.drop 1 (piId it))
+    matches it =
+      ql `T.isInfixOf` key it
+        || (not (T.null (piDesc it)) && ql `T.isInfixOf` T.toLower (piDesc it))

@@ -18,7 +18,9 @@ import Brick.BChan (writeBChan)
 import Control.Concurrent.Async (async)
 import Control.Monad (void)
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (Value)
+import Data.Aeson (Value(..))
+import qualified Data.Aeson.KeyMap as KM
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -85,7 +87,15 @@ openSettingsPanelOn tab = do
 modeAction :: Value -> EventM ResourceName AppState ()
 modeAction body = do
   st <- get
+  -- body 形如 {"action":"cycle"} 或 {"action":"set","mode":"<posture>"}。
+  let kv = case body of Object o -> o; _ -> KM.empty
+      str k = case KM.lookup k kv of Just (String t) -> Just t; _ -> Nothing
+      action = fromMaybe "cycle" (str "action")
+      asked  = str "mode"
+      known = ["read-only", "ask", "auto", "yolo", "plan"] :: [Text]
   case appSessionId st of
+    -- 无会话：set 直接写本地姿态（不再无视 body 硬编码 cycle——批次三
+    -- 「/mode read-only 被吞成 Ask」的根因就在这个分支）。
     Nothing -> do
       let cur = maybe "read-only" smMode (appMode st)
           nextOf m = case m of
@@ -94,7 +104,9 @@ modeAction body = do
             "auto"      -> "yolo"
             "yolo"      -> "plan"
             _           -> "read-only"
-          nxt = nextOf cur
+          nxt = case (action, asked) of
+            ("set", Just m) | m `elem` known -> m
+            _ -> nextOf cur
           mode' = if nxt == "plan" then "ask" else nxt
           label = case nxt of
             "read-only" -> "Read only"
@@ -104,7 +116,7 @@ modeAction body = do
             _           -> "Plan"
       modify $ \s -> s
         { appMode = Just (SessionMode mode' label (nxt == "plan") Nothing)
-        , appStatus = tr (appLang s) "Mode switched" }
+        , appStatus = tr (appLang s) ("Mode: " <> mode') }
     Just sid -> do
       let bridge = appBridge st
           chan = appChan st

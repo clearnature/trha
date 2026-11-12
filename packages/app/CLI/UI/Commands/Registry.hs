@@ -24,6 +24,7 @@ module UI.Commands.Registry
   , SlashCommand(..)
   , Surface(..)
   , slashRegistry
+  , commandArgs
   , CommandGroup(..)
   , commandGroups
   , groupKey
@@ -46,7 +47,7 @@ import Data.List (sortOn)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Core.Types (CLIConfig(..), defaultCLIConfig)
-import UI.Commands.Registry.Table (SlashCommand(..), Surface(..), slashRegistry)
+import UI.Commands.Registry.Table (SlashCommand(..), Surface(..), slashRegistry, commandArgs)
 import UI.Commands.Registry.Types
   ( Command(..), CommandGroup(..), commandGroups, groupKey, groupMembers
   , groupOf, groupTitle )

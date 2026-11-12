@@ -11,6 +11,7 @@ module UI.Commands.Registry.Table
   ( Surface(..)
   , SlashCommand(..)
   , slashRegistry
+  , commandArgs
   ) where
 
 import Data.Text (Text)
@@ -158,4 +159,25 @@ slashRegistry =
   , SlashCommand "/forget"   True  True  "Delete remembered notes matching the text (usage: /forget <text>)" bothSurfaces Forget
   , SlashCommand "/ctx"      True  False "Show or set the context window size (usage: /ctx [tokens])" bothSurfaces SetCtx
   , SlashCommand "/effort"   True  False "Show or set the reasoning effort level (usage: /effort [level])" bothSurfaces Effort
+  ]
+
+-- | 参数候选表（批次四）：首词精确命中的命令在 palette 里给出参数补全。
+-- 只收「静态可枚举」的参数——动态候选（会话 id、模型名）不在此列。
+-- 键 = 命令名（含斜杠），值 = (参数词, 说明)。
+commandArgs :: [(Text, [(Text, Text)])]
+commandArgs =
+  [ ("/export",  [ ("json", "JSON 格式"), ("md", "Markdown 格式") ])
+  , ("/stash",   [ ("pop", "恢复最近草稿"), ("list", "列出暂存草稿") ])
+  , ("/currency",[ ("set", "设置汇率（set CODE RATE）"), ("base", "基准币种（base CODE）") ])
+  , ("/mode",    [ ("read-only", "只读"), ("ask", "询问"), ("auto", "自动")
+                 , ("yolo", "YOLO"), ("plan", "计划") ])
+  , ("/language",[ ("zh", "中文"), ("en", "English"), ("th", "ไทย") ])
+  , ("/effort",  [ ("auto", "自动"), ("low", "低"), ("medium", "中"), ("high", "高") ])
+  , ("/output-style", [ ("default", "默认"), ("concise", "简洁"), ("detailed", "详细") ])
+  , ("/reasoning-language", [ ("auto", "自动"), ("zh-hans", "简体中文")
+                            , ("zh-hant", "繁體中文"), ("en", "English")
+                            , ("fr", "Français"), ("es", "Español"), ("ru", "Русский")
+                            , ("th", "ไทย"), ("my", "မြန်မာ"), ("bo", "བོད་སྐད་"), ("ii", "ꆈꌠ") ])
+  , ("/loop",    [ ("30s", "30 秒循环"), ("5m", "5 分钟循环")
+                 , ("1h", "1 小时循环"), ("stop", "停止循环") ])
   ]

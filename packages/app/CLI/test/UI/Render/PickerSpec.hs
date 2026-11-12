@@ -19,6 +19,20 @@ items =
 
 spec :: Spec
 spec = do
+  describe "UI.Render.Picker 排序分级（批次四）" $ do
+    let it1 = PickerItem "/stop" "/stop" "Stop the kernel and scheduler"
+        it2 = PickerItem "/loop" "/loop" "Run a prompt on an interval (usage: /loop … stop)"
+        it3 = PickerItem "/stats" "/stats" "Show transcript statistics"
+        frec nm = case nm of "/loop" -> 20 :: Int; _ -> 0
+    it "exact 命中排第一；无关联候选（desc/id 都不匹配）被滤掉" $ do
+      let ranked = rankByQuery "stop" frec [it2, it1, it3]
+      map piId ranked `shouldBe` ["/stop", "/loop"]  -- /stats 与 "stop" 无匹配 → 滤掉
+    it "前缀命中次之：/s 的查询按 exact 缺席 → 前缀序" $ do
+      let ranked = rankByQuery "s" frec [it2, it1, it3]
+      map piId ranked `shouldBe` ["/stats", "/stop", "/loop"]
+    it "无匹配强度的候选被滤掉" $ do
+      null (rankByQuery "zzz" frec [it1, it2]) `shouldBe` True
+
   describe "buildPalette" $ do
     let skills =
           [ PickerItem "/skill:zeta" "zeta" "skill"

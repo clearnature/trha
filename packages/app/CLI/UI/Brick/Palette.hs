@@ -35,7 +35,7 @@ import qualified Data.Text.Encoding.Error as TEE
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
 import UI.Commands.Registry
     ( Command(..), parseCommandWith, pickerItems, pickerItemsGrouped
-    , groupKey, groupTitle, helpTextFor, registryHelp )
+    , groupKey, groupTitle, helpTextFor, registryHelp, commandArgs )
 import UI.SettingsView (SettingsEntry(..), settingsEntries, filterEntries, isOverridden, maskSecret)
 import UI.State
 import UI.StatusInfo (StatusRow(..), collectStatusInfo)
@@ -102,7 +102,8 @@ import UI.Stash (Stash(..), emptyStash, stashPush, stashPop, stashEntries, loadS
 import UI.Frecency (Frecency(..), emptyFrecency, recordUse, rankItems, loadFrecency, saveFrecency)
 import UI.ModelPrefs (ModelPrefs(..), emptyModelPrefs, toggleFavorite, recordRecent, orderedModels, loadModelPrefs, saveModelPrefs)
 import UI.InputHistory (HistState(..), emptyHistState, histUp, histDown, histCommit, loadHistory, appendHistory)
-import UI.Render.Picker (PickerItem(..), filterItems, maxVisible, moveSelection, queryAppend, queryDelete, windowRange, buildPalette, isSection, firstSelectable)
+import UI.Render.Picker (PickerItem(..), filterItems, maxVisible, moveSelection, queryAppend, queryDelete, windowRange, buildPalette, isSection, firstSelectable, rankByQuery)
+import Data.Maybe (fromMaybe)
 import UI.ProviderPresets (Preset(..), presets, prePopular)
 import UI.Render.ToolCard (ToolStatus(..), ToolCard(..), ToolFold(..), toggleFold, toolCardWithStatus, toolStatusLine, cardWidth)
 
@@ -160,17 +161,39 @@ refreshPalette = do
       single = not (T.any (== '\n') text)
       tokenOpen = not (T.any (== ' ') text)
       query = T.drop 1 text
+      frec nm = fromMaybe 0 (Map.lookup nm (frecCounts (appFrecency st)))
+      -- 参数候选（批次四 B）：「精确命令 + 空格」→ commandArgs 静态表；
+      -- 已敲参数前缀时按前缀收窄。Nothing = 关闭面板（自由文本参数阶段）。
+      argItems = case T.words (T.strip text) of
+        [w] | " " `T.isSuffixOf` text, "/" `T.isPrefixOf` w ->
+              fmap (\args -> [ PickerItem (w <> " " <> k) (w <> " " <> k) d
+                              | (k, d) <- args ])
+                   (lookup w commandArgs)
+        [w, p] | "/" `T.isPrefixOf` w, not (T.null p) ->
+              fmap (\args -> [ PickerItem (w <> " " <> k) (w <> " " <> k) d
+                              | (k, d) <- args, p `T.isPrefixOf` k ])
+                   (lookup w commandArgs)
+        _ -> Nothing
   modify $ \s ->
     if "/" `T.isPrefixOf` text && single && tokenOpen
       then s { appPalette =
              let items = paletteItemsFor s
+                 all0 = filterItems text items
+                 -- 批次四 A：匹配强度分级排序（exact > prefix > 其余 infix），
+                 -- frecency 作次级键。存排序后的全量列表，DialogCommands 的
+                 -- query 再过滤时保持该顺序。
+                 ranked = rankByQuery query frec all0
                  -- 选中索引必须相对于*过滤后*的列表：'dialogCommandsItems'
                  -- 每次都用 query 重新过滤，若这里按全量列表算，过滤到只剩
                  -- 一项时索引会越界，回车便落到 'runPaletteItem' 的空分支上，
                  -- 表现为「输入 /about 回车毫无反应」。
-             in Just (DialogCommands items query
-                        (dialogCommandsInitialSel items query)) }
-      else s { appPalette = Nothing }
+             in Just (DialogCommands ranked query
+                        (dialogCommandsInitialSel ranked query)) }
+    else if "/" `T.isPrefixOf` text && single
+      then case argItems of
+        Just items -> s { appPalette = Just (DialogCommands items (T.stripEnd text) 0) }
+        Nothing    -> s { appPalette = Nothing }
+    else s { appPalette = Nothing }
 
 -- | Move the palette selection (clamped by the shared dialog state machine).
 movePalette :: Int -> EventM ResourceName AppState ()
