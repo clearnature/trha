@@ -225,6 +225,17 @@ dialogRows st d = case d of
       else [ dialogRow idx sel (str (T.unpack (todoSubject it)))
                         (str (show (todoStatus it)))
            | (idx, it) <- zip [start ..] (drop start (take (end + 1) ts)) ]
+  DialogPermissions rules sel' ->
+    if null rules
+      then [ padLeftRight 1 $ withAttr (attrName "timestamp") $
+               str " no permission rules" ]
+      else [ dialogRow idx sel' (str (T.unpack r)) (str "")
+           | (idx, r) <- zip [s0 ..] (take (e0 + 1) (drop s0 rules')) ]
+       ++ [ padLeftRight 1 $ withAttr (attrName "timestamp") $
+              str "enter cycle kind · d delete · esc close" ]
+    where
+      rules' = map (\(k, p) -> k <> "  " <> p) rules
+      (s0, e0) = windowRange (length rules) sel' 30
   DialogPick title items _ sel' ->
     let (s0, e0) = windowRange (length items) sel' 30
     in [ padLeftRight 1 $ withAttr (attrName "title") $ str (T.unpack title) ]
@@ -279,6 +290,7 @@ drawDialog st d =
       DialogSandbox{}   -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
       DialogPick{}      -> hintRow "↑/↓ · Tab move · Enter choose · Esc close"
       DialogTodos{}     -> hintRow "↑/↓ · Tab move · Esc close"
+      DialogPermissions{} -> hintRow "↑/↓ · Enter cycle kind · d delete · Esc close"
       _ -> emptyWidget
     hintRow t = padLeftRight 1 $ withAttr (attrName "status") $ str (T.unpack (tr lang t))
     -- 可过滤的列表：查询行 + 提示（输入即过滤，回车打开）。

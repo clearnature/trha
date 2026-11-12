@@ -137,6 +137,7 @@ data AppEvent
   | EvCommandDone (Maybe Text) (Maybe String)  -- ^ async slash-command fallback: output + resulting session id
   | EvShowPick Text [(Int, Text)] PickAction     -- ^ open the generic numbered picker (title, items, action)
   | EvEffort Text                              -- ^ set the reasoning effort (from the /effort picker)
+  | EvPermissionsRules (Either CLIError [(Text, Text)]) -- ^ /permissions dialog data or PUT result (kind, pattern) pairs
   | EvBalance (Either CLIError Balance)         -- ^ provider account balance
   | EvSandboxConfig (Either CLIError Bool)       -- ^ scheduler's effective sandbox switch
   | EvTick                                        -- ^ 每秒一次：刷新时钟与耗时显示

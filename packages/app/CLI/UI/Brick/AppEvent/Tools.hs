@@ -34,10 +34,13 @@ import UI.Commands.Registry
     ( Command(..), parseCommandWith, pickerItems, pickerItemsGrouped
     , groupKey, groupTitle, helpTextFor, registryHelp )
 import UI.SettingsView (SettingsEntry(..), settingsEntries, filterEntries, isOverridden, maskSecret)
-import UI.State
+import UI.Dialog.Stack (stackPush, stackTop, stackPop)
 import UI.StatusInfo (StatusRow(..), collectStatusInfo)
+import UI.Dialog (Dialog(..))
 import UI.StatsView (StatsBlock(..), buildStatsBlocks)
 import UI.I18n (Lang(..), langName, parseLang, tr)
+import UI.State
+import UI.Brick.Toast (showToast)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -116,6 +119,19 @@ import UI.Frecency (Frecency(..), emptyFrecency, recordUse, rankItems, loadFrece
 
 -- | 认领 EvTool / EvToggleToolFold。
 handleToolEvent :: AppEvent -> Maybe (EventM ResourceName AppState ())
+handleToolEvent (EvPermissionsRules (Right rules)) = Just $ do
+  -- /permissions 对话框开着就原地更新规则；没开（用户已关）就不打扰。
+  s <- get
+  case stackTop (appDialogs s) of
+    Just (DialogPermissions _ sel) ->
+      modify $ \s2 -> s2 { appDialogs =
+        stackPush (DialogPermissions rules (min sel (max 0 (length rules - 1))))
+                  (stackPop (appDialogs s2)) }
+    _ -> modify $ \s2 -> s2 { appDialogs =
+        stackPush (DialogPermissions rules 0) (appDialogs s2) }
+handleToolEvent (EvPermissionsRules (Left e)) = Just $ do
+  lang <- gets appLang
+  showToast (T.pack ("permissions: " <> show e))
 handleToolEvent (EvTool result) = Just $ do
   lang <- gets appLang
   t <- liftIO now

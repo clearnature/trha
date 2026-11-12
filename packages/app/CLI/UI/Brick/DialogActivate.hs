@@ -22,7 +22,7 @@ import Control.Concurrent.Async (async)
 import Control.Monad (void)
 import Control.Monad.IO.Class (liftIO)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider, setPermissions)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.TurnStats (Prices(..), turnSummary, estimateCost, hasPrices, isOffPeak, pricesForModel)
 import UI.Event
@@ -136,6 +136,22 @@ dialogActivate = do
           (p : _) -> startWizardPreset p
           []      -> return ()
         DialogTodos{} -> return ()  -- 只读列表：Esc 关闭
+        DialogPermissions rules sel -> case drop sel rules of
+          -- Enter 循环规则 kind（allow → ask → deny → allow），d 删除；
+          -- 变更乐观落本地、异步 PUT 持久化，结果经 EvPermissionsRules 回填。
+          ((kind, pat) : _) -> do
+            let next = case kind of "allow" -> "ask"; "ask" -> "deny"; _ -> "allow"
+                rule' = (next, pat)
+                rules' = [ if i == sel then rule' else r | (i, r) <- zip [0 :: Int ..] rules ]
+                bridge = appBridge st
+                chan = appChan st
+            modifyTop $ \_ -> DialogPermissions rules' sel
+            void $ liftIO . async $ do
+              r <- setPermissions bridge (map (\(k, p) -> object ["kind" .= k, "pattern" .= p]) rules')
+              writeBChan chan (EvPermissionsRules $ case r of
+                Right newRules -> Right newRules
+                Left e         -> Left e)
+          [] -> return ()
         DialogPick _ items act sel -> do
           -- 通用编号选择器（批次二）：动作随对话框携带；Enter 按当前
           -- 选中序号在 worker 线程执行。
@@ -271,6 +287,19 @@ handleDialogKey (EvKey (KChar c) [])
           , (p : _) <- drop sel ps -> startProviderRemove p
         Just (DialogProviders ps sel) | c == 't'
           , (p : _) <- drop sel ps -> toggleProviderThinking p
+        Just dp@(DialogPermissions rules sel) | c == 'd'
+          , (_kind, _pat) : _ <- drop sel rules -> do
+            -- d：删除选中规则（乐观本地移除，PUT 持久化）
+            let rules' = [ r | (i, r) <- zip [0 ..] rules, i /= sel ]
+                bridge = appBridge st
+                chan = appChan st
+            modifyTop $ \_ -> DialogPermissions rules' sel
+            void $ liftIO . async $ do
+              r <- setPermissions bridge
+                     (map (\(k, p) -> object ["kind" .= k, "pattern" .= p]) rules')
+              case r of
+                Right newRules -> writeBChan chan (EvPermissionsRules (Right newRules))
+                Left e         -> writeBChan chan (EvToast (T.pack (show e)))
         _ -> withCommands (dialogAppend c) >> scrollBottom
 handleDialogKey _ = return ()
 

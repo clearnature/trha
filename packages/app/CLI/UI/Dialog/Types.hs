@@ -71,6 +71,7 @@ data Dialog
   | DialogSandbox SandboxSettings Int       -- ^ /sandbox: settings, selected row
   | DialogPick Text [(Int, Text)] PickAction Int -- ^ generic numbered picker: title, items, pick action, selected
   | DialogTodos [TodoItem] Int              -- ^ /todo: team tasks (read-only), selected
+  | DialogPermissions [(Text, Text)] Int    -- ^ /permissions: (kind, pattern) rules, selected
   deriving (Show, Eq)
 
 

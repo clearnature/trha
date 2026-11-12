@@ -8,7 +8,7 @@ module Bridge.Scheduler.Admin
   ( fetchAgents, listWorkflows, runWorkflow, startLoop, fetchLoops, stopLoops
   , fetchSandboxConfig, setSandboxConfig, submitExperiment, transcribeVoice
   , fetchBalance, fetchUsageStats, UsageRow(..), fetchServiceStatus
-  , listPlugins, listTools, fetchPermissions, healthCheck
+  , listPlugins, listTools, fetchPermissions, setPermissions, healthCheck
   ) where
 
 import Bridge.Scheduler.Core (SchedulerBridge(..))
@@ -201,6 +201,24 @@ listTools bridge mmode = do
     Left e -> Left e
 
 -- | The orchestration layer's permission rules (@GET /api/permissions@).
+
+-- | 整体替换权限规则（PUT /api/permissions），返回服务端规范化后的规则集。
+setPermissions :: SchedulerBridge -> [Value] -> IO (Either CLIError [(Text, Text)])
+setPermissions bridge rules = do
+  r <- httpPost (bridgeHTTP bridge) "/api/permissions" (Array (V.fromList rules))
+  pure $ case r of
+    Left e  -> Left e
+    Right (Object o) -> case KM.lookup "rules" o of
+      Just (Array a) -> Right [ (ruleKind v, rulePattern v) | v <- V.toList a ]
+      _ -> Left (ServerError "permissions response missing rules")
+    Right _ -> Left (ServerError "permissions response missing rules")
+  where
+    ruleKind v = case v of
+      Object o -> maybe "" (\(String t) -> t) (KM.lookup "kind" o)
+      _ -> ""
+    rulePattern v = case v of
+      Object o -> maybe "" (\(String t) -> t) (KM.lookup "pattern" o)
+      _ -> ""
 
 fetchPermissions :: SchedulerBridge -> IO (Either CLIError [Value])
 fetchPermissions bridge = do

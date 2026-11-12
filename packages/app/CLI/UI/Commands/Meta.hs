@@ -11,6 +11,7 @@ module UI.Commands.Meta
 
 import Control.Exception (IOException, try)
 import Data.IORef (readIORef)
+import Data.Either (isRight)
 import Data.Text (Text)
 import qualified Data.Text as T
 import System.Directory (getCurrentDirectory, getHomeDirectory)
@@ -80,13 +81,16 @@ runMeta env = go
       let fontLine = case font of
             Right (_, out, _) -> T.strip (T.pack out)
             Left _ -> tr lang "fontconfig unavailable"
-      return $ Just $ T.unlines
+          mark b = (if b then "✓" else "✗") :: Text
+      -- 检查表：✓/✗ 标记可达性，· 标记信息项（对齐两列，比逐行键值更扫读）。
+      return $ Just $ T.unlines $
         [ tr lang "Doctor:"
-        , tr lang "  scheduler: " <> either (const (tr lang "unreachable")) (const (tr lang "ok")) sessions
-        , tr lang "  providers: " <> either (const (tr lang "unreachable")) (T.pack . show . length) providers
-        , tr lang "  language: " <> langName lang
-        , tr lang "  context: " <> maybe (tr lang "model default") (T.pack . show) (configCtxSize cfg)
-        , tr lang "  font: " <> fontLine
+        , "  " <> mark (isRight sessions) <> "  scheduler"
+        , "  " <> mark (isRight providers) <> "  providers: "
+            <> either (const (tr lang "unreachable")) (T.pack . show . length) providers
+        , "  ·  language: " <> langName lang
+        , "  ·  context:  " <> maybe (tr lang "model default") (T.pack . show) (configCtxSize cfg)
+        , "  " <> mark (isRight font) <> "  font: " <> fontLine
         ]
     cmdAuth arg = do
       ps <- listProviders bridge

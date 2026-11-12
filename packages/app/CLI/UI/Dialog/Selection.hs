@@ -38,6 +38,7 @@ dialogTitle lang d = case d of
   DialogConfirm{}    -> tr lang " Confirm "
   DialogSandbox{}    -> tr lang " SandBox "
   DialogPick{}       -> tr lang " Todos "
+  DialogPermissions{} -> tr lang " Permissions "
   DialogPick t _ _ _ -> t
 
 -- | 当前选中索引（同样必须覆盖全部构造子）。
@@ -57,6 +58,7 @@ dialogSelected d = case d of
   DialogConfirm _ s -> s
   DialogSandbox _ s -> s
   DialogPick _ _ _ s -> s
+  DialogPermissions _ s -> s
   DialogTodos _ s    -> s
 
 -- | 只有命令与技能面板接受字符输入（其余面板的字符键被丢弃）。
@@ -91,6 +93,7 @@ dialogCount (DialogApproval _ name args _) = length (approvalOptions name args)
 dialogCount (DialogConfirm _ _)      = 2  -- yes / no
 dialogCount (DialogSandbox _ _)      = 4  -- enabled / policy / network / scratch
 dialogCount (DialogPick _ items _ _) = length items
+dialogCount (DialogPermissions rs _) = length rs
 dialogCount (DialogTodos ts _)       = length ts
 
 -- | MiMo parity: destructive shell commands get no "always" option — a
@@ -112,6 +115,7 @@ dialogMoveSel delta d = case d of
   DialogConfirm m s       -> DialogConfirm m (mv (dialogCount d) s)
   DialogSandbox ss s      -> DialogSandbox ss (mv (dialogCount d) s)
   DialogPick t items act s -> DialogPick t items act (mv (dialogCount d) s)
+  DialogPermissions rs s  -> DialogPermissions rs (mv (dialogCount d) s)
   DialogTodos ts s        -> DialogTodos ts (mv (dialogCount d) s)
   where
     mv n s = moveSelection delta s n

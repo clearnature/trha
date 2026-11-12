@@ -104,6 +104,7 @@ module Bridge.Scheduler
   , listPlugins
   , listTools
   , fetchPermissions
+  , setPermissions
 
     -- * Health Check
   , healthCheck
@@ -121,6 +122,7 @@ import Bridge.Scheduler.Session
   , subscribeSessionEventsWithTerminal, tagSession )
 import Bridge.Scheduler.Admin
   ( UsageRow(..), fetchAgents, fetchBalance, fetchLoops, fetchPermissions
+  , setPermissions
   , fetchSandboxConfig, fetchServiceStatus, fetchUsageStats, healthCheck
   , listPlugins, listTools, listWorkflows, runWorkflow, setSandboxConfig
   , startLoop, stopLoops, submitExperiment, transcribeVoice )
