@@ -36,11 +36,11 @@ runMeta env = go
     sessionRef = ceSession env
     modelRef   = ceModel env
 
-    -- 分派：一个命令一条 go 等式。
+    -- 分派：一个命令一条 go 等式。（StopConfirmed 不在此认领：REPL 与 TUI
+    -- 都在分发前拦截它，见 dead-code-report-2026-11-12 D2 的清理。）
     go Help = Just $ cmdHelp
     go Quit = Just $ cmdQuit
     go StopRequest = Just $ cmdStopRequest
-    go StopConfirmed = Just $ cmdStopConfirmed
     go About = Just $ cmdAbout
     go Status = Just $ cmdStatus
     go Doctor = Just $ cmdDoctor
@@ -52,7 +52,6 @@ runMeta env = go
     cmdHelp = pure (Just (registryHelp SRepl lang))
     cmdQuit = pure Nothing
     cmdStopRequest = pure (Just (tr lang "This stops the kernel and scheduler and exits. Type /stop confirm to proceed."))
-    cmdStopConfirmed = pure Nothing
     cmdAbout = do
       cwd <- getCurrentDirectory
       home <- getHomeDirectory

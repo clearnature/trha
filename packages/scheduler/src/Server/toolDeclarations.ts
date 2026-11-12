@@ -42,6 +42,7 @@ const rows: Row[] = [
   { name: 'pwsh', plane: 'agent', presets: CORE },
   { name: 'read', plane: 'agent', presets: [...CORE, ...MINIMAL] },
   { name: 'write', plane: 'agent', presets: [...CORE, ...MINIMAL] },
+  { name: 'append_file', plane: 'agent', presets: [...CORE, ...MINIMAL] },
   { name: 'edit', plane: 'agent', presets: [...CORE, ...MINIMAL] },
   { name: 'grep', plane: 'agent', presets: CORE },
   { name: 'glob', plane: 'agent', presets: CORE },

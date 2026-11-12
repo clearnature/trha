@@ -68,6 +68,11 @@ slashRegistry =
   , SlashCommand "/theme"    True  True  "List or switch the colour theme (usage: /theme [name])" bothSurfaces SetTheme
   , SlashCommand "/mode"     True  True  "Cycle or set the permission posture (usage: /mode [read-only|ask|auto|yolo|plan])" bothSurfaces Mode
   , SlashCommand "/copy"     False True  "Copy the last assistant message" [STui] (\_ -> CopyLast)
+  , SlashCommand "/mouse"    True  False "Toggle mouse capture (usage: /mouse [on|off])" [STui]
+      (\a -> SetMouseCapture (case map T.toLower (T.words a) of
+                                ["on"]  -> Just True
+                                ["off"] -> Just False
+                                _       -> Nothing))
   , SlashCommand "/verbose"  False True  "Toggle verbose tool output" [STui] (\_ -> Verbose)
   , SlashCommand "/todo"     False True  "Show team tasks" bothSurfaces (\_ -> Todo)
   , SlashCommand "/tree"     False True  "Show the agent session tree" bothSurfaces (\_ -> Tree)

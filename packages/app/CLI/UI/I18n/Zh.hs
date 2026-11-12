@@ -166,6 +166,7 @@ zhDict = M.fromList
   , ("List or switch the colour theme (usage: /theme [name])", "列出/切换配色主题（用法：/theme [名称]）")
   , ("Cycle or set the permission posture (usage: /mode [read-only|ask|auto|yolo|plan])", "循环或设置权限姿态（用法：/mode [read-only|ask|auto|yolo|plan]）")
   , ("Copy the last assistant message", "复制最后一条助手消息")
+  , ("Toggle mouse capture (usage: /mouse [on|off])", "切换鼠标捕获（用法：/mouse [on|off]）")
   , ("Toggle verbose tool output", "切换详细工具输出")
   , ("Show team tasks", "显示团队任务")
   , ("Show the agent session tree", "显示代理会话树")

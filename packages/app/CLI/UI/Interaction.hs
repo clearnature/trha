@@ -245,6 +245,7 @@ layerTable =
   , ("/reasoning-language", CmdState)
   , ("/clear", CmdState)
   , ("/copy", CmdState)
+  , ("/mouse", CmdState)
   , ("/verbose", CmdState)
     -- exit
   , ("/quit", CmdExit)

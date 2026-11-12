@@ -171,7 +171,7 @@ groupMembers =
   , (GTools,   [ "/shell", "/mcp", "/lsp", "/hooks", "/plugins", "/skills", "/doctor"
                , "/currency", "/update", "/reload-plugins", "/init", "/review"
                , "/tools", "/permissions" ])
-  , (GInput,   [ "/attachments", "/clear-attachments", "/paste", "/vim", "/copy" ])
+  , (GInput,   [ "/attachments", "/clear-attachments", "/paste", "/vim", "/copy", "/mouse" ])
   , (GAppearance, [ "/theme", "/language", "/reasoning-language"
                   , "/output-style", "/verbose" ])
   , (GSettings, [ "/mode", "/sandbox", "/ask-timeout", "/settings" ])

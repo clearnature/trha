@@ -1,7 +1,7 @@
 # 死代码与账本漂移报告（命令/工具审计副产品，2026-11-12）
 
-> **性质**：独立**报告**，不含处置动作。来源：七方对标审计（`commands-tools-cross-benchmark-2026-11-12.md` §2.3）+ trha 本地普查。
-> **裁定背景**（用户，2026-11-12）：未实现命令走补全（见 `docs/plans/commands-completion-plan.md`）；死代码**先报告、不清理**，处置另行裁定。
+> **性质**：独立**报告**。来源：七方对标审计（`commands-tools-cross-benchmark-2026-11-12.md` §2.3）+ trha 本地普查。
+> **处置结果**：用户裁定 **选项 A（全清）已于 2026-11-12 执行**——D1 三段空分支删除、D2 死分支删除、D3 /mouse 入册（注册表 91→92，`scSurfaces=[STui]`，scPicker=False 不进 picker，分组 GInput，分层 CmdState，Zh 文案已补）、D4 `append_file` 声明行已补（声明 73→74，与 catalog 对齐）。验证：scheduler tsc + vitest 86 文件 594 例全绿；trha-cli-test 全绿（HandlerCoverage 覆盖含 /mouse）。
 > **复核方式**：每条附 grep/位置，均可 30 秒内复验。
 
 ## D1. 迁移占位空分支（最大宗，~130 行 × 3 处）

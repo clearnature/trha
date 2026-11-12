@@ -46,11 +46,6 @@ parseCommandBase input
 parseCommandBase input = case T.words (T.strip input) of
   [] -> SendMessage input
   (w : rest)
-    -- 账外隐藏命令：/mouse 切换鼠标捕获，故意不进注册表（不进 help/picker）。
-    | w == "/mouse" -> SetMouseCapture (case map T.toLower rest of
-                                          ["on"]  -> Just True
-                                          ["off"] -> Just False
-                                          _       -> Nothing)
     | Just sc <- find ((== w) . scCommand) slashRegistry ->
         scParse sc (T.unwords rest)
     | "/" `T.isPrefixOf` w -> Unknown w

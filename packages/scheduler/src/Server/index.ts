@@ -1706,30 +1706,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       }
     }
 
-    if (name === 'bash') {
-      // Migrated to the registry (full DSH contract); the core-chain pre-check
-      // above resolves it before this line is ever reached.
-    }
-    if (name === 'read') {
-      // Migrated to the registry (full DSH contract); the core-chain pre-check
-      // above resolves it before this line is ever reached.
-    }
-    if (name === 'write' || name === 'append_file') {
-      // Migrated to the registry (full DSH contract); the core-chain pre-check
-      // above resolves them before this line is ever reached.
-    }
-    if (name === 'edit') {
-      // Migrated to the registry (full DSH contract); the core-chain pre-check
-      // above resolves it before this line is ever reached.
-    }
-    if (name === 'glob') {
-      // Migrated to the registry (full DSH contract); the core-chain pre-check
-      // above resolves it before this line is ever reached.
-    }
-    if (name === 'grep') {
-      // Migrated to the registry (full DSH contract); the core-chain pre-check
-      // above resolves it before this line is ever reached.
-    }
+    // 2026-11-12：旧 if 链的迁移占位空分支已删（dead-code-report D1）——
+    // core-chain 预检与注册表解析覆盖全部名单。
+
     if (isStandardTool(name)) {
       const session = sessionId ? sessions.get(sessionId) : undefined;
       if (!session) return `ERROR: ${name} needs a live session`;
