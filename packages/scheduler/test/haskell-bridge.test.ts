@@ -81,4 +81,52 @@ describe('HaskellBridge (Phase 3 K4)', () => {
 
     server.close();
   });
+
+  it('derives totalTokens when the wire omits it', async () => {
+    const app = express();
+    app.use(express.json());
+    app.post('/v1/chat/completions', (_req, res) => {
+      res.json({
+        choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+    });
+    const { port, server } = await listen(app);
+
+    const bridge = new HaskellBridge({ host: '127.0.0.1', port });
+    const res = await bridge.queryModel({ messages: [['user', 'hi']] });
+
+    // A turn's total is prompt + completion, not an undefined that the shell
+    // would then fill from a session lifetime counter.
+    expect(res.usage?.promptTokens).toBe(10);
+    expect(res.usage?.completionTokens).toBe(5);
+    expect(res.usage?.totalTokens).toBe(15);
+
+    server.close();
+  });
+
+  it('merges streamed usage frames instead of erasing earlier fields', async () => {
+    const app = express();
+    app.use(express.json());
+    app.post('/v1/chat/completions/stream', (_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ usage: { prompt_tokens: 12, prompt_cache_hit_tokens: 9 } })}\n\n`);
+      // The second frame omits prompt/total/cache: a replace would write
+      // undefined over the numbers the first frame already reported.
+      res.write(`data: ${JSON.stringify({ usage: { completion_tokens: 3 } })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+    const { port, server } = await listen(app);
+
+    const bridge = new HaskellBridge({ host: '127.0.0.1', port });
+    const res = await bridge.queryModelStream({ messages: [['user', 'hi']] }, () => {});
+
+    expect(res.usage?.promptTokens).toBe(12);
+    expect(res.usage?.cacheHitTokens).toBe(9);
+    expect(res.usage?.completionTokens).toBe(3);
+    expect(res.usage?.totalTokens).toBe(15);
+
+    server.close();
+  });
 });

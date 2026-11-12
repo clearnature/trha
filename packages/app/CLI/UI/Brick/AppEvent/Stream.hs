@@ -208,10 +208,14 @@ onFinalReply text = do
 -- 与「哪类 chunk 进来了」无关。
 finishTurn :: Usage -> EventM ResourceName AppState ()
 finishTurn usage = do
-  let real = usageTotalTokens usage > 0
+  let real = turnTokens > 0
       hit = usageCacheHitTokens usage
       miss = usageCacheMissTokens usage
       cacheSeen = real && hit + miss > 0
+      -- The bill of this turn: scheduler aggregates every model call in the
+      -- tool loop, so this is prompt + completion, never a session lifetime
+      -- counter.
+      turnTokens = usagePromptTokens usage + usageCompletionTokens usage
   st0 <- get
   t1 <- liftIO getCurrentTime
   let elapsed = maybe 0 (\t0 -> realToFrac (diffUTCTime t1 t0)) (appTurnStart st0)
@@ -226,7 +230,7 @@ finishTurn usage = do
           let d = realToFrac (diffUTCTime t1 tFirst) :: Double
           in if d > 0.02 then Just (fromIntegral n / d) else Nothing
         _ -> appLastDecodeTps st0
-  modify $ \s -> s { appLastUsage = Just (usageTotalTokens usage)
+  modify $ \s -> s { appLastUsage = Just turnTokens
                    , appUsage = if real then Just usage else appUsage s
                    , appCacheNow = if cacheSeen then Just (hit, miss) else appCacheNow s
                    , appCacheSum = if cacheSeen
@@ -239,9 +243,7 @@ finishTurn usage = do
                    , appCtxUsed =
                        -- The gauge measures the latest request's context, not
                        -- the turn's bill: a tool loop repeats the history.
-                       let ctx = if usageContextPromptTokens usage > 0
-                                   then usageContextPromptTokens usage
-                                   else usagePromptTokens usage
+                       let ctx = usageContextUsed usage
                        in if ctx > 0
                             then Just (ctx + usageCompletionTokens usage)
                             else appCtxUsed s
@@ -249,7 +251,7 @@ finishTurn usage = do
                    , appLastDecodeTps = decodeTps
                    , appCostSum = appCostSum s + estimateCost (pricesOf (appModel s) (appEffCfg s) t1) usage
                    , appLastCost = estimateCost (pricesOf (appModel s) (appEffCfg s) t1) usage
-                   , appSessTokens = appSessTokens s + usageTotalTokens usage
+                   , appSessTokens = appSessTokens s + turnTokens
                    , appFirstToken = Nothing
                    , appTurnStart = Nothing }
   flushPending (if real then Just usage else Nothing)

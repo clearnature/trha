@@ -25,7 +25,7 @@ import qualified Data.Text as T
 import Numeric (showFFloat)
 import UI.I18n (Lang(..), tr)
 import UI.TextWidth (dropCells, graphemes, takeCells, textWidth)
-import Core.Types (Usage(..))
+import Core.Types (Usage(..), usageContextUsed)
 
 -- | Key hints shown at the end of the footer.
 footerHints :: Text
@@ -128,7 +128,8 @@ footerMetrics lang order live statics = map render order
       Nothing -> ""
     occupancy q = tr lang " · ctx " <> T.pack (show q) <> "%"
     occupancyPct u =
-      let cin = usagePromptTokens u
+      -- Occupancy is about one request's context, not the turn's bill.
+      let cin = usageContextUsed u
       in case flCtxSize live of
            Just cs | cs > 0 -> Just (round (fromIntegral cin / fromIntegral cs * 100 :: Double))
            _                -> Nothing

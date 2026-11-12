@@ -96,6 +96,35 @@ function jsonKernel(rounds: JsonRound[], seen: Msg[][]) {
   return kernel;
 }
 
+/** Kernel that streams Delta/tool_calls plus a usage frame (the real path). */
+function sseKernel(rounds: JsonRound[], seen: Msg[][]) {
+  const kernel = express();
+  kernel.use(express.json());
+  let round = 0;
+  kernel.post('/session/start', (_q, res) => res.json({}));
+  kernel.post('/v1/chat/completions/stream', (req, res) => {
+    seen.push((req.body.messages ?? []) as Msg[]);
+    const script = rounds[round] ?? {};
+    round += 1;
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const calls = script.calls ?? [];
+    if (calls.length > 0) {
+      res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {
+        tool_calls: calls.map((c, i) => ({
+          index: i, id: c.id, type: 'function',
+          function: { name: c.name, arguments: JSON.stringify(c.args) },
+        })),
+      } }] })}\n\n`);
+    } else {
+      res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: script.answer ?? 'done' } }] })}\n\n`);
+    }
+    if (script.usage) res.write(`data: ${JSON.stringify({ usage: script.usage })}\n\n`);
+    res.write('data: [DONE]\n\n');
+    res.end();
+  });
+  return kernel;
+}
+
 async function listen(app: express.Express): Promise<{ port: number; server: Server }> {
   const s = await new Promise<Server>(resolve => {
     const srv = app.listen(0, '127.0.0.1', () => resolve(srv));
@@ -125,7 +154,10 @@ describe('tool-loop history invariants', () => {
   });
 
   async function boot(rounds: JsonRound[]) {
-    const kernel = jsonKernel(rounds, seen);
+    return bootKernel(jsonKernel(rounds, seen));
+  }
+
+  async function bootKernel(kernel: express.Express) {
     const kernelServer = await listen(kernel);
     const stateDir = path.join(dir, 'state');
     const { app, stop } = createServer({
@@ -264,7 +296,7 @@ describe('tool-loop history invariants', () => {
     });
     const body = await step.json() as {
       usage: {
-        promptTokens: number; contextPromptTokens: number;
+        promptTokens: number; contextPromptTokens: number; totalTokens: number;
         completionTokens: number; cacheHitTokens: number; cacheMissTokens: number;
       };
     };
@@ -274,7 +306,68 @@ describe('tool-loop history invariants', () => {
     expect(body.usage.cacheHitTokens).toBe(200);
     expect(body.usage.cacheMissTokens).toBe(50);
     expect(body.usage.completionTokens).toBe(15);
+    // The turn's own bill — never the session lifetime counter next to it.
+    expect(body.usage.totalTokens).toBe(265);
     // the context gauge still reads the latest request's occupancy
     expect(body.usage.contextPromptTokens).toBe(150);
+  });
+
+  it('bills both rounds on the streaming path too', async () => {
+    // The CLI always streams, so the SSE usage frames are the only billing
+    // source there.  Same expectation as the JSON path: `in` sums the rounds,
+    // `ctx` stays on the last request.
+    const base = await bootKernel(sseKernel([
+      {
+        calls: [{ id: 'call_s', name: 'todo_write', args: { todos: [] } }],
+        usage: {
+          prompt_tokens: 10500, completion_tokens: 120,
+          prompt_cache_hit_tokens: 10000, prompt_cache_miss_tokens: 500,
+        },
+      },
+      {
+        answer: 'done',
+        usage: {
+          prompt_tokens: 11600, completion_tokens: 400,
+          prompt_cache_hit_tokens: 11100, prompt_cache_miss_tokens: 500,
+        },
+      },
+    ], seen));
+    const sessionId = await start(base);
+    const step = await fetch(`${base}/api/agent/step`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ sessionId, message: 'ls' }),
+    });
+    const body = await step.json() as {
+      usage: {
+        promptTokens: number; contextPromptTokens: number; totalTokens: number;
+        completionTokens: number; cacheHitTokens: number; cacheMissTokens: number;
+      };
+    };
+
+    expect(body.usage.promptTokens).toBe(22100);
+    expect(body.usage.completionTokens).toBe(520);
+    expect(body.usage.totalTokens).toBe(22620);
+    expect(body.usage.cacheHitTokens).toBe(21100);
+    expect(body.usage.cacheMissTokens).toBe(1000);
+    expect(body.usage.contextPromptTokens).toBe(11600);
+  });
+
+  it('never drops a turn’s completion just because promptTokens is missing', async () => {
+    // The old guard skipped the *whole* usage block when a model call did not
+    // report prompt_tokens, so the completion and cache deltas vanished and a
+    // two-call turn was billed as if it were one.
+    const base = await boot([
+      { answer: 'ok', usage: { completion_tokens: 7 } },
+    ]);
+    const sessionId = await start(base);
+    const step = await fetch(`${base}/api/agent/step`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ sessionId, message: 'hi' }),
+    });
+    const body = await step.json() as {
+      usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+    };
+
+    expect(body.usage.promptTokens).toBe(0);
+    expect(body.usage.completionTokens).toBe(7);
+    expect(body.usage.totalTokens).toBe(7);
   });
 });

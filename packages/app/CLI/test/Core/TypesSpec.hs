@@ -6,6 +6,7 @@ import Test.Hspec
 import Core.Types
   ( ToolEvent(..), ToolRunStatus(..), PlanView(..), PlanStepView(..)
   , ProviderInfo(..), ModelInfo(..), Usage(..), mkUsage
+  , usageContextUsed
   , providerStoreToList, providerModelInfos, modelForProvider
   , splitPlanSteps, parsePlanView, planStepOut, renderPlanBrief
   , defaultCLIConfig, configMouseCapture, effectiveReasoningLanguage
@@ -199,7 +200,9 @@ spec = do
       modelForProvider p "gpt-4" `shouldBe` "deepseek-flash"
 
   describe "Usage FromJSON" $ do
-    it "uses cumulativeTokens when the scheduler omits totalTokens" $ do
+    it "ignores cumulativeTokens for the per-turn total" $ do
+      -- cumulativeTokens is the session lifetime total.  Folding it into
+      -- totalTokens made "本轮" grow with the session (10K → 32K → …).
       let v = object
             [ "promptTokens" .= (10 :: Int)
             , "completionTokens" .= (5 :: Int)
@@ -209,7 +212,7 @@ spec = do
       case fromJSON v of
         -- no contextPromptTokens: the latest-request gauge falls back to the
         -- billable prompt count.
-        Success u -> u `shouldBe` Usage 10 5 99 0 10 0 10
+        Success u -> u `shouldBe` Usage 10 5 15 0 10 0 10
         Error e -> expectationFailure e
 
     it "derives prompt+completion when no total is present" $ do
@@ -234,5 +237,9 @@ spec = do
         Success u -> do
           usagePromptTokens u `shouldBe` 250
           usageContextPromptTokens u `shouldBe` 150
+          usageContextUsed u `shouldBe` 150
         Error e -> expectationFailure e
+
+    it "falls back to the prompt count when the gauge field is absent" $ do
+      usageContextUsed (mkUsage 250 15 265) `shouldBe` 250
 

@@ -19,7 +19,7 @@ module UI.Render.Sidebar
   , truncateTo
   ) where
 
-import Core.Types (AgentEntry(..), TodoItem(..), TodoStatus(..), Usage(..))
+import Core.Types (AgentEntry(..), TodoItem(..), TodoStatus(..), Usage(..), usageContextUsed)
 import Data.Text (Text)
 import qualified Data.Text as T
 import UI.I18n (Lang, tr)
@@ -108,7 +108,7 @@ contextLines w d = case sdUsage d of
   where
     occupancy u = case sdCtxSize d of
       Just cs | cs > 0 ->
-        let pct = round (fromIntegral (usagePromptTokens u)
+        let pct = round (fromIntegral (usageContextUsed u)
                          / fromIntegral cs * 100 :: Double) :: Int
         in " · ctx " <> showInt pct <> "%"
       _ -> ""

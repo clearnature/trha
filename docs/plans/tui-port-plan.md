@@ -414,12 +414,12 @@ MiMo 的 17 个 `Match`（`routes/session/index.tsx:2278-2326`）在 trha 的对
 | M10-2 | Sidebar：Task 树（team task / subagent 树） | ✅ 已落地：`Agents` 节 + `fetchAgents`（`/api/sessions` 的 `parentId`）+ `agentTreeLines`（缩进树、当前会话 ●、上限 8 行）；team tasks 仍在 TODO 节 | A |
 | M10-3 | Sidebar：LSP / MCP 状态 | ✅ 已落地：scheduler `GET /api/mcp/status`（configured/connected）与 `GET /api/lsp/status`（running/diagnostics）+ 侧栏 `Services` 节 | A |
 | M10-4 | Sidebar：TPS / 成本（footer 已有 token） | ✅ TPS 已落地：`FooterLive.flTps` + `tps` metric（completion tokens / 本轮耗时）；成本需定价表，未做 | A |
-| M10-4b | 状态栏缓存/上下文/压缩三段 + 权限姿态标签（Reasonix 形态） | ✅ 已落地：`Footer` 新增 `mode/cache/ctx/compact`；`/api/session/:id/mode`；另加**每轮统计行**（`Core.TurnStats.turnSummary`：`本轮 … tok · in · cached · new · out · reasoning · ≈¥… · 低峰/高峰`，TUI 与 REPL 均显示） | A |
+| M10-4b | 状态栏缓存/上下文/压缩三段 + 权限姿态标签（Reasonix 形态） | ✅ 已落地：`Footer` 新增 `mode/cache/ctx/compact`；`/api/session/:id/mode`；另加**每轮统计行**（`Core.TurnStats.turnSummary`：`本轮 … tok · in · ctx · cached · new · out · reasoning · ≈¥… · 低峰/高峰`，TUI 与 REPL 均显示）。`in` 是本轮**计费** prompt（工具循环里每次模型调用之和），`ctx` 是**最后一次请求**的上下文；两者不等时才打印 `ctx`，避免把「两轮工具调用」误读成「上下文翻倍」 | A |
 | M10-5 | 鼠标选区/复制、滚动加速、滚动条 | 只有滚轮滚动 | A（vty 能力所限，能做的做） |
 | M10-6 | 声音反馈（成功/失败 bell，可配） | ✅ 已落地：`configBell`；回复完成与出错时各响一次（`\a`） | A |
 | M10-7 | 主题 32 套 / locale 17 种 | ✅ 主题 32/32；locale 支持集（2026-10-26 用户裁定）= **En / zh-Hans / zh-Hant / Français / Español / Русский / ไทย / မြန်မာ**；藏语（Bo）与彝文（Ii）为骨架；**ja / ko / de / it / pt / pl / tr / vi / id / uk 已剔除** | A |
 
-> **时间显示规范（2026-10-26）**：本地时间带系统时区缩写（`07:31:12 CST`，无缩写时 `UTC+08:00`）；transcript 存储保持 ISO `…Z`（UTC，可解析）；`/export` 头部注明 `Times are UTC (Z)`；低峰判断固定 UTC+8 00:30–08:30。
+> **时间显示规范（2026-10-26）**：本地时间带系统时区缩写（`07:31:12 CST`，无缩写时 `UTC+08:00`）；transcript 存储保持 ISO `…Z`（UTC，可解析）；`/export` 头部注明 `Times are UTC (Z)`；峰谷判断固定 UTC+8——高峰窗口 09:00–12:00 与 14:00–18:00，其余为低峰，且自 2026-08-23 起周末全天低峰（`Core.TurnStats.isOffPeak`）。
 
 > **2026-10-25 两主分支对比**（`/home/yanli/work/DeepSeek-Reasonix`）：
 > `fork/studio` 当前树已无 `internal/cli`（338 文件在 `refactor: the kernel's packages live in the layer they belong to` 中整体移除），因此交互以 `origin/main-v2` 为准。

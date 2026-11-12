@@ -49,6 +49,14 @@ spec = do
       turnSummary noPrices (mkUsage 100 20 120) 0 (utc 2026 10 26 2 0 0)
         `shouldBe` "本轮 120 tok · in 100 · out 20 · ≈¥— · 高峰"
 
+    it "prints ctx next to the bill when a tool loop billed several calls" $ do
+      -- Two model calls, ~11.6K context each: `in` is the sum (22.1K) while
+      -- `ctx` is the latest request.  Without the split the line reads as if
+      -- the context had doubled.
+      let u = Usage 22100 500 22600 21100 994 0 11600
+      turnSummary noPrices u 0 (utc 2026 10 26 2 0 0)
+        `shouldBe` "本轮 22.6K tok · in 22.1K · ctx 11.6K · cached 21.1K · new 994 · out 500 · ≈¥— · 高峰"
+
   describe "estimateCost" $ do
     it "bills a prompt without cache fields at the miss price" $
       estimateCost (Prices 2 0.2 8) (mkUsage 1000000 0 1000000)

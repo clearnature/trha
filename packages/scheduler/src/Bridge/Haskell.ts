@@ -301,15 +301,22 @@ export class HaskellBridge {
           }
           // The kernel emits a usage frame at the end; it carries the cache
           // split, which is the only way a streamed call can be billed.
+          // Frames are merged, never replaced: a provider (or a kernel) may
+          // send the split across frames, and an undefined field must not
+          // erase a number we already saw.
           if (parsed.usage) {
-            const u = parsed.usage as Record<string, number>;
+            const u = parsed.usage as Record<string, unknown>;
+            const prev = usage;
+            const p = numField(u.prompt_tokens);
+            const c = numField(u.completion_tokens);
             usage = {
-              promptTokens: u.prompt_tokens,
-              completionTokens: u.completion_tokens,
-              totalTokens: u.total_tokens,
-              cacheHitTokens: u.prompt_cache_hit_tokens,
-              cacheMissTokens: u.prompt_cache_miss_tokens,
-              reasoningTokens: u.reasoning_tokens,
+              promptTokens: p ?? prev?.promptTokens,
+              completionTokens: c ?? prev?.completionTokens,
+              totalTokens: numField(u.total_tokens)
+                ?? (p !== undefined && c !== undefined ? p + c : prev?.totalTokens),
+              cacheHitTokens: numField(u.prompt_cache_hit_tokens) ?? prev?.cacheHitTokens,
+              cacheMissTokens: numField(u.prompt_cache_miss_tokens) ?? prev?.cacheMissTokens,
+              reasoningTokens: numField(u.reasoning_tokens) ?? prev?.reasoningTokens,
             };
           }
           const delta = (parsed.choices as { delta?: {
@@ -338,6 +345,12 @@ export class HaskellBridge {
       }
     }
     const toolCalls = [...calls.values()].filter(c => c.name !== '');
+    // A usage split across frames may never carry total_tokens; prompt plus
+    // completion is the same number and must not stay undefined.
+    if (usage && usage.totalTokens === undefined
+        && usage.promptTokens !== undefined && usage.completionTokens !== undefined) {
+      usage.totalTokens = usage.promptTokens + usage.completionTokens;
+    }
     const base: QueryResponse = {
       reply,
       ...(reasoning ? { reasoningContent: reasoning } : {}),
@@ -370,6 +383,11 @@ function normalizeMessage(m: BridgeMessage): Record<string, unknown> {
     return { role: m[0], content: m[1] ?? '' };
   }
   return m;
+}
+
+/** A JSON number, or undefined.  `null`/strings must not become `0`. */
+function numField(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
 function parseCompletion(raw: Record<string, unknown>): QueryResponse {
@@ -407,22 +425,25 @@ function parseCompletion(raw: Record<string, unknown>): QueryResponse {
   const constraint = typeof raw.trha_constraint === 'object' && raw.trha_constraint !== null
     ? (raw.trha_constraint as Record<string, unknown>)
     : undefined;
+  const promptTokens = numField(usageRaw?.prompt_tokens);
+  const completionTokens = numField(usageRaw?.completion_tokens);
   return {
     reply: content,
     ...(toolCalls ? { toolCalls } : {}),
     usage: {
-      promptTokens: typeof usageRaw?.prompt_tokens === 'number' ? usageRaw.prompt_tokens : undefined,
-      completionTokens: typeof usageRaw?.completion_tokens === 'number' ? usageRaw.completion_tokens : undefined,
-      totalTokens: typeof usageRaw?.total_tokens === 'number' ? usageRaw.total_tokens : undefined,
+      promptTokens,
+      completionTokens,
+      // Some wires omit total_tokens; prompt + completion is the same number.
+      totalTokens: numField(usageRaw?.total_tokens)
+        ?? (promptTokens !== undefined && completionTokens !== undefined
+          ? promptTokens + completionTokens
+          : undefined),
       // Cache accounting: without these the bill's biggest lever is invisible.
-      cacheHitTokens: typeof usageRaw?.prompt_cache_hit_tokens === 'number'
-        ? usageRaw.prompt_cache_hit_tokens : undefined,
-      cacheMissTokens: typeof usageRaw?.prompt_cache_miss_tokens === 'number'
-        ? usageRaw.prompt_cache_miss_tokens : undefined,
+      cacheHitTokens: numField(usageRaw?.prompt_cache_hit_tokens),
+      cacheMissTokens: numField(usageRaw?.prompt_cache_miss_tokens),
       // Thinking tokens are reported either flat or nested (OpenAI shape).
-      reasoningTokens: typeof usageRaw?.completion_tokens_details?.reasoning_tokens === 'number'
-        ? usageRaw.completion_tokens_details.reasoning_tokens
-        : typeof usageRaw?.reasoning_tokens === 'number' ? usageRaw.reasoning_tokens : undefined,
+      reasoningTokens: numField(usageRaw?.completion_tokens_details?.reasoning_tokens)
+        ?? numField(usageRaw?.reasoning_tokens),
     },
     ...(constraint ? { constraint } : {}),
   };

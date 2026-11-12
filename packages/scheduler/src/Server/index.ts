@@ -583,11 +583,13 @@ function cookieValue(header: string | undefined, name: string): string | undefin
 }
 
 /**
- * The Web UI build (packages/app/Web/dist), when present. `/studio` serves it
- * in preference to the legacy Desktop export.
+ * The archived Web UI build (archive/web/dist), when present. `/studio` serves
+ * it in preference to the legacy Desktop export. The Web client was archived
+ * on 2026-11-12 (focus moved to the shell TUI); the /studio interface itself
+ * is kept — see docs/contracts/desktop-port-contract.md.
  */
 function webUiBuildDir(): string | null {
-  const candidate = path.join(__dirname, '..', '..', '..', 'app', 'Web', 'dist');
+  const candidate = path.join(__dirname, '..', '..', '..', '..', 'archive', 'web', 'dist');
   return existsSync(path.join(candidate, 'index.html')) ? candidate : null;
 }
 
@@ -1950,37 +1952,70 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
         // stream — still answers: fall back to the blocking call instead of
         // failing the whole step.  Transient provider failures (429 / 5xx /
         // timeout) are retried once or twice before the offline fallback.
-        const callModel = () => onDelta
-          ? bridge.queryModelStream(
-              request,
-              onDelta,
-              text => events.emit('agent:reasoning', { sessionId: session.id, reasoning: text }),
-            ).catch(() => bridge.queryModel(request))
-          : bridge.queryModel(request);
+        // A stream that already produced output has been billed by the
+        // provider once (and partly shown to the user).  Re-sending the same
+        // request would charge the turn twice while the accounting below sees
+        // only the retried call, so the fallback is limited to a stream that
+        // failed before anything arrived.
+        let streamedAnything = false;
+        const sink = onDelta;
+        const callModel = () => {
+          if (!sink) return bridge.queryModel(request);
+          const onText = (text: string) => { streamedAnything = true; sink(text); };
+          const onThink = (text: string) => {
+            streamedAnything = true;
+            events.emit('agent:reasoning', { sessionId: session.id, reasoning: text });
+          };
+          return bridge.queryModelStream(request, onText, onThink).catch((err) => {
+            if (streamedAnything) throw err;
+            console.error(
+              `stream failed before any output, retrying without streaming`
+              + ` (${session.id}):`, err instanceof Error ? err.message : err);
+            return bridge.queryModel(request);
+          });
+        };
         response = await withRetry(callModel, (attempt, delayMs, reason) => {
           events.emit('agent:retry', {
             sessionId: session.id, attempt, delayMs, reason,
           });
         });
         if (response.constraint) stepConstraint = response.constraint;
-        if (response.usage?.promptTokens !== undefined) {
+        const turnUsage = response.usage;
+        if (process.env.TRHA_DEBUG_USAGE) {
           // TRHA_DEBUG_USAGE=1：排查长会话的上下文压力（promptTokens 是
           // govern 的输入；与 messages 数对不上时说明内容或口径有问题）。
-          if (process.env.TRHA_DEBUG_USAGE) {
-            console.error(
-              `usage prompt=${response.usage.promptTokens}`
-              + ` completion=${response.usage.completionTokens ?? '-'}`
-              + ` total=${response.usage.totalTokens ?? '-'}`
-              + ` cacheHit=${response.usage.cacheHitTokens ?? '-'}`
-              + ` cacheMiss=${response.usage.cacheMissTokens ?? '-'}`
-              + ` msgs=${session.messages.length} (${session.id})`);
-          }
-          session.lastPromptTokens = response.usage.promptTokens;
-          session.turnPromptTokens = (session.turnPromptTokens ?? 0) + response.usage.promptTokens;
-          session.cacheHitTokens = (session.cacheHitTokens ?? 0) + (response.usage.cacheHitTokens ?? 0);
-          session.cacheMissTokens = (session.cacheMissTokens ?? 0) + (response.usage.cacheMissTokens ?? 0);
-          session.completionTokens = (session.completionTokens ?? 0) + (response.usage.completionTokens ?? 0);
-          session.reasoningTokens = (session.reasoningTokens ?? 0) + (response.usage.reasoningTokens ?? 0);
+          console.error(
+            `usage prompt=${turnUsage?.promptTokens ?? '-'}`
+            + ` completion=${turnUsage?.completionTokens ?? '-'}`
+            + ` total=${turnUsage?.totalTokens ?? '-'}`
+            + ` cacheHit=${turnUsage?.cacheHitTokens ?? '-'}`
+            + ` cacheMiss=${turnUsage?.cacheMissTokens ?? '-'}`
+            + ` msgs=${session.messages.length} round=${round} (${session.id})`);
+        }
+        // Every counter is accumulated on its own.  The old guard skipped the
+        // *entire* turn's accounting whenever `promptTokens` was missing, so a
+        // two-call tool turn could be billed as a one-call turn — the "in"
+        // figure then looked half of what the provider charged.  A missing
+        // number must be reported, never silently swallowed.
+        if (turnUsage?.promptTokens !== undefined && turnUsage.promptTokens > 0) {
+          session.lastPromptTokens = turnUsage.promptTokens;
+          session.turnPromptTokens = (session.turnPromptTokens ?? 0) + turnUsage.promptTokens;
+        } else {
+          console.error(
+            `usage: no promptTokens from the model call`
+            + ` (round ${round}, ${session.id}); keeping the previous context gauge`);
+        }
+        if (turnUsage?.completionTokens !== undefined) {
+          session.completionTokens = (session.completionTokens ?? 0) + turnUsage.completionTokens;
+        }
+        if (turnUsage?.cacheHitTokens !== undefined) {
+          session.cacheHitTokens = (session.cacheHitTokens ?? 0) + turnUsage.cacheHitTokens;
+        }
+        if (turnUsage?.cacheMissTokens !== undefined) {
+          session.cacheMissTokens = (session.cacheMissTokens ?? 0) + turnUsage.cacheMissTokens;
+        }
+        if (turnUsage?.reasoningTokens !== undefined) {
+          session.reasoningTokens = (session.reasoningTokens ?? 0) + turnUsage.reasoningTokens;
         }
       } catch {
         // Kernel unreachable: demo tool lifecycle + mode-context echo
@@ -2214,11 +2249,17 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // completion deltas next to it.  `contextPromptTokens` is the latest
     // request's prompt size, which is what a context gauge must show —
     // conflating the two made a multi-round tool turn look cheaper than it was.
-    // `cumulativeTokens` is the session total (cacheHit+cacheMiss+completion).
+    // `totalTokens` is this turn's bill (prompt + completion); `cumulativeTokens`
+    // is the session lifetime total and must never stand in for it.  A turn that
+    // made no model call (plugin intercept, offline demo) bills 0 rather than
+    // re-reporting the previous turn's prompt.
+    const turnPrompt = session.turnPromptTokens ?? 0;
+    const turnCompletion = (session.completionTokens ?? 0) - beforeTokens.comp;
     const usage = {
-      promptTokens: session.turnPromptTokens ?? session.lastPromptTokens ?? 0,
+      promptTokens: turnPrompt,
       contextPromptTokens: session.lastPromptTokens ?? 0,
-      completionTokens: (session.completionTokens ?? 0) - beforeTokens.comp,
+      completionTokens: turnCompletion,
+      totalTokens: turnPrompt + turnCompletion,
       reasoningTokens: (session.reasoningTokens ?? 0) - beforeTokens.rsn,
       cacheHitTokens: (session.cacheHitTokens ?? 0) - beforeTokens.hit,
       cacheMissTokens: (session.cacheMissTokens ?? 0) - beforeTokens.miss,

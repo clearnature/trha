@@ -22,7 +22,7 @@ module Core.TurnStats
   , turnSummary
   ) where
 
-import Core.Types (Usage(..))
+import Core.Types (Usage(..), usageContextUsed)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Calendar (Day, DayOfWeek(..), dayOfWeek, fromGregorian)
@@ -114,11 +114,17 @@ shortCount n
 
 -- | The per-turn line.  Cache fields are omitted when the provider does not
 -- report them, and the cost reads @≈¥—@ until prices are configured.
+--
+-- @in@ is the *billable* prompt total for the turn: a tool loop issues one
+-- model call per round and the scheduler sums their prompts.  That makes the
+-- number legitimately larger than the context, so a multi-round turn also
+-- prints @ctx@ — the latest single request — and the two are never conflated.
 turnSummary :: Prices -> Usage -> Int -> UTCTime -> Text
 turnSummary p u reasoning at =
   T.intercalate " · " (concat
     [ [ "本轮 " <> shortCount (usagePromptTokens u + usageCompletionTokens u) <> " tok" ]
     , [ "in " <> shortCount (usagePromptTokens u) ]
+    , [ "ctx " <> shortCount (ctxUsed u) | multiRound ]
     , cacheParts
     , [ "out " <> shortCount (usageCompletionTokens u) ]
     , [ "reasoning " <> T.pack (show reasoning) | reasoning > 0 ]
@@ -126,6 +132,12 @@ turnSummary p u reasoning at =
     , [ if isOffPeak at then "低峰" else "高峰" ]
     ])
   where
+    ctxUsed = usageContextUsed
+    -- Only a tool loop (or a resend) can make the bill exceed one request;
+    -- printing @ctx@ on every ordinary turn would just add noise.
+    multiRound = usagePromptTokens u > 0
+              && ctxUsed u > 0
+              && ctxUsed u /= usagePromptTokens u
     cacheParts
       | usageCacheHitTokens u + usageCacheMissTokens u > 0 =
           [ "cached " <> shortCount (usageCacheHitTokens u)

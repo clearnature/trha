@@ -13,6 +13,7 @@ module Core.Types
   , ModelInfo(..)
   , Usage(..)
   , mkUsage
+  , usageContextUsed
   , StreamChunk(..)
   , SessionMode(..)
   , PlanSubmit(..)
@@ -47,7 +48,6 @@ module Core.Types
   , CLIError(..)
   ) where
 
-import Control.Applicative ((<|>))
 import Data.Aeson
 import Data.Aeson.Key (fromText)
 import qualified Data.Aeson.KeyMap as KM
@@ -152,24 +152,38 @@ data Usage = Usage
 mkUsage :: Int -> Int -> Int -> Usage
 mkUsage p c t = Usage p c t 0 0 0 p
 
+-- | The prompt size of the latest model call — the context gauge.
+--
+-- 'usagePromptTokens' is the *billable* prompt total of the whole turn: a tool
+-- loop makes one model call per round, and the scheduler sums all of them.  On
+-- such a turn that number can be several times the real context, so anything
+-- that draws an occupancy gauge must read this field instead.
+usageContextUsed :: Usage -> Int
+usageContextUsed u
+  | usageContextPromptTokens u > 0 = usageContextPromptTokens u
+  | otherwise = usagePromptTokens u
+
 instance ToJSON Usage
 -- The scheduler echoes provider numbers as promptTokens/completionTokens
--- plus cache deltas and a cumulative total; older kernels send totalTokens.
--- Requiring all three fields made the whole usage value unparsable, which in
--- turn meant the TUI never received its terminal ChunkDone (busy stuck on
--- "Thinking..."). Derive what is missing instead.
+-- plus cache deltas.  Requiring all three fields made the whole usage value
+-- unparsable, which in turn meant the TUI never received its terminal
+-- ChunkDone (busy stuck on "Thinking..."); derive what is missing instead.
+--
+-- @cumulativeTokens@ is deliberately *not* consulted: it is the session
+-- lifetime total, so folding it into 'usageTotalTokens' made every turn's
+-- "本轮" figure grow with the session and double-counted the tokens in
+-- 'appSessTokens'.
 instance FromJSON Usage where
   parseJSON = withObject "Usage" $ \o -> do
     p <- o .:? "promptTokens" .!= 0
     c <- o .:? "completionTokens" .!= 0
     t <- o .:? "totalTokens"
-    cum <- o .:? "cumulativeTokens"
     hit <- o .:? "cacheHitTokens" .!= 0
     miss <- o .:? "cacheMissTokens" .!= 0
     rsn <- o .:? "reasoningTokens" .!= 0
     -- Older schedulers send only one prompt count: use it for both.
     ctx <- o .:? "contextPromptTokens" .!= p
-    pure $ Usage p c (fromMaybe (p + c) (t <|> cum)) hit miss rsn ctx
+    pure $ Usage p c (fromMaybe (p + c) t) hit miss rsn ctx
 
 -- | Session permission posture (Shift+Tab cycle / Ctrl+Y YOLO).
 data SessionMode = SessionMode
