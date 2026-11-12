@@ -29,7 +29,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 
 import Core.SessionSummary (SessionSummary(..))
-import Core.Types (AgentEntry(..), ModelInfo(..), ProviderInfo(..), configAskTimeout)
+import Core.Types (AgentEntry(..), ModelInfo(..), ProviderInfo(..), TodoItem(..), configAskTimeout)
 import UI.Dialog
   ( ApprovalOption(..), Dialog(..), SandboxSettings(..), approvalOptions
   , dialogCommandsItems, dialogCommandsSelected, dialogCount, dialogEditable
@@ -218,7 +218,14 @@ dialogRows st d = case d of
     , padLeftRight 1 $ withAttr (attrName "timestamp") $
         str "enter toggle · esc close"
     ]
-  DialogPick title items sel' ->
+  DialogTodos ts _ ->
+    if null ts
+      then [ padLeftRight 1 $ withAttr (attrName "timestamp") $
+               str " no team tasks" ]
+      else [ dialogRow idx sel (str (T.unpack (todoSubject it)))
+                        (str (show (todoStatus it)))
+           | (idx, it) <- zip [start ..] (drop start (take (end + 1) ts)) ]
+  DialogPick title items _ sel' ->
     let (s0, e0) = windowRange (length items) sel' 30
     in [ padLeftRight 1 $ withAttr (attrName "title") $ str (T.unpack title) ]
        ++ [ dialogRow idx sel' (str (T.unpack (T.pack (show k) <> "  " <> line))) (str "")
@@ -271,6 +278,7 @@ drawDialog st d =
       DialogProviders{} -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
       DialogSandbox{}   -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
       DialogPick{}      -> hintRow "↑/↓ · Tab move · Enter choose · Esc close"
+      DialogTodos{}     -> hintRow "↑/↓ · Tab move · Esc close"
       _ -> emptyWidget
     hintRow t = padLeftRight 1 $ withAttr (attrName "status") $ str (T.unpack (tr lang t))
     -- 可过滤的列表：查询行 + 提示（输入即过滤，回车打开）。

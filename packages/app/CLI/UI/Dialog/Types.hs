@@ -7,6 +7,7 @@
 -- 所以先把类型沉下来，其余拆分才能做到单向依赖。
 module UI.Dialog.Types
   ( Dialog(..)
+  , PickAction(..)
   , SandboxSettings(..)
   , defaultSandboxSettings
   , sandboxApply
@@ -20,7 +21,7 @@ import Brick.Escape (EscFlags(..), EscOutcome(..))
 import Data.Text (Text)
 
 import Core.SessionSummary (SessionSummary)
-import Core.Types (AgentEntry, ModelInfo, ProviderInfo)
+import Core.Types (AgentEntry, ModelInfo, ProviderInfo, TodoItem(..))
 import UI.I18n (Lang)
 import UI.ProviderPresets (Preset)
 import UI.Render.Picker (PickerItem)
@@ -68,12 +69,25 @@ data Dialog
   | DialogApproval Text String [Text] Int   -- ^ ask message, tool, args, selected
   | DialogConfirm Text Int                  -- ^ "always" confirmation, selected (0=yes)
   | DialogSandbox SandboxSettings Int       -- ^ /sandbox: settings, selected row
-  | DialogPick Text [(Int, Text)] Int       -- ^ generic numbered picker: title, items, selected;
-                                            --   the pick action lives in AppState.appPickAction
+  | DialogPick Text [(Int, Text)] PickAction Int -- ^ generic numbered picker: title, items, pick action, selected
+  | DialogTodos [TodoItem] Int              -- ^ /todo: team tasks (read-only), selected
   deriving (Show, Eq)
+
 
 -- | Stack of open dialogs; the head is the topmost (owns keys).
 type DialogStack = [Dialog]
+
+-- | A numbered picker's per-item action ('DialogPick').  A newtype so
+-- @Dialog@ keeps its derived 'Show'/'Eq' (functions have neither): the
+-- instances are deliberately opaque — actions are closures over their
+-- claim-site environment and are compared (or printed) only as "exists".
+newtype PickAction = PickAction { runPickAction :: Int -> IO () }
+
+instance Show PickAction where
+  showsPrec d _ = showString "PickAction <fn>"
+
+instance Eq PickAction where
+  _ == _ = True
 -- | Options offered by an approval card, in display order.
 data ApprovalOption = ApprovalOnce | ApprovalAlways | ApprovalReject
   deriving (Show, Eq)

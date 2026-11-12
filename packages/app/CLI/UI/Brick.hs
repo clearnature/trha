@@ -221,7 +221,6 @@ initialState bridge chan cfg = AppState
   , appPendingStop   = False
   , appPendingProviderRemove = Nothing
   , appPendingConfirm = Nothing
-  , appPickAction = Nothing
   , appUsage     = Nothing
   , appCtxSize   = configCtxSize cfg
   , appSidebar   = SidebarAuto

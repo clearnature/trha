@@ -21,6 +21,8 @@ import UI.Brick.RunControl (runShellCommand)
 import UI.Brick.Slash.Ctx (CmdCtx(..))
 import UI.I18n (tr)
 import UI.Render.ToolCard (ToolCard(..), ToolStatus(..))
+import UI.Brick.Apply (openSettingsPanelOn)
+import UI.State (SettingsTab(..))
 import UI.State (AppState(..), ResourceName, appLang, mkMsg, toolMsg)
 
 handleToolsSlash :: CmdCtx -> Maybe (EventM ResourceName AppState ())
@@ -32,6 +34,8 @@ handleToolsSlash cx
         else runShellCommand arg
   -- /diff：本地 git，快；直接同步跑，输出以 diff 卡片呈现（批次二 D：
   -- 不再落 4000 字纯文本兜底——diffWidget 渲染器现成）。
+  -- /stats：复用设置面板现成的 TabStats 图形页（批次三 R1），不再打印文本表。
+  | cmd == "/stats" = Just $ openSettingsPanelOn TabStats
   | cmd == "/diff" = Just $ do
       st <- get
       modify $ \s -> s { appStatus = tr (appLang s) "Running /diff…" }

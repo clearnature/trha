@@ -102,8 +102,8 @@ import UI.Theme
 
 handleIntegrationSlash :: CmdCtx -> Maybe (EventM ResourceName AppState ())
 handleIntegrationSlash cx = case cxCmd cx of
-  "/todo" -> Just $ slashTodo cx
-  "/tree" -> Just $ slashTree cx
+  "/todo" -> Just $ slashTodosDialog cx
+  "/tree" -> Just $ slashAgents cx
   "/agents" -> Just $ slashAgents cx
   "/skills" -> Just $ slashSkills cx
   "/plugins" -> Just $ slashPlugins cx
@@ -124,24 +124,33 @@ slashWorkflowPick cx = do
       t <- liftIO now
       appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
     Just sid -> do
-      modify $ \s -> s { appPickAction = Just (\i -> do
-          r0 <- listWorkflows bridge
-          case r0 of
-            Right wfs | i >= 0 && i < length wfs ->
-              let (name, _desc) = wfs !! i
-              in do
-                rr <- runWorkflow bridge sid name ""
-                writeBChan chan (EvToast $ case rr of
-                  Right out -> T.take 300 out
-                  Left e    -> T.pack (show e))
-            _ -> writeBChan chan (EvToast "workflow pick failed")) }
+      let act i = do
+            r0 <- listWorkflows bridge
+            case r0 of
+              Right wfs | i >= 0 && i < length wfs ->
+                let (name, _desc) = wfs !! i
+                in do
+                  rr <- runWorkflow bridge sid name ""
+                  writeBChan chan (EvToast $ case rr of
+                    Right out -> T.take 300 out
+                    Left e    -> T.pack (show e))
+              _ -> writeBChan chan (EvToast "workflow pick failed")
       void $ liftIO . async $ do
         r <- listWorkflows bridge
         case r of
           Right wfs | not (null wfs) ->
-            writeBChan chan (EvShowPick "Workflow" (zip [0 ..] (map fst wfs)))
+            writeBChan chan (EvShowPick "Workflow" (zip [0 ..] (map fst wfs)) (PickAction act))
           Right _ -> writeBChan chan (EvToast "No workflow templates.")
           Left e  -> writeBChan chan (EvToast (T.pack (show e)))
+
+-- | @/todo@：团队任务只读对话框（空则文本提示；Esc 关闭）。
+slashTodosDialog :: CmdCtx -> EventM ResourceName AppState ()
+slashTodosDialog cx = do
+  st2 <- get
+  t2 <- liftIO now
+  if null (appTodos st2)
+    then appendMsg (mkMsg "system" (tr (cxLang cx) "No team tasks.") t2)
+    else modify $ \s -> s { appDialogs = stackPush (DialogTodos (appTodos st2) 0) (appDialogs s) }
 
 -- | @/forget <text>@：先数命中行数，再弹确认；Yes 才真正删除并 toast 结果。
 slashForgetConfirm :: CmdCtx -> EventM ResourceName AppState ()

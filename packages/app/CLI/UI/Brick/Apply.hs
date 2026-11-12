@@ -8,11 +8,12 @@ module UI.Brick.Apply
   ( applyLanguage
   , applyTheme
   , openSettingsPanel
+  , openSettingsPanelOn
   , modeAction
   ) where
 
 import Brick (EventM, get, modify)
-import Brick.Focus (focusRing)
+import Brick.Focus (focusRing, focusSetCurrent)
 import Brick.BChan (writeBChan)
 import Control.Concurrent.Async (async)
 import Control.Monad (void)
@@ -60,7 +61,11 @@ applyTheme name = do
 
 -- | 打开 @/settings@ 面板：先把有效配置快照下来，并异步拉取状态行。
 openSettingsPanel :: EventM ResourceName AppState ()
-openSettingsPanel = do
+openSettingsPanel = openSettingsPanelOn TabSettings
+
+-- | 打开设置面板并定位到指定页签（/@stats@ 复用 TabStats 图形页）。
+openSettingsPanelOn :: SettingsTab -> EventM ResourceName AppState ()
+openSettingsPanelOn tab = do
   st <- get
   let chan = appChan st
       model = appModel st
@@ -69,7 +74,7 @@ openSettingsPanel = do
   _ <- liftIO $ async $ do
     rows <- collectStatusInfo cfg mSid model
     writeBChan chan (EvStatusInfo rows)
-  modify $ \s -> s { appSettings = Just (SettingsPanel (focusRing ([minBound .. maxBound] :: [SettingsTab])) FocusList 0 "" Nothing Nothing)
+  modify $ \s -> s { appSettings = Just (SettingsPanel (focusSetCurrent tab (focusRing ([minBound .. maxBound] :: [SettingsTab]))) FocusList 0 "" Nothing Nothing)
                     , appEffCfg = cfg }
 
 -- | 切换权限姿态（read-only → ask → auto → yolo → plan，循环）。

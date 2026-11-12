@@ -42,6 +42,7 @@ import qualified Data.Text as T
 import UI.Completion (Completion)
 import UI.Skills (Skill)
 import UI.I18n (Lang(..), tr)
+import UI.Dialog.Types (PickAction(..))
 import UI.StatusInfo (StatusRow(..))
 
 -- | Tool invocation record.
@@ -134,12 +135,12 @@ data AppEvent
   | EvAgents (Either CLIError [AgentEntry])     -- ^ session tree (subagents)
   | EvServices [Text] [Text]                   -- ^ LSP lines, MCP lines
   | EvCommandDone (Maybe Text) (Maybe String)  -- ^ async slash-command fallback: output + resulting session id
-  | EvShowPick Text [(Int, Text)]              -- ^ open the generic numbered picker (title, items)
+  | EvShowPick Text [(Int, Text)] PickAction     -- ^ open the generic numbered picker (title, items, action)
   | EvEffort Text                              -- ^ set the reasoning effort (from the /effort picker)
   | EvBalance (Either CLIError Balance)         -- ^ provider account balance
   | EvSandboxConfig (Either CLIError Bool)       -- ^ scheduler's effective sandbox switch
   | EvTick                                        -- ^ 每秒一次：刷新时钟与耗时显示
-  deriving (Show)
+  -- AppEvent 携带函数（EvShowPick 的 PickAction），不再派生 Show。
 
 -- | Which screen the TUI is showing.  Home is the launch screen (MiMo's
 -- home route); submitting a message moves to the session view.

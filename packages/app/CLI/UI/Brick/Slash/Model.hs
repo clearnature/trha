@@ -205,9 +205,9 @@ slashEffort cx = do
       shown = "(" <> T.intercalate "|" levels <> ")"
   if T.null lvl
     then do
-      -- 无参 → 阶梯选择器（批次二 DialogPick；act 经 EvEffort 回状态）
-      modify $ \s -> s { appPickAction = Just (\i -> writeBChan (cxChan cx) (EvEffort (levels !! i))) }
-      liftIO $ writeBChan (cxChan cx) (EvShowPick "Effort" (zip [0 ..] levels))
+      -- 无参 → 阶梯选择器（DialogPick 动作随框；act 经 EvEffort 回状态）
+      let act i = writeBChan (cxChan cx) (EvEffort (levels !! i))
+      modify $ \s -> s { appDialogs = stackPush (DialogPick "Effort" (zip [0 ..] levels) (PickAction act) 0) (appDialogs s) }
     else if lvl `elem` levels
       then do
         liftIO (saveConfig (cfg { configEffort = lvl }))

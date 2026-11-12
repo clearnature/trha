@@ -135,15 +135,13 @@ dialogActivate = do
         DialogPresets ps sel -> case drop sel ps of
           (p : _) -> startWizardPreset p
           []      -> return ()
-        DialogPick _ items sel -> do
-          -- 通用编号选择器（T9b 批次二）：动作本体在 AppState.appPickAction，
-          -- 由认领分支在打开前写入；Enter 按当前选中序号执行并清槽。
-          st2 <- get
-          modify $ \s -> s { appDialogs = stackPop (appDialogs s)
-                           , appPickAction = Nothing }
+        DialogTodos{} -> return ()  -- 只读列表：Esc 关闭
+        DialogPick _ items act sel -> do
+          -- 通用编号选择器（批次二）：动作随对话框携带；Enter 按当前
+          -- 选中序号在 worker 线程执行。
+          modify $ \s -> s { appDialogs = stackPop (appDialogs s) }
           let n = maybe 0 fst (listToMaybe (drop sel items))
-              act = fromMaybe (\_ -> pure ()) (appPickAction st2)
-          void $ liftIO $ async (act n)
+          void $ liftIO $ async (runPickAction act n)
         DialogSkills _ _ sel -> case drop sel (dialogSkillsItems d) of
           (sk : _) -> selectSkill (skName sk)
           []       -> return ()

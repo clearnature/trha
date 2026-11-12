@@ -110,6 +110,7 @@ import UI.Theme
 handleSessionSlash :: CmdCtx -> Maybe (EventM ResourceName AppState ())
 handleSessionSlash cx = case cxCmd cx of
   "/clear" -> Just $ slashClear cx
+  "/cls"   -> Just $ slashClear cx  -- TUI 内两者等价（REPL 的 /cls 才是清屏）
   "/new" -> Just $ slashNew cx
   "/sessions" -> Just $ slashSessions cx
   "/rename" -> Just $ slashRename cx

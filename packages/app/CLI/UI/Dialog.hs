@@ -11,6 +11,7 @@
 module UI.Dialog
   ( -- * Dialog stack
     Dialog(..)
+  , PickAction(..)
   , SandboxSettings(..)
   , defaultSandboxSettings
   , sandboxApply

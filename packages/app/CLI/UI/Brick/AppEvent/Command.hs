@@ -8,7 +8,7 @@
 --     并清空命令缓存（与同步路径逐字段对齐）。
 --   * 'EvShowPick' —— 需要异步取数的选择器（@/rewind@ 读转录、@/restore@
 --     读快照、@/workflow@ 拉模板）在取数完成后打开通用编号选择器
---     'DialogPick'；动作本体由认领分支事先写入 AppState.appPickAction。
+--     'DialogPick'；动作随对话框携带（AppEvent 去 Show 后可带函数）。
 module UI.Brick.AppEvent.Command
   ( handleCommandEvent
   ) where
@@ -32,8 +32,7 @@ handleCommandEvent (EvCommandDone mout msid) = Just $ do
                    , appCacheNow = Nothing
                    , appCacheSum = (0, 0)
                    , appCacheTurns = 0 }
-handleCommandEvent (EvShowPick title items) = Just $
-  -- 动作本体已在认领分支写入 AppState.appPickAction，Enter 时由
-  -- DialogActivate 读取执行；这里只负责把选择器压栈。
-  modify $ \s -> s { appDialogs = stackPush (DialogPick title items 0) (appDialogs s) }
+handleCommandEvent (EvShowPick title items act) = Just $
+  -- 动作随对话框走（不再经 AppState 槽位）：两个选择器并存也互不覆盖。
+  modify $ \s -> s { appDialogs = stackPush (DialogPick title items act 0) (appDialogs s) }
 handleCommandEvent _ = Nothing

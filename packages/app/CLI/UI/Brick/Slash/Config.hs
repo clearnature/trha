@@ -179,8 +179,7 @@ slashReasoningLanguagePick cx = do
         let v = vals !! i
         liftIO (saveConfig (cfg { configReasoningLanguage = v }))
         writeBChan chan (EvToast ("reasoning-language: " <> v))
-  modify $ \s -> s { appPickAction = Just act }
-  liftIO $ writeBChan chan (EvShowPick "Reasoning language" (zip [0 ..] vals))
+  modify $ \s -> s { appDialogs = stackPush (DialogPick "Reasoning language" (zip [0 ..] vals) (PickAction act) 0) (appDialogs s) }
 
 -- | @/output-style@（无参）→ 值选择器；带参仍走文本设置路径。
 slashOutputStylePick :: CmdCtx -> EventM ResourceName AppState ()
@@ -192,5 +191,4 @@ slashOutputStylePick cx = do
         let v = vals !! i
         liftIO (saveConfig (cfg { configOutputStyle = v }))
         writeBChan chan (EvToast ("output-style: " <> v))
-  modify $ \s -> s { appPickAction = Just act }
-  liftIO $ writeBChan chan (EvShowPick "Output style" (zip [0 ..] vals))
+  modify $ \s -> s { appDialogs = stackPush (DialogPick "Output style" (zip [0 ..] vals) (PickAction act) 0) (appDialogs s) }

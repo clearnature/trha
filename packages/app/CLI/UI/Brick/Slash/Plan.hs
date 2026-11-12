@@ -146,22 +146,22 @@ slashRewindPick cx = do
   case cur of
     Nothing -> appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
     Just sid -> do
-      modify $ \s -> s { appPickAction = Just (\i -> do
-          r <- forkSession (cxBridge cx) sid (Just i)
-          case r of
-            Right newSid -> writeBChan (cxChan cx) (EvCommandDone
-                             (Just ("Rewound to turn " <> T.pack (show i) <> ": " <> T.pack newSid))
-                             (Just newSid))
-            Left e -> writeBChan (cxChan cx) (EvToast (T.pack (show e)))) }
-      void $ liftIO . async $ do
-        vals <- loadTranscript sid
-        let blocks = renderReplay vals
-            turns = [ (k, T.take 60 (T.strip (rbContent b)))
-                    | (k, b) <- zip [1 :: Int ..] blocks
-                    , rbRole b == "user", not (T.null (T.strip (rbContent b))) ]
-        if null turns
-          then writeBChan (cxChan cx) (EvToast "No user turns to rewind to.")
-          else writeBChan (cxChan cx) (EvShowPick "Rewind to turn" turns)
+      let act i = do
+            r <- forkSession (cxBridge cx) sid (Just i)
+            case r of
+              Right newSid -> writeBChan (cxChan cx) (EvCommandDone
+                               (Just ("Rewound to turn " <> T.pack (show i) <> ": " <> T.pack newSid))
+                               (Just newSid))
+              Left e -> writeBChan (cxChan cx) (EvToast (T.pack (show e)))
+      -- 转录是本地文件，同步读取（与 /export 同先例）；小会话毫秒级。
+      vals <- liftIO (loadTranscript sid)
+      let blocks = renderReplay vals
+          turns = [ (k, T.take 60 (T.strip (rbContent b)))
+                  | (k, b) <- zip [1 :: Int ..] blocks
+                  , rbRole b == "user", not (T.null (T.strip (rbContent b))) ]
+      if null turns
+        then liftIO $ writeBChan (cxChan cx) (EvToast "No user turns to rewind to.")
+        else modify $ \s -> s { appDialogs = stackPush (DialogPick "Rewind to turn" turns (PickAction act) 0) (appDialogs s) }
 
 -- | @/restore@（无参）→ 快照选择器：列 ~/.trha/file-history 最近 20 份，
 -- 选中即按 basename 回找写回（复用 snapshotBase / findFilesNamed）。
@@ -176,27 +176,28 @@ slashRestorePick cx = do
   if not present || null names
     then appendMsg (mkMsg "system" (tr (cxLang cx) "No file history yet (~/.trha/file-history).") t)
     else do
-      modify $ \s -> s { appPickAction = Just (\i -> do
-          names' <- sortBy (comparing (Data.Ord.Down)) <$> listDirectory dir
-          if i >= 1 && i <= length names'
-            then do
-              let snap = names' !! (i - 1)
-              case snapshotBase snap of
-                Nothing -> writeBChan chan (EvToast ("Unrecognised snapshot: " <> T.pack snap))
-                Just base -> do
-                  cwd <- getCurrentDirectory
-                  hits <- findFilesNamed cwd base
-                  case hits of
-                    [target] -> do
-                      body <- TIO.readFile (dir </> snap)
-                      TIO.writeFile target body
-                      writeBChan chan (EvToast ("Restored " <> T.pack snap <> " -> " <> T.pack target))
-                    _ -> writeBChan chan (EvToast
-                           ("candidates for " <> T.pack base <> ": " <> T.pack (show (length hits))
-                            <> " — cd into the right tree and retry"))
-            else writeBChan chan (EvToast "snapshot pick failed")) }
-      liftIO $ writeBChan chan (EvShowPick "Restore snapshot"
-        (zip [1 ..] (map T.pack (take 20 names))))
+      let act i = do
+            names' <- sortBy (comparing (Data.Ord.Down)) <$> listDirectory dir
+            if i >= 1 && i <= length names'
+              then do
+                let snap = names' !! (i - 1)
+                case snapshotBase snap of
+                  Nothing -> writeBChan chan (EvToast ("Unrecognised snapshot: " <> T.pack snap))
+                  Just base -> do
+                    cwd <- getCurrentDirectory
+                    hits <- findFilesNamed cwd base
+                    case hits of
+                      [target] -> do
+                        body <- TIO.readFile (dir </> snap)
+                        TIO.writeFile target body
+                        writeBChan chan (EvToast ("Restored " <> T.pack snap <> " -> " <> T.pack target))
+                      _ -> writeBChan chan (EvToast
+                             ("candidates for " <> T.pack base <> ": " <> T.pack (show (length hits))
+                              <> " — cd into the right tree and retry"))
+              else writeBChan chan (EvToast "snapshot pick failed")
+          -- 快照目录列表是本地 IO，同步读（与 /clear-attachments 同先例）。
+          items = zip [1 ..] (map T.pack (take 20 names))
+      modify $ \s -> s { appDialogs = stackPush (DialogPick "Restore snapshot" items (PickAction act) 0) (appDialogs s) }
 
 slashDeny :: CmdCtx -> EventM ResourceName AppState ()
 slashDeny cx = do

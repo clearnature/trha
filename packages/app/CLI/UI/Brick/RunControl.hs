@@ -127,7 +127,7 @@ escapeWithoutApproval = do
   case resolveEscape flags of
     EscPopDialog ->
       modify $ \s -> s { appDialogs = stackPop (appDialogs s), appEscLast = Nothing
-                       , appPendingStop = False, appPickAction = Nothing }
+                       , appPendingStop = False }
     _ | fired -> do
           modify $ \s -> s { appEscLast = Nothing }
           requestInterrupt
