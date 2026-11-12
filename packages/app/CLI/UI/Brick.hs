@@ -384,11 +384,15 @@ runTUI bridge cfg = do
   customCmds <- loadCustomCommands
   t0 <- getCurrentTime
   tz0 <- getCurrentTimeZone
-  void $ customMain vty mkVty' (Just chan) appFor
+  -- brick 升级后 customMain 只收单个 Maybe (IO Vty) builder（内部自建 Vty）；
+  -- 为保留 vty.ready 启动探针的预构建计时，改用 customMainWithVty，
+  -- 代价是调用方自行 shutdown。
+  void $ customMainWithVty vty mkVty' (Just chan) appFor
         (initialState bridge chan cfg) { appHist = hist, appStash = stash
                                        , appFrecency = frec, appModelPrefs = prefs
                                        , appCustomCmds = customCmds
                                        , appTheme = theme, appNow = Just t0, appTz = Just tz0 }
+  V.shutdown vty
   tEnd <- getCurrentTime
   logLine (T.pack ("probe brick.exit ms="
                    <> show (round (diffUTCTime tEnd tStart * 1000) :: Int)))
