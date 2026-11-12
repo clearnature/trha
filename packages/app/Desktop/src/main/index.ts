@@ -13,6 +13,19 @@ import {
   stopResultText,
 } from './services.js';
 
+// When launched detached from a terminal (desktop launcher, packaged app),
+// stdout/stderr pipes may already be closed; every console write then raises
+// an uncaught EPIPE and pops a main-process error dialog. The scheduler
+// stdout forwarding below logs per-line, so one detached launch could flood
+// dozens of dialogs. Swallow EPIPE here, before anything can log; rethrow
+// everything else to keep real failures fatal.
+const onStreamError = (err: NodeJS.ErrnoException): void => {
+  if (err.code === 'EPIPE') return;
+  throw err;
+};
+process.stdout?.on('error', onStreamError);
+process.stderr?.on('error', onStreamError);
+
 let mainWindow: BrowserWindow | null = null;
 let schedulerProcess: ChildProcess | null = null;
 let studioInfo: StudioInfo | null = null;
