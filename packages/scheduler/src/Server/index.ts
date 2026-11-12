@@ -2506,11 +2506,12 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   app.post('/api/session/:id/compact', async (req, res) => {
     const session = sessions.get(req.params.id);
     if (!session) return res.status(404).json({ error: 'no session' });
-    // focus 是调用方的关注点提示：本端点先把它记录进 lastMaintenance 并在
-    // 响应里回显（管道贯通）；压缩策略本身消费 focus 属 T9b 设计任务
-    // （docs/plans/commands-completion-plan.md §3 M3）。
+    // focus 是调用方的关注点提示（T9b 语义）：匹配的消息在本次压缩中受保护
+    // ——snip 保留正文、fold 按序保留且工具块保持原子；数量经 focusKept 回显。
     const focus = typeof req.body?.focus === 'string' ? req.body.focus.trim() : '';
-    const governed = govern(session.messages, session.lastPromptTokens ?? 0, governanceConfig());
+    const governed = govern(session.messages, session.lastPromptTokens ?? 0, {
+      ...governanceConfig(), ...(focus ? { focus } : {}),
+    });
     session.messages = governed.messages;
     session.lastMaintenance = {
       trigger: governed.trigger, savedTokens: governed.savedTokens,
@@ -2523,6 +2524,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     });
     res.json({
       trigger: governed.trigger, savedTokens: governed.savedTokens,
+      focusKept: governed.focusKept,
       ...(focus ? { focus } : {}),
     });
   });

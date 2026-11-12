@@ -264,9 +264,12 @@ runSession env = go
           r <- compactSession bridge sid (T.strip focus)
           return $ Just $ case r of
             Left e -> tr lang "Error: " <> T.pack (show e)
-            Right (trigger, saved) ->
+            Right (trigger, f, saved, kept) ->
               tr lang "Compacted (" <> trigger <> tr lang "): saved "
                 <> T.pack (show saved) <> tr lang " tokens"
+                <> (if T.null f then ""
+                    else tr lang "; focus \"" <> f <> tr lang "\" kept "
+                         <> T.pack (show kept) <> tr lang " message(s)")
     cmdResumeList = do
       cwd <- getCurrentDirectory
       -- Only this project's transcripts: another project's conversation resumed

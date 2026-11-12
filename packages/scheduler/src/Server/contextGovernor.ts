@@ -41,6 +41,14 @@ export interface GovernanceConfig {
    * elided, so this is the cheapest quality/price win in the fold.
    */
   keepFirstUser: boolean;
+  /**
+   * Focus hint for one explicit /compact [focus] pass (T9b): messages whose
+   * content matches (case-insensitive substring) are protected from elision —
+   * snipped tool results keep their body, folded messages survive in order,
+   * and their tool-call blocks stay atomic. Empty/absent = no protection and
+   * behaviour identical to a pass without focus.
+   */
+  focus?: string;
 }
 
 export const DEFAULT_GOVERNANCE: GovernanceConfig = {
@@ -62,6 +70,8 @@ export interface GovernanceResult<T extends GovernedMessage = GovernedMessage> {
   savedTokens: number;
   /** True when the request prefix changed, i.e. the next call's cache misses. */
   prefixChanged: boolean;
+  /** Messages kept verbatim because of the focus hint (0 without focus). */
+  focusKept: number;
 }
 
 /** Cheap token estimate: CJK runs are ~1 token per char, ASCII ~1 per 3.5. */
@@ -102,19 +112,81 @@ function tailStart(messages: readonly GovernedMessage[], tailTokens: number): nu
 
 const SNIPPED = (n: number) => `[tool result elided: ${n} chars]`;
 
+/** Case-insensitive focus match on message content. Empty focus never matches. */
+function matchesFocus(m: GovernedMessage, focus: string): boolean {
+  if (!focus) return false;
+  const c = m.content ?? '';
+  return c.toLowerCase().includes(focus.toLowerCase());
+}
+
+/**
+ * Expand a seed set of protected indices to whole tool blocks.
+ *
+ * A `tool` result may never be kept without the `assistant` message that
+ * carries its call (and the sibling results of that call), and vice versa —
+ * splitting a block is exactly the "insufficient tool messages" provider
+ * rejection the history invariants guard against.
+ */
+function expandProtected<T extends GovernedMessage>(messages: readonly T[], seed: Iterable<number>): Set<number> {
+  const prot = new Set(seed);
+  for (let i = 0; i < messages.length; i++) {
+    if (!prot.has(i)) continue;
+    const m = messages[i]!;
+    if (m.role === 'tool' && m.tool_call_id) {
+      // walk back to the assistant carrying this call, protect it + siblings
+      let j = i - 1;
+      while (j >= 0) {
+        const p = messages[j]!;
+        const calls = p.tool_calls ?? [];
+        if (p.role === 'assistant' && calls.some(c => (c as { id?: string }).id === m.tool_call_id)) {
+          prot.add(j);
+          for (let k = j + 1; k <= i; k++) {
+            const q = messages[k]!;
+            if (q.role === 'tool' && q.tool_call_id && calls.some(c => (c as { id?: string }).id === q.tool_call_id)) prot.add(k);
+          }
+          break;
+        }
+        j -= 1;
+      }
+    } else if (m.role === 'assistant' && (m.tool_calls ?? []).length > 0) {
+      // protect the tool results answering this call
+      for (let k = i + 1; k < messages.length; k++) {
+        const q = messages[k]!;
+        if (q.role === 'tool' && q.tool_call_id && (m.tool_calls ?? []).some(c => (c as { id?: string }).id === q.tool_call_id)) {
+          prot.add(k);
+        } else if (q.role !== 'tool') break;
+      }
+    }
+  }
+  return prot;
+}
+
 /**
  * Replace the content of old tool results with a stable placeholder.
  *
  * Tool results are the largest and least reusable payloads in a long session,
  * so they go first — and the placeholder is a fixed string, so the rewritten
- * prefix stays byte-identical on later turns.
+ * prefix stays byte-identical on later turns. Focus-matching results are the
+ * one exception: the caller asked for them to survive this pass.
+ *
+ * Returns the rewritten messages and how many results focus protected.
  */
-function snip(messages: readonly GovernedMessage[], keepFrom: number): GovernedMessage[] {
-  return messages.map((m, i) => {
+function snip(
+  messages: readonly GovernedMessage[],
+  keepFrom: number,
+  focus: string,
+): { out: GovernedMessage[]; focusKept: number } {
+  let focusKept = 0;
+  const out = messages.map((m, i) => {
     if (i >= keepFrom || m.role !== 'tool') return m;
     if (m.content.length <= 200) return m;
+    if (matchesFocus(m, focus)) {
+      focusKept += 1;
+      return m;
+    }
     return { ...m, content: SNIPPED(m.content.length) };
   });
+  return { out, focusKept };
 }
 
 /**
@@ -122,14 +194,19 @@ function snip(messages: readonly GovernedMessage[], keepFrom: number): GovernedM
  *
  * The marker carries counts, not content, and no timestamp — anything volatile
  * would change the prefix on every turn and defeat the cache.
+ *
+ * Focus-matching messages (and, per block atomicity, their whole tool blocks)
+ * are kept verbatim, in original order, ahead of the marker; the marker's
+ * counts describe only what was actually elided.
  */
 function fold(
   messages: readonly GovernedMessage[],
   keepFrom: number,
   trigger: 'fold' | 'force',
   keepFirstUser: boolean,
-): GovernedMessage[] {
-  if (keepFrom <= 0) return [...messages];
+  focus: string,
+): { out: GovernedMessage[]; focusKept: number } {
+  if (keepFrom <= 0) return { out: [...messages], focusKept: 0 };
   const tail = messages.slice(keepFrom);
   let elided = messages.slice(0, keepFrom);
 
@@ -148,13 +225,31 @@ function fold(
     if (firstUser >= 0) kept.push(...elided.splice(firstUser, 1));
   }
 
+  // Focus protection: block-atomic, order-preserving, applied to whatever is
+  // still in the elidable span after the head and first-user extractions.
+  let focusKept = 0;
+  const focusKeptMsgs: GovernedMessage[] = [];
+  if (focus) {
+    const seed = new Set<number>();
+    elided.forEach((m, i) => { if (matchesFocus(m, focus)) seed.add(i); });
+    if (seed.size > 0) {
+      const prot = expandProtected(elided, seed);
+      for (let i = 0; i < elided.length; i++) {
+        if (prot.has(i)) focusKeptMsgs.push(elided[i]!);
+      }
+      elided = elided.filter((_, i) => !prot.has(i));
+      focusKept = focusKeptMsgs.length;
+    }
+  }
+
   const userTurns = elided.filter(m => m.role === 'user').length;
+  const focusNote = focusKept > 0 ? `; focus "${focus}": ${focusKept} message(s) kept` : '';
   const marker: GovernedMessage = {
     role: 'user',
     content: `[context ${trigger === 'force' ? 'compacted' : 'folded'}: ${elided.length} earlier messages`
-      + ` (${userTurns} user turns, ~${estimateMessages(elided)} tokens) elided to fit the window]`,
+      + ` (${userTurns} user turns, ~${estimateMessages(elided)} tokens) elided to fit the window${focusNote}]`,
   };
-  return [...head, ...kept, marker, ...tail];
+  return { out: [...head, ...kept, ...focusKeptMsgs, marker, ...tail], focusKept };
 }
 
 /**
@@ -169,8 +264,9 @@ export function govern<T extends GovernedMessage>(
   cfg: GovernanceConfig = DEFAULT_GOVERNANCE,
 ): GovernanceResult<T> {
   const pressure = latestPromptTokens > 0 ? latestPromptTokens : estimateMessages(messages);
+  const focus = (cfg.focus ?? '').trim();
   const unchanged: GovernanceResult<T> = {
-    messages: [...messages], trigger: 'none', savedTokens: 0, prefixChanged: false,
+    messages: [...messages], trigger: 'none', savedTokens: 0, prefixChanged: false, focusKept: 0,
   };
   if (cfg.window <= 0 || pressure < cfg.window * cfg.snipRatio) return unchanged;
 
@@ -182,10 +278,17 @@ export function govern<T extends GovernedMessage>(
   const keepFrom = tailStart(messages, cfg.window * cfg.tailRatio);
   const before = estimateMessages(messages);
 
-  const next: T[] =
-    trigger === 'snip'
-      ? (snip(messages, keepFrom) as T[])
-      : (fold(messages, keepFrom, trigger, cfg.keepFirstUser) as T[]);
+  let next: T[];
+  let focusKept = 0;
+  if (trigger === 'snip') {
+    const r = snip(messages, keepFrom, focus) as { out: T[]; focusKept: number };
+    next = r.out;
+    focusKept = r.focusKept;
+  } else {
+    const r = fold(messages, keepFrom, trigger, cfg.keepFirstUser, focus) as { out: T[]; focusKept: number };
+    next = r.out;
+    focusKept = r.focusKept;
+  }
 
   const saved = Math.max(0, before - estimateMessages(next));
   // The economics rule: a fold that saves less than a small request would cost
@@ -193,5 +296,5 @@ export function govern<T extends GovernedMessage>(
   if (trigger !== 'snip' && saved < cfg.minFoldTokens) return unchanged;
   if (saved <= 0) return unchanged;
 
-  return { messages: next, trigger, savedTokens: saved, prefixChanged: true };
+  return { messages: next, trigger, savedTokens: saved, prefixChanged: true, focusKept };
 }

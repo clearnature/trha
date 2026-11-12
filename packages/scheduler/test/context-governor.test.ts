@@ -112,6 +112,23 @@ describe('contextGovernor', () => {
   });
 });
 
+/** Every tool result must still have its call; every call its results. */
+function orphans(messages: readonly GovernedMessage[]): string[] {
+  const open = new Set<string>();
+  const bad: string[] = [];
+  messages.forEach((m, i) => {
+    if (m.role === 'assistant' && (m.tool_calls ?? []).length) {
+      const follow = messages.slice(i + 1, i + 1 + m.tool_calls!.length);
+      if (follow.some(f => f.role !== 'tool')) bad.push(`call block at ${i} is split`);
+      for (const c of m.tool_calls!) open.add(String((c as { id?: string }).id));
+    }
+    if (m.role === 'tool' && !open.has(String(m.tool_call_id))) {
+      bad.push(`orphan tool result at ${i} (${m.tool_call_id})`);
+    }
+  });
+  return bad;
+}
+
 describe('compaction never splits a tool block', () => {
   /** assistant(tool_calls) + tool result, repeated. */
   function toolRounds(n: number): GovernedMessage[] {
@@ -129,23 +146,6 @@ describe('compaction never splits a tool block', () => {
     return out;
   }
 
-  /** Every tool result must still have its call; every call its results. */
-  function orphans(messages: readonly GovernedMessage[]): string[] {
-    const open = new Set<string>();
-    const bad: string[] = [];
-    messages.forEach((m, i) => {
-      if (m.role === 'assistant' && (m.tool_calls ?? []).length) {
-        const follow = messages.slice(i + 1, i + 1 + m.tool_calls!.length);
-        if (follow.some(f => f.role !== 'tool')) bad.push(`call block at ${i} is split`);
-        for (const c of m.tool_calls!) open.add(String((c as { id?: string }).id));
-      }
-      if (m.role === 'tool' && !open.has(String(m.tool_call_id))) {
-        bad.push(`orphan tool result at ${i} (${m.tool_call_id})`);
-      }
-    });
-    return bad;
-  }
-
   it('walks the boundary back over a tool message', () => {
     const msgs = toolRounds(6);
     const cfg = { ...DEFAULT_GOVERNANCE, window: 2000, tailRatio: 0.12, minFoldTokens: 10 };
@@ -161,5 +161,90 @@ describe('compaction never splits a tool block', () => {
       const r = govern(msgs, 1900, cfg);
       expect(orphans(r.messages), `tailRatio=${ratio.toFixed(2)}`).toEqual([]);
     }
+  });
+});
+
+describe('focus retention (T9b: /compact [focus])', () => {
+  const FOCUSED = { ...SMALL, focus: 'needle' };
+
+  it('snip keeps focus-matching tool results verbatim, snips the rest', () => {
+    const big = 'y'.repeat(2000);
+    const msgs: GovernedMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'do it' },
+      { role: 'tool', tool_call_id: 'c1', content: 'the needle is here ' + big },
+      { role: 'tool', tool_call_id: 'c2', content: big },
+      { role: 'assistant', content: 'done' },
+      ...conversation(8, 800).slice(1),
+    ];
+    const withFocus = govern(msgs, 6000, FOCUSED);
+    expect(withFocus.trigger).toBe('snip');
+    const t1 = withFocus.messages.find(m => m.tool_call_id === 'c1');
+    expect(t1?.content).toContain('needle');                    // 保留正文
+    const t2 = withFocus.messages.find(m => m.tool_call_id === 'c2');
+    expect(t2?.content).toMatch(/^\[tool result elided: \d+ chars\]$/); // 其余照常
+    expect(withFocus.focusKept).toBe(1);
+
+    const without = govern(msgs, 6000, SMALL);
+    expect(without.messages.find(m => m.tool_call_id === 'c1')?.content)
+      .toMatch(/^\[tool result elided/);                        // 无 focus 时照常剪
+  });
+
+  it('fold keeps focus-matching messages in order, excluded from the marker', () => {
+    const msgs: GovernedMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'task' },
+      ...conversation(6, 800),
+      { role: 'user', content: 'remember the needle spec: alpha-42' },
+      ...conversation(3, 800),
+    ];
+    const r = govern(msgs, 9500, FOCUSED);       // 95% → force fold
+    expect(['fold', 'force']).toContain(r.trigger);
+    const keptMsg = r.messages.find(m => m.content.includes('alpha-42'));
+    expect(keptMsg).toBeTruthy();                // focus 消息原文保留
+    const marker = r.messages.find(m => String(m.content).startsWith('[context'));
+    expect(String(marker?.content)).toContain('focus "needle": 1 message(s) kept');
+    const keptIdx = r.messages.indexOf(keptMsg!);
+    const markerIdx = r.messages.indexOf(marker!);
+    expect(keptIdx).toBeLessThan(markerIdx);     // 保持原顺序：focus 在 marker 前
+    expect(r.focusKept).toBe(1);
+  });
+
+  it('focus protection keeps tool blocks atomic', () => {
+    const msgs: GovernedMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'task' },
+      ...conversation(5, 800),
+      { role: 'assistant', content: '', tool_calls: [
+        { id: 'c1', type: 'function', function: { name: 'bash', arguments: '{}' } },
+        { id: 'c2', type: 'function', function: { name: 'bash', arguments: '{}' } },
+      ] },
+      { role: 'tool', tool_call_id: 'c1', content: 'x'.repeat(400) },
+      { role: 'tool', tool_call_id: 'c2', content: 'the needle reading: 42' },
+      ...conversation(3, 800),
+    ];
+    const r = govern(msgs, 9500, FOCUSED);
+    expect(['fold', 'force']).toContain(r.trigger);
+    // c2 命中 focus ⇒ 其 assistant 调用与兄弟结果 c1 一并保留（块原子性）
+    const asst = r.messages.find(m => (m.tool_calls ?? []).some(c => c.id === 'c1'));
+    expect(asst).toBeTruthy();
+    const i1 = r.messages.findIndex(m => m.tool_call_id === 'c1');
+    const i2 = r.messages.findIndex(m => m.tool_call_id === 'c2');
+    expect(i1).toBe(i2 - 1);
+    const blocks = orphans(r.messages);
+    expect(blocks).toEqual([]);
+  });
+
+  it('no-match focus behaves like no focus', () => {
+    const msgs = conversation(10, 800);
+    const withMiss = govern(msgs, 9500, { ...SMALL, focus: 'absent-term' });
+    const plain = govern(msgs, 9500, SMALL);
+    expect(withMiss.messages).toEqual(plain.messages);
+    expect(withMiss.focusKept).toBe(0);
+  });
+
+  it('without focus the pass reports focusKept 0', () => {
+    const r = govern(conversation(10, 800), 9500, SMALL);
+    expect(r.focusKept).toBe(0);
   });
 });

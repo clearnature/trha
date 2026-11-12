@@ -372,16 +372,19 @@ retrySession bridge sid = do
 -- | Compact a session's history through the scheduler's context governor.
 
 -- | Compact a session's history through the scheduler's context governor.
--- @focus@ 会被服务端记录进 lastMaintenance 并在响应里回显（语义应用
--- 见 commands-completion-plan T9b；当前压缩策略本身不消费 focus）。
-compactSession :: SchedulerBridge -> SessionId -> Text -> IO (Either CLIError (Text, Int))
+-- @focus@ 是关注点提示（T9b 语义）：匹配的消息在本次压缩中受保护——
+-- snip 保留正文、fold 按序保留且工具块保持原子；返回 (trigger, focus, saved, focusKept)。
+compactSession :: SchedulerBridge -> SessionId -> Text -> IO (Either CLIError (Text, Text, Int, Int))
 compactSession bridge sid focus = do
   r <- httpPost (bridgeHTTP bridge) ("/api/session/" ++ sid ++ "/compact")
          (object ["focus" .= focus])
   pure $ case r of
     Left e  -> Left e
     Right v -> case parseMaybe (.: "savedTokens") v of
-      Just n  -> Right (fromMaybe "none" (parseMaybe (.: "trigger") v), n)
+      Just n  -> Right ( fromMaybe "none" (parseMaybe (.: "trigger") v)
+                       , fromMaybe "" (parseMaybe (.: "focus") v)
+                       , n
+                       , fromMaybe 0 (parseMaybe (.: "focusKept") v) )
       Nothing -> Left (ServerError "compact returned no result")
 
 -- | Transcribe a recorded WAV through the scheduler (MiMo's ASR contract:
