@@ -3,7 +3,7 @@
 > **日期**：2026-10-26 · **目的**：为 trha TUI 的分层命令模型找证据，不抄形态。
 > **方法**：四路并行读源码（MiMo-Code/opencode、qwen-code/gemini-cli、dsh/Reasonix、codex/ratatui）
 > + 同语言近邻 `/data/work/functional-programming/hs/haskell-agent` 精读。
-> **对应问题**：`docs/plans/ide-information-architecture.md` §6 的 D1–D9。
+> **对应问题**：`docs/archive/ide-information-architecture.md` §6 的 D1–D9。
 
 ---
 

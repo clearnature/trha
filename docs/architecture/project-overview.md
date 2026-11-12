@@ -1,5 +1,10 @@
 # trha 项目总览：技术栈 · 架构 · 计划完成度
 
+> **⚠️ 2026-11-12 更新**：**Desktop / Web 外壳已归档**（`packages/app/Desktop` →
+> `archive/desktop`、`packages/app/Web` → `archive/web`），开发重心是 shell TUI。
+> 本文表格与回执中涉及两端的行保持原貌作历史证据；以横幅为准。
+> scheduler 侧接口（`/studio`、宿主契约）保留，见 `docs/contracts/`。
+
 > **日期**：2026-09-17（北京时间）
 > **性质**：**综合视图**。它把散在各处的「技术栈 / 架构 / 计划完成度」收进一页，
 > 但**不取代**任何权威文档 —— 冲突时以 §7 列出的那几份为准。
@@ -31,8 +36,8 @@
 | **WebGPU 后端** | 手写 FFI 绑 wgpu-native C API（`WGPUStringView` + `*CallbackInfo`）+ WGSL + hsc2hs | `src/webgpu/Infrastructure/WebGPU/**`（`Raw/` 9 模块） | 9 模块 + `src/webgpu/cbits/wgpu_callback_shim.c` | ✅ `library trha-webgpu`（`trha.cabal:222`），5 个探针可执行 + `trha-webgpu-test` |
 | **编排层** | TypeScript + Express + Zod + Winston + Cordis 式插件 | `packages/scheduler/` | 27 `.ts`，19 测试文件 / 115 用例 | npm 独立构建（不在 cabal） |
 | **CLI / TUI 外壳** | Haskell + brick + vty + haskeline + optparse-applicative | `packages/app/CLI/`（`trha-cli.cabal`） | 45 文件；`trha-cli-test` 182 用例 | ✅ `cabal.project` 的第二个 package |
-| **桌面外壳** | Electron 44.2.0 + React 18 + Vite + Zustand + electron-builder 26.15.3 + Vitest/jsdom | `packages/app/Desktop/` | 46 源文件，30 测试文件 / 137 用例；打包装配实测可产出 linux deb 且能启动 | npm 独立构建（不在 cabal） |
-| **Web 外壳** | React + Vite + Zustand | `packages/app/Web/` | 15 源/配置文件（另有 3 个 `dist/` 产物）+ 1 个测试 | ❌ 不在 cabal、不在 CI —— **空壳** |
+| **桌面外壳**（已归档 2026-11-12 → `archive/desktop/`） | Electron 44.2.0 + React 18 + Vite + Zustand + electron-builder 26.15.3 + Vitest/jsdom | `archive/desktop/` | 46 源文件，30 测试文件 / 137 用例；打包装配实测可产出 linux deb 且能启动 | npm 独立构建（不在 cabal） |
+| **Web 外壳**（已归档 2026-11-12 → `archive/web/`） | React + Vite + Zustand | `archive/web/` | 15 源/配置文件（另有 3 个 `dist/` 产物）+ 1 个测试 | ❌ 不在 cabal、不在 CI —— **空壳** |
 | **静态编译** | Alpine + musl → scratch 单文件 | `Dockerfile.static` | — | 存在；**构建未验证**（本机未跑 docker） |
 | **规范基座（仓外）** | Agda「律算合一」+ pyBitNet《架构宪法 v1.1》 | `/data/work/discrete-mathematics`、`/data/trit/pyBitNet` | 对拍目标，**不参与本仓构建** | ❌ Agda 未进 CI（D-7） |
 
@@ -194,12 +199,12 @@ SSE 事件帧 4 类（消息 / 计划挂起 / 决策 / 工具生命周期）。
 | **自研 CPU 推理 M1–M6**（`plans/desktop-provider-design.md` A6） | **2/6**：M1 GGUF ✅、M2 反量化（8 型）✅；M3 BPE / M4 单层前向+KV / M5 完整前向+Sampler / M6 SIMD 未做 | `src/llm/Infrastructure/CPU/Inference.hs:36,47,77,86` 四处 `-- (placeholder)` |
 | **WebGPU 接线 W1–W7**（`plans/webgpu-wiring-plan.md`） | **✅ 7/7 已跑通** | `library trha-webgpu`（`trha.cabal:222`）+ 5 探针 + `trha-webgpu-test` 3/0（真机 AMD Navi 44 + Vulkan/radv） |
 | **WebGPU T1–T4**（同文档 §9） | **✅ 4/4** | GF(27) matmul 与 CPU 逐元素一致、Profile 真实计时、rpath、独立 hspec 套件 |
-| **Desktop UI 移植 T1–T12**（`plans/desktop-ui-execution-plan.md`） | **22/24**：`T5b`(resume) ▢、`T12a`(清旧组件) 用户裁定「暂不删除，保留清单」 | 30 测试文件 / 137 用例（§8 复现） |
+| **Desktop UI 移植 T1–T12**（`docs/archive/desktop-ui-execution-plan.md`） | **22/24**：`T5b`(resume) ▢、`T12a`(清旧组件) 用户裁定「暂不删除，保留清单」 | 30 测试文件 / 137 用例（§8 复现） |
 | **Provider 三层 P1–P8 + A1–A5**（`plans/desktop-provider-design.md`） | **✅ 13/13** | 文档头部逐条列了验证（三 wire 真流式、tool 增量聚合、假流式改真流式的时间证据） |
 | **Phase 1–3（CLI/TUI + 协议 + 三端）**（`plans/plan-reconciliation.md`） | P1.1–P1.6 ✅ · S0–S3 ✅（S1 语义转移至编排层）· P3-* ✅ · K1–K6 ✅ | 同上文档「逐项核对」 |
 | **真缺口 G1–G5** | G1 **裁决关闭** · G2 ✅ · **G3 ❌ 未开始**（`trha-ui` 共享渲染库未提取）· **G4 部分**（Desktop 已实质起跑，Web 仍空壳）· **G5 ❌ 未开始** | 同上「真缺口」表 |
 | **架构偏差 D-1…D-9**（`architecture-intended-vs-actual.md`） | **6 项已闭合/处置**（D-1/D-2/D-3/D-6/D-8/D-9；**D-6 于 2026-09-19 接线完成**：engineGPU 弱耦合注入 + TRHA_GPU=1 → GPU-only 60 层闭环 5.1x）· **D-7 对拍成体系但 Agda 未进 CI** · **D-4/D-5 未开始** | 同文档 §4 |
-| **Electron 28 → 44 升级**（`plans/electron-44-upgrade.md`） | **✅ 依赖 + 二进制 + 编译 + 打包 + 实机启动 均已验证**（2026-09-17）：`npm run package` EXIT=0 → `trha_0.1.0_amd64.deb`；产物契约 `CONTRACT OK`；实机启动随包 scheduler `/health` → HTTP 200。**仍未做**：win/mac 打包、GUI 渲染断言、`chrome-sandbox` SUID（靠 `--no-sandbox` 绕过）、`.npmrc` 镜像未配、改动未提交 | `plans/electron-44-upgrade.md` §2/§3/§6；回执 `r-mu52cxfw-jnesjs`·`r-mu52how8-ei0sg7`·`r-mu52huhe-m9ivzy` |
+| **Electron 28 → 44 升级**（`docs/archive/electron-44-upgrade.md`） | **✅ 依赖 + 二进制 + 编译 + 打包 + 实机启动 均已验证**（2026-09-17）：`npm run package` EXIT=0 → `trha_0.1.0_amd64.deb`；产物契约 `CONTRACT OK`；实机启动随包 scheduler `/health` → HTTP 200。**仍未做**：win/mac 打包、GUI 渲染断言、`chrome-sandbox` SUID（靠 `--no-sandbox` 绕过）、`.npmrc` 镜像未配、改动未提交 | `docs/archive/electron-44-upgrade.md` §2/§3/§6；回执 `r-mu52cxfw-jnesjs`·`r-mu52how8-ei0sg7`·`r-mu52huhe-m9ivzy` |
 | **文件级完成跟踪**（`plans/file-completion-tracking.md`） | 其声称的四个测试计数**今天全部复现**（190/99/3/182） | §8 回执 `r-mu50b3k7-tl70so` |
 
 ### 3.2 本轮实测基线（可复现）
@@ -235,7 +240,7 @@ SSE 事件帧 4 类（消息 / 计划挂起 / 决策 / 工具生命周期）。
 | 项 | 为什么没验 |
 |---|---|
 | ~~**Electron 实机启动**~~ → **✅ 2026-09-17 已验** | 打包产物 `./release/linux-unpacked/trha --no-sandbox` 起来、随包 scheduler 在 3456 服务、`/health` → HTTP 200（`r-mu52how8-ei0sg7`）。**但 GUI 渲染仍未被断言**（无截图/无渲染断言）；且启动依赖 `--no-sandbox`（SUID 未设，需 sudo） |
-| **win/mac 打包** | 需各自平台构建机。`electron-builder.yml` 只做了 schema 层修复（见 `plans/electron-44-upgrade.md` §6.1），**两个平台都没跑过** |
+| **win/mac 打包** | 需各自平台构建机。`electron-builder.yml` 只做了 schema 层修复（见 `docs/archive/electron-44-upgrade.md` §6.1），**两个平台都没跑过** |
 | **`Dockerfile.static` 静态构建** | 本机未跑 docker |
 | **CI 实际结果** | 无法在本机执行 GitHub Actions。**修前**的静态观察：`ci.yml`/`smoke-tests.yml` 钉 GHC `9.4.8`（base-4.17），而 `trha.cabal` 要求 `base ^>=4.22` ⇒ Haskell job 不可能通过。**2026-09-17 已改**为 GHC 9.14.1 + cabal 3.16.1.0（ghcup 实测清单里存在），并且 `cabal build all && cabal test all` 本机 EXIT=0（`r-mu51ay1f-z0gbne`）。**但工作流本身仍未跑过** —— 见 §5-9 与 `known_issues trha-ci-wgpu-libdir-unverified` |
 | **真实 LLM key 冒烟** | 所有 provider 验证基于本地/桩 endpoint（文档各处已自陈） |
@@ -362,7 +367,7 @@ ls 3rdparty/                                                                 # l
 | 日期 | 变更 |
 |---|---|
 | 2026-09-17 | 初版：技术栈（分层 + 构建拓扑 + 依赖 + 3rdparty）· 架构现状图 + 职责分界 + 协议 + 规模 · 计划完成度总账（逐计划）· 未完成/未验证 · 文档漂移清单 10 条 · 复核命令 · 本轮回执 |
-| 2026-09-17 | **桌面版打通**：`.github/workflows/` 无关；改 `packages/app/Desktop/electron-builder.yml` 两处（`win.signingHashAlgorithms` → `win.signtoolOptions`；`extraResources` 把 scheduler 的 `node_modules` 单列一条，绕开 electron-builder ≥25 的硬编码排除）。编译 / 打包 / 实机启动三段全部实测通过，回执 `r-mu52cxfw-jnesjs`·`r-mu52how8-ei0sg7`·`r-mu52huhe-m9ivzy`；根因与复现写入 `plans/electron-44-upgrade.md` §6 |
+| 2026-09-17 | **桌面版打通**：`.github/workflows/` 无关；改 `packages/app/Desktop/electron-builder.yml` 两处（`win.signingHashAlgorithms` → `win.signtoolOptions`；`extraResources` 把 scheduler 的 `node_modules` 单列一条，绕开 electron-builder ≥25 的硬编码排除）。编译 / 打包 / 实机启动三段全部实测通过，回执 `r-mu52cxfw-jnesjs`·`r-mu52how8-ei0sg7`·`r-mu52huhe-m9ivzy`；根因与复现写入 `docs/archive/electron-44-upgrade.md` §6 |
 | 2026-09-17 | **二次扫描**又发现 4 条同类残留（#11–#14：`smoke-tests.yml` 同样钉 9.4.8、`architecture-intended-vs-actual.md` §3 活状态图仍称 WebGPU 不在构建、`webgpu-wiring-plan.md` §1/§3.1 的未标日期快照、`architecture.md` §2 图与 §4.3/§4.4）—— 一并修掉。教训见 `worklog journal` `j-mu518js2-vryo` |
 | 2026-09-19 | **WebGPU 生产接线完成（D-6 闭合）**：trha-gpu-infer 独立库（src/gpu-infer/ 目录，规避共享 src 双类型）+ `engineGPU` 弱耦合句柄 + `createCPUAdapterWith`/`setEngineGPU` + ProviderRuntime `TRHA_GPU=1` → `gpuForwardFactory` → GPU-only 60 层闭环（q/christoffel 上 WGSL、cur/nxt 轮换、单次读回；hidden 与 CPU reportL 逐元素一致，353ms/60 层 ≈5.1x CPU；失败回退 CPU）。回执链：r-mu7cdlsf-mecbgq（60 层一致）、r-mu6wfgrm-obntjm（e2e）、r-mu7d7hdv-3vab6u（197/0 回归）。本文 §0/§2.1/§3/§4 三处「未接生产」→「已接线」。 |
 | 2026-09-17 | **§5 的 10 条漂移中 9 条已修**（1–8、10；第 9 条 CI 已改但**CI 实跑仍未验证**）。改动文件：`.github/workflows/ci.yml`、`docs/plans/code-docs-reconciliation.md`、`docs/plans/plan-reconciliation.md`、`docs/plans/webgpu-wiring-plan.md`、`docs/architecture/architecture.md`、`docs/architecture/system-overview.mmd`、`docs/README.md`、`QWEN.md`。取证：`cabal build all && cabal test all` → EXIT=0（`r-mu517qwn-d0b8v2`） |

@@ -2,7 +2,9 @@
 
 > 本文档是桌面 UI 与运行时之间的**唯一**接口契约。UI 组件只允许经由
 > `src/renderer/port/` 暴露的 `Port` 接口访问后端；禁止组件内直接 `fetch`。
-> 相关：`docs/plans/desktop-ui-port-plan.md`（设计）、`docs/plans/desktop-ui-execution-plan.md`（原子与状态）。
+> 相关：`docs/archive/desktop-ui-port-plan.md`（设计）、`docs/archive/desktop-ui-execution-plan.md`（原子与状态）。
+> ⚠️ 客户端代码已于 2026-11-12 归档至 `archive/desktop/`（TUI-first）；本契约保留，
+> 作为 shell/TUI 做 UI↔后端解耦时的复用参考。
 
 ## 1. Port 接口表（`src/renderer/port/port.ts`）
 

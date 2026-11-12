@@ -84,7 +84,7 @@ Brick.Widgets.Dialog.Escape
 
 **泛型化要点**：`Stack.hs` 目前只依赖 `Dialog` 类型，把 `Dialog` 换成类型参数 `a` 即可；`Escape.hs` 的 `EscFlags` 本身就是通用概念（选区/栈/shell/补全）。
 
-**为什么值得做**：`docs/plans/ide-information-architecture.md:225` 已论证 brick 不提供层栈，而**任何**有多个模态面板的 TUI 都要重建一遍。
+**为什么值得做**：`docs/archive/ide-information-architecture.md:225` 已论证 brick 不提供层栈，而**任何**有多个模态面板的 TUI 都要重建一遍。
 
 #### `brick-theme`（对应 `UI/Theme.hs`）
 

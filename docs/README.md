@@ -35,7 +35,7 @@
 - **`architecture-intended-vs-actual.md`** — **意图 vs 现状**：规范基座链（Agda「律算合一」→ pyBitNet《架构宪法》→ 本仓 CPU 实现）· 意图架构图 · 现状架构图（带 ✅/⚠️/❌）· 偏差 D-1…D-9 · 状态分档 A–E · 待澄清项。**项目愿景此前未写入任何文档，导致过一次严重误读，故新会话应先读本文**
 - `architecture.md` — 分层、核心模块、数据流、技术选型。⚠️ §6「包结构规划」写的是"每包独立目录"，与现状不符（见 `plans/code-docs-reconciliation.md` §6）
 - **`architecture-snapshot-2026-10-27.md`** — **当前架构快照（实测）**：一页分层图（L0 规范基座 → L1 内核 → L2 编排 → L3 壳 → Provider）、各层模块细分、一次 turn 的数据流、关键契约、**问题索引**（S1–S3 结构性 / C1–C3 一致性 / D1–D4 债务）与「不是问题的取舍」。要「现在长什么样」先看这份；问题编号与 `reference/trha-architecture-benchmark-review.md` 的 A1–A8 互为索引
-- `presentation-layer.md` — Presentation 层（Desktop / Web / TUI）设计；**该层代码尚未接入构建**
+- `presentation-layer.md` — Presentation 层（Desktop / Web / TUI）设计；**该层代码尚未接入构建**（Desktop / Web 两端的壳代码已于 2026-11-12 归档）
 - `event-matrix.md` — 每个事件的 producer / consumer / SSE 转发 / 持久化位置
 - `agent-lifecycle-notes.md` — 一次 step → 多个模型轮次 → 工具执行的可观测面（含遥测缺口标注）
 - `dsh-capability-seams.md` — 能力缝（`ctx.<key>` 服务）与「加 X → 机制」速查表
@@ -44,11 +44,11 @@
 
 - **`session-truth.md`** — **会话真相契约（2026-10-27）**：两类权威——A 类「模型可见历史」以内核事件日志为准，B 类「UI 元数据」（title/tags/todos/goal/permissionMode）以 scheduler `stateStore` 为准；CLI `transcript.jsonl` 只读回放。含恢复规则、一致性要求与三阶段迁移
 
-- `protocol-shell-kernel.md` — 外壳（CLI/TUI/桌面/Web）↔ 编排层（`packages/scheduler`，默认 :28433，Bearer token）↔ 内核 的端点、SSE 帧、凭证总账（Phase 3 三端基线）
-- `desktop-port-contract.md` — UI ↔ 后端 `Port` 契约（组件只经 `port/` 访问后端，禁止直接 `fetch`）
-- `desktop-host-contract.md` — Desktop ↔ Scheduler 宿主契约 v1（握手 / 租约 / 日志 stderr / 安全基线）
+- `protocol-shell-kernel.md` — 外壳（CLI/TUI/桌面/Web）↔ 编排层（`packages/scheduler`，默认 :28433，Bearer token）↔ 内核 的端点、SSE 帧、凭证总账（Phase 3 三端基线）。⚠️ 2026-11-12 起 Desktop/Web 两端代码已归档（`archive/desktop`、`archive/web`），专注 shell TUI；协议本身仍是 scheduler 的活接口
+- `desktop-port-contract.md` — UI ↔ 后端 `Port` 契约（组件只经 `port/` 访问后端，禁止直接 `fetch`）。客户端代码已归档，留作 TUI 复用 `Port` 解耦思路的参考
+- `desktop-host-contract.md` — Desktop ↔ Scheduler 宿主契约 v1（握手 / 租约 / 日志 stderr / 安全基线）。宿主语义（复用/派生 scheduler、detached、stderr 日志）对任何壳仍适用
 
-### `plans/` — 进行中（16）
+### `plans/` — 进行中（12）
 
 - **`compact-weights-plan.md`** — **紧凑权重（2026-10-27，P-12 已完成）**：默认走 `SovereignIntWeightsC` + `sovereignForwardFullCompact`；`trha-cpu-braintoken` 实测 **2.5s/token、RSS 8.6GB**（旧流式 222s/40GB 仅作对照）；C1–C5 已落地，门禁 ≤5s / ≤12GB
 
@@ -64,14 +64,10 @@
 
 - **`improvement-plan-2026-10-27.md`** — **改进计划（2026-10-27）**：合并 qwen 2026-09-20 的独立评价（S1–S6）与本次对照评审（A1–A8），并**重新核实**现状（44 个重复模块、sdk 已并入根构建、haskell-network 已归档（2026-10-27 处置；旧记录 92 文件/11,781 行误把 dist-newstyle 计入）、Presentation 8 文件、26 executable）。含 P0/P1/P2 路线、两项需用户裁定（重复模块归属、死代码去留）、与「不建议做」清单
 
-- `desktop-provider-design.md` — Provider 三层体系（内核 registry + scheduler 透传 + Desktop UI）；P1–P8 / A1–A5 完成；A6（自研 CPU 推理）M1–M2 完成、M3–M6 未做。**「共享 `src/` 模块唯一归属」规则的原始出处就在这里**（第 60/63 行的结构注意）
-- `desktop-ui-execution-plan.md` — Desktop UI 移植的原子表与预算（T1–T12；`T5b` resume、`T12a` 清理未完成）
-- `desktop-ui-port-plan.md` — Desktop UI 分析与能力矩阵（执行计划的前置）
-- `desktop-ui-progress.md` — Desktop/Electron 跨会话 checkpoint（已完成基线 + 待办索引）
+- `desktop-provider-design.md` — Provider 三层体系（内核 registry + scheduler 透传 + ~~Desktop UI~~ **UI 侧已随 2026-11-12 客户端归档退役**，内核/scheduler 两层仍有效）；P1–P8 / A1–A5 完成；A6（自研 CPU 推理）M1–M2 完成、M3–M6 未做。**「共享 `src/` 模块唯一归属」规则的原始出处就在这里**（第 60/63 行的结构注意）
 - `pybitnet-ternary-inference-blueprint.md` — CPU 三值推理内核蓝图（M1–M20，逐条标注参考实现行号）
 - `plan-reconciliation.md` — 计划 vs 现实（**功能面**）；文末「架构原则」是内核/外壳职责分界的用户裁定
 - `code-docs-reconciliation.md` — 代码 vs 文档（**构建 / 接线 / 使用面**）；未接线清单（WebGPU / Presentation）与待办（原 `trha-orchestration` 199 行已于 2026-09-13 归档出构建 → `../../archive/orchestration/`）
-- `electron-44-upgrade.md` — **Electron 28 → 44 升级的变更与待办**：已完成部分（依赖 + 二进制已验证）、待处理（`chrome-sandbox` SUID 权限、实机启动验证、electron 二进制镜像配置、改动未提交）
 - `verification-criteria.md` — **判据是什么**：C1–C5（代数结构 / 类型不变量 / 多实现全等 / 因果语义 / 约束↔外部推理）+ 覆盖进度表；**性能不是判据**
 - `file-completion-tracking.md` — 逐**文件**的完成状态 + 验证方式 + 证据（按计划项核对见 `plan-reconciliation.md`）
 - `webgpu-wiring-plan.md` — WebGPU 后端接线：数据流程、W1–W7 / T1–T4 原子分解（均已跑通）、12 条「照文档写会踩」的坑；**未接生产推理路径**
@@ -95,13 +91,14 @@
 - `security-cleanup-guide.md` — Git 历史敏感信息清理
 - `262974980.jpeg`、`Electron 外壳.txt` — 素材（后者：Reasonix v2.11.0 pre-release 说明，Wails→Electron 迁移背景）
 
-### `archive/` — 已归档：已完成或已被取代（11）
+### `archive/` — 已归档：已完成或已被取代（17）
 
 - `implementation-plan-cli-tui.md`（P1.1–P1.6 ✅）、`implementation-plan-phase2.md`、`plan-phase2-s2-s3-atomic.md`
 - `kernel-tool-execution-plan.md`（方案 A 的 K1–K6 全部 ✅）
 - `implementation-plan-shell-sharing.md`、`shell-sharing-design.md`、`reasonix-shell-sharing-analysis.md`（共享外壳设计，已由编排层接管）
 - `execution-discipline-acceptance.md`（Phase 2 执行纪律，范围已过）
 - `implementation-roadmap.md`（`pi-trha/` 十二周计划，**从未采用**）、`code-migration-plan.md`（目标目录 `src/core-engine/`，**从未采用**）、`pi-integration-plan.md`
+- **Desktop/Web 客户端六篇（2026-11-12 归档，随代码移入仓库根 `archive/`）**：`desktop-ui-port-plan.md`（分析与能力矩阵）、`desktop-ui-execution-plan.md`（T1–T12 原子表）、`desktop-ui-progress.md`（跨会话 checkpoint）、`electron-44-upgrade.md`（Electron 28→44）、`ide-information-architecture.md`（IDE 信息架构）、`web-ui-layout-port-draft.md`（Web 布局移植草案）
 
 ## 维护约定
 

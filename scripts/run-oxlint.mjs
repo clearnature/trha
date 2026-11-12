@@ -11,8 +11,8 @@ const cli = path.join(repoRoot, 'node_modules', '.bin', 'oxlint');
 
 const DEFAULT_TARGETS = [
   'packages/scheduler/src',
-  'packages/app/Desktop/src',
-  'packages/app/Web/src',
+  // packages/app/{Desktop,Web} 已归档至 archive/{desktop,web}（2026-11-12），
+  // 不再参与 lint；要审旧代码时手动指定路径。
 ];
 
 // oxlint prints one caret block per finding; keep a ceiling so a pathological

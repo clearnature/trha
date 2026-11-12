@@ -68,4 +68,4 @@
 - 官方：[TS 7.0 发布公告](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/) · [TS 7.1 Beta](https://devblogs.microsoft.com/typescript/announcing-typescript-7-1-beta)（新模块化 API、content mappers、`--target es2026`）
 - typescript-eslint：[issue #10940（TS 7 适配跟踪）](https://github.com/typescript-eslint/typescript-eslint/issues/10940) · [PR #12803（native backend）](https://github.com/typescript-eslint/typescript-eslint/pull/12803)
 - 本地源码：`/data/training/cli/typescript-eslint`（main @ `1166ba20e`；TS7 检测 `eaf457631`，tsgo typecheck `1849b530c`）
-- 相关既有文档：[`electron-44-upgrade.md`](./electron-44-upgrade.md)（Desktop 工具链升级先例与本轮待办的关联）
+- 相关既有文档：[`electron-44-upgrade.md`](../archive/electron-44-upgrade.md)（Desktop 工具链升级先例与本轮待办的关联；客户端已归档）

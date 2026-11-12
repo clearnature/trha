@@ -4,7 +4,8 @@ Guidance for AI coding agents working in this repository.
 
 **trha** — a microkernel agent harness: Haskell core engine (Free-monad plugins,
 multi-protocol API server), TypeScript scheduler (parallel sub-agent
-orchestration), Electron desktop app, and a Haskell CLI/TUI.
+orchestration), and a Haskell CLI/TUI (the Electron desktop and Web clients
+are archived under `archive/` since 2026-11-12 — TUI-first).
 
 **Authority chain**: this file is the agent entry point only. The structural
 authority is [`QWEN.md`](./QWEN.md) (§Architecture Layers / §Development
@@ -25,11 +26,12 @@ cd packages/scheduler && npm install
 npx tsc --noEmit         # typecheck
 npx vitest run           # full suite (see memory discipline below)
 npx vitest run test/<file>.test.ts   # preferred during development
-
-# Web / Desktop (own npm projects)
-cd packages/app/Web      && npm install && npm run build
-cd packages/app/Desktop  && npm install && npm run typecheck
 ```
+
+**Desktop / Web clients are archived (2026-11-12)** — moved to `archive/desktop`
+and `archive/web` to focus on the shell TUI. They are out of build, CI and
+lint; do not develop there. The scheduler-side contracts remain live:
+`docs/contracts/{protocol-shell-kernel,desktop-host-contract,desktop-port-contract}.md`.
 
 ## Test Memory Discipline (mandatory — OOM incident 2026-10-25)
 

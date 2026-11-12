@@ -1,3 +1,17 @@
+# trha Desktop Application（已归档）
+
+> **⚠️ 2026-11-12 归档**：开发重心转到 shell TUI（`packages/app/CLI`），本目录停止维护，
+> 已移出构建、CI 与 lint。以下正文是归档时的原貌（含早期未完成状态的描述），仅作历史参考。
+>
+> **保留的接口与契约**（TUI 复用入口）：
+> - 宿主契约（复用/派生 scheduler、detached、stderr 日志）：`docs/contracts/desktop-host-contract.md`
+> - Port 解耦契约（UI 组件不直接 `fetch`）：`docs/contracts/desktop-port-contract.md`
+> - 跨端协议总账：`docs/contracts/protocol-shell-kernel.md`
+> - 实现参考：`src/main/index.ts`（scheduler 派生与握手）、`src/main/handshake.ts`、
+>   `src/renderer/port/`；EPIPE 防护见 `src/main/index.ts` 顶部的 `process.stdout/stderr` error 滤网。
+
+---
+
 # trha Desktop Application
 
 Electron + React 桌面应用程序，用于与 trha 代理系统交互。

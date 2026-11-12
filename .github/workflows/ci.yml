@@ -19,76 +19,13 @@ on:
     branches: [ main, master ]
 
 # 同一 ref 只保留最新一次运行：连续 push 时取消上一轮未完成的 run，
-# 否则每个 push 都会并行排队、各自把 7 个 job 跑满。
+# 否则每个 push 都会并行排队、各自把 2 个 job 跑满。
+# （desktop / web 两个 job 已随 2026-11-12 客户端归档移除，见 archive/。）
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  desktop:
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Use Node.js (from .node-version)
-      uses: actions/setup-node@v4
-      with:
-        node-version-file: .node-version
-        cache: 'npm'
-        cache-dependency-path: '**/package-lock.json'
-
-    - name: Install dependencies
-      run: |
-        cd packages/app/Desktop
-        npm ci
-
-    - name: Test (host contract, handshake, studio client)
-      run: |
-        cd packages/app/Desktop
-        npx vitest run
-
-    - name: Build main + renderer
-      run: |
-        cd packages/app/Desktop
-        npm run build:main
-        npm run build:renderer
-
-  web:
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Use Node.js (from .node-version)
-      uses: actions/setup-node@v4
-      with:
-        node-version-file: .node-version
-        cache: 'npm'
-        cache-dependency-path: '**/package-lock.json'
-
-    - name: Install dependencies
-      run: |
-        cd packages/app/Web
-        npm ci
-
-    - name: Typecheck
-      run: |
-        cd packages/app/Web
-        npm run typecheck
-
-    - name: Test
-      run: |
-        cd packages/app/Web
-        npm test
-
-    # Web is an independent client (P-10, 2026-10-27): its dist must be
-    # reproducible in CI, not only built on a developer machine.
-    - name: Build (dist)
-      run: |
-        cd packages/app/Web
-        npm run build
-
   benchmarks:
     runs-on: ubuntu-latest
     

@@ -20,7 +20,9 @@ need_web=0
 need_desktop=0
 need_haskell=0
 need_lint=0
-lint_files=$(printf '%s\n' "$changed" | grep -E '\.(ts|tsx|mts|cts|js|mjs)$' || true)
+# archive/ keeps historical style (same rationale as the hlint filter below);
+# the lint gate applies to project sources only.
+lint_files=$(printf '%s\n' "$changed" | grep -E '\.(ts|tsx|mts|cts|js|mjs)$' | grep -v '^archive/' || true)
 if [ -n "$lint_files" ]; then need_lint=1; fi
 need_hlint=0
 # vendored third-party Haskell and archive/ keep upstream/historical style;

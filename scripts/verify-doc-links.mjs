@@ -12,7 +12,8 @@
 //
 // Line suffixes (`:52`, `:52,59`) are stripped before resolving. Repo-rooted
 // paths are also tried under the package roots, because docs often write
-// `src/main/handshake.ts` for packages/app/Desktop/src/main/handshake.ts.
+// `src/main/handshake.ts` for archive/desktop/src/main/handshake.ts (the
+// Desktop/Web clients were archived there on 2026-11-12).
 //
 // Usage: node scripts/verify-doc-links.mjs [--quiet]
 import fs from 'node:fs';
@@ -23,7 +24,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const docsRoot = path.join(repoRoot, 'docs');
 const SKIP_DIR = path.join('docs', 'archive');
 
-const PACKAGE_ROOTS = ['', 'packages/app/Desktop', 'packages/scheduler', 'packages/app/Web'];
+const PACKAGE_ROOTS = ['', 'archive/desktop', 'packages/scheduler', 'archive/web'];
 
 function listMarkdown(dir) {
   const out = [];

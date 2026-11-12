@@ -8,12 +8,10 @@ on:
   push:
     paths:
       - 'packages/scheduler/**'
-      - 'packages/app/Web/**'
       - '.github/workflows/ts-linux.yml'
   pull_request:
     paths:
       - 'packages/scheduler/**'
-      - 'packages/app/Web/**'
       - '.github/workflows/ts-linux.yml'
   workflow_dispatch:
 
@@ -86,11 +84,6 @@ jobs:
     - name: build (scheduler)
       run: |
         cd packages/scheduler
-        npm run build
-    - name: build web (studio assets)
-      run: |
-        cd packages/app/Web
-        npm ci
         npm run build
 
   ts-linux-vitest:

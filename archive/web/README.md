@@ -1,3 +1,14 @@
+# trha Web（已归档）
+
+> **⚠️ 2026-11-12 归档**：开发重心转到 shell TUI（`packages/app/CLI`），本目录停止维护，
+> 已移出构建、CI 与 lint；以下正文是归档时的原貌，仅作历史参考。
+>
+> scheduler 侧的 `/studio` 静态托管接口**保留**（`Server/index.ts` 的 `studioDir`/
+> `webUiBuildDir`，现指向 `archive/web/dist`）——接口与端点契约不变，见
+> `docs/contracts/protocol-shell-kernel.md`。
+
+---
+
 # trha Web
 
 **独立客户端**（2026-10-27 定位，P-10）。

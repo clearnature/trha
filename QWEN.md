@@ -4,7 +4,7 @@ Microkernel agent harness in Haskell with TypeScript orchestration, multi-protoc
 
 ## Project Overview
 
-**trha** is a microkernel agent framework inspired by the Cordis plugin architecture. The core engine is written in Haskell (GHC, type-driven design) and exposes a multi-protocol API server (OpenAI / Anthropic / Responses-compatible). A TypeScript scheduler layer handles parallel sub-agent orchestration, and shell apps (brick TUI/CLI, Electron + React Desktop, Web) provide the UI. Product-wise the goal is a self-developed **agent IDE**; the four porting upstreams are qwen code, MiMo-Code, reasonix, and deepseek-harness (see `docs/reference/`).
+**trha** is a microkernel agent framework inspired by the Cordis plugin architecture. The core engine is written in Haskell (GHC, type-driven design) and exposes a multi-protocol API server (OpenAI / Anthropic / Responses-compatible). A TypeScript scheduler layer handles parallel sub-agent orchestration, and the shell is the Haskell brick TUI/CLI (the Electron Desktop and Web clients were archived under `archive/` on 2026-11-12 — TUI-first). Product-wise the goal is a self-developed **agent IDE**; the four porting upstreams are qwen code, MiMo-Code, reasonix, and deepseek-harness (see `docs/reference/`).
 
 ### Architecture Layers
 
@@ -19,10 +19,8 @@ Microkernel agent harness in Haskell with TypeScript orchestration, multi-protoc
 | **Scheduler** | TypeScript, Express, Zod, Winston | `packages/scheduler/` |
 | **SDK** | Haskell client face | `packages/sdk/` |
 | **CLI/TUI App** | Haskell, brick + vty | `packages/app/CLI/` (entry: root `executable trha`) |
-| **Desktop App** | Electron 44 + React | `packages/app/Desktop/` |
-| **Web App** | Vite + React + zustand | `packages/app/Web/` |
 
-Archived out of the build (do not resurrect without a ruling): `archive/inference-kernel/` (GPU/CPU inference model, 2026-10-28 — the kernel no longer depends on the inference model), `archive/haskell-plugin/` (`Core.Plugin.*`), `archive/orchestration/`, `archive/go-haskell-bridge/`, `archive/haskell-network/`, `archive/sdk-legacy/`, `archive/webgpu-legacy/`, `archive/cpu-backend-legacy/`.
+Archived out of the build (do not resurrect without a ruling): `archive/desktop/` (Electron + React desktop client, 2026-11-12 — TUI-first), `archive/web/` (Vite + React web client, 2026-11-12), `archive/inference-kernel/` (GPU/CPU inference model, 2026-10-28 — the kernel no longer depends on the inference model), `archive/haskell-plugin/` (`Core.Plugin.*`), `archive/orchestration/`, `archive/go-haskell-bridge/`, `archive/haskell-network/`, `archive/sdk-legacy/`, `archive/webgpu-legacy/`, `archive/cpu-backend-legacy/`.
 
 ### Key Design Patterns
 
@@ -80,12 +78,12 @@ npm run coverage  # used by the pre-push gate
 
 Node >= 22.4; TypeScript 7 strict mode, ESM (`*.js` import suffixes); vitest 5.
 
-### Web / Desktop apps
+### Web / Desktop apps (archived 2026-11-12)
 
-```bash
-cd packages/app/Web      && npm install && npm run build   # vite; vitest run for tests
-cd packages/app/Desktop  && npm install && npm run typecheck
-```
+The Electron desktop and Web clients live under `archive/desktop/` and
+`archive/web/` (TUI-first; see `AGENTS.md` §Build & Test). No build, CI or
+lint runs there; the scheduler-facing contracts in `docs/contracts/` stay
+authoritative.
 
 ### Services (user-level systemd / launchd)
 
@@ -178,15 +176,15 @@ Repo-root scripts also verify these locally: `npm run verify:ci` (workflow wirin
 **Protocol contracts — `docs/contracts/`**
 - `protocol-shell-kernel.md` — shell ↔ scheduler (:28433, Bearer) ↔ kernel (:19433) endpoint/SSE/credential ledger.
 - `session-truth.md` — **session truth contract (2026-10-27)**: A-class "model-visible history" = kernel event log; B-class UI metadata = scheduler `stateStore`; CLI `transcript.jsonl` is read-only replay.
-- `desktop-port-contract.md` — UI ↔ backend `Port` contract (no direct `fetch` in components).
-- `desktop-host-contract.md` — Desktop ↔ Scheduler host contract v1.
+- `desktop-port-contract.md` — UI ↔ backend `Port` contract (no direct `fetch` in components). Client archived 2026-11-12; kept as the TUI-reusable decoupling reference.
+- `desktop-host-contract.md` — Desktop ↔ Scheduler host contract v1 (scheduler-side semantics still live).
 
 **Active plans — `docs/plans/`** (uncompleted items are *not* implemented; see `plan-reconciliation.md`)
 - `compact-weights-plan.md` — compact weights (P-12 done; measured 2.5s/token, RSS 8.6GB via `trha-cpu-braintoken`).
 - `sandbox-decisions.md` (ADR-001–007, frozen 2026-10-29), `sandbox-architecture.md` (design baseline, §5.7 interface freeze), `sandbox-delivery-plan.md` (M0–M5 + WBS 48 items), `sandbox-handoff.md` — **read the handoff doc before starting sandbox work**.
 - `remote-access-bot-plan.md` — remote access / IM bot (chosen: IM long-connection, zero inbound ports; not implemented).
 - `improvement-plan-2026-10-27.md` — improvement plan P-01..P-13 (incl. the per-library source split).
-- `desktop-provider-design.md` (P1–P8/A1–A5 done; A6 CPU inference M1–M2 done, M3–M6 not started), `desktop-ui-execution-plan.md` / `desktop-ui-port-plan.md` / `desktop-ui-progress.md` (T1–T12; T5b/T12a open), `electron-44-upgrade.md`.
+- `desktop-provider-design.md` (P1–P8/A1–A5 done; A6 CPU inference M1–M2 done, M3–M6 not started; UI layer retired with the 2026-11-12 client archive). Desktop/Web UI plan docs moved to `docs/archive/` the same day: `desktop-ui-execution-plan` / `desktop-ui-port-plan` / `desktop-ui-progress` / `electron-44-upgrade` / `ide-information-architecture` / `web-ui-layout-port-draft`.
 - `verification-criteria.md` — **what counts as evidence**: C1–C5 (algebra ↔ Agda, compile-time type invariants, cross-implementation equality, causal semantics, constraint ↔ external API). **Performance is not a criterion.**
 - `file-completion-tracking.md`, `code-docs-reconciliation.md` (⚠️ §2 WebGPU claim stale — see `architecture/project-overview.md` §5), `pybitnet-ternary-inference-blueprint.md`, `webgpu-wiring-plan.md` (W1–W7/T1–T4 done, **not wired into production inference**), markdown-rendering plan (8cb9d51/a008158), `typescript-7-toolchain-migration.md`, `tui-port-plan.md`, `windows-shell-port-plan.md`.
 
@@ -194,6 +192,6 @@ Repo-root scripts also verify these locally: `npm run verify:ci` (workflow wirin
 
 **Archive — `docs/archive/`**: completed or superseded plans — do not follow.
 
-Component docs: `packages/scheduler/README.md`, `packages/app/Desktop/README.md`, `packages/app/CLI/README.md`, `packages/sdk/docs/sdk-api.md`, `3rdparty/README.md`.
+Component docs: `packages/scheduler/README.md`, `packages/app/CLI/README.md`, `packages/sdk/docs/sdk-api.md`, `3rdparty/README.md` (archived clients: `archive/desktop/README.md`, `archive/web/README.md`).
 
 **Maintenance conventions for docs/** (see `docs/README.md`): archive rather than delete; new docs go in a lifecycle subdirectory, never the `docs/` root; structure changes sync **this file's §Documentation** + `docs/README.md`; moving a doc requires grepping and fixing references; intent changes update `architecture-intended-vs-actual.md` first.
