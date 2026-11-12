@@ -45,7 +45,7 @@ import UI.StatusInfo (StatusRow(..), collectStatusInfo)
 import UI.StatsView (StatsBlock(..), buildStatsBlocks)
 import UI.I18n (Lang(..), langName, parseLang, tr)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, listToMaybe)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Graphics.Vty.Attributes
@@ -135,6 +135,15 @@ dialogActivate = do
         DialogPresets ps sel -> case drop sel ps of
           (p : _) -> startWizardPreset p
           []      -> return ()
+        DialogPick _ items sel -> do
+          -- 通用编号选择器（T9b 批次二）：动作本体在 AppState.appPickAction，
+          -- 由认领分支在打开前写入；Enter 按当前选中序号执行并清槽。
+          st2 <- get
+          modify $ \s -> s { appDialogs = stackPop (appDialogs s)
+                           , appPickAction = Nothing }
+          let n = maybe 0 fst (listToMaybe (drop sel items))
+              act = fromMaybe (\_ -> pure ()) (appPickAction st2)
+          void $ liftIO $ async (act n)
         DialogSkills _ _ sel -> case drop sel (dialogSkillsItems d) of
           (sk : _) -> selectSkill (skName sk)
           []       -> return ()

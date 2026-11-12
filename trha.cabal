@@ -374,6 +374,7 @@ executable trha
     UI.Brick.SettingsKeys
     UI.Brick.Settings.Pure
     UI.Brick.AppEvent
+    UI.Brick.AppEvent.Command
     UI.Brick.AppEvent.Model
     UI.Brick.AppEvent.Plan
     UI.Brick.AppEvent.Session

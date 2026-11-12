@@ -18,7 +18,7 @@ import Control.Concurrent.Async (async)
 import Control.Monad (void)
 import Control.Monad.IO.Class (liftIO)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider, forkSession)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.TurnStats (Prices(..), turnSummary, estimateCost, hasPrices, isOffPeak, pricesForModel)
 import UI.Event
@@ -31,7 +31,9 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Encoding.Error as TEE
 import Core.SessionSummary (SessionSummary(..), pickLocalSession)
-import Core.Transcript (recordUser)
+import Core.Transcript (loadTranscript, recordUser)
+import Data.List (sortBy)
+import Data.Ord (comparing, Down (Down))
 import UI.Commands.Registry
     ( Command(..), parseCommandWith, pickerItems, pickerItemsGrouped
     , groupKey, groupTitle, helpTextFor, registryHelp )
@@ -76,6 +78,8 @@ import UI.Render.Spans
   , spanToks, splitAtWidth, spinnerFrame, todoGlyph, truncLine )
 import System.FilePath ((</>))
 import System.Exit (ExitCode(..))
+import System.Directory (getCurrentDirectory, getHomeDirectory, listDirectory, doesDirectoryExist)
+import UI.Commands.Helpers (findFilesNamed, snapshotBase)
 import UI.Render.Markdown (MdBlock(..), MdSpan(..), parseMarkdown)
 import UI.Dialog
 import UI.Render.Diff
@@ -105,6 +109,8 @@ import UI.Theme
 handlePlanSlash :: CmdCtx -> Maybe (EventM ResourceName AppState ())
 handlePlanSlash cx = case cxCmd cx of
   "/approve" -> Just $ slashApprove cx
+  "/rewind" -> Just $ slashRewindPick cx
+  "/restore" -> Just $ slashRestorePick cx
   -- /deny <reason>：按首词认领（cxCmd 是整条输入的小写），理由由 slashDeny
   -- 从输入解析——否则 "/deny xxx" 会漏到文本兜底、DenyWith 丢失。
   _ | (cxCmd cx) == "/deny" || "/deny " `T.isPrefixOf` (cxCmd cx) -> Just $ slashDeny cx
@@ -130,6 +136,67 @@ slashApprove cx = do
         void $ liftIO $ async $ do
           r <- approvePlan (cxBridge cx) sid
           writeBChan (cxChan cx) (EvVerdict r)
+
+-- | @/rewind@（无参）→ 轮次选择器：列出本会话的 user turn，选中即
+-- forkSession 回到该轮并切到新会话（EvCommandDone 回填状态）。
+slashRewindPick :: CmdCtx -> EventM ResourceName AppState ()
+slashRewindPick cx = do
+  cur <- gets appSessionId
+  let t = cxTime cx
+  case cur of
+    Nothing -> appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
+    Just sid -> do
+      modify $ \s -> s { appPickAction = Just (\i -> do
+          r <- forkSession (cxBridge cx) sid (Just i)
+          case r of
+            Right newSid -> writeBChan (cxChan cx) (EvCommandDone
+                             (Just ("Rewound to turn " <> T.pack (show i) <> ": " <> T.pack newSid))
+                             (Just newSid))
+            Left e -> writeBChan (cxChan cx) (EvToast (T.pack (show e)))) }
+      void $ liftIO . async $ do
+        vals <- loadTranscript sid
+        let blocks = renderReplay vals
+            turns = [ (k, T.take 60 (T.strip (rbContent b)))
+                    | (k, b) <- zip [1 :: Int ..] blocks
+                    , rbRole b == "user", not (T.null (T.strip (rbContent b))) ]
+        if null turns
+          then writeBChan (cxChan cx) (EvToast "No user turns to rewind to.")
+          else writeBChan (cxChan cx) (EvShowPick "Rewind to turn" turns)
+
+-- | @/restore@（无参）→ 快照选择器：列 ~/.trha/file-history 最近 20 份，
+-- 选中即按 basename 回找写回（复用 snapshotBase / findFilesNamed）。
+slashRestorePick :: CmdCtx -> EventM ResourceName AppState ()
+slashRestorePick cx = do
+  home <- liftIO getHomeDirectory
+  let dir = home </> ".trha" </> "file-history"
+      chan = cxChan cx
+      t = cxTime cx
+  present <- liftIO (doesDirectoryExist dir)
+  names <- if present then liftIO (sortBy (comparing (Data.Ord.Down)) <$> listDirectory dir) else pure []
+  if not present || null names
+    then appendMsg (mkMsg "system" (tr (cxLang cx) "No file history yet (~/.trha/file-history).") t)
+    else do
+      modify $ \s -> s { appPickAction = Just (\i -> do
+          names' <- sortBy (comparing (Data.Ord.Down)) <$> listDirectory dir
+          if i >= 1 && i <= length names'
+            then do
+              let snap = names' !! (i - 1)
+              case snapshotBase snap of
+                Nothing -> writeBChan chan (EvToast ("Unrecognised snapshot: " <> T.pack snap))
+                Just base -> do
+                  cwd <- getCurrentDirectory
+                  hits <- findFilesNamed cwd base
+                  case hits of
+                    [target] -> do
+                      body <- TIO.readFile (dir </> snap)
+                      TIO.writeFile target body
+                      writeBChan chan (EvToast ("Restored " <> T.pack snap <> " -> " <> T.pack target))
+                    _ -> writeBChan chan (EvToast
+                           ("candidates for " <> T.pack base <> ": " <> T.pack (show (length hits))
+                            <> " — cd into the right tree and retry"))
+            else writeBChan chan (EvToast "snapshot pick failed")) }
+      liftIO $ writeBChan chan (EvShowPick "Restore snapshot"
+        (zip [1 ..] (map T.pack (take 20 names))))
 
 slashDeny :: CmdCtx -> EventM ResourceName AppState ()
 slashDeny cx = do

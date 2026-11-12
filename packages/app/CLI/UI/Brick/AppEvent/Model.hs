@@ -19,6 +19,7 @@ import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.TurnStats (Prices(..), turnSummary, estimateCost, hasPrices, isOffPeak, pricesForModel)
 import UI.Event
 import Core.SSE (SseNotice(..))
+import Config.Settings (resolveConfig, saveConfig)
 import Data.Aeson (Value(..), object, (.=), decode, encode)
 import qualified Data.Aeson.Key as AK
 import qualified Data.Aeson.KeyMap as KM
@@ -116,6 +117,12 @@ handleModelEvent (EvModels result) = Just $ onModelsListed result
 handleModelEvent (EvProviders result) = Just $ onProvidersListed result
 handleModelEvent (EvSkills result) = Just $ onSkillsListed result
 handleModelEvent (EvProviderSaved result) = Just $ onProviderSaved result
+handleModelEvent (EvEffort lvl) = Just $ do
+  cfg <- liftIO (resolveConfig defaultCLIConfig)
+  liftIO (saveConfig (cfg { configEffort = lvl }))
+  modify $ \s -> s { appEffort = lvl }
+  lang <- gets appLang
+  showToast (tr lang ("effort: " <> lvl))
 handleModelEvent _ = Nothing
 
 onModelsListed :: Either CLIError [ModelInfo] -> EventM ResourceName AppState ()

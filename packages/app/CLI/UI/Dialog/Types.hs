@@ -68,6 +68,8 @@ data Dialog
   | DialogApproval Text String [Text] Int   -- ^ ask message, tool, args, selected
   | DialogConfirm Text Int                  -- ^ "always" confirmation, selected (0=yes)
   | DialogSandbox SandboxSettings Int       -- ^ /sandbox: settings, selected row
+  | DialogPick Text [(Int, Text)] Int       -- ^ generic numbered picker: title, items, selected;
+                                            --   the pick action lives in AppState.appPickAction
   deriving (Show, Eq)
 
 -- | Stack of open dialogs; the head is the topmost (owns keys).

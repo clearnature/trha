@@ -14,6 +14,8 @@ import Brick
 import Brick.BChan
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
+import Control.Concurrent.Async (async)
+import Control.Monad (void)
 import Control.Monad.IO.Class (liftIO)
 import Core.Types
 import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider)
@@ -155,17 +157,18 @@ handleSlash input = do
           c -> do
             -- Every registry command now reaches the same implementation the
             -- REPL uses; before this, new commands were "Unknown" in the TUI.
+            -- 批次二 A：worker 线程执行，结果经 EvCommandDone 回填——键线程
+            -- 不再被网络/本地 IO 阻塞（对标审计的最大结构性缺口）。
             ref <- liftIO (newIORef (appSessionId st))
             mref <- liftIO (newIORef (appModel st))
-            r <- liftIO $ executeCommand lang bridge ref mref c
-            sid' <- liftIO (readIORef ref)
-            modify $ \s -> s { appSessionId = sid'
-                             , appCacheNow = Nothing
-                             , appCacheSum = (0, 0)
-                             , appCacheTurns = 0 }
-            case r of
-              Just out | not (T.null (T.strip out)) -> appendMsg (mkMsg "system" out t)
-              _ -> pure ()
+            modify $ \s -> s { appStatus = tr lang ("Running " <> frecKey <> "…") }
+            void . liftIO . async $ do
+              r <- executeCommand lang bridge ref mref c
+              sid' <- readIORef ref
+              let out = case r of
+                    Just msg | not (T.null (T.strip msg)) -> Just msg
+                    _ -> Nothing
+              writeBChan chan (EvCommandDone out sid')
   scrollBottom
 
 -- | Refresh the sidebar's TODO list and title for a session.  Best effort:

@@ -204,7 +204,10 @@ slashEffort cx = do
       lvl = T.toLower (T.strip (T.drop (T.length "/effort") (cxCmd cx)))
       shown = "(" <> T.intercalate "|" levels <> ")"
   if T.null lvl
-    then appendMsg (mkMsg "system" ("effort: " <> configEffort cfg <> "  " <> shown) (cxTime cx))
+    then do
+      -- 无参 → 阶梯选择器（批次二 DialogPick；act 经 EvEffort 回状态）
+      modify $ \s -> s { appPickAction = Just (\i -> writeBChan (cxChan cx) (EvEffort (levels !! i))) }
+      liftIO $ writeBChan (cxChan cx) (EvShowPick "Effort" (zip [0 ..] levels))
     else if lvl `elem` levels
       then do
         liftIO (saveConfig (cfg { configEffort = lvl }))

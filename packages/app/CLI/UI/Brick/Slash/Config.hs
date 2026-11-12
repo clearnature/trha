@@ -104,6 +104,8 @@ import UI.Theme
 
 handleConfigSlash :: CmdCtx -> Maybe (EventM ResourceName AppState ())
 handleConfigSlash cx = case cxCmd cx of
+  "/reasoning-language" -> Just $ slashReasoningLanguagePick cx
+  "/output-style" -> Just $ slashOutputStylePick cx
   "/settings" -> Just $ slashSettings cx
   "/sandbox"  -> Just $ slashSandbox cx
   "/theme"    -> Just $ slashTheme cx
@@ -166,3 +168,29 @@ slashLanguage cx = do
       modify $ \s -> s { appLang = l, appStatus = tr l "Language: " <> langName l }
       appendMsg (mkMsg "system"
         (tr l "Language: " <> langName l <> "\n" <> tr l "available: " <> available) (cxTime cx))
+
+-- | @/reasoning-language@（无参）→ 值选择器；带参仍走文本设置路径。
+slashReasoningLanguagePick :: CmdCtx -> EventM ResourceName AppState ()
+slashReasoningLanguagePick cx = do
+  let vals = ["auto", "zh-hans", "zh-hant", "en", "fr", "es", "ru", "th", "my", "bo", "ii"]
+      chan = cxChan cx
+      act i = do
+        cfg <- resolveConfig defaultCLIConfig
+        let v = vals !! i
+        liftIO (saveConfig (cfg { configReasoningLanguage = v }))
+        writeBChan chan (EvToast ("reasoning-language: " <> v))
+  modify $ \s -> s { appPickAction = Just act }
+  liftIO $ writeBChan chan (EvShowPick "Reasoning language" (zip [0 ..] vals))
+
+-- | @/output-style@（无参）→ 值选择器；带参仍走文本设置路径。
+slashOutputStylePick :: CmdCtx -> EventM ResourceName AppState ()
+slashOutputStylePick cx = do
+  let vals = ["default", "concise", "detailed"]
+      chan = cxChan cx
+      act i = do
+        cfg <- resolveConfig defaultCLIConfig
+        let v = vals !! i
+        liftIO (saveConfig (cfg { configOutputStyle = v }))
+        writeBChan chan (EvToast ("output-style: " <> v))
+  modify $ \s -> s { appPickAction = Just act }
+  liftIO $ writeBChan chan (EvShowPick "Output style" (zip [0 ..] vals))

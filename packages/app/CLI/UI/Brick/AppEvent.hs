@@ -67,6 +67,7 @@ import UI.Brick.Input
 import UI.Brick.SessionView
   ( blocksToMessages, localSessionLines, refreshSidebar, resumeSession )
 import UI.Brick.AppEvent.Model (handleModelEvent)
+import UI.Brick.AppEvent.Command (handleCommandEvent)
 import UI.Brick.AppEvent.Plan (handlePlanEvent)
 import UI.Brick.AppEvent.Session (handleSessionEvent)
 import UI.Brick.AppEvent.Stream (handleStreamEvent)
@@ -130,7 +131,7 @@ import UI.Frecency (Frecency(..), emptyFrecency, recordUse, rankItems, loadFrece
 handleAppEvent :: AppEvent -> EventM ResourceName AppState ()
 -- | 认领式分派：Sidebar/Status/Toast 三个域先试，未命中再落到下方各等式。
 handleAppEvent ev = fromMaybe (pure ()) $
-  msum [ handleModelEvent ev, handlePlanEvent ev, handleSessionEvent ev, handleSidebarEvent ev
+  msum [ handleCommandEvent ev, handleModelEvent ev, handlePlanEvent ev, handleSessionEvent ev, handleSidebarEvent ev
          , handleStreamEvent ev
          , handleStatusEvent ev, handleToastEvent ev
          , handleToolEvent ev ]

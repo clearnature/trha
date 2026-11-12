@@ -12,9 +12,11 @@ import Brick
 import Brick.BChan
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
+import Control.Concurrent.Async (async)
+import Control.Monad (void)
 import Control.Monad.IO.Class (liftIO)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider, listWorkflows, runWorkflow)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.Memory (countMatchingNotes, forgetText)
 import Core.TurnStats (Prices(..), turnSummary, estimateCost, hasPrices, isOffPeak, pricesForModel)
@@ -105,9 +107,41 @@ handleIntegrationSlash cx = case cxCmd cx of
   "/agents" -> Just $ slashAgents cx
   "/skills" -> Just $ slashSkills cx
   "/plugins" -> Just $ slashPlugins cx
+  "/workflow" -> Just $ slashWorkflowPick cx
   -- /forget <text>：破坏性删除，先确认再执行（通用确认槽）。
   _ | (cxCmd cx) == "/forget" || "/forget " `T.isPrefixOf` (cxCmd cx) -> Just $ slashForgetConfirm cx
   _ -> Nothing
+
+-- | @/workflow@（无参）→ 模板选择器；选中即在当前会话跑一次（toast 结果）。
+slashWorkflowPick :: CmdCtx -> EventM ResourceName AppState ()
+slashWorkflowPick cx = do
+  st0 <- get
+  let bridge = appBridge st0
+      chan = cxChan cx
+  cur <- gets appSessionId
+  case cur of
+    Nothing -> do
+      t <- liftIO now
+      appendMsg (mkMsg "system" "No session yet — use /new or send a message first." t)
+    Just sid -> do
+      modify $ \s -> s { appPickAction = Just (\i -> do
+          r0 <- listWorkflows bridge
+          case r0 of
+            Right wfs | i >= 0 && i < length wfs ->
+              let (name, _desc) = wfs !! i
+              in do
+                rr <- runWorkflow bridge sid name ""
+                writeBChan chan (EvToast $ case rr of
+                  Right out -> T.take 300 out
+                  Left e    -> T.pack (show e))
+            _ -> writeBChan chan (EvToast "workflow pick failed")) }
+      void $ liftIO . async $ do
+        r <- listWorkflows bridge
+        case r of
+          Right wfs | not (null wfs) ->
+            writeBChan chan (EvShowPick "Workflow" (zip [0 ..] (map fst wfs)))
+          Right _ -> writeBChan chan (EvToast "No workflow templates.")
+          Left e  -> writeBChan chan (EvToast (T.pack (show e)))
 
 -- | @/forget <text>@：先数命中行数，再弹确认；Yes 才真正删除并 toast 结果。
 slashForgetConfirm :: CmdCtx -> EventM ResourceName AppState ()

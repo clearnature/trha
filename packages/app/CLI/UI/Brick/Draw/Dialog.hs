@@ -218,6 +218,13 @@ dialogRows st d = case d of
     , padLeftRight 1 $ withAttr (attrName "timestamp") $
         str "enter toggle · esc close"
     ]
+  DialogPick title items sel' ->
+    let (s0, e0) = windowRange (length items) sel' 30
+    in [ padLeftRight 1 $ withAttr (attrName "title") $ str (T.unpack title) ]
+       ++ [ dialogRow idx sel' (str (T.unpack (T.pack (show k) <> "  " <> line))) (str "")
+          | (idx, (k, line)) <- zip [s0 ..] (take (e0 + 1) (drop s0 items)) ]
+       ++ [ padLeftRight 1 $ withAttr (attrName "timestamp") $
+              str "enter choose · esc close" ]
   where
     lang = appLang st
     sel = dialogSelected d
@@ -263,6 +270,7 @@ drawDialog st d =
       DialogPresets{}   -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
       DialogProviders{} -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
       DialogSandbox{}   -> hintRow "↑/↓ · Tab move · Enter open · Esc close"
+      DialogPick{}      -> hintRow "↑/↓ · Tab move · Enter choose · Esc close"
       _ -> emptyWidget
     hintRow t = padLeftRight 1 $ withAttr (attrName "status") $ str (T.unpack (tr lang t))
     -- 可过滤的列表：查询行 + 提示（输入即过滤，回车打开）。
