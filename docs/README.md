@@ -1,6 +1,6 @@
 # docs/ 导览
 
-> 本目录共 **58 份文档**（2026-11-02 追加 windows-dev-notes；计数规则 = `reference/` 下按**条目**计，其余按 `.md` 文件计），按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
+> 本目录共 **59 份文档**（2026-11-12 追加 commands-tools-cross-benchmark；计数规则 = `reference/` 下按**条目**计，其余按 `.md` 文件计），按**文档生命周期**分为五个子目录（2026-09-13 归置；动因与分类依据见 `plans/code-docs-reconciliation.md` §5–§6）。
 >
 > **结构权威**是 `../QWEN.md`（§Architecture Layers / §Development Conventions / §Documentation）与 `architecture/architecture.md`。本文件只是**浏览用导览**，如有冲突，一律以 `QWEN.md` 为准。
 
@@ -72,8 +72,9 @@
 - `file-completion-tracking.md` — 逐**文件**的完成状态 + 验证方式 + 证据（按计划项核对见 `plan-reconciliation.md`）
 - `webgpu-wiring-plan.md` — WebGPU 后端接线：数据流程、W1–W7 / T1–T4 原子分解（均已跑通）、12 条「照文档写会踩」的坑；**未接生产推理路径**
 
-### `reference/` — 参考、研究、运维（17）
+### `reference/` — 参考、研究、运维（18）
 
+- **`commands-tools-cross-benchmark-2026-11-12.md`** — **命令与工具七方对标审计（2026-11-12）**：dsh / DeepSeek-Reasonix / oh-my-pi / opencode / qwen-code / haskell-agent 三项目 + trha 本地，共七路源码审计的交叉对比。91 条斜杠命令与 74+33 工具的逐项实现普查（**0 个「仅名字」**，81+10 部分实现清单）、七方交互层级对比、分组对比（trha 10 组为唯一全覆盖）、五个可吸收洞见（编译期穷尽检查、双表面语义、审批统一 pipeline）与按性价比排序的行动清单。加命令/工具或怀疑漂移时先读这份
 - **`windows-dev-notes.md`** — **Windows 开发笔记与跨平台交接（2026-11-02）**：TUI/内核 API 接入批次修复的平台缺陷清单（spawn 阻塞、同路径 SSE、provider 解析、x-api-key、代理策略统一/默认直连）、环境坑（TIME_WAIT 风暴、页面文件、TEMP 大小写、IME 吞键、GBK 假象）、Ubuntu 侧初始化清单与跨平台语义核对表、与 Reasonix（bubbletea/glyphFit/proxy_mode）的对照。新环境接手 Windows 开发或验证跨平台行为先读这份
 - `source-code-analysis.md` — 四个来源项目（DeepSeek-Harness / Pi / Reasonix / trha）的结构与融合映射。⚠️ 2026-10-27 起标注为**早期分析**，现状以 `architecture/architecture-snapshot-2026-10-27.md` 为准
 - `microkernel-lineage.md` — **微内核谱系**（2026-10-27）：概念来自 deepseek-harness/Cordis（进程内插件树、可逆副作用），Haskell 手法来自 Yi 的 `dynamic-state`（`HashMap ConcreteTypeRep Dynamic` 类型索引状态），进程外模型参考 Reasonix Extension Protocol v2（sidecar + NDJSON JSON-RPC + manifest）。**§3.5 另收 Haskell 侧完整 harness 参考**：`/data/work/functional-programming/hs` 的 haskell-agent（30+ 包、runtime daemon、agent-server）、langchain-hs（RunnableTree / StateGraph）、tricorder（daemon + TUI + MCP 插件）。含四者对照表与 trha 的实际落点（`Core.Plugin` 生产零引用、真正扩展面在 scheduler）
