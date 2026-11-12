@@ -32,6 +32,12 @@ spec = do
       map piId ranked `shouldBe` ["/stats", "/stop", "/loop"]
     it "无匹配强度的候选被滤掉" $ do
       null (rankByQuery "zzz" frec [it1, it2]) `shouldBe` True
+    it "fuzzy 子序列垫底：/stp 只命中 /stop，排最后" $ do
+      let ranked = rankByQuery "stp" frec [it1, it3, it2]
+      map piId ranked `shouldBe` ["/stop"]
+    it "fuzzy：/lop 命中 /loop（desc 假匹配之外还有子序列档）" $ do
+      let ranked = rankByQuery "lop" frec [it2, it1]
+      map piId ranked `shouldBe` ["/loop"]
 
   describe "buildPalette" $ do
     let skills =

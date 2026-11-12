@@ -98,16 +98,29 @@ queryDelete = FL.queryDelete
 -- | 匹配强度档位：越小越强。
 --
 -- 查询与候选 id 都先去掉首字符 @/@ 并转小写再比较。
-data MatchTier = MExact | MPrefix | MInfix
+data MatchTier = MExact | MPrefix | MInfix | MFuzzy
   deriving (Show, Eq, Ord)
+
+-- | @sub@ 是否为 @s@ 的子序列（保持顺序、允许跳字）。
+isSubseq :: Text -> Text -> Bool
+isSubseq sub s = go (T.unpack sub) (T.unpack s)
+  where
+    go [] _ = True
+    go _ [] = False
+    go (c : cs) (k : ks)
+      | c == k = go cs ks
+      | otherwise = go (c : cs) ks
 
 -- | 候选 id 对查询的匹配档位（调用方已用 infix 过滤，命中者至少是 'MInfix'）。
 matchTier :: Text -> PickerItem -> Int
 matchTier q it
   | key == q  = 0
   | q `T.isPrefixOf` key = 1
-  | otherwise = 2
+  | q `T.isInfixOf` key || q `T.isInfixOf` T.toLower (piDesc it) = 2
+  | isSubseq ql key = 3
+  | otherwise = 4  -- 无匹配（调用方应滤掉）
   where
+    ql = T.toLower q
     key = T.toLower (T.drop 1 (piId it))
 
 -- | 按 匹配档位 → frecency 次数（降序）→ 名字 排序。
@@ -119,15 +132,11 @@ rankByQuery :: Text -> (Text -> Int) -> [PickerItem] -> [PickerItem]
 rankByQuery q frec items
   -- 空查询：全部候选按 frecency 降序。
   | T.null ql = sortOn (negate . frec . piId) items
-  -- 非空：infix 过滤（id 或 desc）后按 匹配档位 → frecency → 名字 排序；
-  -- 未命中的候选被丢弃。
+  -- 非空：infix → fuzzy 子序列 全收（tier 决定次序），完全无关联的被滤掉。
   | otherwise = map (\(_, _, _, it) -> it) $
       sortOn (\(t, c, n, _) -> (t, c, n))
         [ (matchTier ql it, negate (frec (piId it)), key it, it)
-        | it <- items, matches it ]
+        | it <- items, matchTier ql it < 4 ]
   where
     ql = T.toLower (T.strip q)
     key it = T.toLower (T.drop 1 (piId it))
-    matches it =
-      ql `T.isInfixOf` key it
-        || (not (T.null (piDesc it)) && ql `T.isInfixOf` T.toLower (piDesc it))

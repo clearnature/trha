@@ -115,7 +115,7 @@ slashRegistry =
   , SlashCommand "/queue"    True  True  "Queue a message for after this turn (usage: /queue [message])" bothSurfaces
       (\a -> Queue (case T.strip a of s | T.null s -> Nothing; s' -> Just s'))
   , SlashCommand "/steer"    True  True  "Steer the running turn (usage: /steer <prompt>)" bothSurfaces Steer
-  , SlashCommand "/fork"     True  True  "Fork this session into a child (usage: /fork [title])" bothSurfaces Fork
+  , SlashCommand "/fork"     False True  "Fork this session into a child" bothSurfaces Fork
   , SlashCommand "/branch"   False True  "Fork just before the last user turn" bothSurfaces (\_ -> Branch)
   , SlashCommand "/goal"     False True  "Show the session goal and todo count" bothSurfaces (\_ -> GoalView)
   , SlashCommand "/switch"   True  True  "Switch the active provider (usage: /switch [name])" bothSurfaces (SwitchProvider . optToken)

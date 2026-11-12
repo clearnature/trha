@@ -375,7 +375,7 @@ zhDict = M.fromList
   , ("Summarize the conversation so far", "摘要当前会话")
   , ("Queue a message for after this turn (usage: /queue [message])", "排队一条消息，在当前轮结束后发送（用法：/queue [message]）")
   , ("Steer the running turn (usage: /steer <prompt>)", "转向当前轮（用法：/steer <prompt>）")
-  , ("Fork this session into a child (usage: /fork [title])", "把当前会话分叉为子会话（用法：/fork [title]）")
+  , ("Fork this session into a child", "将当前会话分叉为子会话")
   , ("Fork just before the last user turn", "在最后一条用户消息之前分叉")
   , ("Show the session goal and todo count", "显示会话目标与任务数")
   , ("Switch the active provider (usage: /switch [name])", "切换当前 Provider（用法：/switch [name]）")

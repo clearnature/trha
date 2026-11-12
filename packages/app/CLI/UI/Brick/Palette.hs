@@ -178,17 +178,13 @@ refreshPalette = do
     if "/" `T.isPrefixOf` text && single && tokenOpen
       then s { appPalette =
              let items = paletteItemsFor s
-                 all0 = filterItems text items
-                 -- 批次四 A：匹配强度分级排序（exact > prefix > 其余 infix），
-                 -- frecency 作次级键。存排序后的全量列表，DialogCommands 的
-                 -- query 再过滤时保持该顺序。
-                 ranked = rankByQuery query frec all0
-                 -- 选中索引必须相对于*过滤后*的列表：'dialogCommandsItems'
-                 -- 每次都用 query 重新过滤，若这里按全量列表算，过滤到只剩
-                 -- 一项时索引会越界，回车便落到 'runPaletteItem' 的空分支上，
-                 -- 表现为「输入 /about 回车毫无反应」。
-             in Just (DialogCommands ranked query
-                        (dialogCommandsInitialSel ranked query)) }
+                 -- 不过滤：rankByQuery 内部按 tier（含 fuzzy 子序列）收候选，
+                 -- infix 预过滤会把 fuzzy 档提前杀掉。排序 = 匹配档位 →
+                 -- frecency → 名字。
+                 ranked = rankByQuery query frec items
+                 -- 候选已按相关性预筛预排：存储的 query 置空，避免
+                 -- dialogCommandsItems 再用 infix 过滤把 fuzzy 档筛没。
+             in Just (DialogCommands ranked "" (dialogCommandsInitialSel ranked "")) }
     else if "/" `T.isPrefixOf` text && single
       then case argItems of
         Just items -> s { appPalette = Just (DialogCommands items (T.stripEnd text) 0) }
