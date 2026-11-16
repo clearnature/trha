@@ -192,6 +192,17 @@ export class HaskellBridge {
   }
 
   /** Call the kernel chat completions endpoint (non-streaming). */
+  /** Exact token count via deepseek-recipe FFI (kernel /api/token-count).
+   * Returns null when the kernel is unreachable or the FFI is not loaded. */
+  async countTokens(text: string): Promise<number | null> {
+    try {
+      const raw = await this.httpClient.post<{count: number}>('/api/token-count', { text });
+      return typeof raw?.count === 'number' ? raw.count : null;
+    } catch {
+      return null;
+    }
+  }
+
   async queryModel(request: QueryRequest): Promise<QueryResponse> {
     const body: Record<string, unknown> = {
       messages: request.messages.map(normalizeMessage),
