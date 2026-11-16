@@ -25,6 +25,7 @@ import Control.Monad (unless)
 import Data.Aeson (Value(..))
 import qualified Data.Aeson as Aeson
 import Data.IORef
+import Data.Maybe (isJust)
 import Data.Maybe (fromMaybe)
 import Foreign.C.String (CString, newCString, peekCString)
 import Foreign.Ptr (nullPtr)
@@ -34,6 +35,7 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+import qualified Data.Text.Encoding as TE
 import qualified Data.Text as T
 import Data.Text (Text)
 
@@ -79,9 +81,12 @@ callAndParse fn payload = do
   if resultPtr == nullPtr
     then pure Nothing
     else do
-      jsonStr <- peekCString resultPtr
+      -- 读原始字节（不经过 locale 解码），Aeson 直接解析 UTF-8 JSON
+      rawBytes <- BS.packCString resultPtr
       c_recipe_free_string resultPtr
-      pure (Aeson.decode (BSL.fromStrict (BSC.pack jsonStr)))
+      let decoded = Aeson.decode (BSL.fromStrict rawBytes) :: Maybe Aeson.Value
+      putStrLn $ "[FFI-DEBUG] bytes=" <> show (BS.length rawBytes) <> " decoded=" <> show (isJust decoded)
+      pure decoded
 
 -- | 从 Aeson Object 提取字段（避免额外 FromJSON 约束）。
 getField :: Aeson.FromJSON a => Aeson.Object -> Text -> Maybe a

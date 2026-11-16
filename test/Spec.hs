@@ -4,6 +4,7 @@
 
 import Test.Hspec
 import qualified ToolDeferSpec
+import qualified LLM.Recipe.FFISpec
 import Test.QuickCheck
 import Kernel.Carrier
   ( Layer (..), initialPoint, dimCarrier, dotC, normC2, basisVec
@@ -38,6 +39,7 @@ import Core.Cache.Engine
 import LLM.Adapter.Types
 import qualified LLM.Adapter.Types as LLM
 import LLM.Adapter.Interface
+import LLM.Recipe.FFI
 import LLM.Providers.DeepSeek (buildDeepSeekChatRequest, createDeepSeekProvider, parseDeepSeekChatTurn)
 import API.Server (OpenAIRequest(..), parseOpenAIRequest, mkApp, mkStubApp, genParamsWithDefaultEffort)
 import Network.Wai (Application)
@@ -145,6 +147,7 @@ testSuite = do
   experimentSpec
   configSpec
   ToolDeferSpec.spec
+  LLM.Recipe.FFISpec.spec
 
   describe "Core.Session" $ do
     it "can create a session and append events" $ do
@@ -243,6 +246,38 @@ testSuite = do
       models <- llmModels adapter
       length models `shouldSatisfy` (>= 1)
       modelName (head models) `shouldBe` "deepseek-flash"
+
+  describe "LLM.Recipe.FFI (deepseek-recipe FFI)" $ do
+    it "recipeInit works" $ do
+      recipeInit
+      recipeIsInit `shouldReturn` True
+    it "recipeCountTokens: short text → positive int" $ do
+      r <- recipeCountTokens "hello world"
+      r `shouldSatisfy` maybe False (> 0)
+    it "recipeCountTokens: long text → more tokens than short" $ do
+      short <- recipeCountTokens "hello"
+      long  <- recipeCountTokens (T.replicate 100 "hello world ")
+      case (short, long) of
+        (Just s, Just l) -> l `shouldSatisfy` (> s * 5)
+        _ -> fail "countTokens returned Nothing"
+    it "recipeRenderV41: Chat Completions JSON → prompt with BOS token" $ do
+      let req = "{\"model\":\"DeepSeek-V4.1-Flash\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+      r <- recipeRenderV41 req
+      case r of
+        Just p  -> p `shouldSatisfy` T.isPrefixOf "<｜begin▁of▁sentence｜>"
+        Nothing -> fail "renderV41 returned Nothing"
+    it "recipeRenderV41: prompt contains User token" $ do
+      let req = "{\"model\":\"DeepSeek-V4.1-Flash\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+      r <- recipeRenderV41 req
+      case r of
+        Just p  -> p `shouldSatisfy` T.isInfixOf "User"
+        Nothing -> fail "renderV41 returned Nothing"
+    it "recipeEncodeV41: returns non-empty token IDs" $ do
+      let req = "{\"model\":\"DeepSeek-V4.1-Flash\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+      r <- recipeEncodeV41 req
+      case r of
+        Just ids -> ids `shouldSatisfy` not . null
+        Nothing  -> fail "encodeV41 returned Nothing"
 
   -- Phase 3 K1: function-calling message model (OpenAI-aligned JSON)
   describe "LLM.FunctionCalling" $ do

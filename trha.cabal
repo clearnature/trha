@@ -446,6 +446,7 @@ test-suite trha-sandbox-test
                   , AuditSpec
                   , ExperimentSpec
                   , ConfigSpec
+                  , LLM.Recipe.FFISpec
   -- Linux / macOS / BSD 专用 spec：它们 import System.Posix.* 或 Linux cgroup
   -- API，在 Windows 上无法编译（不是"跳过用例"，而是整个模块不参与构建）。
   if !os(windows)
@@ -476,6 +477,7 @@ test-suite trha-sandbox-test
 test-suite trha-test
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
+  ghc-options:      -optl-Wl,-rpath,/home/yanli/work/trha/3rdparty/trha-recipe/dist
   other-modules:    CoreContractSpec, SessionPersistSpec, ApprovalSpec, PlanSpec
                   , GoldenGF27Spec
                   , GoldenCrossSpec
