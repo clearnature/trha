@@ -85,7 +85,6 @@ callAndParse fn payload = do
       rawBytes <- BS.packCString resultPtr
       c_recipe_free_string resultPtr
       let decoded = Aeson.decode (BSL.fromStrict rawBytes) :: Maybe Aeson.Value
-      putStrLn $ "[FFI-DEBUG] bytes=" <> show (BS.length rawBytes) <> " decoded=" <> show (isJust decoded)
       pure decoded
 
 -- | 从 Aeson Object 提取字段（避免额外 FromJSON 约束）。

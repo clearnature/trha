@@ -88,6 +88,7 @@ import qualified LLM.Adapter.Types as LLM
 import LLM.Adapter.Interface (LLMAdapter(..))
 import LLM.Adapter.Types (ChatMessage(..), ChatTurn(..), StreamChunk(..), ToolCall(..), ToolSpec, Usage(..), mkUsage)
 import qualified LLM.Stream as Stream
+import qualified LLM.Recipe.FFI
 import Sov.ConstraintVerdict
   ( ConstraintVerdict (..), T6State (..), VerdictStatus (..)
   , verdictOf, verdictOfWithState )
@@ -127,6 +128,8 @@ type API =
   :<|> "v1" :> "chat" :> "completions" :> Raw
   :<|> "v1" :> "messages" :> Raw
   :<|> "v1" :> "responses" :> Raw
+  -- Token counting via deepseek-recipe FFI (exact, not estimated)
+  :<|> "api" :> "token-count" :> ReqBody '[JSON] Value :> Post '[JSON] Value
 
 -- Request types
 --
@@ -233,6 +236,7 @@ server adapter sessions stateDir =
   :<|> streamAwareApp (openaiStreamApp adapter) (openaiChatHandler adapter sessions stateDir)
   :<|> streamAwareApp (anthropicStreamApp adapter) (anthropicMessagesHandler adapter)
   :<|> streamAwareApp (responsesStreamApp adapter) (responsesHandler adapter)
+  :<|> tokenCountHandler
 
 -- Health check
 healthHandler :: Handler Value
@@ -241,6 +245,20 @@ healthHandler = return $ object
   , "version" .= ("0.1.0" :: Text)
   , "modes"   .= map modeToText [minBound..(maxBound :: AgentMode)]
   ]
+
+-- | POST /api/token-count — deepseek-recipe FFI 精确 token 计数。
+-- 请求体：{"text": "..."}；响应：{"count": N}。
+tokenCountHandler :: Value -> Handler Value
+tokenCountHandler body = do
+  let text = case body of
+        Object o -> maybe "" id $ do
+          v <- KM.lookup "text" o
+          case v of
+            String t -> Just t
+            _        -> Nothing
+        _ -> ""
+  n <- liftIO $ LLM.Recipe.FFI.recipeCountTokens text
+  return $ object ["count" .= fromMaybe 0 n]
 
 -- Start session
 --
