@@ -60,7 +60,11 @@ library trha-llm
     LLM.Adapter.Interface
     LLM.Providers.DeepSeek
     LLM.Providers.OpenAI
+    LLM.Recipe.FFI
     LLM.Stream
+  ghc-options:      -optl-Wl,-rpath,/home/yanli/work/trha/3rdparty/trha-recipe/dist
+  extra-lib-dirs:    /home/yanli/work/trha/3rdparty/trha-recipe/dist
+  extra-libraries:   trha_recipe_ffi
   hs-source-dirs:   src/llm
   build-depends:    base ^>=4.22
                   , trha:trha-core
@@ -397,7 +401,7 @@ executable trha
     UI.Render.Footer
     UI.TextWidth
     UI.ProviderPresets
-  ghc-options:      -rtsopts -threaded
+  ghc-options:      -rtsopts -threaded -optl-Wl,-rpath,/home/yanli/work/trha/3rdparty/trha-recipe/dist
   build-depends:    base ^>=4.22
                   , trha:trha-api
                   , trha:trha-infra
