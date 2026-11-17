@@ -262,8 +262,13 @@ export function govern<T extends GovernedMessage>(
   messages: readonly T[],
   latestPromptTokens: number,
   cfg: GovernanceConfig = DEFAULT_GOVERNANCE,
+  exactCounts?: (number | null)[],
 ): GovernanceResult<T> {
-  const pressure = latestPromptTokens > 0 ? latestPromptTokens : estimateMessages(messages);
+  const pressure = latestPromptTokens > 0
+    ? latestPromptTokens
+    : exactCounts
+      ? exactCounts.reduce<number>((a, b) => a + (b ?? 0), 0)
+      : estimateMessages(messages);
   const focus = (cfg.focus ?? '').trim();
   const unchanged: GovernanceResult<T> = {
     messages: [...messages], trigger: 'none', savedTokens: 0, prefixChanged: false, focusKept: 0,
