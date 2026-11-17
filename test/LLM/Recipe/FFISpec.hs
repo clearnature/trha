@@ -174,7 +174,49 @@ spec = do
       _ <- recipeStreamClose n Nothing
       r <- recipeStreamFeed n "{\"type\":\"text\",\"content\":\"x\",\"token_count\":1}"
       isNothing r `shouldBe` True
+
+  -- ------------------------------------------------------------------
+  -- 图像子系统
+  -- ------------------------------------------------------------------
+  describe "recipeImageTokenSpec" $ do
+    it "大图 token 数在 (0, 1024] 内" $ do
+      r <- recipeImageTokenSpec 1024 768
+      case r of
+        Just iti -> do
+          itiTokenCount iti `shouldSatisfy` (\t -> t > 0 && t <= 1024)
+          itiMaxTokenCount iti `shouldBe` 1024
+        Nothing -> fail "imageTokenSpec returned Nothing"
+
+    it "小图被放大对齐（64x48：isValid=False，fitting 后宽 ≥ 原宽）" $ do
+      r <- recipeImageTokenSpec 64 48
+      case r of
+        Just iti -> do
+          itiTokenCount iti `shouldSatisfy` (> 0)
+          itiIsValid iti `shouldBe` False
+          itiBestWidth iti `shouldSatisfy` (\w -> w >= 64)
+        Nothing -> fail "imageTokenSpec returned Nothing"
+
+  describe "recipeImageResolve" $
+    it "data_url 图像解析出 image_count=1" $ do
+      let pngB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC" :: T.Text
+          payload = T.pack
+            ("{\"sources\": [{\"kind\": \"data_url\", \"data_url\": \"data:image/png;base64,"
+             <> T.unpack pngB64 <> "\"}]}")
+      r <- recipeImageResolve payload
+      case r of
+        Just v ->
+          (objField v "image_count" :: Maybe Int) `shouldBe` Just 1
+        _ -> fail "imageResolve returned Nothing"
   where
+    -- 任意 Value 顶层字段（无 lens 的取法）
+    objField :: Aeson.FromJSON a => Aeson.Value -> T.Text -> Maybe a
+    objField (Aeson.Object o) k = case KM.lookup (AK.fromText k) o of
+      Just x -> case Aeson.fromJSON x of
+        Aeson.Success a -> Just a
+        _               -> Nothing
+      _ -> Nothing
+    objField _ _ = Nothing
+
     -- 顶层 "special_tokens" / "model_versions" 数组长度（无 lens 的取法）
     arrayFieldCount (objAt "special_tokens" -> Just (Aeson.Array v)) = V.length v
     arrayFieldCount (objAt "model_versions" -> Just (Aeson.Array v)) = V.length v

@@ -45,6 +45,10 @@ module LLM.Recipe.FFI
   , recipeStreamFeed
   , recipeStreamClose
   , recipeStreamAbort
+    -- 图像子系统
+  , ImageTokenInfo(..)
+  , recipeImageTokenSpec
+  , recipeImageResolve
   ) where
 
 import Control.Monad (unless)
@@ -333,6 +337,45 @@ recipeStreamAbort handle =
 -- | Word → CULLong 的句柄桥。
 withStreamHandle :: Word -> (CULLong -> IO a) -> IO a
 withStreamHandle h f = f (CULLong (fromIntegral h))
+
+-- ---------------------------------------------------------------------------
+-- 图像子系统
+-- ---------------------------------------------------------------------------
+
+-- | V4.1 图像 token 数学结果（'recipeImageTokenSpec'）。
+data ImageTokenInfo = ImageTokenInfo
+  { itiTokenCount    :: Int    -- ^ 该尺寸占用的图像 token 数
+  , itiBestWidth     :: Int    -- ^ token-budget fitting 后的宽
+  , itiBestHeight    :: Int    -- ^ token-budget fitting 后的高
+  , itiMaxTokenCount :: Int    -- ^ 单图上限（V4.1 = 1024）
+  , itiIsValid       :: Bool   -- ^ fitting 是否保持原尺寸
+  } deriving (Show, Eq)
+
+-- | V4.1 图像 token 数学：宽高 → token 数 + fitting 结果。纯同步，不碰字节。
+recipeImageTokenSpec :: Int -> Int -> IO (Maybe ImageTokenInfo)
+recipeImageTokenSpec width height = do
+  let payload = Aeson.encode (Aeson.object
+        ["width" Aeson..= width, "height" Aeson..= height])
+  recipeDispatch "image_token_spec" (babel payload) >>= \case
+    Just (Aeson.Object o) -> do
+      let g k = getField o k :: Maybe Int
+          b k = getField o k :: Maybe Bool
+      pure $ case (g "token_count", g "best_width", g "best_height",
+                   g "max_token_count", b "is_image_valid") of
+        (Just tc, Just bw, Just bh, Just mc, Just v) ->
+          Just ImageTokenInfo { itiTokenCount = tc, itiBestWidth = bw
+                              , itiBestHeight = bh, itiMaxTokenCount = mc
+                              , itiIsValid = v }
+        _ -> Nothing
+    _ -> pure Nothing
+
+-- | 图像解析：sources（data_url/url/bytes）→ 预处理 + 各图 token 数。
+-- payload 形态见 trha-recipe-ffi image.rs 文档；默认拒内网/环回 URL（SSRF）。
+recipeImageResolve :: Text -> IO (Maybe Aeson.Value)
+recipeImageResolve payload = do
+  recipeDispatch "image_resolve" payload >>= \case
+    Just (Aeson.Object o) | KM.member (AK.fromText "error") o -> pure Nothing
+    v -> pure v
 
 -- | 流 open 的 @[handle]@ 字段提取。
 readHandleReply :: CString -> IO (Maybe Word)
