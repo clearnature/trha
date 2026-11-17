@@ -130,6 +130,12 @@ type API =
   :<|> "v1" :> "responses" :> Raw
   -- Token counting via deepseek-recipe FFI (exact, not estimated)
   :<|> "api" :> "token-count" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  -- deepseek-recipe capability surface (render / encode / convert / limits);
+  -- the op is fixed per route — no bare dispatch endpoint leaves the kernel
+  :<|> "api" :> "recipe" :> "render"  :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  :<|> "api" :> "recipe" :> "encode"  :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  :<|> "api" :> "recipe" :> "convert" :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  :<|> "api" :> "recipe" :> "limits"  :> ReqBody '[JSON] Value :> Post '[JSON] Value
 
 -- Request types
 --
@@ -237,6 +243,10 @@ server adapter sessions stateDir =
   :<|> streamAwareApp (anthropicStreamApp adapter) (anthropicMessagesHandler adapter)
   :<|> streamAwareApp (responsesStreamApp adapter) (responsesHandler adapter)
   :<|> tokenCountHandler
+  :<|> recipeEndpoint "render"  recipeRenderFields
+  :<|> recipeEndpoint "encode"  recipeEncodeFields
+  :<|> recipeEndpoint "convert" recipeConvertFields
+  :<|> recipeEndpoint "limits"  recipeLimitsFields
 
 -- Health check
 healthHandler :: Handler Value
@@ -262,6 +272,36 @@ tokenCountHandler body = do
   if length counts == 1
     then return $ object ["count" .= head counts]
     else return $ object ["counts" .= counts]
+
+-- | deepseek-recipe 能力面的 HTTP 壳。op 由路由固定（内核不出裸分发面），
+-- payload 只收白名单字段。三种失败形态：
+--
+--   * cdylib 不可载 → 503（部署问题，调用方降级）
+--   * 库报错（转换失败 / 未知 kind / 未知版本）→ 400 带错误文本
+--   * FFI 绑定 Nothing 同 503
+--
+-- 请求前幂等 ensureInit：dispatch 直连路径不惰性初始化。
+recipeRenderFields, recipeEncodeFields, recipeConvertFields, recipeLimitsFields :: [KM.Key]
+recipeRenderFields  = ["kind", "request", "version"]
+recipeEncodeFields  = ["kind", "request", "version", "ids"]
+recipeConvertFields = ["kind", "request"]
+recipeLimitsFields  = ["kind", "request", "prompt_tokens", "context_limit"]
+
+recipeEndpoint :: Text -> [KM.Key] -> Value -> Handler Value
+recipeEndpoint op fields body = do
+  liftIO LLM.Recipe.FFI.recipeInit
+  let payload = case body of
+        Object o -> object
+          [ f .= v | f <- fields, Just v <- [KM.lookup f o] ]
+        _ -> Null
+  mres <- liftIO $ LLM.Recipe.FFI.recipeDispatch op
+    (TE.decodeUtf8 (BL.toStrict (encode payload)))
+  case mres of
+    Nothing -> throwError err503
+      { errBody = "recipe FFI unavailable (cdylib missing or not initialised)" }
+    Just (Object o) | Just (String e) <- KM.lookup "error" o ->
+      throwError err400 { errBody = BL.fromStrict (TE.encodeUtf8 e) }
+    Just v -> return v
 
 -- Start session
 --

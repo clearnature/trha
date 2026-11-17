@@ -5,6 +5,7 @@
 import Test.Hspec
 import qualified ToolDeferSpec
 import qualified LLM.Recipe.FFISpec
+import qualified RecipeEndpointsSpec
 import Test.QuickCheck
 import Kernel.Carrier
   ( Layer (..), initialPoint, dimCarrier, dotC, normC2, basisVec
@@ -140,6 +141,7 @@ testSuite :: Spec
 testSuite = do
   coreContractSpec
   sessionPersistSpec
+  RecipeEndpointsSpec.recipeEndpointsSpec
   approvalSpec
   planSpec
   goldenGF27Spec
