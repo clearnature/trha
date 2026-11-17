@@ -215,6 +215,58 @@ export class HaskellBridge {
     }
   }
 
+  /** Conversation-level exact token count: the request is converted and
+   * rendered (BOS + system framing + tool prompt included) before encoding —
+   * superset of countTokens, which counts raw text only.
+   * kind: 'cc' | 'responses' | 'anthropic'; version: 'v4' | 'v41' (optional). */
+  async recipeEncodeCount(
+    kind: 'cc' | 'responses' | 'anthropic',
+    request: unknown,
+    version?: 'v4' | 'v41',
+  ): Promise<number | null> {
+    try {
+      const raw = await this.httpClient.post<{count: number}>('/api/recipe/encode', {
+        kind, request, ...(version ? {version} : {}),
+      });
+      return typeof raw?.count === 'number' ? raw.count : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Render a protocol request as the model's prompt (V4/V4.1), plus the
+   * special-token ranges inside it. Debug/observability use. */
+  async recipeRender(
+    kind: 'cc' | 'responses' | 'anthropic',
+    request: unknown,
+    version?: 'v4' | 'v41',
+  ): Promise<{prompt: string; model_version?: string} | null> {
+    try {
+      const raw = await this.httpClient.post<{prompt: string; model_version?: string}>(
+        '/api/recipe/render', { kind, request, ...(version ? {version} : {}) });
+      return typeof raw?.prompt === 'string' ? raw : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Resolve max_tokens / top_p under DeepSeek semantics (thinking-mode
+   * defaults, context clamp, tool top_p=1). */
+  async recipeLimits(
+    kind: 'cc' | 'responses' | 'anthropic',
+    request: unknown,
+    promptTokens: number,
+    contextLimit: number,
+  ): Promise<{max_tokens: number; top_p: number; model_version?: string} | null> {
+    try {
+      const raw = await this.httpClient.post<{max_tokens: number; top_p: number}>(
+        '/api/recipe/limits', { kind, request, prompt_tokens: promptTokens, context_limit: contextLimit });
+      return typeof raw?.max_tokens === 'number' ? raw : null;
+    } catch {
+      return null;
+    }
+  }
+
   async queryModel(request: QueryRequest): Promise<QueryResponse> {
     const body: Record<string, unknown> = {
       messages: request.messages.map(normalizeMessage),

@@ -92,6 +92,18 @@ recipeEndpointsSpec =
       c `shouldBe` 200
       body `shouldSatisfy` ("\"max_tokens\":65536" `isInfixOf`)
 
+    it "trha 别名归一：deepseek-flash → DeepSeek-V4.1-Flash（encode 可用）" $ \app -> withApp app $ \mgr base -> do
+      (c, body) <- httpPost mgr (base ++ "/api/recipe/encode") $ object
+        [ "kind" .= ("cc" :: T.Text)
+        , "request" .= object
+            [ "model" .= ("deepseek-flash" :: T.Text)
+            , "messages" .= [ object [ "role" .= ("user" :: T.Text), "content" .= ("hi" :: T.Text) ] ]
+            ]
+        ]
+      c `shouldBe` 200
+      body `shouldSatisfy` ("\"count\":" `isInfixOf`)
+      body `shouldSatisfy` ("DeepseekV41Flash" `isInfixOf`)
+
     it "未知 kind → 400 带错误文本（不是 500）" $ \app -> withApp app $ \mgr base -> do
       (c, body) <- httpPost mgr (base ++ "/api/recipe/convert") $ object
         [ "kind" .= ("wat" :: T.Text), "request" .= ccRequest ]

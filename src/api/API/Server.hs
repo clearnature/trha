@@ -287,12 +287,27 @@ recipeEncodeFields  = ["kind", "request", "version", "ids"]
 recipeConvertFields = ["kind", "request"]
 recipeLimitsFields  = ["kind", "request", "prompt_tokens", "context_limit"]
 
+-- | trha 模型别名 → 库校验的 API 名（目录与 DeepSeek.hs 的 llmModels 一致）。
+-- 调用方传 trha 会话里的别名（deepseek-flash），库只认精确 API 名。
+recipeModelAlias :: Text -> Text
+recipeModelAlias "deepseek-flash"  = "DeepSeek-V4.1-Flash"
+recipeModelAlias "deepseek-v4-pro" = "DeepSeek-V4-Pro"
+recipeModelAlias m                 = m
+
+-- | request 内嵌对象里的 model 字段过一遍别名归一（已是 API 名则原样）。
+normalizeRecipeRequest :: Value -> Value
+normalizeRecipeRequest (Object o)
+  | Just (String m) <- KM.lookup "model" o =
+      Object (KM.insert "model" (String (recipeModelAlias m)) o)
+normalizeRecipeRequest v = v
+
 recipeEndpoint :: Text -> [KM.Key] -> Value -> Handler Value
 recipeEndpoint op fields body = do
   liftIO LLM.Recipe.FFI.recipeInit
   let payload = case body of
         Object o -> object
-          [ f .= v | f <- fields, Just v <- [KM.lookup f o] ]
+          [ (if f == "request" then (f, normalizeRecipeRequest v) else (f, v))
+          | f <- fields, Just v <- [KM.lookup f o] ]
         _ -> Null
   mres <- liftIO $ LLM.Recipe.FFI.recipeDispatch op
     (TE.decodeUtf8 (BL.toStrict (encode payload)))

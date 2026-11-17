@@ -315,12 +315,29 @@ interface SchedulerSession {
 }
 
 // ── Context governance (window / thresholds) ──────────────────────────────
+
+// Model catalog (module scope: /api/models serves it and governanceConfig
+// reads the window from it). What api.deepseek.com actually serves
+// (verified 2026-10); working limits, not the model ceiling: 500k context /
+// 128k output. Raising them again is a config change, not a code change.
+const MODEL_CATALOG = [
+  { name: 'deepseek-flash', description: 'DeepSeek-V4.1-Flash', contextSize: 524288, maxOutputTokens: 131072 },
+  { name: 'deepseek-v4-pro', description: 'DeepSeek-V4-Pro', contextSize: 524288, maxOutputTokens: 131072 },
+];
+
 // The override exists so tests can force pressure without a 1M-token session.
-function governanceConfig(): GovernanceConfig {
+// W2：window 来源链——TRHA_CONTEXT_WINDOW（ops/测试覆盖）> 模型目录
+// contextSize（W2c 之前 DEFAULT_GOVERNANCE 里写死 524_288，与目录数字一致，
+// 但目录才是未来换模型时唯一要动的地方）。
+function governanceConfig(modelName?: string): GovernanceConfig {
   const window = Number(process.env.TRHA_CONTEXT_WINDOW ?? '');
+  if (Number.isFinite(window) && window > 0) {
+    return { ...DEFAULT_GOVERNANCE, window };
+  }
+  const model = modelName ? MODEL_CATALOG.find(m => m.name === modelName) : undefined;
   return {
     ...DEFAULT_GOVERNANCE,
-    ...(Number.isFinite(window) && window > 0 ? { window } : {}),
+    ...(model && model.contextSize > 0 ? { window: model.contextSize } : {}),
   };
 }
 
@@ -878,10 +895,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
   // what context governance sizes its thresholds against.
   // Working limits, not the model ceiling: 500k context / 128k output. Raising
   // them again is a config change, not a code change.
-  const models = [
-    { name: 'deepseek-flash', description: 'DeepSeek-V4.1-Flash', contextSize: 524288, maxOutputTokens: 131072 },
-    { name: 'deepseek-v4-pro', description: 'DeepSeek-V4-Pro', contextSize: 524288, maxOutputTokens: 131072 },
-  ];
+  const models = MODEL_CATALOG;
 
   app.get('/api/models', (_req, res) => {
     res.json(models);
@@ -1871,11 +1885,24 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       try {
         // Context governance runs immediately before the request, so the
         // provider sees exactly what was measured.
-        // 批次七：冷启动用 recipe FFI tokenizer 精确计数替换 estimateMessages。
-        const msgTexts = session.messages.map((m: {content?: string}) => m.content ?? '');
-        const exactCounts = await bridge.countTokensBatch(msgTexts);
+        // W2 升级：冷启动用对话级 encode 精确计数（含渲染框架 + 工具提示，
+        // 比纯文本 count_text 更贴近 provider 真值）；温启动直接用 provider
+        // 上次报的 prompt_tokens，不再每步做全量重编码。
+        // 降级链：encode → count_text 批量 → estimateMessages（govern 内置）。
         const pressureTokens = session.lastPromptTokens ?? 0;
-        const governed = govern(session.messages, pressureTokens, governanceConfig(), exactCounts);
+        let exactCounts: (number | null)[] | undefined;
+        if (pressureTokens <= 0) {
+          const convCount = await bridge.recipeEncodeCount('cc', {
+            model: target.model, messages: session.messages, tools: toolsCfg,
+          });
+          if (convCount !== null) {
+            exactCounts = [convCount];
+          } else {
+            const msgTexts = session.messages.map((m: {content?: string}) => m.content ?? '');
+            exactCounts = await bridge.countTokensBatch(msgTexts);
+          }
+        }
+        const governed = govern(session.messages, pressureTokens, governanceConfig(target.model), exactCounts);
         if (governed.prefixChanged) {
           // 折叠/压缩是静默发生的：留一行日志，出问题时能对上界面里
           // 那条「context compacted」提示。
@@ -2493,7 +2520,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
     // ——snip 保留正文、fold 按序保留且工具块保持原子；数量经 focusKept 回显。
     const focus = typeof req.body?.focus === 'string' ? req.body.focus.trim() : '';
     const governed = govern(session.messages, session.lastPromptTokens ?? 0, {
-      ...governanceConfig(), ...(focus ? { focus } : {}),
+      ...governanceConfig(session.pendingApproval?.model ?? session.lastRequest?.model),
+      ...(focus ? { focus } : {}),
     });
     session.messages = governed.messages;
     session.lastMaintenance = {
@@ -2509,6 +2537,32 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       trigger: governed.trigger, savedTokens: governed.savedTokens,
       focusKept: governed.focusKept,
       ...(focus ? { focus } : {}),
+    });
+  });
+
+  // ── Context state (/ctx) ─────────────────────────────────────────────
+  // The TUI's /ctx reads this: exact-or-estimated pressure against the
+  // model window, plus what the last governance pass did. exact=true means
+  // the number came from the provider's own usage report (warm step); false
+  // = estimate fallback (no successful model round yet).
+  app.get('/api/context/:id', (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) return res.status(404).json({ error: 'no session' });
+    // 与 withSystemPrompt 的默认一致：未显式选型时按 deepseek-flash 算窗口
+    const model = session.pendingApproval?.model ?? session.lastRequest?.model ?? 'deepseek-flash';
+    const window = governanceConfig(model).window;
+    const pressure = session.lastPromptTokens ?? 0;
+    const pct = window > 0 ? Math.min(100, Math.round((pressure / window) * 100)) : 0;
+    res.json({
+      sessionId: session.id,
+      model: model ?? null,
+      window,
+      pressure,
+      percent: pct,
+      exact: pressure > 0,
+      messageCount: session.messages.length,
+      lastMaintenance: session.lastMaintenance ?? null,
+      prefixResets: session.prefixResets ?? 0,
     });
   });
 
