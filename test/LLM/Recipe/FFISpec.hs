@@ -18,6 +18,7 @@ import qualified Data.Aeson.Key as AK
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Vector as V
 import qualified Data.Text as T
+import Data.Word (Word)
 
 -- | Skip helper：FFI 不可用时跳过所有依赖 .so 的测试。
 requireFFI :: SpecWith () -> Spec
@@ -146,23 +147,26 @@ spec = do
   -- 流会话（StreamProcessor 句柄化）
   -- ------------------------------------------------------------------
   describe "recipeStream* 会话" $ do
-    let openStream = recipeStreamOpen "cc"
-                       "{\"model\":\"DeepSeek-V4.1-Flash\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"thinking\":{\"type\":\"disabled\"}}"
-                       Nothing "chatcmpl-hspec" "DeepSeek-V4.1-Flash"
+    let openStream :: IO Word
+        openStream = do
+          r <- recipeStreamOpen "cc"
+                 "{\"model\":\"DeepSeek-V4.1-Flash\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"thinking\":{\"type\":\"disabled\"}}"
+                 Nothing "chatcmpl-hspec" "DeepSeek-V4.1-Flash"
+          either (fail . T.unpack) pure r
 
     it "open 返回句柄" $ do
-      h <- openStream
-      isJust h `shouldBe` True
+      _ <- openStream
+      pure ()
 
     it "ready chunk 产出 Start（role）协议块" $ do
-      Just n <- openStream
+      n <- openStream
       r <- recipeStreamFeed n "{\"type\":\"ready\",\"prompt_tokens\":12,\"prompt_cache_hit_tokens\":0}"
       fmap chunksCount r `shouldSatisfy` maybe False (> 0)
       _ <- recipeStreamAbort n
       pure ()
 
     it "text chunk 原样透传为 content 增量" $ do
-      Just n <- openStream
+      n <- openStream
       _ <- recipeStreamFeed n "{\"type\":\"ready\",\"prompt_tokens\":12,\"prompt_cache_hit_tokens\":0}"
       r <- recipeStreamFeed n "{\"type\":\"text\",\"content\":\"hello\",\"token_count\":2}"
       fmap deltaContents r `shouldBe` Just "hello"
@@ -170,7 +174,7 @@ spec = do
       pure ()
 
     it "close 后再 feed → Nothing（句柄已释放）" $ do
-      Just n <- openStream
+      n <- openStream
       _ <- recipeStreamClose n Nothing
       r <- recipeStreamFeed n "{\"type\":\"text\",\"content\":\"x\",\"token_count\":1}"
       isNothing r `shouldBe` True

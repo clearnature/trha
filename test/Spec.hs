@@ -5,6 +5,7 @@
 import Test.Hspec
 import qualified ToolDeferSpec
 import qualified LLM.Recipe.FFISpec
+import qualified CpuProviderSpec
 import qualified RecipeEndpointsSpec
 import Test.QuickCheck
 import Kernel.Carrier
@@ -140,6 +141,7 @@ pinProviderEnv = do
 testSuite :: Spec
 testSuite = do
   coreContractSpec
+  CpuProviderSpec.cpuProviderSpec
   sessionPersistSpec
   RecipeEndpointsSpec.recipeEndpointsSpec
   approvalSpec

@@ -1,5 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | FFI 绑定：trha-recipe-ffi cdylib（deepseek-recipe 的 C ABI 薄壳）。
@@ -42,6 +43,7 @@ module LLM.Recipe.FFI
   , recipeModelVersions
     -- 流会话
   , recipeStreamOpen
+  , recipeStreamRun
   , recipeStreamFeed
   , recipeStreamClose
   , recipeStreamAbort
@@ -108,6 +110,10 @@ foreign import ccall "recipe_stream_close"
 
 foreign import ccall "recipe_stream_abort"
   c_recipe_stream_abort :: CULLong -> IO CString
+
+foreign import ccall "recipe_stream_run"
+  c_recipe_stream_run :: CString -> CString -> CString -> CString
+                      -> CString -> CString -> IO CString
 
 foreign import ccall "recipe_free_string"
   c_recipe_free_string :: CString -> IO ()
@@ -296,17 +302,27 @@ babel = TE.decodeUtf8 . BSL.toStrict
 
 -- | 开流：协议 @kind@ + 请求 JSON + 可选 tokenizer 路径。
 -- 返回句柄；失败回 @Nothing@（@[error]@ 在响应里）。
-recipeStreamOpen :: Text -> Text -> Maybe FilePath -> Text -> Text -> IO (Maybe Word)
+recipeStreamOpen :: Text -> Text -> Maybe FilePath -> Text -> Text
+                 -> IO (Either Text Word)
 recipeStreamOpen kind requestJson mTokPath responseId model = do
   cKind <- toCS kind
   cReq <- toCS requestJson
-  cTok <- case mTokPath of
-    Just p  -> newCString p
-    Nothing -> pure nullPtr
+  cTok <- maybe (pure nullPtr) (toCS . T.pack) mTokPath
   cRid <- toCS responseId
   cModel <- toCS model
   resultPtr <- c_recipe_stream_open cKind cReq cTok cRid cModel
-  readHandleReply resultPtr
+  raw <- readValueReply resultPtr
+  pure $ case raw of
+    Just (Object o) -> case KM.lookup (AK.fromText "handle") o of
+      Just v -> case Aeson.fromJSON v of
+        Aeson.Success (n :: Int) -> Right (fromIntegral n)
+        _                        -> Left "no handle in reply"
+      _ -> Left (errText o)
+    _ -> Left "stream open returned nothing"
+  where
+    errText o = case KM.lookup (AK.fromText "error") o of
+      Just (String t) -> t
+      _               -> "unknown stream open error"
 
 -- | 喂一个推理块（@ready@/@text@/@tokens@/@finish@ JSON），
 -- 返回已就绪的协议 chunk 数组原文；失败回 @Nothing@。
@@ -377,13 +393,6 @@ recipeImageResolve payload = do
     Just (Aeson.Object o) | KM.member (AK.fromText "error") o -> pure Nothing
     v -> pure v
 
--- | 流 open 的 @[handle]@ 字段提取。
-readHandleReply :: CString -> IO (Maybe Word)
-readHandleReply resultPtr = do
-  mv <- readValueReply resultPtr
-  pure $ case mv of
-    Just (Aeson.Object o) -> fromIntegral <$> (getField o "handle" :: Maybe Int)
-    _                     -> Nothing
 
 -- | 读响应指针 → Aeson Value（原始字节，不走 locale）→ 释放。
 -- 响应里带 @[error]@ 字段按失败处理（回 @Nothing@），与「错误不抛异常、
@@ -397,3 +406,23 @@ readValueReply resultPtr
       pure $ case Aeson.decode (BSL.fromStrict rawBytes) of
         Just (Aeson.Object o) | KM.member (AK.fromText "error") o -> Nothing
         v                                                         -> v
+
+
+-- ---------------------------------------------------------------------------
+-- 同步单轮解析（W4 CPU 后端；无会话句柄、无竞态）
+-- ---------------------------------------------------------------------------
+
+-- | 一次性流解析：token IDs → CC chunks（JSON 数组）。
+-- ids 为补全 token 序列（含 added-vocab token，如 </think>/DSML）。
+recipeStreamRun :: Text -> Text -> Maybe FilePath -> [Int] -> Text -> Text
+                -> IO (Maybe Aeson.Value)
+recipeStreamRun kind requestJson mTokPath ids responseId model = do
+  recipeInit
+  cKind <- toCS kind
+  cReq <- toCS requestJson
+  cTok <- maybe (pure nullPtr) (toCS . T.pack) mTokPath
+  cIds <- toCS (T.pack (show ids))
+  cRid <- toCS responseId
+  cModel <- toCS model
+  resultPtr <- c_recipe_stream_run cKind cReq cTok cIds cRid cModel
+  readValueReply resultPtr

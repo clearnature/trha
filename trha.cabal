@@ -102,6 +102,7 @@ library trha-api
     API.Providers
     API.ProviderProbe
     API.ProviderRuntime
+    API.ProviderCpu
     Core.Provider.Types
 
   -- 2026-10-27：按库拆分后本库只看 src/api，44 项 other-modules 已删除。
@@ -499,6 +500,7 @@ test-suite trha-test
                   , ConfigSpec
                   , ToolDeferSpec
                   , LLM.Recipe.FFISpec
+                  , CpuProviderSpec
                   , RecipeEndpointsSpec
   -- Linux 专用 spec：import System.Posix.*（或 Linux cgroup API），
   -- Windows 上整个模块不参与构建。

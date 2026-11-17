@@ -59,6 +59,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 import Core.Provider.Types
 import LLM.Adapter.Interface (LLMAdapter(..), StreamCall)
+import API.ProviderCpu (cpuRecipeAdapter)
 import qualified LLM.Stream as LStream
 import LLM.Adapter.Types
 import LLM.Providers.DeepSeek (buildDeepSeekChatRequest, parseDeepSeekChatTurn)
@@ -129,6 +130,10 @@ buildAdapter entry key = case peKind entry of
   "responses" -> Right <$> responsesAdapter (peNoProxy entry) (peBaseUrl entry) key (peDefault entry)
                        (extraHeaders (peHeaders entry)) (peExtraBody entry)
                        (peResponsesMode entry)
+  -- W4：内核内本地推理后端——流路径全链走 recipe stream 会话（token IDs →
+  -- InferenceChunk → StreamProcessor → CC chunks）。peBaseUrl 携带模型路径
+  -- （标识；真推理引擎接入后由此定位模型文件）。
+  "cpu"       -> Right <$> cpuRecipeAdapter (peBaseUrl entry)
   other       -> pure (Left ("provider kind not implemented yet: " <> other))
 
 --------------------------------------------------------------------------------
