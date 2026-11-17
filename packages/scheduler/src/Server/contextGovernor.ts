@@ -17,7 +17,8 @@
 
 export interface GovernedMessage {
   role: string;
-  content: string;
+  /** String for plain turns; CC content blocks when the turn carries images. */
+  content: string | unknown[];
   tool_calls?: unknown[] | undefined;
   tool_call_id?: string | undefined;
   [key: string]: unknown;
@@ -74,6 +75,21 @@ export interface GovernanceResult<T extends GovernedMessage = GovernedMessage> {
   focusKept: number;
 }
 
+/** Text of a message content: string as-is; blocks = their text parts joined.
+ * (Image blocks carry no text here — their token cost arrives via the
+ * session-level `imageTokens` added to the pressure by the caller.) */
+function contentText(m: GovernedMessage): string {
+  const c: unknown = m.content;
+  if (typeof c === 'string') return c;
+  if (Array.isArray(c)) {
+    return c
+      .map(b => (b && typeof b === 'object' && (b as { type?: unknown }).type === 'text'
+        && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : ''))
+      .join('');
+  }
+  return '';
+}
+
 /** Cheap token estimate: CJK runs are ~1 token per char, ASCII ~1 per 3.5. */
 export function estimateTokens(text: string): number {
   let cjk = 0;
@@ -85,7 +101,7 @@ export function estimateTokens(text: string): number {
 export function estimateMessages(messages: readonly GovernedMessage[]): number {
   let total = 0;
   for (const m of messages) {
-    total += 4 + estimateTokens(m.content ?? '');
+    total += 4 + estimateTokens(contentText(m));
     if (m.tool_calls) total += estimateTokens(JSON.stringify(m.tool_calls));
   }
   return total;
@@ -104,7 +120,7 @@ function tailStart(messages: readonly GovernedMessage[], tailTokens: number): nu
   let i = messages.length;
   while (i > 0 && budget > 0) {
     i -= 1;
-    budget -= 4 + estimateTokens(messages[i]?.content ?? '');
+    budget -= 4 + estimateTokens(contentText(messages[i] ?? ({} as GovernedMessage)));
   }
   while (i > 0 && messages[i]?.role === 'tool') i -= 1;
   return i;
@@ -115,8 +131,7 @@ const SNIPPED = (n: number) => `[tool result elided: ${n} chars]`;
 /** Case-insensitive focus match on message content. Empty focus never matches. */
 function matchesFocus(m: GovernedMessage, focus: string): boolean {
   if (!focus) return false;
-  const c = m.content ?? '';
-  return c.toLowerCase().includes(focus.toLowerCase());
+  return contentText(m).toLowerCase().includes(focus.toLowerCase());
 }
 
 /**

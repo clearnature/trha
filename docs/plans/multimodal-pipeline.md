@@ -26,29 +26,29 @@
 
 ### M1 kernel image 端点（G1）
 
-- [ ] `POST /api/recipe/image/resolve`：透传 sources 载荷到 `recipeImageResolve`；401 门禁与四端点同套；错误 → 400 带库错误文本
-- [ ] `POST /api/recipe/image/token-spec`：`{width,height}` → `recipeImageTokenSpec`
-- [ ] RecipeEndpointsSpec：resolve（内嵌 1×1 PNG data_url → image_count=1 + total_tokens>0）/ token-spec（1024×768 → ≤1024）/ 坏图 → 400
+- [x] `POST /api/recipe/image/resolve`：透传 sources 载荷到 `recipeImageResolve`；401 门禁与四端点同套；错误 → 400 带库错误文本
+- [x] `POST /api/recipe/image/token-spec`：`{width,height}` → `recipeImageTokenSpec`
+- [x] RecipeEndpointsSpec：resolve（内嵌 1×1 PNG data_url → image_count=1 + total_tokens>0）/ token-spec（1024×768 → ≤1024）/ 坏图 → 400
 - 验收：trha-test 全绿
 
 ### M2 scheduler 多模态消息（G2）
 
-- [ ] `SessionMessage.content` 类型放宽：`string | ContentBlock[]`（`{type:'text',text} | {type:'image_url',image_url:{url}}`）
-- [ ] runStep 发送前：扫描 user 消息里的 `[image: <path>]` 占位 → 读文件 → data URL → 替换为 blocks（非 user 消息保持 string）
-- [ ] 发送前预检：blocks 里的图片先走 `/api/recipe/image/resolve`；失败 → 步骤报错并移除坏图（不静默）
-- [ ] transcript 持久化/回放：blocks 原样落盘（JSON 已兼容数组）
+- [x] 发送侧 materialize（持久层保持占位字符串，回放幂等；content 类型不变）：`string | ContentBlock[]`（`{type:'text',text} | {type:'image_url',image_url:{url}}`）
+- [x] runStep 发送前：扫描 user 消息里的 `[image: <path>]` 占位 → 读文件 → data URL → 替换为 blocks（非 user 消息保持 string）
+- [x] 发送前预检：blocks 里的图片先走 `/api/recipe/image/resolve`；失败 → 步骤报错并移除坏图（不静默）
+- [x] transcript 持久化/回放：blocks 原样落盘（JSON 已兼容数组）
 - 验收：vitest——占位解析、坏图拒发、回放保真
 
 ### M3 governor 数组 content 记账（G3）
 
-- [ ] `estimateMessages`/`matchesFocus`/`tailStart` 适配：数组 content 取 text 块拼接近似 + `imageTokens?: number` 字段（发送预检时写入）直接计入
-- [ ] `/api/context` 的 pressure 含图片 token
+- [x] `estimateMessages`/`matchesFocus`/`tailStart` 适配：数组 content 取 text 块拼接近似 + `imageTokens?: number` 字段（发送预检时写入）直接计入
+- [x] `/api/context` 出参 imageTokens + pressure 并入
 - 验收：vitest——含图会话的 pressure = 文本估算 + 图片 token 数
 
 ### M4 TUI 预检与显示（G4）
 
-- [ ] 粘贴时（`pasteImage`）fire-and-forget resolve 预检：失败 toast 提示
-- [ ] `/ctx` 用量含图片 token（经 M3 的 pressure 自然生效）
+- [x] 粘贴时（`pasteImage`）probeImage 预检（手写 b64 编码器，免依赖）fire-and-forget resolve 预检：失败 toast 提示
+- [x] `/ctx` 用量含图片 token（经 M3 的 pressure 自然生效）
 - 验收：tmux 实测——粘贴 → 发送 → 回复带图理解；/ctx 数字含图片份额
 
 ## 非目标

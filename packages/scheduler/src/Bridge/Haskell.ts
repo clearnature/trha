@@ -234,6 +234,19 @@ export class HaskellBridge {
     }
   }
 
+  /** Validate/preprocess images and count their tokens (W5 multimodal
+   * pipeline). sources: [{kind: data_url|url|bytes, ...}] — see
+   * trha-recipe-ffi image.rs. Returns null when the kernel is unreachable. */
+  async recipeImageResolve(sources: unknown): Promise<{images?: Array<{token_count?: number; width?: number; height?: number}>; total_tokens?: number} | null> {
+    try {
+      const raw = await this.httpClient.post<{images?: { token_count?: number; width?: number; height?: number }[]; total_tokens?: number}>(
+        '/api/recipe/image/resolve', { sources });
+      return raw && Array.isArray(raw.images) ? raw : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Render a protocol request as the model's prompt (V4/V4.1), plus the
    * special-token ranges inside it. Debug/observability use. */
   async recipeRender(

@@ -21,11 +21,12 @@ import Brick.BChan
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
-import Control.Monad (forM_)
+import Control.Monad (forM_, void)
 import Control.Monad.IO.Class (liftIO)
 import Core.Clipboard (readClipboardText, saveClipboardImage)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider)
+import Control.Concurrent.Async (async)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider, probeImage)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.TurnStats (Prices(..), turnSummary, estimateCost, hasPrices, isOffPeak, pricesForModel)
 import UI.Event
@@ -137,6 +138,15 @@ pasteImage = do
         { appInput = editorText InputArea (Just 1)
             (editorValue s <> " [image: " <> T.pack path <> "]") }
       showToast (tr lang "Image saved: " <> T.pack path)
+      -- W5 多模态预检：粘贴即校验（resolve + 图片 token 数），失败当场
+      -- toast——发送时坏图会被剥离，这里提前告知（fire-and-forget）
+      chan <- gets appChan
+      bridge <- gets appBridge
+      void $ liftIO . async $ do
+        res <- probeImage bridge path
+        case res of
+          Left err  -> writeBChan chan (EvToast ("image precheck failed: " <> T.pack (show err)))
+          Right msg -> writeBChan chan (EvToast msg)
 
 -- | ctrl+l：清空消息视图；历史保留在 transcript 里（/resume 仍可回放）。
 clearView :: EventM ResourceName AppState ()

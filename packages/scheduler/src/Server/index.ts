@@ -253,6 +253,8 @@ interface SchedulerSession {
   pendingApproval: ({ message: string } & TurnTarget) | null;
   /** When the gate was parked, so /ask-timeout can expire it. */
   pendingApprovalAt?: string | null;
+  /** 图片 token 总数（上一轮 materialize 的 resolve 记账）。 */
+  imageTokens?: number;
   /** Approval wait for this session (ms); overrides TRHA_APPROVAL_TIMEOUT_MS. */
   askTimeoutMs?: number;
   /** The last turn, so /retry can replay it exactly. */
@@ -452,6 +454,90 @@ async function loadRuleFiles(): Promise<string> {
   }
   if (!chunks.length) return '';
   return `\n\nGlobal rules (~/.trha/rules):\n\n${chunks.join('\n\n')}`.slice(0, RULES_MAX_BYTES);
+}
+
+// ── W5 multimodal: [image: path] placeholder → CC content blocks ─────────
+
+/** A text or image block of a multimodal user message (CC wire shape). */
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
+/** Matches the placeholder pasteImage inserts: `[image: /abs/path]`. */
+const IMAGE_PLACEHOLDER = /\[image:\s*([^\]]+)\]/g;
+
+/** Per-image read cap — mirrors the read_image tool's 2 MiB. */
+const IMAGE_READ_CAP = 2 * 1024 * 1024;
+
+/**
+ * Turn `[image: path]` placeholders in user messages into real CC content
+ * blocks, validating each image against the recipe image resolver first.
+ *
+ * Persistence keeps the plain-text placeholder (replay-friendly and
+ * idempotent); only the outgoing request sees blocks. A placeholder whose
+ * image cannot be read or resolved is NOT fatal: it is replaced with a
+ * visible removal note and the rest of the message still sends.
+ */
+async function materializeImages(
+  bridge: HaskellBridge,
+  messages: Array<Record<string, unknown>>,
+): Promise<{ messages: Array<Record<string, unknown>>; imageTokens: number; removed: string[] }> {
+  let imageTokens = 0;
+  const removed: string[] = [];
+  let touched = false;
+
+  const out: Array<Record<string, unknown>> = [];
+  for (const m of messages) {
+    if (m.role !== 'user' || typeof m.content !== 'string' || !m.content.includes('[image:')) {
+      out.push(m);
+      continue;
+    }
+    touched = true;
+    const text = m.content;
+    const blocks: ContentBlock[] = [];
+    let cursor = 0;
+    for (const match of text.matchAll(IMAGE_PLACEHOLDER)) {
+      const before = text.slice(cursor, match.index ?? 0);
+      if (before.trim()) blocks.push({ type: 'text', text: before });
+      const rawPath = (match[1] ?? '').trim();
+      let note: string | null = null;
+      try {
+        const buf = await readFile(rawPath);
+        if (buf.byteLength > IMAGE_READ_CAP) {
+          note = `[image removed: ${rawPath} (${buf.byteLength} bytes exceeds the ${IMAGE_READ_CAP} byte cap)]`;
+        } else {
+          const ext = path.extname(rawPath).toLowerCase();
+          const mime = ext === '.png' ? 'image/png'
+            : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
+            : ext === '.gif' ? 'image/gif'
+            : ext === '.webp' ? 'image/webp' : 'application/octet-stream';
+          const dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
+          // Bridge 方法自身包 {sources} 信封——这里只传数组
+          const resolved = await bridge.recipeImageResolve([
+            { kind: 'data_url', data_url: dataUrl, path: rawPath },
+          ]);
+          if (resolved === null) {
+            note = `[image removed: ${rawPath} (resolver unavailable)]`;
+          } else {
+            const first = (resolved as { images?: Array<{ token_count?: number }> }).images?.[0];
+            imageTokens += typeof first?.token_count === 'number' && Number.isFinite(first.token_count) ? first.token_count : 0;
+            blocks.push({ type: 'image_url', image_url: { url: dataUrl } });
+          }
+        }
+      } catch (err) {
+        note = `[image removed: ${rawPath} (${(err as Error).message})]`;
+      }
+      if (note !== null) {
+        removed.push(note);   // 带原因的完整标注，日志即可见
+        blocks.push({ type: 'text', text: note });
+      }
+      cursor = (match.index ?? 0) + match[0].length;
+    }
+    const tail = text.slice(cursor);
+    if (tail.trim()) blocks.push({ type: 'text', text: tail });
+    out.push({ ...m, content: blocks });
+  }
+  return touched ? { messages: out, imageTokens, removed } : { messages, imageTokens: 0, removed };
 }
 
 /** Session messages as the model should see them: a system message first, then the rest. */
@@ -1896,7 +1982,9 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
             model: target.model, messages: session.messages, tools: toolsCfg,
           });
           if (convCount !== null) {
-            exactCounts = [convCount];
+            // 图片 token 由上一轮 materialize 记在 session.imageTokens
+            // （encode 数不出未解码图）——与 lastPromptTokens 同为「上轮值」
+            exactCounts = [convCount + (session.imageTokens ?? 0)];
           } else {
             const msgTexts = session.messages.map((m: {content?: string}) => m.content ?? '');
             exactCounts = await bridge.countTokensBatch(msgTexts);
@@ -1938,12 +2026,24 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           session.lastTimeContextAt = Date.now();
           persistSession(session);
         }
-        const promptMessages = await withSystemPrompt(
+        const promptMessagesRaw = await withSystemPrompt(
           mode, target.model ?? 'deepseek-flash',
           session.cwd ?? WORKSPACE, session.messages,
           target.reasoningLanguage,
           target.extraInstructions,
         );
+        // W5：[image: path] 占位 → CC content blocks（图片经 recipe 校验并
+        // 计 token；坏图剥离并留可见标注，不静默、不炸步骤）
+        const materialized = await materializeImages(bridge, promptMessagesRaw);
+        const promptMessages = materialized.messages;
+        const imageTokens = materialized.imageTokens;
+        if (materialized.removed.length > 0) {
+          console.error(`images removed before send: ${materialized.removed.join(', ')} (${session.id})`);
+          events.emit('agent:notice', {
+            sessionId: session.id,
+            text: `images removed before send: ${materialized.removed.join(', ')}`,
+          });
+        }
         if (process.env.TRHA_DEBUG_USAGE) {
           console.error(
             `request sessionMsgs=${session.messages.length} promptMsgs=${promptMessages.length}`
@@ -1968,7 +2068,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
             ? { reasoning_effort: target.genParams.effort } : {}),
         };
         const limits = await bridge.recipeLimits(
-          'cc', limitsRequest, session.lastPromptTokens ?? 0, limitsWindow);
+          'cc', limitsRequest, (session.lastPromptTokens ?? 0) + (session.imageTokens ?? 0), limitsWindow);
         const genParams: Record<string, unknown> | undefined = limits
           ? { ...target.genParams,
               maxTokens: limits.max_tokens,
@@ -1983,6 +2083,8 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
           // updates projections/FSM instead of running statelessly.
           sessionId: session.id,
         };
+        // 图片 token 记账：下一轮 governor/limits 的 pressure 输入
+        session.imageTokens = imageTokens;
         // A kernel without the streaming endpoint — or a wire that cannot
         // stream — still answers: fall back to the blocking call instead of
         // failing the whole step.  Transient provider failures (429 / 5xx /
@@ -2586,6 +2688,7 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       percent: pct,
       exact: pressure > 0,
       messageCount: session.messages.length,
+      imageTokens: session.imageTokens ?? 0,
       lastMaintenance: session.lastMaintenance ?? null,
       prefixResets: session.prefixResets ?? 0,
     });

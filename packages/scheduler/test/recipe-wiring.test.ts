@@ -18,6 +18,7 @@ import type { AddressInfo } from 'net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { writeFile } from 'node:fs/promises';
 import { createServer } from '../src/Server/index.js';
 
 const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer dev-token' } as Record<string, string>;
@@ -28,7 +29,7 @@ function wiringKernel(opts: { encodeStatus?: number } = {}) {
   kernel.use(express.json());
   const hits: string[] = [];
   kernel.use((req, _res, next) => { hits.push(req.path); next(); });
-  const completions: Array<{ genParams: Record<string, unknown> | null }> = [];
+  const completions: Array<{ genParams: Record<string, unknown> | null; messages: unknown }> = [];
   kernel.post('/session/start', (_q, res) => res.json({}));
   kernel.post('/api/recipe/encode', (req, res) => {
     if (opts.encodeStatus !== undefined) return res.status(opts.encodeStatus).json({ error: 'down' });
@@ -41,13 +42,23 @@ function wiringKernel(opts: { encodeStatus?: number } = {}) {
     if (!Array.isArray(texts)) return res.status(400).json({ error: 'expected texts' });
     res.json({ counts: texts.map((t: string) => t.length) });
   });
+  kernel.post('/api/recipe/image/resolve', (req, res) => {
+    if (opts.encodeStatus !== undefined) return res.status(opts.encodeStatus).json({ error: 'down' });
+    const src = (req.body?.sources ?? [])[0] ?? {};
+    const ok = typeof src.data_url === 'string' && src.data_url.startsWith('data:image/png');
+    if (!ok) return res.status(400).json({ error: 'unsupported image' });
+    res.json({ images: [{ width: 64, height: 48, token_count: 1234 }], total_tokens: 1234 });
+  });
   kernel.post('/api/recipe/limits', (req, res) => {
     if (opts.encodeStatus !== undefined) return res.status(opts.encodeStatus).json({ error: 'down' });
     // DeepSeek thinking 语义：max_tokens 默认 65536；top_p 按请求解析（上限 0.95）
     res.json({ max_tokens: 65536, top_p: 0.95, model_version: 'DeepseekV41Flash' });
   });
   kernel.post('/v1/chat/completions', (req, res) => {
-    completions.push({ genParams: (req.body.genParams ?? null) as Record<string, unknown> | null });
+    completions.push({
+      genParams: (req.body.genParams ?? null) as Record<string, unknown> | null,
+      messages: req.body.messages,
+    });
     res.json({
       choices: [{ message: { role: 'assistant', content: 'done' }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 900, completion_tokens: 10, total_tokens: 910 },
@@ -199,5 +210,55 @@ describe('recipe wiring (W2)', () => {
     const gp = completions[0]!.genParams as { maxTokens?: number; topP?: number };
     expect(gp.maxTokens).toBe(65536);
     expect(gp.topP).toBe(0.95);
+  });
+
+  // ── W5 多模态：[image: path] 占位 → content blocks ───────────────────
+
+  async function pasteImage(dir: string, name: string, bytes: Buffer): Promise<string> {
+    const p = path.join(dir, name);
+    await writeFile(p, bytes);
+    return p;
+  }
+
+  /** 1×1 红 PNG（与 FFISpec 同一常量字节）。 */
+  const tinyPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC',
+    'base64');
+
+  it('user placeholder [image: path] becomes an image_url content block on the wire', async () => {
+    const { base, sessionId, hits, completions } = await boot();
+    const imgPath = await pasteImage(dir, 'shot.png', tinyPng);
+    const step = await fetch(`${base}/api/agent/step`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ sessionId, message: `look at [image: ${imgPath}] please` }),
+    });
+    expect(step.status).toBe(200);
+    expect(hits).toContain('/api/recipe/image/resolve');   // 预检跑了
+    const last = completions[0]!.messages as Array<{ role: string; content: unknown }>;
+    // 不能取 at(-1)：time-context 注入在发送前排在我们的消息之后
+    const userMsg = last.filter(m => m.role === 'user')
+      .find(m => JSON.stringify(m.content).includes('look at'))!;
+    const blocks = userMsg.content as Array<{ type: string; image_url?: { url: string }; text?: string }>;
+    expect(blocks.some(b => b.type === 'image_url' && b.image_url?.url.startsWith('data:image/png'))).toBe(true);
+    expect(blocks.some(b => b.type === 'text' && (b.text ?? '').includes('look at'))).toBe(true);
+  });
+
+  it('unresolvable placeholder is replaced with a visible note, not fatal', async () => {
+    const { base, sessionId, completions } = await boot();
+    const step = await fetch(`${base}/api/agent/step`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ sessionId, message: 'look at [image: /nonexistent/shot.png] please' }),
+    });
+    expect(step.status).toBe(200);   // 步骤不炸
+    const last = completions[0]!.messages as Array<{ role: string; content: unknown }>;
+    const userMsg = last.filter(m => m.role === 'user')
+      .find(m => JSON.stringify(m.content).includes('nonexistent'))!;
+    // 坏占位被替换成可见标注，没有 image_url block
+    const content = userMsg.content as string | Array<{ type: string; text?: string }>;
+    const text = typeof content === 'string' ? content
+      : content.filter(b => b.type === 'text').map(b => b.text ?? '').join('');
+    expect(text).toContain('look at');
+    expect(text).toContain('image removed: /nonexistent/shot.png');
+    expect(JSON.stringify(content)).not.toContain('image_url');
   });
 });

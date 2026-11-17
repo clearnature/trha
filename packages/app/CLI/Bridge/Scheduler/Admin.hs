@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | 管理面端点：工作流、循环任务、沙箱配置、实验提交、语音转写、
@@ -8,15 +9,22 @@ module Bridge.Scheduler.Admin
   ( fetchAgents, listWorkflows, runWorkflow, startLoop, fetchLoops, stopLoops
   , fetchSandboxConfig, setSandboxConfig, submitExperiment, transcribeVoice
   , fetchBalance, fetchUsageStats, UsageRow(..), fetchServiceStatus
-  , ContextState(..), fetchContextState
+  , ContextState(..), fetchContextState, probeImage
   , listPlugins, listTools, fetchPermissions, setPermissions, healthCheck
   ) where
 
 import Bridge.Scheduler.Core (SchedulerBridge(..))
 import Core.Types
 import Core.HTTP
+import Control.Exception (IOException, try)
 import Control.Monad (join)
+import Data.Bits (shiftL, shiftR, (.&.), (.|.))
+import Data.Char (toLower)
+import Data.Word (Word8)
 import Data.Maybe (fromMaybe)
+import System.FilePath (takeExtension)
+import qualified Data.ByteString as BS
+import qualified Data.Text.Encoding as TE
 import Data.Aeson
 import qualified Data.Aeson.KeyMap as KM
 import Data.Aeson.Types (parseMaybe, (.:), (.:?), (.!=))
@@ -198,6 +206,68 @@ fetchContextState bridge sid = do
         , csSavedTokens = sub "savedTokens"
         }
     parseContext _ = Nothing
+
+-- | 标准 base64（字母表 + padding）。cabal 环境没有可靠的 base64 包——
+-- 12 行手写免掉依赖问题；输入量级 ≤2 MiB，性能无虞。
+b64Encode :: BS.ByteString -> Text
+b64Encode = TE.decodeUtf8 . go
+  where
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    go bs
+      | BS.null bs = BS.empty
+      | otherwise = BS.append (enc (take 3 (BS.unpack bs))) (go (BS.drop 3 bs))
+    enc chunk = case chunk of
+      [x, y, z] -> quad x (Just y) (Just z)
+      [x, y]    -> quad x (Just y) Nothing
+      [x]       -> quad x Nothing Nothing
+      _         -> BS.empty
+    quad :: Word8 -> Maybe Word8 -> Maybe Word8 -> BS.ByteString
+    quad x my mz = BS.pack [pick 0, pick 1, third, lastc]
+      where
+        n :: Int
+        n = (fromIntegral x `shiftL` 16)
+          .|. (fromIntegral (fromMaybe 0 my) `shiftL` 8)
+          .|. fromIntegral (fromMaybe 0 mz)
+        pick :: Int -> Word8
+        pick i = fromIntegral (fromEnum (alphabet !! ((n `shiftR` (18 - 6 * i)) .&. 63)))
+        third = case mz of
+          Just _  -> pick 2
+          Nothing -> fromIntegral (fromEnum '=')
+        lastc = case my of
+          Just _  -> pick 3
+          Nothing -> fromIntegral (fromEnum '=')
+
+-- | 粘贴图预检（W5 多模态组件链路）：读文件 → data URL →
+-- /api/recipe/image/resolve 校验并计 token。Right = 校验通过文案
+-- （含图片 token 数）；Left = 失败原因（预检不过，发送时也会被剥离，
+-- 这里提前告知）。
+probeImage :: SchedulerBridge -> FilePath -> IO (Either CLIError Text)
+probeImage bridge fp = do
+  r <- try (BS.readFile fp) :: IO (Either IOException BS.ByteString)
+  case r of
+    Left e -> pure (Left (ValidationError (T.pack (show e))))
+    Right bytes -> do
+      let ext = map toLower (takeExtension fp)
+          mime = case ext of
+            ".png"  -> "image/png"  :: Text
+            ".jpg"  -> "image/jpeg"
+            ".jpeg" -> "image/jpeg"
+            ".gif"  -> "image/gif"
+            ".webp" -> "image/webp"
+            _       -> "application/octet-stream"
+          dataUrl = "data:" <> mime <> ";base64," <> b64Encode bytes
+          payload = object
+            [ "sources" .= [ object
+                [ "kind" .= ("data_url" :: Text)
+                , "data_url" .= dataUrl
+                , "path" .= (T.pack fp)
+                ] ] ]
+      rr <- httpPost (bridgeHTTP bridge) "/api/recipe/image/resolve" payload
+      pure $ case rr of
+        Left e -> Left e
+        Right v -> case parseMaybe (\o -> o .: "total_tokens") v :: Maybe Int of
+          Just n -> Right ("image validated (" <> T.pack (show n) <> " image tokens)")
+          Nothing -> Left (ValidationError "resolve returned no token count")
 
 -- | LSP / MCP service state for the sidebar (best effort: [] when the
 -- scheduler predates the endpoints).

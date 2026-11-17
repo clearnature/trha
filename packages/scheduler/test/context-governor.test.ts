@@ -24,6 +24,43 @@ function conversation(turns: number, chars: number): GovernedMessage[] {
 const SMALL = { ...DEFAULT_GOVERNANCE, window: 10_000, tailRatio: 0.1, minFoldTokens: 50 };
 
 describe('contextGovernor', () => {
+  it('estimates array content (multimodal blocks) without NaN', () => {
+    const imageTurn: GovernedMessage = { role: 'user', content: [
+      { type: 'text', text: 'what is in this picture' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+    ] };
+    const msgs: GovernedMessage[] = [
+      { role: 'system', content: 'stable system prompt' },
+      imageTurn,
+      ...conversation(6, 600).slice(1),
+    ];
+    // 数组 content 不产生 NaN/崩溃；文本块照常估算（图片块贡献 0，
+    // 图片 token 由调用方经 exactCounts 注入——session.imageTokens）
+    expect(Number.isFinite(estimateMessages(msgs))).toBe(true);
+    expect(govern(msgs, 0, SMALL).trigger).toBe('none');
+    // pressure 响应 exactCounts：注入图片 token 后落 fold 带（≥8000）
+    const withImage = govern(msgs, 0, SMALL, [8500]);
+    expect(withImage.trigger).toBe('fold');
+    // 无注入（文本估算）则保持 none——这正是冷启动欠账的形状
+    expect(govern(msgs, 0, SMALL, [3000]).trigger).toBe('none');
+  });
+
+  it('focus matches text blocks of array content', () => {
+    const msgs: GovernedMessage[] = [
+      { role: 'system', content: 'sys' },
+      // 首个 user 轮由 keepFirstUser 保留（不走 focus 路径）——焦点图放在后面
+      { role: 'user', content: 'the task statement' },
+      { role: 'user', content: [
+        { type: 'text', text: 'explain thesherlock diagram' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+      ] },
+      ...conversation(6, 600).slice(1),
+    ];
+    const r = govern(msgs, 8500, { ...SMALL, focus: 'sherlock' });
+    expect(r.trigger).toBe('fold');
+    expect(r.focusKept).toBe(1);   // 含文本块的数组消息受保护
+  });
+
   it('does nothing below the snip threshold', () => {
     const msgs = conversation(3, 100);
     const r = govern(msgs, 0, SMALL);

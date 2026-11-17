@@ -47,6 +47,7 @@ module Bridge.Scheduler
   , UsageRow(..)
   , ContextState(..)
   , fetchContextState
+  , probeImage
   , transcribeVoice
   , compactSession
   , retrySession
@@ -126,7 +127,7 @@ import Bridge.Scheduler.Admin
   ( UsageRow(..), fetchAgents, fetchBalance, fetchLoops, fetchPermissions
   , setPermissions
   , fetchSandboxConfig, fetchServiceStatus, fetchUsageStats, healthCheck
-  , ContextState(..), fetchContextState
+  , ContextState(..), fetchContextState, probeImage
   , listPlugins, listTools, listWorkflows, runWorkflow, setSandboxConfig
   , startLoop, stopLoops, submitExperiment, transcribeVoice )
 import Bridge.Scheduler.Plan
