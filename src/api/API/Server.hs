@@ -136,6 +136,8 @@ type API =
   :<|> "api" :> "recipe" :> "encode"  :> ReqBody '[JSON] Value :> Post '[JSON] Value
   :<|> "api" :> "recipe" :> "convert" :> ReqBody '[JSON] Value :> Post '[JSON] Value
   :<|> "api" :> "recipe" :> "limits"  :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  :<|> "api" :> "recipe" :> "image" :> "resolve"    :> ReqBody '[JSON] Value :> Post '[JSON] Value
+  :<|> "api" :> "recipe" :> "image" :> "token-spec" :> ReqBody '[JSON] Value :> Post '[JSON] Value
 
 -- Request types
 --
@@ -247,6 +249,8 @@ server adapter sessions stateDir =
   :<|> recipeEndpoint "encode"  recipeEncodeFields
   :<|> recipeEndpoint "convert" recipeConvertFields
   :<|> recipeEndpoint "limits"  recipeLimitsFields
+  :<|> recipeEndpoint "image_resolve"    recipeImageResolveFields
+  :<|> recipeEndpoint "image_token_spec" recipeImageSpecFields
 
 -- Health check
 healthHandler :: Handler Value
@@ -286,6 +290,13 @@ recipeRenderFields  = ["kind", "request", "version"]
 recipeEncodeFields  = ["kind", "request", "version", "ids"]
 recipeConvertFields = ["kind", "request"]
 recipeLimitsFields  = ["kind", "request", "prompt_tokens", "context_limit"]
+
+-- image 子系统：resolve 载荷原样透传（sources/detail/allow_private_urls），
+-- token-spec 只收 width/height
+recipeImageResolveFields :: [KM.Key]
+recipeImageResolveFields = ["sources", "detail", "allow_private_urls"]
+recipeImageSpecFields :: [KM.Key]
+recipeImageSpecFields = ["width", "height"]
 
 -- | trha 模型别名 → 库校验的 API 名（目录与 DeepSeek.hs 的 llmModels 一致）。
 -- 调用方传 trha 会话里的别名（deepseek-flash），库只认精确 API 名。

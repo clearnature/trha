@@ -104,6 +104,36 @@ recipeEndpointsSpec =
       body `shouldSatisfy` ("\"count\":" `isInfixOf`)
       body `shouldSatisfy` ("DeepseekV41Flash" `isInfixOf`)
 
+    it "image/resolve：1×1 PNG data_url → image_count=1 + total_tokens>0" $ \app -> withApp app $ \mgr base -> do
+      let pngB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC" :: T.Text
+      (c, body) <- httpPost mgr (base ++ "/api/recipe/image/resolve") $ object
+        [ "sources" .= [ object
+            [ "kind" .= ("data_url" :: T.Text)
+            , "data_url" .= ("data:image/png;base64," <> pngB64)
+            , "path" .= ("red.png" :: T.Text)
+            ] ]
+        ]
+      c `shouldBe` 200
+      body `shouldSatisfy` ("\"image_count\":1" `isInfixOf`)
+      body `shouldSatisfy` ("\"total_tokens\":" `isInfixOf`)
+
+    it "image/token-spec：1024×768 → token ≤ 1024 上限" $ \app -> withApp app $ \mgr base -> do
+      (c, body) <- httpPost mgr (base ++ "/api/recipe/image/token-spec") $ object
+        [ "width" .= (1024 :: Int), "height" .= (768 :: Int) ]
+      c `shouldBe` 200
+      body `shouldSatisfy` ("\"token_count\":" `isInfixOf`)
+      body `shouldSatisfy` ("\"max_token_count\":1024" `isInfixOf`)
+
+    it "image/resolve：坏字节 → 400 带错误文本" $ \app -> withApp app $ \mgr base -> do
+      (c, body) <- httpPost mgr (base ++ "/api/recipe/image/resolve") $ object
+        [ "sources" .= [ object
+            [ "kind" .= ("bytes" :: T.Text)
+            , "base64" .= ("bm90LWFuLWltYWdl" :: T.Text)   -- "not-an-image"
+            ] ]
+        ]
+      c `shouldBe` 400
+      body `shouldSatisfy` ("unsupported image" `isInfixOf`)
+
     it "未知 kind → 400 带错误文本（不是 500）" $ \app -> withApp app $ \mgr base -> do
       (c, body) <- httpPost mgr (base ++ "/api/recipe/convert") $ object
         [ "kind" .= ("wat" :: T.Text), "request" .= ccRequest ]
