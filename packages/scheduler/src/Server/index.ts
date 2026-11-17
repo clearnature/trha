@@ -1949,11 +1949,36 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
             `request sessionMsgs=${session.messages.length} promptMsgs=${promptMessages.length}`
             + ` (${session.id})`);
         }
+        // L 接线：发请求前按 DeepSeek 语义校准 genParams（resolve_limits）。
+        // 请求里带上用户显式给的 max_tokens/top_p——库语义是「请求值保留、
+        // 缺省按模式补默认（thinking 65536 / 非 thinking 8192 / effort max
+        // 131072）、再 clamp 到 context 剩余；top_p 按模式解析（thinking 上限
+        // 0.95）」。prompt_tokens 用最近一次真值（冷启动近似：上一轮的提示
+        // 规模），context_limit 与治理窗口同源（模型目录）。调用失败或
+        // 内核不可达时保持 target.genParams 原样——行为与未接线完全一致。
+        const limitsWindow = governanceConfig(target.model).window;
+        const limitsRequest: Record<string, unknown> = {
+          model: target.model ?? 'deepseek-flash',
+          messages: promptMessages,
+          tools: toolsCfg,
+          ...(target.genParams?.maxTokens !== undefined ? { max_tokens: target.genParams.maxTokens } : {}),
+          ...(target.genParams?.topP !== undefined ? { top_p: target.genParams.topP } : {}),
+          // effort=max 时库的 max_tokens 默认档是 131072（非 65536）——透传才选得对
+          ...(target.genParams?.effort !== undefined && target.genParams.effort !== 'auto'
+            ? { reasoning_effort: target.genParams.effort } : {}),
+        };
+        const limits = await bridge.recipeLimits(
+          'cc', limitsRequest, session.lastPromptTokens ?? 0, limitsWindow);
+        const genParams: Record<string, unknown> | undefined = limits
+          ? { ...target.genParams,
+              maxTokens: limits.max_tokens,
+              topP: limits.top_p }
+          : target.genParams;
         const request = {
           messages: promptMessages,
           tools: toolsCfg,
           model: target.model, provider: target.provider,
-          genParams: target.genParams,
+          genParams,
           // Same key the kernel session was registered under, so this round
           // updates projections/FSM instead of running statelessly.
           sessionId: session.id,

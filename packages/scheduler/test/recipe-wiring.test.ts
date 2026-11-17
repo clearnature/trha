@@ -28,6 +28,7 @@ function wiringKernel(opts: { encodeStatus?: number } = {}) {
   kernel.use(express.json());
   const hits: string[] = [];
   kernel.use((req, _res, next) => { hits.push(req.path); next(); });
+  const completions: Array<{ genParams: Record<string, unknown> | null }> = [];
   kernel.post('/session/start', (_q, res) => res.json({}));
   kernel.post('/api/recipe/encode', (req, res) => {
     if (opts.encodeStatus !== undefined) return res.status(opts.encodeStatus).json({ error: 'down' });
@@ -40,13 +41,19 @@ function wiringKernel(opts: { encodeStatus?: number } = {}) {
     if (!Array.isArray(texts)) return res.status(400).json({ error: 'expected texts' });
     res.json({ counts: texts.map((t: string) => t.length) });
   });
-  kernel.post('/v1/chat/completions', (_req, res) => {
+  kernel.post('/api/recipe/limits', (req, res) => {
+    if (opts.encodeStatus !== undefined) return res.status(opts.encodeStatus).json({ error: 'down' });
+    // DeepSeek thinking 语义：max_tokens 默认 65536；top_p 按请求解析（上限 0.95）
+    res.json({ max_tokens: 65536, top_p: 0.95, model_version: 'DeepseekV41Flash' });
+  });
+  kernel.post('/v1/chat/completions', (req, res) => {
+    completions.push({ genParams: (req.body.genParams ?? null) as Record<string, unknown> | null });
     res.json({
       choices: [{ message: { role: 'assistant', content: 'done' }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 900, completion_tokens: 10, total_tokens: 910 },
     });
   });
-  return { kernel, hits };
+  return { kernel, hits, completions };
 }
 
 async function listen(app: express.Express): Promise<{ port: number; server: Server }> {
@@ -75,7 +82,7 @@ describe('recipe wiring (W2)', () => {
   });
 
   async function boot(encodeStatus?: number) {
-    const { kernel, hits } = wiringKernel({ encodeStatus });
+    const { kernel, hits, completions } = wiringKernel({ encodeStatus });
     const kernelServer = await listen(kernel);
     const stateDir = path.join(dir, 'state');
     const { app, stop } = createServer({
@@ -88,7 +95,7 @@ describe('recipe wiring (W2)', () => {
       method: 'POST', headers: auth, body: JSON.stringify({ mode: 'standard', permissionMode: 'yolo' }),
     });
     const sessionId = ((await startRes.json()) as { sessionId: string }).sessionId;
-    return { base, sessionId, hits };
+    return { base, sessionId, hits, completions };
   }
 
   it('cold start measures via /api/recipe/encode and normalizes the model alias', async () => {
@@ -154,5 +161,43 @@ describe('recipe wiring (W2)', () => {
     } finally {
       delete process.env.TRHA_CONTEXT_WINDOW;
     }
+  });
+
+  // ── L 接线：resolve_limits 校准 genParams ────────────────────────────
+
+  it('calibrates genParams from resolve_limits (thinking defaults surface on the wire)', async () => {
+    const { base, sessionId, hits, completions } = await boot();
+    await fetch(`${base}/api/agent/step`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ sessionId, message: 'hi' }),
+    });
+    expect(hits).toContain('/api/recipe/limits');
+    expect(completions.length).toBeGreaterThanOrEqual(1);
+    const gp = completions[0]!.genParams as { maxTokens?: number; topP?: number };
+    expect(gp.maxTokens).toBe(65536);   // thinking 默认档
+    expect(gp.topP).toBe(0.95);         // thinking top_p 上限
+  });
+
+  it('keeps genParams untouched when the limits call fails', async () => {
+    const { base, sessionId, completions } = await boot(500);   // limits+encode 都 500
+    await fetch(`${base}/api/agent/step`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ sessionId, message: 'hi' }),
+    });
+    const gp = completions[0]!.genParams as { maxTokens?: number; topP?: number };
+    // 与未接线行为一致：失败时不凭空添加校准值
+    expect(gp.maxTokens).toBeUndefined();
+    expect(gp.topP).toBeUndefined();
+  });
+
+  it('user max_tokens rides into limits and survives as the kept value', async () => {
+    const { base, sessionId, completions } = await boot();
+    // limits mock 恒回 65536——这里断言的是透传后 wire 带校准值；用户值保留
+    // 语义由 Rust 侧（requested kept）钉住，wiring 只验「用户给了就带进去」
+    await fetch(`${base}/api/agent/step`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ sessionId, message: 'hi', maxTokens: 8192, topP: 0.7 }),
+    });
+    const gp = completions[0]!.genParams as { maxTokens?: number; topP?: number };
+    expect(gp.maxTokens).toBe(65536);
+    expect(gp.topP).toBe(0.95);
   });
 });

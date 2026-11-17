@@ -54,6 +54,12 @@
 - [x] HandlerCoverageSpec / RegistrySpec 回归钉（两实现共享 renderCtxUsage，同一口径）
 - 验收：tmux 实测——发几条消息后 `/ctx` 显示与计费一致的精确数字（不再只是数字回显）
 
+### W2.5 resolve_limits 接线（G5 收尾，2026-11-17 完成）
+
+- [x] runStep 发请求前校准 genParams：limits 请求带用户显式 max_tokens/top_p/reasoning_effort（库语义：请求值保留、缺省按模式补默认、clamp 到 context 剩余、top_p 按模式解析）；失败/内核不可达保持原 genParams（与未接线行为一致）
+- [x] Rust limits op 优先回传 inference_options.top_p（适配器已解析值——实测钉死 thinking 模式 top_p 上限 0.95 语义，请求 0.7 → 终值 0.95）；23 个 Rust 测试全绿
+- [x] recipe-wiring 3 例：校准值上 wire / 失败保持 / 用户值透传；scheduler 87 文件 602 例全绿
+
 ### W4 recipe 流会话 → 本地推理后端（G6）— 独立细化后执行
 
 - [ ] provider kind `gpu-infer`/`vllm`（本地后端）的 `providerStream` 内部改走 `recipe_stream_*`：backend raw chunk → InferenceChunk（`tokens` 型，附 tokenizer）→ StreamProcessor → CC chunk JSON → 现有 `StreamChunk` 事件
