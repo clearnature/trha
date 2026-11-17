@@ -24,7 +24,8 @@ import Sov.ConstraintVerdict
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.IO (hSetEncoding, stdout, stderr, utf8)
 import Data.Maybe (fromMaybe, isJust)
-import System.Directory (doesFileExist)
+import System.Directory (doesFileExist, getTemporaryDirectory)
+import System.FilePath ((</>))
 import Core.Session.Types
 import Core.Session.Manager
 import Core.Agent.StateMachine (AgentCommand (..))
@@ -118,7 +119,22 @@ ensureUtf8Output = do
   hSetEncoding stderr utf8
 
 main :: IO ()
-main = ensureUtf8Output >> hspec testSuite
+main = do
+  ensureUtf8Output
+  pinProviderEnv
+  hspec testSuite
+
+-- | 测试进程内把 provider 配置钉到不存在的空文件。
+--
+-- 真实 ~/.trha/providers.json 里有 inUse 的 provider 时，/agent/step 经
+-- resolveAdapterIO 会构造**真**适配器打真网络——SessionPersistSpec 曾因此
+-- 在全量跑时依赖真实 API（隔离跑恰好不触发）。pin 之后 store 恒为空，
+-- inUseProviderName = Nothing → stub 适配器，测试与机器配置解耦。
+pinProviderEnv :: IO ()
+pinProviderEnv = do
+  tmp <- getTemporaryDirectory
+  setEnv "TRHA_PROVIDERS_FILE" (tmp </> "trha-test-empty-providers.json")
+  setEnv "TRHA_PROVIDER_KEYS_FILE" (tmp </> "trha-test-empty-keys.json")
 
 testSuite :: Spec
 testSuite = do

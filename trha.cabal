@@ -496,6 +496,8 @@ test-suite trha-test
                   , AuditSpec
                   , ExperimentSpec
                   , ConfigSpec
+                  , ToolDeferSpec
+                  , LLM.Recipe.FFISpec
   -- Linux 专用 spec：import System.Posix.*（或 Linux cgroup API），
   -- Windows 上整个模块不参与构建。
   if !os(windows)
