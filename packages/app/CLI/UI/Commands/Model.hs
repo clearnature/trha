@@ -14,7 +14,7 @@ import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as BSL
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, fetchUsageStats, UsageRow(..), compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setSessionCwd, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus, probeProvider, listTools, fetchPermissions, getMessages)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, listSessions, createSession, deleteSession, sendMessage, sendMessageWithUsage, sendMessageWithEffort, listModels, listProviders, planStep, approvePlan, denyPlan, denyPlanWithReason, subscribeSessionEvents, submitPlan, decideStep, fetchPlan, fetchSessionInfo, fetchAgents, renameSession, tagSession, fetchSessionMode, applySessionMode, reportStep, fetchBalance, fetchUsageStats, UsageRow(..), compactSession, retrySession, btwAsk, recapSession, queueMessage, fetchQueue, steerSession, forkSession, branchSession, setSessionCwd, setInUseProvider, startLoop, fetchLoops, stopLoops, listWorkflows, runWorkflow, fetchServiceStatus, probeProvider, listTools, fetchPermissions, getMessages, fetchContextState)
 import UI.ProviderPresets (presets, preBaseUrl, preKind, preName)
 import Core.Currency (CurrencyTable(..), loadCurrency, saveCurrency)
 import Core.Replay (ReplayBlock(..), renderReplay, renderReplayText)
@@ -40,6 +40,7 @@ import UI.InputHistory (HistState(..), loadHistory)
 import UI.CustomCommands (CustomCommand(..), loadCustomCommands, renderCustomCommand)
 import UI.Theme (Theme(..), themes, themeNames, resolveTheme)
 import UI.I18n (Lang(..), langName, parseLang, tr)
+import UI.Render.Ctx (renderCtxUsage)
 import Config.Settings (resolveConfig, saveConfig)
 
 runModel :: CmdEnv -> Command -> Maybe (IO (Maybe Text))
@@ -78,7 +79,17 @@ runModel env = go
       cfg <- resolveConfig defaultCLIConfig
       let raw = T.strip arg
       if T.null raw
-        then return $ Just ("context: " <> maybe "model default" (T.pack . show) (configCtxSize cfg))
+        then do
+          -- W3：无参 → 调度层 governor 快照渲染用量条（与 TUI 面同一实现）；
+          -- 无会话或调度层不可达时回退到配置数字（行为与 W3 之前一致）。
+          msid <- readIORef sessionRef
+          case msid of
+            Nothing -> return $ Just ("context: " <> maybe "model default" (T.pack . show) (configCtxSize cfg))
+            Just sid -> do
+              r <- fetchContextState bridge (T.pack sid)
+              return $ Just $ case r of
+                Right cs -> renderCtxUsage cs
+                Left _ -> "context: " <> maybe "model default" (T.pack . show) (configCtxSize cfg)
         else case reads (T.unpack raw) :: [(Int, String)] of
           [(n, "")] | n > 0 -> do
             saveConfig (cfg { configCtxSize = Just n })

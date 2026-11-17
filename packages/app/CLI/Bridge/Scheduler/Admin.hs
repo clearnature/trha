@@ -8,6 +8,7 @@ module Bridge.Scheduler.Admin
   ( fetchAgents, listWorkflows, runWorkflow, startLoop, fetchLoops, stopLoops
   , fetchSandboxConfig, setSandboxConfig, submitExperiment, transcribeVoice
   , fetchBalance, fetchUsageStats, UsageRow(..), fetchServiceStatus
+  , ContextState(..), fetchContextState
   , listPlugins, listTools, fetchPermissions, setPermissions, healthCheck
   ) where
 
@@ -156,6 +157,47 @@ fetchUsageStats bridge = do
     Right v -> case parseMaybe (\o -> o .: "rows") v :: Maybe [UsageRow] of
       Just rows -> Right rows
       Nothing -> Left (ValidationError "Missing rows in /api/usage-stats")
+
+-- | One snapshot of @GET /api/context/:id@ — the governor state the TUI's
+-- /ctx renders. @csExact@ says the pressure came from the provider's own
+-- usage report (or a recipe conversation encode), not the char estimate.
+
+data ContextState = ContextState
+  { csWindow       :: Int
+  , csPressure     :: Int
+  , csPercent      :: Int
+  , csExact        :: Bool
+  , csMessageCount :: Int
+  , csTrigger      :: Maybe Text
+  , csSavedTokens  :: Maybe Int
+  } deriving (Show, Eq)
+
+fetchContextState :: SchedulerBridge -> Text -> IO (Either CLIError ContextState)
+fetchContextState bridge sid = do
+  r <- httpGet (bridgeHTTP bridge) ("/api/context/" <> T.unpack sid)
+  pure $ case r of
+    Left e -> Left e
+    Right v -> case parseContext v of
+      Just cs -> Right cs
+      Nothing -> Left (ValidationError "Missing fields in /api/context")
+  where
+    parseContext (Object o) = do
+      w  <- parseMaybe (.: "window") o        :: Maybe Int
+      p  <- parseMaybe (.: "pressure") o      :: Maybe Int
+      pc <- parseMaybe (.: "percent") o       :: Maybe Int
+      ex <- parseMaybe (.: "exact") o         :: Maybe Bool
+      mc <- parseMaybe (.: "messageCount") o  :: Maybe Int
+      let mm = KM.lookup "lastMaintenance" o
+          sub k = mm >>= \lm -> case lm of
+            Object om -> parseMaybe (.: k) om
+            _         -> Nothing
+      pure ContextState
+        { csWindow = w, csPressure = p, csPercent = pc, csExact = ex
+        , csMessageCount = mc
+        , csTrigger = sub "trigger"
+        , csSavedTokens = sub "savedTokens"
+        }
+    parseContext _ = Nothing
 
 -- | LSP / MCP service state for the sidebar (best effort: [] when the
 -- scheduler predates the endpoints).

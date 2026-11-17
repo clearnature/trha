@@ -16,7 +16,7 @@ import Control.Concurrent.Async (async)
 import Control.Monad (void)
 import Control.Monad.IO.Class (liftIO)
 import Core.Types
-import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider)
+import Bridge.Scheduler (SchedulerBridge, listPlugins, subscribeSessionEvents, subscribeSessionEventsWithTerminal, listSessions, createSession, deleteSession, sendMessage, sendMessageWithTarget, sendMessageWithTargetEffort, allowAlways, interruptSession, fetchSessionInfo, fetchAgents, SessionInfo(..), listProviders, saveProvider, probeProvider, removeProvider, ProviderProbe(..), listModels, planStep, approvePlan, denyPlan, submitPlan, decideStep, decidePlan, reportStep, fetchSessionMode, applySessionMode, renameSession, tagSession, fetchServiceStatus, denyPlanWithReason, fetchBalance, transcribeVoice, setSandboxConfig, fetchSandboxConfig, setSessionCwd, fetchPlan, setInUseProvider, fetchContextState)
 import Core.Replay (ReplayBlock(..), renderReplay)
 import Core.TurnStats (Prices(..), turnSummary, estimateCost, hasPrices, isOffPeak, pricesForModel)
 import UI.Event
@@ -71,6 +71,7 @@ import UI.Brick.Draw.Messages
 import UI.Brick.Draw.Status
   ( drawStatus, modelLabel, pricesOf, statusLine
   , statusSandboxTag, statusClock, statusModelLine, statusGitLine, statusStatsLine )
+import UI.Render.Ctx (renderCtxUsage)
 import UI.Render.Footer (FooterLive(..), footerMetrics, parseMetrics, branchFromHead, statusFitsOneRow, wrapStatusLine)
 import UI.Render.Spans
   ( SpanTok(..), boolText, diffAttrOf, fillLines, isCompactionMark
@@ -165,8 +166,21 @@ slashCtx cx = do
   cfg <- liftIO (resolveConfig defaultCLIConfig)
   let raw = T.strip (T.drop (T.length "/ctx") (cxCmd cx))
   if T.null raw
-    then appendMsg (mkMsg "system" ("context: "
-                      <> maybe "model default" (T.pack . show) (configCtxSize cfg)) (cxTime cx))
+    then case appSessionId (cxState cx) of
+      -- W3：无参 → 拉调度层 governor 快照渲染用量条（异步，EvCommandDone
+      -- 回填；与 REPL 面同一 renderCtxUsage 实现）。无会话回退配置数字。
+      Nothing -> appendMsg (mkMsg "system" ("context: "
+                        <> maybe "model default" (T.pack . show) (configCtxSize cfg)) (cxTime cx))
+      Just sid -> do
+        let bridge = cxBridge cx
+            fallback = "context: "
+                     <> maybe "model default" (T.pack . show) (configCtxSize cfg)
+        void $ liftIO . async $ do
+          r <- fetchContextState bridge (T.pack sid)
+          let out = case r of
+                Right cs -> renderCtxUsage cs
+                Left _   -> fallback
+          writeBChan (cxChan cx) (EvCommandDone (Just out) (Just sid))
     else case reads (T.unpack raw) :: [(Int, String)] of
       [(n, "")] | n > 0 -> do
         liftIO (saveConfig (cfg { configCtxSize = Just n }))

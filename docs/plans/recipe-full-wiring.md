@@ -31,27 +31,27 @@
 
 ### W1 kernel recipe 端点（G1）— additive，先落
 
-- [ ] `POST /api/recipe/render` `{kind, request, version?}` → `{prompt, special_ranges, model_version}`（Servant 端点 + handler 调 `recipeRender`）
-- [ ] `POST /api/recipe/encode` `{kind, request, version?, ids?}` → `{count, token_ids?, model_version}`（`ids` 缺省 false——50 万 token 的响应不该默认回传）
-- [ ] `POST /api/recipe/convert` `{kind, request}` → conversation JSON
-- [ ] `POST /api/recipe/limits` `{kind, request, prompt_tokens, context_limit}` → `{max_tokens, top_p, model_version}`
-- [ ] 端点测试（复用 FFISpec 的请求形态：模型名 `DeepSeek-V4.1-Flash` 精确拼写；`resolve_limits` 断言 thinking 默认 65536）
+- [x] `POST /api/recipe/render` `{kind, request, version?}` → `{prompt, special_ranges, model_version}`（Servant 端点 + handler 调 `recipeRender`）
+- [x] `POST /api/recipe/encode` `{kind, request, version?, ids?}` → `{count, token_ids?, model_version}`（`ids` 缺省 false——50 万 token 的响应不该默认回传）
+- [x] `POST /api/recipe/convert` `{kind, request}` → conversation JSON
+- [x] `POST /api/recipe/limits` `{kind, request, prompt_tokens, context_limit}` → `{max_tokens, top_p, model_version}`
+- [x] 端点测试（复用 FFISpec 的请求形态：模型名 `DeepSeek-V4.1-Flash` 精确拼写；`resolve_limits` 断言 thinking 默认 65536）
 - 验收：四端点 HTTP 直调全通；未初始化（.so 缺失）时 503 带可读错误，不崩内核
 
 ### W2 scheduler 窗口与预算（G2+G3）
 
-- [ ] `Bridge/Haskell.ts`：`recipeRender` / `recipeLimits` / `recipeEncodeCount` 方法（调 W1 端点）
-- [ ] runStep：`exactCounts` 数据源从 `countTokensBatch` 升级为 `recipeEncodeCount` 批量（端点内循环 encode；`ids=false`）；kernel 不可达时回退 `countTokensBatch`（再回退估算——现有降级链不变）
-- [ ] governor window 来源：session 初始化时从 `GET /api/models` 取当前模型 `context_size` 作 `cfg.window`；`configCtxSize`（用户 /ctx 设置）优先于模型值
-- [ ] vitest：window 来源 3 例（模型值/用户覆盖/kernel 不可达回退）、exactCounts 升级 2 例
+- [x] `Bridge/Haskell.ts`：`recipeRender` / `recipeLimits` / `recipeEncodeCount` 方法（调 W1 端点）
+- [x] runStep：`exactCounts` 数据源从 `countTokensBatch` 升级为 `recipeEncodeCount` 批量（端点内循环 encode；`ids=false`）；kernel 不可达时回退 `countTokensBatch`（再回退估算——现有降级链不变）
+- [x] governor window 来源：session 初始化时从 `GET /api/models` 取当前模型 `context_size` 作 `cfg.window`；`configCtxSize`（用户 /ctx 设置）优先于模型值
+- [x] vitest：recipe-wiring 5 例（encode 优先/回退链/温启动跳过/window 目录/env 覆盖）（模型值/用户覆盖/kernel 不可达回退）、exactCounts 升级 2 例
 - 验收：scheduler vitest 全绿；`/ctx` 设置的窗口真实生效于 governor
 
 ### W3 TUI /ctx 真实用量（G4+G5）
 
-- [ ] scheduler `GET /api/context`：出参 `{window, pressure, trigger, savedTokens, focusKept, messageCount, exact: bool}`（从 governor 最近一次 govern() 结果与会话状态取）
-- [ ] TUI：无参 `/ctx` 改为 bridge 拉取 + 用量条渲染（`[███░░] 43% · 214k/500k · last: snip -38k`，qwen 形态）；异步兜底（Slash worker 既有模式）
-- [ ] 带参 `/ctx <tokens>` 语义不变（set `configCtxSize`）
-- [ ] HandlerCoverageSpec / RegistrySpec 回归钉
+- [x] scheduler `GET /api/context`：出参 `{window, pressure, trigger, savedTokens, focusKept, messageCount, exact: bool}`（从 governor 最近一次 govern() 结果与会话状态取）
+- [x] TUI：无参 `/ctx`（tmux 实测 `[░░…] 0% · 0/524k · ~estimate · msgs 3` 渲染；精确压力路径由 recipe-wiring 钉住——provider 余额耗尽无法做计费轮） 改为 bridge 拉取 + 用量条渲染（`[███░░] 43% · 214k/500k · last: snip -38k`，qwen 形态）；异步兜底（Slash worker 既有模式）
+- [x] 带参 `/ctx <tokens>` 语义不变（set `configCtxSize`）
+- [x] HandlerCoverageSpec / RegistrySpec 回归钉（两实现共享 renderCtxUsage，同一口径）
 - 验收：tmux 实测——发几条消息后 `/ctx` 显示与计费一致的精确数字（不再只是数字回显）
 
 ### W4 recipe 流会话 → 本地推理后端（G6）— 独立细化后执行

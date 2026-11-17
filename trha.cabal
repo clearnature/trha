@@ -330,6 +330,7 @@ executable trha
     UI.Stash
     UI.Frecency
     UI.ModelPrefs
+    UI.Render.Ctx
     UI.Render.Picker
     UI.Render.Sidebar
     UI.Render.Diff
