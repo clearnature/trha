@@ -203,6 +203,18 @@ export class HaskellBridge {
     }
   }
 
+  /** Batch token count: send N texts, get N exact counts back.
+   * Uses deepseek-recipe FFI tokenizer (same tokenizer as the model).
+   * Returns null for individual failures; the array length matches input. */
+  async countTokensBatch(texts: string[]): Promise<(number | null)[]> {
+    try {
+      const raw = await this.httpClient.post<{counts: number[]}>('/api/token-count', { texts });
+      return Array.isArray(raw?.counts) ? raw.counts : texts.map(() => null);
+    } catch {
+      return texts.map(() => null);
+    }
+  }
+
   async queryModel(request: QueryRequest): Promise<QueryResponse> {
     const body: Record<string, unknown> = {
       messages: request.messages.map(normalizeMessage),

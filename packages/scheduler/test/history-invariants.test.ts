@@ -72,6 +72,11 @@ function jsonKernel(rounds: JsonRound[], seen: Msg[][]) {
   kernel.use(express.json());
   let round = 0;
   kernel.post('/session/start', (_q, res) => res.json({}));
+  kernel.post('/api/token-count', (req, res) => {
+    const texts = req.body?.texts;
+    if (!Array.isArray(texts)) return res.status(400).json({error:'expected texts'});
+    res.json({ counts: texts.map((t: string) => t.length) });
+  });
   kernel.post('/v1/chat/completions', (req, res) => {
     seen.push((req.body.messages ?? []) as Msg[]);
     const script = rounds[round] ?? {};

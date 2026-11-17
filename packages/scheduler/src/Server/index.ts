@@ -1871,15 +1871,11 @@ export function createServer(config: ServerConfig = defaultServerConfig) {
       try {
         // Context governance runs immediately before the request, so the
         // provider sees exactly what was measured.
-        // 批次七 R2：冷启动（lastPromptTokens==0）时通过 recipe FFI 获取
-        // 精确 token 数替换字符估算——warm 路径仍用 provider 报告的真实值。
-        let pressureTokens = session.lastPromptTokens ?? 0;
-        if (pressureTokens === 0 && session.messages.length > 0) {
-          const joined = session.messages.map((m: {content?: string}) => m.content ?? '').join('\n');
-          const exact = await bridge.countTokens(joined).catch(() => null);
-          if (exact !== null && exact > 0) pressureTokens = exact;
-        }
-        const governed = govern(session.messages, pressureTokens, governanceConfig());
+        // 批次七：冷启动用 recipe FFI tokenizer 精确计数替换 estimateMessages。
+        const msgTexts = session.messages.map((m: {content?: string}) => m.content ?? '');
+        const exactCounts = await bridge.countTokensBatch(msgTexts);
+        const pressureTokens = session.lastPromptTokens ?? 0;
+        const governed = govern(session.messages, pressureTokens, governanceConfig(), exactCounts);
         if (governed.prefixChanged) {
           // 折叠/压缩是静默发生的：留一行日志，出问题时能对上界面里
           // 那条「context compacted」提示。
