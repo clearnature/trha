@@ -247,18 +247,21 @@ healthHandler = return $ object
   ]
 
 -- | POST /api/token-count — deepseek-recipe FFI 精确 token 计数。
--- 请求体：{"text": "..."}；响应：{"count": N}。
+-- 单条：{"text": "..."} → {"count": N}
+-- 批量：{"texts": ["…", "…"]} → {"counts": [N1, N2, …]}
 tokenCountHandler :: Value -> Handler Value
 tokenCountHandler body = do
-  let text = case body of
-        Object o -> maybe "" id $ do
-          v <- KM.lookup "text" o
-          case v of
-            String t -> Just t
-            _        -> Nothing
-        _ -> ""
-  n <- liftIO $ LLM.Recipe.FFI.recipeCountTokens text
-  return $ object ["count" .= fromMaybe 0 n]
+  let texts = case body of
+        Object o -> case KM.lookup "texts" o of
+          Just (Array vs) -> [ t | String t <- V.toList vs ]
+          _ -> case KM.lookup "text" o of
+            Just (String t) -> [t]
+            _               -> []
+        _ -> []
+  counts <- liftIO $ mapM LLM.Recipe.FFI.recipeCountTokens texts
+  if length counts == 1
+    then return $ object ["count" .= head counts]
+    else return $ object ["counts" .= counts]
 
 -- Start session
 --
